@@ -194,6 +194,39 @@ func (self *NsqLookupdEtcdMgr) AcquireAndWatchLeader(leader chan *NsqLookupdNode
 	master.Start()
 }
 
+func  (self *NsqLookupdEtcdMgr) GetTopicsMetaInfoMap(topics []string) (map[string]*TopicMetaInfo, error) {
+	topicMetaInfoCache := make(map[string]*TopicMetaInfo)
+	if atomic.LoadInt32(&self.ifTopicChanged) == 1 {
+		//fetch from etcd
+		for _, topic := range topics {
+			topicMeta, _, err := self.GetTopicMetaInfo(topic)
+			if err != nil {
+				return nil, err
+			}
+			topicMetaInfoCache[topic] = &topicMeta
+		}
+	} else {
+		self.tmiMutex.Lock()
+		defer self.tmiMutex.Unlock()
+		for _, topic := range topics {
+			topicMeta, exist := self.topicMetaMap[topic]
+			if !exist {
+				coordLog.Infof("meta info for %v not exist", topic)
+				topicMetaInfoCache[topic] = &TopicMetaInfo{
+					OrderedMulti: false,
+					Ext: false,
+				}
+			} else {
+				topicMetaInfoCache[topic] = &TopicMetaInfo{
+					OrderedMulti: topicMeta.OrderedMulti,
+					Ext: topicMeta.Ext,
+				}
+			}
+		}
+	}
+	return topicMetaInfoCache, nil
+}
+
 func (self *NsqLookupdEtcdMgr) processMasterEvents(master etcdlock.Master, leader chan *NsqLookupdNodeInfo, stop chan struct{}) {
 	for {
 		select {
@@ -388,7 +421,7 @@ func (self *NsqLookupdEtcdMgr) scanTopics() ([]TopicPartitionMetaInfo, error) {
 		return nil, err
 	}
 
-	topicMetaMap := make(map[string]TopicMetaInfo)
+	topicMetaMap := make(map[string]*TopicMetaInfo)
 	topicReplicasMap := make(map[string]map[string]TopicPartitionReplicaInfo)
 	self.processTopicNode(rsp.Node.Nodes, topicMetaMap, topicReplicasMap)
 
@@ -406,20 +439,21 @@ func (self *NsqLookupdEtcdMgr) scanTopics() ([]TopicPartitionMetaInfo, error) {
 			var topicInfo TopicPartitionMetaInfo
 			topicInfo.Name = k
 			topicInfo.Partition = partition
-			topicInfo.TopicMetaInfo = topicMeta
+			topicInfo.TopicMetaInfo = *topicMeta
 			topicInfo.TopicPartitionReplicaInfo = v2
 			topicMetaInfos = append(topicMetaInfos, topicInfo)
 		}
 	}
 
-	self.tmisMutex.Lock()
+	self.tmiMutex.Lock()
 	self.topicMetaInfos = topicMetaInfos
-	self.tmisMutex.Unlock()
+	self.topicMetaMap = topicMetaMap
+	self.tmiMutex.Unlock()
 
 	return topicMetaInfos, nil
 }
 
-func (self *NsqLookupdEtcdMgr) processTopicNode(nodes client.Nodes, topicMetaMap map[string]TopicMetaInfo, topicReplicasMap map[string]map[string]TopicPartitionReplicaInfo) {
+func (self *NsqLookupdEtcdMgr) processTopicNode(nodes client.Nodes, topicMetaMap map[string]*TopicMetaInfo, topicReplicasMap map[string]map[string]TopicPartitionReplicaInfo) {
 	for _, node := range nodes {
 		if node.Nodes != nil {
 			self.processTopicNode(node.Nodes, topicMetaMap, topicReplicasMap)
@@ -460,7 +494,7 @@ func (self *NsqLookupdEtcdMgr) processTopicNode(nodes client.Nodes, topicMetaMap
 				continue
 			}
 			topicName := keys[keyLen-2]
-			topicMetaMap[topicName] = mInfo
+			topicMetaMap[topicName] = &mInfo
 		}
 	}
 }

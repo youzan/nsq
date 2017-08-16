@@ -162,6 +162,8 @@ type NSQLookupdLeadership interface {
 	// only leader lookup can do the release, normally notify the nsqd node do the release by itself.
 	// lookup node should release only when the nsqd is lost
 	ReleaseTopicLeader(topic string, partition int, session *TopicLeaderSession) error
+	// get topic meta info map with passin topics slice
+	GetTopicsMetaInfoMap(topics []string) (map[string]*TopicMetaInfo, error)
 }
 
 type NSQDLeadership interface {

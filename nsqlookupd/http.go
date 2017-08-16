@@ -16,6 +16,7 @@ import (
 	"github.com/absolute8511/nsq/internal/protocol"
 	"github.com/absolute8511/nsq/internal/version"
 	"github.com/julienschmidt/httprouter"
+	"github.com/absolute8511/nsq/internal/clusterinfo"
 )
 
 const (
@@ -223,6 +224,35 @@ func (s *httpServer) doClusterStats(w http.ResponseWriter, req *http.Request, ps
 
 func (s *httpServer) doTopics(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {
 	topics := s.ctx.nsqlookupd.DB.FindTopics()
+	//wrap topic meta info
+	reqParams, err := url.ParseQuery(req.URL.RawQuery)
+	if err != nil {
+		return nil, http_api.Err{400, "INVALID_REQUEST"}
+	}
+	if reqParams.Get("metaInfo") == "true" && s.ctx.nsqlookupd.coordinator != nil {
+		var topicsInfo []*clusterinfo.TopicInfo
+		metaInfoMap, err := s.ctx.nsqlookupd.coordinator.GetTopicsMetaInfoMap(topics)
+		if err != nil {
+			return nil, err
+		}
+
+		for _, topic := range topics {
+			topicMeta, exist := metaInfoMap[topic]
+			if !exist {
+				return nil, fmt.Errorf("topic meta info for %v not exist", topic)
+			}
+			info := &clusterinfo.TopicInfo{
+				TopicName:      topic,
+				ExtSupport:	topicMeta.Ext,
+				Ordered:	topicMeta.OrderedMulti,
+			}
+			topicsInfo = append(topicsInfo, info)
+		}
+		return map[string]interface{}{
+			"topics": topics,
+			"meta_info": topicsInfo,
+		}, nil
+	}
 	return map[string]interface{}{
 		"topics": topics,
 	}, nil
