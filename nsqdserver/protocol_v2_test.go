@@ -998,6 +998,7 @@ func TestConsumeMessageWhileUpgrade(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		msgOut := recvNextMsgAndCheckExt(t, conn2, len(msgBody), 0, true, true)
 		test.NotNil(t, msgOut)
+		t.Log(msgOut)
 		test.Equal(t, uint8(ext.NO_EXT_VER), msgOut.ExtVer)
 		test.Equal(t, msgBody, msgOut.Body)
 		test.Assert(t, msgOut.Attempts <= 4000, "attempts should less than 4000")
