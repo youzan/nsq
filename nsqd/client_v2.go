@@ -617,6 +617,13 @@ func (c *ClientV2) SetMsgTimeout(msgTimeout int) error {
 	return nil
 }
 
+
+func (c *ClientV2) UnsetDesiredTag() {
+	c.LockWrite()
+	defer c.UnlockWrite()
+	c.DesiredTag = ""
+}
+
 func (c *ClientV2) SetDesiredTag(tagStr string) error {
 	if tagStr == "" {
 		return nil
