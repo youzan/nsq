@@ -1243,6 +1243,50 @@ func TestRemoveTagClientWhileConsuming(t *testing.T) {
 	test.Equal(t, false, exist)
 }
 
+
+//subscribe to old topic, with desired tag, which is a valid hehavior
+func TestSubWTagToOldTopic(t *testing.T) {
+	topicName := "test_tag_unset" + strconv.Itoa(int(time.Now().Unix()))
+
+	opts := nsqdNs.NewOptions()
+	opts.Logger = newTestLogger(t)
+	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
+	defer os.RemoveAll(opts.DataPath)
+	defer nsqdServer.Exit()
+	topic := nsqd.GetTopicIgnPart(topicName)
+	topicDynConf := nsqdNs.TopicDynamicConf{
+		AutoCommit: 1,
+		SyncEvery:  1,
+		Ext:        false,
+	}
+	topic.SetDynamicInfo(topicDynConf, nil, nil)
+	topic.GetChannel("ch")
+
+	//pub without ext content
+	body := fmt.Sprintf("msg for old topic")
+	msg := nsqdNs.NewMessageWithExt(0, []byte(body), ext.NO_EXT_VER, nil)
+	topic.GetChannel("ch")
+	_, _, _, _, putErr := topic.PutMessage(msg)
+	test.Nil(t, putErr)
+
+	conn, err := mustConnectNSQD(tcpAddr)
+	defer conn.Close()
+	test.Equal(t, err, nil)
+	client1Params := make(map[string]interface{})
+	client1Params["client_id"] = "client_w_tag"
+	client1Params["hostname"] = "client_w_tag"
+	client1Params["desired_tag"] = "valid_tag_123"
+	identify(t, conn, client1Params, frameTypeResponse)
+	sub(t, conn, topicName, "ch")
+
+	_, err = nsq.Ready(1).WriteTo(conn)
+	test.Equal(t, err, nil)
+	//consume 10 of message in stock
+	msgOut := recvNextMsgAndCheckExt(t, conn, len(msg.Body), msg.TraceID, true, false)
+	test.NotNil(t, msgOut)
+	test.Equal(t, "msg for old topic", string(msgOut.Body))
+}
+
 func TestInvalidTagSub(t *testing.T) {
 	topicName := "test_tag_invalid" + strconv.Itoa(int(time.Now().Unix()))
 

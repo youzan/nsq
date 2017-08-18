@@ -941,9 +941,10 @@ func (p *protocolV2) internalSUB(client *nsqd.ClientV2, params [][]byte, enableT
 		return nil, protocol.NewFatalClientErr(nil, FailedOnNotLeader, "")
 	}
 	channel := topic.GetChannel(channelName)
+	// client with tag is subscribe to topic not support tag, remove client's tag and treat it like untaged consumer
 	if !topic.IsExt() && client.GetDesiredTag() != "" {
-		return nil, protocol.NewFatalClientErr(nil, ext.E_EXT_NOT_SUPPORT,
-			fmt.Sprintf("IDENTIFY before subscribe has a tag %v to topic %v not support tag.", client.GetDesiredTag(), topicName))
+		nsqd.NsqLogger().Logf("[%v] IDENTIFY before subscribe has a tag %v to topic %v not support tag. Remove client's tag.", client, client.GetDesiredTag(), topicName)
+		client.UnsetDesiredTag()
 	}
 
 	err = channel.AddClient(client.ID, client)
