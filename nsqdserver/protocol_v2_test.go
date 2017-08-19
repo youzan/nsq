@@ -951,9 +951,11 @@ func TestConsumeMessageWhileUpgrade(t *testing.T) {
 	subFail(t, conn2, topicName, "ch")
 
 	msgBody := []byte("test body")
+	traceID := uint64((0))
 	for i := 0; i < 10; i++ {
 		msg := nsqdNs.NewMessage(0, msgBody)
-		topic.GetChannel("ch")
+		msg.TraceID = traceID
+		traceID++
 		_, _, _, _, putErr := topic.PutMessage(msg)
 		test.Nil(t, putErr)
 	}
@@ -964,6 +966,7 @@ func TestConsumeMessageWhileUpgrade(t *testing.T) {
 		test.Equal(t, msgBody, msgOut.Body)
 		test.Assert(t, msgOut.Attempts <= 4000, "attempts should less than 4000")
 	}
+	// conn1 last message may be requeued
 	t.Logf("begin upgrade topic")
 
 	topicDynConf.Ext = true
@@ -971,9 +974,11 @@ func TestConsumeMessageWhileUpgrade(t *testing.T) {
 	jsonHeaderStr := "{\"##channel_filter_tag\":\"test\",\"custome_header1\":\"test_header\",\"custome_h2\":\"test\"}"
 	jhe := ext.NewJsonHeaderExt()
 	jhe.SetJsonHeaderBytes([]byte(jsonHeaderStr))
+	extTraceID := traceID
 	for i := 0; i < 10; i++ {
 		msg := nsqdNs.NewMessageWithExt(0, msgBody, jhe.ExtVersion(), jhe.GetBytes())
-		topic.GetChannel("ch")
+		msg.TraceID = traceID
+		traceID++
 		_, _, _, _, putErr := topic.PutMessage(msg)
 		test.Nil(t, putErr)
 	}
@@ -998,8 +1003,12 @@ func TestConsumeMessageWhileUpgrade(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		msgOut := recvNextMsgAndCheckExt(t, conn2, len(msgBody), 0, true, true)
 		test.NotNil(t, msgOut)
-		t.Log(msgOut)
-		test.Equal(t, uint8(ext.NO_EXT_VER), msgOut.ExtVer)
+		if msgOut.GetTraceID() >= extTraceID {
+			test.Equal(t, uint8(ext.JSON_HEADER_EXT_VER), msgOut.ExtVer)
+			test.Equal(t, []byte(jsonHeaderStr), msgOut.ExtBytes)
+		} else {
+			test.Equal(t, uint8(ext.NO_EXT_VER), msgOut.ExtVer)
+		}
 		test.Equal(t, msgBody, msgOut.Body)
 		test.Assert(t, msgOut.Attempts <= 4000, "attempts should less than 4000")
 	}
@@ -1009,8 +1018,12 @@ func TestConsumeMessageWhileUpgrade(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		msgOut := recvNextMsgAndCheckExt(t, conn2, len(msgBody), 0, true, true)
 		test.NotNil(t, msgOut)
-		test.Equal(t, uint8(ext.JSON_HEADER_EXT_VER), msgOut.ExtVer)
-		test.Equal(t, []byte(jsonHeaderStr), msgOut.ExtBytes)
+		if msgOut.GetTraceID() >= extTraceID {
+			test.Equal(t, uint8(ext.JSON_HEADER_EXT_VER), msgOut.ExtVer)
+			test.Equal(t, []byte(jsonHeaderStr), msgOut.ExtBytes)
+		} else {
+			test.Equal(t, uint8(ext.NO_EXT_VER), msgOut.ExtVer)
+		}
 		test.Equal(t, msgBody, msgOut.Body)
 		test.Assert(t, msgOut.Attempts <= 4000, "attempts should less than 4000")
 	}
@@ -1242,7 +1255,6 @@ func TestRemoveTagClientWhileConsuming(t *testing.T) {
 	_, exist = ch.GetClientTagMsgChan(tagName)
 	test.Equal(t, false, exist)
 }
-
 
 //subscribe to old topic, with desired tag, which is a valid hehavior
 func TestSubWTagToOldTopic(t *testing.T) {
