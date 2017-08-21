@@ -729,7 +729,7 @@ func (c *Channel) ConfirmBackendQueue(msg *Message) (BackendOffset, int64, bool)
 			}
 			return curConfirm.Offset(), curConfirm.TotalMsgCnt(), reduced
 		} else {
-			if nsqLog.Level() >= levellogger.LOG_DEBUG {
+			if nsqLog.Level() >= levellogger.LOG_DETAIL || c.IsTraced() {
 				nsqLog.Logf("channel %v merge msg %v( %v) to interval %v, confirmed to %v", c.GetName(),
 					msg.Offset, msg.queueCntIndex, mergedInterval, newConfirmed)
 			}
@@ -924,9 +924,9 @@ func (c *Channel) ShouldRequeueToEnd(clientID int64, clientAddr string, id Messa
 		return nil, false
 	}
 
-	if nsqLog.Level() >= levellogger.LOG_DEBUG {
-		nsqLog.LogDebugf("check requeue to end, timeout:%v, msg timestamp:%v, depth ts:%v, msg attempt:%v, waiting :%v",
-			timeout, msg.Timestamp,
+	if nsqLog.Level() >= levellogger.LOG_DEBUG || c.IsTraced() {
+		nsqLog.LogDebugf("channel %v check requeue to end, timeout:%v, msg timestamp:%v, depth ts:%v, msg attempt:%v, waiting :%v",
+			c.GetName(), timeout, msg.Timestamp,
 			c.DepthTimestamp(), msg.Attempts, atomic.LoadInt32(&c.waitingConfirm))
 	}
 
@@ -1177,7 +1177,7 @@ func (c *Channel) GetInflightNum() int {
 func (c *Channel) UpdateConfirmedInterval(intervals []MsgQueueInterval) {
 	c.confirmMutex.Lock()
 	defer c.confirmMutex.Unlock()
-	if nsqLog.Level() >= levellogger.LOG_DEBUG {
+	if nsqLog.Level() >= levellogger.LOG_DETAIL {
 		nsqLog.Logf("update confirmed interval, before: %v", c.confirmedMsgs.ToString())
 	}
 	if c.confirmedMsgs.Len() != 0 {
@@ -1186,7 +1186,7 @@ func (c *Channel) UpdateConfirmedInterval(intervals []MsgQueueInterval) {
 	for _, qi := range intervals {
 		c.confirmedMsgs.AddOrMerge(&queueInterval{start: qi.Start, end: qi.End, endCnt: qi.EndCnt})
 	}
-	if nsqLog.Level() >= levellogger.LOG_DEBUG {
+	if nsqLog.Level() >= levellogger.LOG_DETAIL {
 		nsqLog.Logf("update confirmed interval, after: %v", c.confirmedMsgs.ToString())
 	}
 }
@@ -1315,7 +1315,7 @@ func (c *Channel) DisableConsume(disable bool) {
 			// since we dropped all inflight and requeue data while disable consume.
 			if nsqLog.Level() >= levellogger.LOG_DEBUG {
 				c.confirmMutex.Lock()
-				nsqLog.Logf("confirmed interval while enable: %v", c.confirmedMsgs.ToString())
+				nsqLog.Logf("channel %v confirmed interval while enable: %v", c.GetName(), c.confirmedMsgs.ToString())
 				c.confirmMutex.Unlock()
 			}
 
@@ -1426,7 +1426,7 @@ func (c *Channel) TryWakeupRead() {
 	case c.tryReadBackend <- true:
 	default:
 	}
-	if nsqLog.Level() >= levellogger.LOG_DEBUG {
+	if nsqLog.Level() >= levellogger.LOG_DETAIL {
 		nsqLog.LogDebugf("channel consume try wakeup : %v", c.name)
 	}
 }
@@ -1529,7 +1529,7 @@ LOOP:
 		} else if atomic.LoadInt32(&c.waitingConfirm) > maxWin {
 			if nsqLog.Level() >= levellogger.LOG_DEBUG {
 				nsqLog.LogDebugf("channel %v reader is holding: %v, %v",
-				   c.GetName(),
+					c.GetName(),
 					atomic.LoadInt32(&c.waitingConfirm),
 					c.GetConfirmed())
 			}
@@ -1657,7 +1657,7 @@ LOOP:
 					c.GetName(), lastMsg.ID, lastMsg.Offset, msg.ID, msg.Offset)
 			}
 			if resumedFirst {
-				if nsqLog.Level() >= levellogger.LOG_DEBUG {
+				if nsqLog.Level() >= levellogger.LOG_DEBUG || c.IsTraced() {
 					nsqLog.LogDebugf("channel %v resumed first messsage %v at Offset: %v", c.GetName(), msg.ID, msg.Offset)
 				}
 				resumedFirst = false
@@ -1789,7 +1789,7 @@ func (c *Channel) GetChannelDebugStats() string {
 	c.inFlightMutex.Lock()
 	inFlightCount := len(c.inFlightMessages)
 	debugStr += fmt.Sprintf("inflight %v messages : ", inFlightCount)
-	if nsqLog.Level() >= levellogger.LOG_DEBUG {
+	if nsqLog.Level() >= levellogger.LOG_DEBUG || c.IsTraced() {
 		for _, msg := range c.inFlightMessages {
 			debugStr += fmt.Sprintf("%v(%v, %v),", msg.ID, msg.Offset, msg.DelayedType)
 		}
