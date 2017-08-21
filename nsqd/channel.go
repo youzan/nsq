@@ -1061,7 +1061,7 @@ func (c *Channel) RequeueMessage(clientID int64, clientAddr string, id MessageID
 	}
 	c.inFlightPQ.Push(msg)
 
-	nsqLog.LogDebugf("client %v requeue with delayed %v message: %v", clientID, timeout, id)
+	nsqLog.LogDebugf("channel %v client %v requeue with delayed %v message: %v", c.GetName(), clientID, timeout, id)
 	return nil
 }
 
@@ -1528,10 +1528,10 @@ LOOP:
 			needReadBackend = false
 		} else if atomic.LoadInt32(&c.waitingConfirm) > maxWin {
 			if nsqLog.Level() >= levellogger.LOG_DEBUG {
-				nsqLog.LogDebugf("channel reader is holding: %v, %v, %v",
+				nsqLog.LogDebugf("channel %v reader is holding: %v, %v",
+				   c.GetName(),
 					atomic.LoadInt32(&c.waitingConfirm),
-					c.GetConfirmed(),
-					c.name)
+					c.GetConfirmed())
 			}
 			atomic.StoreInt32(&c.needNotifyRead, 1)
 
@@ -1658,7 +1658,7 @@ LOOP:
 			}
 			if resumedFirst {
 				if nsqLog.Level() >= levellogger.LOG_DEBUG {
-					nsqLog.LogDebugf("resumed first messsage %v at Offset: %v", msg.ID, msg.Offset)
+					nsqLog.LogDebugf("channel %v resumed first messsage %v at Offset: %v", c.GetName(), msg.ID, msg.Offset)
 				}
 				resumedFirst = false
 			}
@@ -1827,8 +1827,8 @@ func (c *Channel) processInFlightQueue(tnow int64) (bool, bool) {
 		flightCnt = len(c.inFlightMessages)
 		if msg == nil {
 			if atomic.LoadInt32(&c.waitingConfirm) > 1 || flightCnt > 1 {
-				nsqLog.LogDebugf("no timeout, inflight %v, waiting confirm: %v, confirmed: %v",
-					flightCnt, atomic.LoadInt32(&c.waitingConfirm),
+				nsqLog.LogDebugf("channel %v no timeout, inflight %v, waiting confirm: %v, confirmed: %v",
+					c.GetName(), flightCnt, atomic.LoadInt32(&c.waitingConfirm),
 					c.GetConfirmed())
 				if !c.IsOrdered() && atomic.LoadInt32(&c.waitingConfirm) >= int32(c.option.MaxConfirmWin) {
 					confirmed := c.GetConfirmed().Offset()
@@ -1917,7 +1917,7 @@ exit:
 	reqLen := len(c.requeuedMsgChan) + len(c.waitingRequeueMsgs)
 	if !c.IsConsumeDisabled() {
 		if len(c.waitingRequeueMsgs) > 1 {
-			nsqLog.LogDebugf("requeue waiting messages: %v", len(c.waitingRequeueMsgs))
+			nsqLog.LogDebugf("channel %v requeue waiting messages: %v", c.GetName(), len(c.waitingRequeueMsgs))
 		}
 
 		for k, m := range c.waitingRequeueMsgs {
@@ -2006,10 +2006,12 @@ exit:
 						m.DelayedOrigID = tmpID
 
 						if tnow > m.DelayedTs+int64(c.option.QueueScanInterval*2) {
-							nsqLog.LogDebugf("delayed is too late now %v for message: %v, peeking time: %v", tnow, m, peekStart)
+							nsqLog.LogDebugf("channel %v delayed is too late now %v for message: %v, peeking time: %v",
+								c.GetName(), tnow, m, peekStart)
 						}
 						if tnow < m.DelayedTs {
-							nsqLog.LogDebugf("delayed is too early now %v for message: %v, peeking time: %v", tnow, m, peekStart)
+							nsqLog.LogDebugf("channel %v delayed is too early now %v for message: %v, peeking time: %v",
+								c.GetName(), tnow, m, peekStart)
 						}
 						if m.TraceID != 0 || c.IsTraced() || nsqLog.Level() >= levellogger.LOG_DEBUG {
 							nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "DELAY_QUEUE_TIMEOUT", m.TraceID, &m, "")
@@ -2033,19 +2035,20 @@ exit:
 			c.delayedConfirmedMsgs = make(map[MessageID]Message, MaxWaitingDelayed)
 			c.confirmMutex.Unlock()
 			if newAdded > 0 && nsqLog.Level() >= levellogger.LOG_DEBUG {
-				nsqLog.LogDebugf("delayed waiting peeked %v added %v new : %v", cnt, newAdded, waitingDelayCnt)
+				nsqLog.LogDebugf("channel %v delayed waiting peeked %v added %v new : %v",
+					c.GetName(), cnt, newAdded, waitingDelayCnt)
 			}
 		}
 	} else if clientNum > 0 {
 		if waitingDelayCnt > 0 {
 			if nsqLog.Level() >= levellogger.LOG_DEBUG {
-				nsqLog.LogDebugf("delayed waiting : %v", waitingDelayCnt)
+				nsqLog.LogDebugf("channel %v delayed waiting : %v", c.GetName(), waitingDelayCnt)
 			}
 			c.inFlightMutex.Lock()
 			allWaiting := len(c.inFlightMessages) + len(c.waitingRequeueChanMsgs) + len(c.waitingRequeueMsgs)
 			c.inFlightMutex.Unlock()
 			if waitingDelayCnt > int64(allWaiting) {
-				nsqLog.Logf("delayed waiting : %v, more than all waiting delivery: %v", waitingDelayCnt, allWaiting)
+				nsqLog.Logf("channel %v delayed waiting : %v, more than all waiting delivery: %v", c.GetName(), waitingDelayCnt, allWaiting)
 			}
 		}
 	}
