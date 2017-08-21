@@ -889,6 +889,18 @@ func (c *Channel) ContinueConsumeForOrder() {
 	}
 }
 
+func (c *Channel) isTooMuchDeferredInMem(deCnt int64) bool {
+	// if requeued by deferred is more than half of the all messages handled,
+	// it may be a bug in client which can not handle any more, so we just wait
+	// timeout not requeue to defer
+	cnt := c.GetChannelWaitingConfirmCnt()
+	if cnt >= c.option.MaxConfirmWin && float64(deCnt) > float64(cnt)*0.5 {
+		nsqLog.Logf("too much delayed in memory: %v vs %v", deCnt, cnt)
+		return true
+	}
+	return false
+}
+
 func (c *Channel) ShouldRequeueToEnd(clientID int64, clientAddr string, id MessageID,
 	timeout time.Duration, byClient bool) (*Message, bool) {
 	if !byClient {
@@ -934,7 +946,7 @@ func (c *Channel) ShouldRequeueToEnd(clientID int64, clientAddr string, id Messa
 		// it may be a bug in client which can not handle any more, so we just wait
 		// timeout not requeue to defer
 		cnt := c.GetChannelWaitingConfirmCnt()
-		if cnt >= c.option.MaxConfirmWin && float64(deCnt) <= float64(cnt)*0.6 {
+		if cnt >= c.option.MaxConfirmWin && float64(deCnt) <= float64(cnt)*0.5 {
 			nsqLog.Logf("requeue msg to end %v, since too much delayed in memory: %v vs %v", id, deCnt, cnt)
 			return msg.GetCopy(), true
 		}
@@ -1026,15 +1038,9 @@ func (c *Channel) RequeueMessage(clientID int64, clientAddr string, id MessageID
 			newTimeout, msg.deliveryTS, timeout, id)
 	}
 	deCnt := atomic.LoadInt64(&c.deferredCount)
-	if deCnt >= c.option.MaxConfirmWin {
-		// if requeued by deferred is more than half of the all messages handled,
-		// it may be a bug in client which can not handle any more, so we just wait
-		// timeout not requeue to defer
-		cnt := c.GetChannelWaitingConfirmCnt()
-		if cnt >= c.option.MaxConfirmWin && float64(deCnt) > float64(cnt)*0.6 {
-			nsqLog.Logf("failed to requeue msg %v, since too much delayed in memory: %v vs %v", id, deCnt, cnt)
-			return ErrMsgDeferredTooMuch
-		}
+	if c.isTooMuchDeferredInMem(deCnt) {
+		nsqLog.Logf("failed to requeue msg %v, since too much delayed in memory: %v", id, deCnt)
+		return ErrMsgDeferredTooMuch
 	}
 
 	atomic.AddInt64(&c.deferredCount, 1)
@@ -1183,6 +1189,13 @@ func (c *Channel) UpdateConfirmedInterval(intervals []MsgQueueInterval) {
 	if nsqLog.Level() >= levellogger.LOG_DEBUG {
 		nsqLog.Logf("update confirmed interval, after: %v", c.confirmedMsgs.ToString())
 	}
+}
+
+func (c *Channel) GetConfirmedIntervalLen() int {
+	c.confirmMutex.Lock()
+	l := c.confirmedMsgs.Len()
+	c.confirmMutex.Unlock()
+	return l
 }
 
 func (c *Channel) GetConfirmedInterval() []MsgQueueInterval {
@@ -1839,9 +1852,16 @@ func (c *Channel) processInFlightQueue(tnow int64) (bool, bool) {
 						nsqLog.Logf("msg %v is blocking confirm, requeue to end, inflight %v, waiting confirm: %v, confirmed: %v",
 							PrintMessage(blockingMsg),
 							flightCnt, atomic.LoadInt32(&c.waitingConfirm), confirmed)
-
-						copyMsg := blockingMsg.GetCopy()
-						c.nsqdNotify.ReqToEnd(c, copyMsg, time.Duration(copyMsg.pri-time.Now().UnixNano()))
+						toEnd := true
+						deCnt := atomic.LoadInt64(&c.deferredCount)
+						if c.isTooMuchDeferredInMem(deCnt) {
+							nsqLog.Logf("channel %v too much delayed in memory: %v", c.GetName(), deCnt)
+							toEnd = false
+						}
+						if toEnd {
+							copyMsg := blockingMsg.GetCopy()
+							c.nsqdNotify.ReqToEnd(c, copyMsg, time.Duration(copyMsg.pri-time.Now().UnixNano()))
+						}
 					}
 				}
 			}

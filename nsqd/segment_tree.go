@@ -466,20 +466,25 @@ func (self *IntervalHash) ToIntervalList() []MsgQueueInterval {
 }
 
 func (self *IntervalHash) ToString() string {
+	dataStr := ""
+	dataStr += fmt.Sprintf("intervals %v, ", len(self.elems))
+	dataStr += fmt.Sprintf("history intervals %v, ", len(self.historyMsg))
+	if len(self.elems) < 100 {
 	sorted := skiplist.NewIntMap()
 	for _, qi := range self.elems {
 		sorted.Set(qi.Start(), qi)
 	}
 
-	dataStr := ""
 	it := sorted.Iterator()
 	for it.Next() {
 		dataStr += fmt.Sprintf("interval %v, ", it.Value())
 	}
 	it.Close()
-	dataStr += fmt.Sprintf("history intervals %v, ", len(self.historyMsg))
+	}
+	if len(self.historyMsg) < 100 {
 	for s, e := range self.historyMsg {
 		dataStr += fmt.Sprintf("interval %v-%v, ", s, e)
+	}
 	}
 	return dataStr
 }

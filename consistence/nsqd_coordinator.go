@@ -2267,8 +2267,13 @@ func (self *NsqdCoordinator) trySyncTopicChannels(tcData *coordData, syncDelayed
 
 			syncOffset.VOffset = int64(confirmed.Offset())
 			syncOffset.VCnt = confirmed.TotalMsgCnt()
-			syncOffset.ConfirmedInterval = ch.GetConfirmedInterval()
-			syncOffset.NeedUpdateConfirmed = true
+			if ch.GetConfirmedIntervalLen() > 100 {
+				syncOffset.NeedUpdateConfirmed = false
+				syncOffset.ConfirmedInterval = nil
+			} else {
+				syncOffset.ConfirmedInterval = ch.GetConfirmedInterval()
+				syncOffset.NeedUpdateConfirmed = true
+			}
 
 			for _, nodeID := range tcData.topicInfo.ISR {
 				if nodeID == self.myNode.GetID() {
@@ -2280,7 +2285,7 @@ func (self *NsqdCoordinator) trySyncTopicChannels(tcData *coordData, syncDelayed
 				}
 				rpcErr = c.UpdateChannelOffset(&tcData.topicLeaderSession, &tcData.topicInfo, ch.GetName(), syncOffset)
 				if rpcErr != nil {
-					coordLog.Infof("node %v update channel %v offset %v failed %v.", nodeID, ch.GetName(), syncOffset, rpcErr)
+					coordLog.Infof("node %v update channel %v offset failed %v.", nodeID, ch.GetName(), rpcErr)
 				}
 			}
 			// only the first channel of topic should flush.
