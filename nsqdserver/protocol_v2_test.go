@@ -683,7 +683,7 @@ func TestConsumeTagMessageNormal(t *testing.T) {
 		SyncEvery:  1,
 		Ext:        true,
 	}
-	topic.SetDynamicInfo(topicDynConf, nil, nil)
+	topic.SetDynamicInfo(topicDynConf, nil)
 
 	topic.GetChannel("ch")
 	tagName := "TAG"
@@ -786,7 +786,7 @@ func TestConsumeJsonHeaderMessageNormal(t *testing.T) {
 		SyncEvery:  1,
 		Ext:        true,
 	}
-	topic.SetDynamicInfo(topicDynConf, nil, nil)
+	topic.SetDynamicInfo(topicDynConf, nil)
 
 	topic.GetChannel("ch")
 
@@ -839,7 +839,7 @@ func TestConsumeJsonHeaderMessageTag(t *testing.T) {
 		SyncEvery:  1,
 		Ext:        true,
 	}
-	topic.SetDynamicInfo(topicDynConf, nil, nil)
+	topic.SetDynamicInfo(topicDynConf, nil)
 	topic.GetChannel("ch")
 
 	//subscribe tag client
@@ -927,7 +927,7 @@ func TestConsumeMessageWhileUpgrade(t *testing.T) {
 		SyncEvery:  1,
 		Ext:        false,
 	}
-	topic.SetDynamicInfo(topicDynConf, nil, nil)
+	topic.SetDynamicInfo(topicDynConf, nil)
 	topic.GetChannel("ch")
 
 	conn1, err := mustConnectNSQD(tcpAddr)
@@ -970,7 +970,7 @@ func TestConsumeMessageWhileUpgrade(t *testing.T) {
 	t.Logf("begin upgrade topic")
 
 	topicDynConf.Ext = true
-	topic.SetDynamicInfo(topicDynConf, nil, nil)
+	topic.SetDynamicInfo(topicDynConf, nil)
 	jsonHeaderStr := "{\"##channel_filter_tag\":\"test\",\"custome_header1\":\"test_header\",\"custome_h2\":\"test\"}"
 	jhe := ext.NewJsonHeaderExt()
 	jhe.SetJsonHeaderBytes([]byte(jsonHeaderStr))
@@ -1045,7 +1045,7 @@ func TestConsumeMultiTagMessages(t *testing.T) {
 		SyncEvery:  1,
 		Ext:        true,
 	}
-	topic.SetDynamicInfo(topicDynConf, nil, nil)
+	topic.SetDynamicInfo(topicDynConf, nil)
 
 	topic.GetChannel("ch")
 
@@ -1160,7 +1160,7 @@ func TestRemoveTagClientWhileConsuming(t *testing.T) {
 		SyncEvery:  1,
 		Ext:        true,
 	}
-	topic.SetDynamicInfo(topicDynConf, nil, nil)
+	topic.SetDynamicInfo(topicDynConf, nil)
 	topic.GetChannel("ch")
 	tagName := "TAG"
 
@@ -1271,7 +1271,7 @@ func TestSubWTagToOldTopic(t *testing.T) {
 		SyncEvery:  1,
 		Ext:        false,
 	}
-	topic.SetDynamicInfo(topicDynConf, nil, nil)
+	topic.SetDynamicInfo(topicDynConf, nil)
 	topic.GetChannel("ch")
 
 	//pub without ext content
@@ -1313,7 +1313,7 @@ func TestInvalidTagSub(t *testing.T) {
 		SyncEvery:  1,
 		Ext:        true,
 	}
-	topic.SetDynamicInfo(topicDynConf, nil, nil)
+	topic.SetDynamicInfo(topicDynConf, nil)
 	topic.GetChannel("ch")
 
 	//pub without ext content
@@ -1363,7 +1363,7 @@ func consumeTagConcurrent(t *testing.T, producerFirst bool, ticker *time.Ticker)
 		SyncEvery:  1,
 		Ext:        true,
 	}
-	topic.SetDynamicInfo(topicDynConf, nil, nil)
+	topic.SetDynamicInfo(topicDynConf, nil)
 	topic.GetChannel("ch")
 
 	tags := make([]*ext.JsonHeaderExt, 3)
@@ -1724,7 +1724,7 @@ func TestWriteAndConsumeTagMix(t *testing.T) {
 		SyncEvery:  1,
 		Ext:        true,
 	}
-	topic.SetDynamicInfo(topicDynConf, nil, nil)
+	topic.SetDynamicInfo(topicDynConf, nil)
 	topic.GetChannel("ch")
 
 	tagName := "TAG"
@@ -1842,7 +1842,7 @@ func TestStuckOnAnotherTag(t *testing.T) {
 		SyncEvery:  1,
 		Ext:        true,
 	}
-	topic.SetDynamicInfo(topicDynConf, nil, nil)
+	topic.SetDynamicInfo(topicDynConf, nil)
 
 	topic.GetChannel("ch")
 
@@ -2843,7 +2843,7 @@ func TestSubOrderedMulti(t *testing.T) {
 		AutoCommit:   1,
 		OrderedMulti: true,
 	}
-	topic.SetDynamicInfo(conf, nil, nil)
+	topic.SetDynamicInfo(conf, nil)
 
 	identify(t, conn, nil, frameTypeResponse)
 	_, err = nsq.Subscribe(topicName, "ordered_ch").WriteTo(conn)
@@ -4580,7 +4580,7 @@ func benchmarkProtocolV2Sub(b *testing.B, size int) {
 		SyncEvery:  1,
 		Ext:        false,
 	}
-	topic.SetDynamicInfo(topicDynConf, nil, nil)
+	topic.SetDynamicInfo(topicDynConf, nil)
 	topic.GetChannel("ch")
 
 	for i := 0; i < b.N; i++ {
@@ -4649,7 +4649,7 @@ func benchmarkProtocolV2SubExt(b *testing.B, size int) {
 		SyncEvery:  1,
 		Ext:        true,
 	}
-	topic.SetDynamicInfo(topicDynConf, nil, nil)
+	topic.SetDynamicInfo(topicDynConf, nil)
 	topic.GetChannel("ch")
 
 	workers := runtime.GOMAXPROCS(0)
@@ -4725,7 +4725,7 @@ func benchmarkProtocolV2SubExtTag(b *testing.B, size int) {
 		SyncEvery:  1,
 		Ext:        true,
 	}
-	topic.SetDynamicInfo(topicDynConf, nil, nil)
+	topic.SetDynamicInfo(topicDynConf, nil)
 	topic.GetChannel("ch")
 
 	workers := runtime.GOMAXPROCS(0)

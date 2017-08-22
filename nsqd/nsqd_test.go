@@ -381,7 +381,7 @@ func TestLoadTopicMetaExt(t *testing.T) {
 		SyncEvery:  1,
 		Ext:        true,
 	}
-	topicExt.SetDynamicInfo(topicDynConf, nil, nil)
+	topicExt.SetDynamicInfo(topicDynConf, nil)
 	topicExt.GetChannel("ch")
 
 	atomic.StoreInt32(&nsqd.isLoading, 0)

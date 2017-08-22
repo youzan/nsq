@@ -276,6 +276,12 @@ func newDelayQueue(topicName string, part int, dataPath string, opt *Options,
 		return nil, err
 	}
 	q.backend = queue.(*diskQueueWriter)
+	if ro == nil {
+		ro = &bolt.Options{
+			Timeout:  time.Second,
+			ReadOnly: false,
+		}
+	}
 	q.kvStore, err = bolt.Open(path.Join(q.dataPath, getDelayQueueDBName(q.tname, q.partition)), 0644, ro)
 	if err != nil {
 		nsqLog.LogErrorf("topic(%v) failed to init delayed db: %v , %v ", q.fullName, err, backendName)
@@ -335,7 +341,11 @@ func (q *DelayQueue) CheckConsistence() error {
 
 func (q *DelayQueue) reOpenStore() error {
 	var err error
-	q.kvStore, err = bolt.Open(path.Join(q.dataPath, getDelayQueueDBName(q.tname, q.partition)), 0644, nil)
+	ro := &bolt.Options{
+		Timeout:  time.Second,
+		ReadOnly: false,
+	}
+	q.kvStore, err = bolt.Open(path.Join(q.dataPath, getDelayQueueDBName(q.tname, q.partition)), 0644, ro)
 	if err != nil {
 		nsqLog.LogErrorf("topic(%v) failed to open delayed db: %v ", q.fullName, err)
 		return err
@@ -1256,7 +1266,11 @@ func (q *DelayQueue) compactStore(force bool) error {
 	}
 	tmpPath := src.Path() + "-tmp.compact"
 	// Open destination database.
-	dst, err := bolt.Open(tmpPath, 0644, nil)
+		ro := &bolt.Options{
+			Timeout: time.Second,
+			ReadOnly: false,
+		}
+	dst, err := bolt.Open(tmpPath, 0644, ro)
 	if err != nil {
 		return err
 	}

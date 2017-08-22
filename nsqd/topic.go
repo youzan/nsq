@@ -245,6 +245,7 @@ func (t *Topic) GetOrCreateDelayedQueueNoLock(idGen MsgIDGenerator) (*DelayQueue
 			}
 			t.channelLock.RUnlock()
 		} else {
+			nsqLog.LogWarningf("topic %v init delayed queue error %v", t.tname, err)
 			return nil, err
 		}
 	}
@@ -605,7 +606,7 @@ func (t *Topic) IsOrdered() bool {
 	return atomic.LoadInt32(&t.isOrdered) == 1
 }
 
-func (t *Topic) SetDynamicInfo(dynamicConf TopicDynamicConf, idGen MsgIDGenerator, delayIDGen MsgIDGenerator) {
+func (t *Topic) SetDynamicInfo(dynamicConf TopicDynamicConf, idGen MsgIDGenerator) {
 	t.Lock()
 	if idGen != nil {
 		t.msgIDCursor = idGen
@@ -619,11 +620,9 @@ func (t *Topic) SetDynamicInfo(dynamicConf TopicDynamicConf, idGen MsgIDGenerato
 	} else {
 		atomic.StoreInt32(&t.isOrdered, 0)
 	}
-	if !dynamicConf.OrderedMulti && delayIDGen != nil {
-		dq, _ := t.GetOrCreateDelayedQueueNoLock(delayIDGen)
-		if dq != nil {
-			atomic.StoreInt64(&dq.SyncEvery, dynamicConf.SyncEvery)
-		}
+	dq := t.GetDelayedQueue()
+	if dq != nil {
+		atomic.StoreInt64(&dq.SyncEvery, dynamicConf.SyncEvery)
 	}
 	t.dynamicConf.Ext = dynamicConf.Ext
 	if dynamicConf.Ext {

@@ -89,7 +89,7 @@ func TestHTTPPubExt(t *testing.T) {
 		SyncEvery:  1,
 		Ext:        true,
 	}
-	topic.SetDynamicInfo(topicDynConf, nil, nil)
+	topic.SetDynamicInfo(topicDynConf, nil)
 	topic.GetChannel("ch")
 
 	//subscribe tag client
