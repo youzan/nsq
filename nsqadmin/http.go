@@ -224,9 +224,10 @@ func (s *httpServer) topicsHandler(w http.ResponseWriter, req *http.Request, ps 
 		return nil, http_api.Err{400, err.Error()}
 	}
 
-	var topics []string
+	var topics []*clusterinfo.TopicInfo
 	if len(s.ctx.nsqadmin.opts.NSQLookupdHTTPAddresses) != 0 {
-		topics, err = s.ci.GetLookupdTopics(s.ctx.nsqadmin.opts.NSQLookupdHTTPAddresses)
+		fetchMetaStr, _ := reqParams.Get("metaInfo")
+		topics, err = s.ci.GetLookupdTopicsMeta(s.ctx.nsqadmin.opts.NSQLookupdHTTPAddresses, fetchMetaStr == "true")
 	} else {
 		topics, err = s.ci.GetNSQDTopics(s.ctx.nsqadmin.opts.NSQDHTTPAddresses)
 	}
@@ -246,13 +247,13 @@ func (s *httpServer) topicsHandler(w http.ResponseWriter, req *http.Request, ps 
 		if len(s.ctx.nsqadmin.opts.NSQLookupdHTTPAddresses) == 0 {
 			goto respond
 		}
-		for _, topicName := range topics {
+		for _, topic := range topics {
 			producers, _, _ := s.ci.GetLookupdTopicProducers(
-				topicName, s.ctx.nsqadmin.opts.NSQLookupdHTTPAddresses)
+				topic.TopicName, s.ctx.nsqadmin.opts.NSQLookupdHTTPAddresses)
 			if len(producers) == 0 {
 				topicChannels, _ := s.ci.GetLookupdTopicChannels(
-					topicName, s.ctx.nsqadmin.opts.NSQLookupdHTTPAddresses)
-				topicChannelMap[topicName] = topicChannels
+					topic.TopicName, s.ctx.nsqadmin.opts.NSQLookupdHTTPAddresses)
+				topicChannelMap[topic.TopicName] = topicChannels
 			}
 		}
 	respond:
@@ -263,7 +264,7 @@ func (s *httpServer) topicsHandler(w http.ResponseWriter, req *http.Request, ps 
 	}
 
 	return struct {
-		Topics  []string `json:"topics"`
+		Topics  []*clusterinfo.TopicInfo `json:"topics"`
 		Message string   `json:"message"`
 	}{topics, maybeWarnMsg(messages)}, nil
 }
