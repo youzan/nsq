@@ -57,6 +57,17 @@ func NewFakeNsqlookupLeadership() *FakeNsqlookupLeadership {
 func (self *FakeNsqlookupLeadership) InitClusterID(id string) {
 }
 
+func (self *FakeNsqlookupLeadership) GetTopicsMetaInfoMap(topics []string) (map[string]*TopicMetaInfo, error) {
+	metas := make(map[string]*TopicMetaInfo)
+	self.dataMutex.Lock()
+	defer self.dataMutex.Unlock()
+	for k, v := range self.fakeTopicMetaInfo {
+		tmp := v
+		metas[k] = &tmp
+	}
+	return metas, nil
+}
+
 func (self *FakeNsqlookupLeadership) GetClusterEpoch() (EpochType, error) {
 	return self.clusterEpoch, nil
 }
@@ -887,6 +898,7 @@ func testNsqLookupNsqdNodesChange(t *testing.T, useFakeLeadership bool) {
 		}
 
 		waitClusterStable(lookupCoord1, time.Second*5)
+		t.Logf("stopping nodeid : %v", failedID)
 		t0, _ = lookupLeadership.GetTopicInfo(topic, 0)
 		// we have no failed node in isr or we got the last failed node leaving in isr.
 		t.Log(t0)

@@ -2,13 +2,14 @@ package consistence
 
 import (
 	"errors"
-	"github.com/cenkalti/backoff"
 	"net"
 	"runtime"
 	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/cenkalti/backoff"
 )
 
 var (
