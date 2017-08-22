@@ -118,7 +118,7 @@ func maybeInitDelayedQ(tcData *coordData, localTopic *nsqd.Topic) error {
 	if !tcData.topicInfo.OrderedMulti && tcData.delayedLogMgr != nil {
 		localTopic.Lock()
 		_, err := localTopic.GetOrCreateDelayedQueueNoLock(tcData.delayedLogMgr)
-		localTopic.Lock()
+		localTopic.Unlock()
 		return err
 	}
 	return nil
