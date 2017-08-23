@@ -47,6 +47,11 @@
             <button class="btn btn-medium btn-primary" data-action="skip">Skip Channel</button>
         {{/if}}
     </div>
+    <div class="col-md-2" title="reset consume offset to specified data time, if specified timestamp is earlier(later) than timestamp of first(last) available message in queue, offset will be set to the beginning(tail) of message queue.">
+            <button class="btn btn-medium btn-primary" data-action="reset">Reset Channel Offset</button>
+            <input id="resetChannelDatetime" type="datetime-local" name="resetTime" step=1>
+            <label id="resetTimestamp"></label>
+    </div>
 </div>
 
 <div class="row">

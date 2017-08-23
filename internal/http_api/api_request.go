@@ -188,6 +188,39 @@ retry:
 	return resp.StatusCode, nil
 }
 
+func (c *Client) POSTV1WithContent(endpoint string, content string) (int, error) {
+	retry:
+	req, err := http.NewRequest("POST", endpoint, strings.NewReader(content))
+	if err != nil {
+		return -1, err
+	}
+
+	req.Header.Add("Accept", "application/vnd.nsq; version=1.0")
+
+	resp, err := c.c.Do(req)
+	if err != nil {
+		return -1, err
+	}
+
+	body, err := ioutil.ReadAll(resp.Body)
+	resp.Body.Close()
+	if err != nil {
+		return resp.StatusCode, err
+	}
+	if resp.StatusCode != 200 {
+		if resp.StatusCode == 403 && !strings.HasPrefix(endpoint, "https") {
+			endpoint, err = httpsEndpoint(endpoint, body)
+			if err != nil {
+				return resp.StatusCode, err
+			}
+			goto retry
+		}
+		return resp.StatusCode, fmt.Errorf("got response %s %q", resp.Status, body)
+	}
+
+	return resp.StatusCode, nil
+}
+
 func httpsEndpoint(endpoint string, body []byte) (string, error) {
 	var forbiddenResp struct {
 		HTTPSPort int `json:"https_port"`

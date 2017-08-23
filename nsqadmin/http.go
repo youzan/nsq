@@ -934,6 +934,7 @@ func (s *httpServer) topicChannelAction(req *http.Request, topicName string, cha
 
 	var body struct {
 		Action string `json:"action"`
+		DataTime string `json:"timestamp"`
 	}
 	err := json.NewDecoder(req.Body).Decode(&body)
 	if err != nil {
@@ -1009,6 +1010,15 @@ func (s *httpServer) topicChannelAction(req *http.Request, topicName string, cha
 				s.ctx.nsqadmin.opts.NSQLookupdHTTPAddresses)
 
 			s.notifyAdminAction("create_channel", topicName, channelName, "", req)
+		}
+	case "reset":
+		if channelName != "" {
+			//parse timestamp
+			tsStr := fmt.Sprintf("timestamp:%v", body.DataTime)
+			err = s.ci.ResetChannel(topicName, channelName,
+				s.ctx.nsqadmin.opts.NSQLookupdHTTPAddresses, tsStr)
+			s.notifyAdminAction("reset_channel", topicName, channelName, "", req)
+
 		}
 	default:
 		return nil, http_api.Err{400, "INVALID_ACTION"}
