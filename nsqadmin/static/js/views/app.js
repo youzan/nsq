@@ -10,7 +10,7 @@ var Router = require('../router');
 
 var BaseView = require('./base');
 var HeaderView = require('./header');
-var TopicsView = require('./topics');
+var TopicsFilterView = require('./topicsFilter');
 var TopicView = require('./topic');
 var ChannelView = require('./channel');
 var LookupView = require('./lookup');
@@ -96,7 +96,7 @@ var AppView = BaseView.extend({
 
     showTopics: function() {
         this.showView(function() {
-            return new TopicsView();
+            return new TopicsFilterView();
         });
     },
 
