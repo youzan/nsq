@@ -50,10 +50,7 @@ var ChannelView = BaseView.extend({
             } else if (action === 'reset') {
                //parse timestamp
                ts = $('#resetChannelDatetime:first').val();
-               //parse time stamp according to timezone
-               var tsDate = new Date(ts.replace(/-/g,'/').replace('T',' '));
-               var tsZ = tsDate.getTime() / 1000;
-               $.post(this.model.url(), JSON.stringify({'action': action, 'timestamp': '' + tsZ}))
+               $.post(this.model.url(), JSON.stringify({'action': action, 'timestamp': '' + ts}))
                                    .done(function() { window.location.reload(true); })
                                    .fail(this.handleAJAXError.bind(this));
             } else {
