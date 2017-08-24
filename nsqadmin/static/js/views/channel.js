@@ -15,7 +15,16 @@ var ChannelView = BaseView.extend({
     template: require('./spinner.hbs'),
 
     events: {
-        'click .channel-actions button': 'channelAction'
+        'click .channel-actions button': 'channelAction',
+        'blur .channel-actions input#resetChannelDatetime': 'resettsValidate'
+    },
+
+    resettsValidate: function(e) {
+        if(!event.target.checkValidity() || event.target.value === '') {
+            $('.channel-actions button.resetbtn').prop('disabled', true);
+        } else {
+            $('.channel-actions button.resetbtn').prop('disabled', false);
+        }
     },
 
     initialize: function() {
@@ -36,7 +45,13 @@ var ChannelView = BaseView.extend({
         var action = $(e.currentTarget).data('action');
         var txt = 'Are you sure you want to <strong>' +
             action + '</strong> <em>' + this.model.get('topic') +
-            '/' + this.model.get('name') + '</em>?';
+            '/' + this.model.get('name') + '</em>';
+        var ts
+        if(action === 'reset') {
+            ts = parseInt($('#resetChannelDatetime:first').val());
+            txt = txt + ' to <strong>' + ts + '</strong> in second';
+        }
+        txt = txt + '?';
         bootbox.confirm(txt, function(result) {
             if (result !== true) {
                 return;
@@ -49,7 +64,6 @@ var ChannelView = BaseView.extend({
                     .fail(this.handleAJAXError.bind(this));
             } else if (action === 'reset') {
                //parse timestamp
-               ts = $('#resetChannelDatetime:first').val();
                $.post(this.model.url(), JSON.stringify({'action': action, 'timestamp': '' + ts}))
                                    .done(function() { window.location.reload(true); })
                                    .fail(this.handleAJAXError.bind(this));
