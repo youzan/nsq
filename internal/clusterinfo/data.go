@@ -1249,6 +1249,43 @@ func (c *ClusterInfo) EmptyChannel(topicName string, channelName string, lookupd
 	return c.actionHelper(topicName, lookupdHTTPAddrs, nsqdHTTPAddrs, "empty_channel", "channel/empty", qs)
 }
 
+func (c *ClusterInfo) ResetChannel(topicName string, channelName string, lookupdHTTPAddrs []string, resetBy string) error {
+	qs := fmt.Sprintf("topic=%s&channel=%s", url.QueryEscape(topicName), url.QueryEscape(channelName))
+	return c.actionHelperWithContent(topicName, lookupdHTTPAddrs, nil, "", "channel/setoffset", qs, resetBy)
+}
+
+func (c *ClusterInfo) actionHelperWithContent(topicName string, lookupdHTTPAddrs []string, nsqdHTTPAddrs []string, deprecatedURI string, v1URI string, qs string, content string) error {
+	var errs []error
+
+	_, partitionProducers, err := c.GetTopicProducers(topicName, lookupdHTTPAddrs, nsqdHTTPAddrs)
+	if err != nil {
+		pe, ok := err.(PartialErr)
+		if !ok {
+			return err
+		}
+		errs = append(errs, pe.Errors()...)
+	}
+	c.logf("CI: got %v partition producers for topic %v", len(partitionProducers), topicName)
+	if len(partitionProducers) > 0 {
+		for pid, pp := range partitionProducers {
+			qsPart := qs + "&partition=" + pid
+			err = c.versionPivotProducersWithContent(pp, deprecatedURI, v1URI, qsPart, content)
+			if err != nil {
+				pe, ok := err.(PartialErr)
+				if !ok {
+					return err
+				}
+				errs = append(errs, pe.Errors()...)
+			}
+		}
+	}
+
+	if len(errs) > 0 {
+		return ErrList(errs)
+	}
+	return nil
+}
+
 func (c *ClusterInfo) actionHelper(topicName string, lookupdHTTPAddrs []string, nsqdHTTPAddrs []string, deprecatedURI string, v1URI string, qs string) error {
 	var errs []error
 
@@ -1344,6 +1381,30 @@ func (c *ClusterInfo) versionPivotProducers(pl Producers, deprecatedURI string, 
 		endpoint := fmt.Sprintf("http://%s/%s?%s", p.HTTPAddress(), uri, qs)
 		c.logf("CI: querying nsqd %s", endpoint)
 		_, err := c.client.POSTV1(endpoint)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+	}
+
+	if len(errs) > 0 {
+		return ErrList(errs)
+	}
+	return nil
+}
+
+func (c *ClusterInfo) versionPivotProducersWithContent(pl Producers, deprecatedURI string, v1URI string, qs string, content string) error {
+	var errs []error
+
+	for _, p := range pl {
+		uri := deprecatedURI
+		if p.VersionObj.NE(semver.Version{}) && p.VersionObj.GTE(v1EndpointVersion) {
+			uri = v1URI
+		}
+
+		endpoint := fmt.Sprintf("http://%s/%s?%s", p.HTTPAddress(), uri, qs)
+		c.logf("CI: querying nsqd %s", endpoint)
+		_, err := c.client.POSTV1WithContent(endpoint, content)
 		if err != nil {
 			errs = append(errs, err)
 			continue
