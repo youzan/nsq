@@ -1228,7 +1228,6 @@ func (self *NsqdCoordinator) SearchLogByMsgTimestamp(topic string, part int, ts_
 		return nil, 0, 0, fmt.Errorf("Invalid timestamp %v", ts_sec)
 	}
 
-	fmt.Println(comp)
 	startSearch := time.Now()
 	_, _, l, localErr := tcData.logMgr.SearchLogDataByComparator(comp)
 	coordLog.Infof("search log cost: %v", time.Since(startSearch))
