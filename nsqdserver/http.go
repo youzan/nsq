@@ -368,7 +368,11 @@ func (s *httpServer) internalPUB(w http.ResponseWriter, req *http.Request, ps ht
 			jhe.SetJsonHeaderBytes(jsonHeaderExtBytes)
 			extContent = jhe
 		} else if !isExt && pubExt {
-			return nil, http_api.Err{400, ext.E_EXT_NOT_SUPPORT}
+			if s.ctx.getOpts().AllowExtCompatible {
+				extContent = ext.NewNoExt()
+			} else {
+				return nil, http_api.Err{400, ext.E_EXT_NOT_SUPPORT}
+			}
 		} else {
 			extContent = ext.NewNoExt()
 		}
