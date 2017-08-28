@@ -623,6 +623,9 @@ func (t *Topic) SetDynamicInfo(dynamicConf TopicDynamicConf, idGen MsgIDGenerato
 	dq := t.GetDelayedQueue()
 	if dq != nil {
 		atomic.StoreInt64(&dq.SyncEvery, dynamicConf.SyncEvery)
+		if dynamicConf.Ext {
+			dq.setExt()
+		}
 	}
 	t.dynamicConf.Ext = dynamicConf.Ext
 	if dynamicConf.Ext {
