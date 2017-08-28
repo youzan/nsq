@@ -1031,6 +1031,209 @@ func TestConsumeMessageWhileUpgrade(t *testing.T) {
 	time.Sleep(1 * time.Second)
 }
 
+func TestConsumeDelayedMessageWhileUpgrade(t *testing.T) {
+	topicName := "test_ext_topic_upgrade" + strconv.Itoa(int(time.Now().Unix()))
+
+	opts := nsqdNs.NewOptions()
+	opts.Logger = newTestLogger(t)
+	if testing.Verbose() {
+		opts.LogLevel = 3
+		nsqdNs.SetLogger(opts.Logger)
+	}
+	opts.ReqToEndThreshold = time.Second
+	opts.MsgTimeout = time.Second * 5
+	opts.MaxConfirmWin = 50
+	opts.MaxReqTimeout = opts.ReqToEndThreshold * 10
+	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
+	defer os.RemoveAll(opts.DataPath)
+	defer nsqdServer.Exit()
+	topic := nsqd.GetTopicIgnPart(topicName)
+	topicDynConf := nsqdNs.TopicDynamicConf{
+		AutoCommit: 1,
+		SyncEvery:  1,
+		Ext:        false,
+	}
+	topic.SetDynamicInfo(topicDynConf, nil)
+	topic.GetChannel("ch")
+
+	conn1, err := mustConnectNSQD(tcpAddr)
+	test.Equal(t, err, nil)
+	client1Params := make(map[string]interface{})
+	client1Params["client_id"] = "client_w_tag"
+	client1Params["hostname"] = "client_w_tag"
+	client1Params["extend_support"] = false
+	identify(t, conn1, client1Params, frameTypeResponse)
+	sub(t, conn1, topicName, "ch")
+	_, err = nsq.Ready(1).WriteTo(conn1)
+	test.Equal(t, err, nil)
+
+	msgBody := []byte("test body")
+	traceID := uint64((0))
+	for i := 0; i < 10; i++ {
+		msg := nsqdNs.NewMessage(0, msgBody)
+		msg.TraceID = traceID
+		traceID++
+		_, _, _, _, putErr := topic.PutMessage(msg)
+		test.Nil(t, putErr)
+	}
+	// make sure delayed queue is enabled  before upgrade
+	_, err = topic.GetOrCreateDelayedQueueNoLock(nil)
+	test.Nil(t, err)
+	delayedNonExtMsgID := uint64(0)
+	// use old conn consume old message
+	for i := 0; i < 5; i++ {
+		msgOut := recvNextMsgAndCheckExt(t, conn1, len(msgBody), 0, false, false)
+		test.NotNil(t, msgOut)
+		test.Equal(t, msgBody, msgOut.Body)
+		test.Assert(t, msgOut.Attempts <= 4000, "attempts should less than 4000")
+		if delayedNonExtMsgID == 0 && msgOut.GetTraceID() >= 1 {
+			_, err := nsq.Requeue(nsq.MessageID(msgOut.GetFullMsgID()), opts.ReqToEndThreshold*2).WriteTo(conn1)
+			test.Nil(t, err)
+			delayedNonExtMsgID = msgOut.GetTraceID()
+		} else {
+			_, err = nsq.Finish(nsq.MessageID(msgOut.GetFullMsgID())).WriteTo(conn1)
+			test.Nil(t, err)
+		}
+	}
+	// conn1 last message may be requeued
+	t.Logf("begin upgrade topic")
+
+	topicDynConf.Ext = true
+	topic.SetDynamicInfo(topicDynConf, nil)
+	jsonHeaderStr := "{\"##channel_filter_tag\":\"test\",\"custome_header1\":\"test_header\",\"custome_h2\":\"test\"}"
+	jhe := ext.NewJsonHeaderExt()
+	jhe.SetJsonHeaderBytes([]byte(jsonHeaderStr))
+	extTraceID := traceID
+	for i := 0; i < 10; i++ {
+		msg := nsqdNs.NewMessageWithExt(0, msgBody, jhe.ExtVersion(), jhe.GetBytes())
+		msg.TraceID = traceID
+		traceID++
+		_, _, _, _, putErr := topic.PutMessage(msg)
+		test.Nil(t, putErr)
+	}
+	conn1.Close()
+	t.Logf("end write upgrade topic")
+	// all connection should be closed after upgrade, we need reconnect
+	conn2, err := mustConnectNSQD(tcpAddr)
+	test.Equal(t, err, nil)
+	client2Params := make(map[string]interface{})
+	client2Params["client_id"] = "client_wo_tag"
+	client2Params["hostname"] = "client_wo_tag"
+	client2Params["extend_support"] = true
+	identify(t, conn2, client2Params, frameTypeResponse)
+	sub(t, conn2, topicName, "ch")
+	_, err = nsq.Ready(1).WriteTo(conn2)
+	test.Equal(t, err, nil)
+	delayedExtMsgID := uint64(0)
+	delayedRecved := 0
+	// use new conn consume old message
+	t.Logf("receiving old messages using new conn")
+	for i := 0; i < 5; i++ {
+		msgOut := recvNextMsgAndCheckExt(t, conn2, len(msgBody), 0, false, true)
+		test.NotNil(t, msgOut)
+		if msgOut.GetTraceID() >= extTraceID {
+			test.Equal(t, uint8(ext.JSON_HEADER_EXT_VER), msgOut.ExtVer)
+			test.Equal(t, []byte(jsonHeaderStr), msgOut.ExtBytes)
+			if msgOut.GetTraceID() > 1 && delayedExtMsgID == 0 {
+				_, err := nsq.Requeue(nsq.MessageID(msgOut.GetFullMsgID()), opts.ReqToEndThreshold*2).WriteTo(conn2)
+				test.Nil(t, err)
+				delayedExtMsgID = msgOut.GetTraceID()
+			} else {
+				_, err = nsq.Finish(nsq.MessageID(msgOut.GetFullMsgID())).WriteTo(conn2)
+				test.Nil(t, err)
+			}
+		} else {
+			test.Equal(t, uint8(ext.NO_EXT_VER), msgOut.ExtVer)
+			if msgOut.GetTraceID() == delayedNonExtMsgID {
+				ts := time.Now().UnixNano() - msgOut.Timestamp
+				if ts < opts.ReqToEndThreshold.Nanoseconds()*2 {
+					t.Logf("delay msg %v  , now: %v", msgOut, time.Now().UnixNano())
+					test.Assert(t, false, "delay return early")
+				}
+				delayedRecved++
+			}
+			_, err = nsq.Finish(nsq.MessageID(msgOut.GetFullMsgID())).WriteTo(conn2)
+			test.Nil(t, err)
+		}
+		test.Equal(t, msgBody, msgOut.Body)
+		test.Assert(t, msgOut.Attempts <= 4000, "attempts should less than 4000")
+	}
+
+	t.Logf("receiving extend messages using new conn")
+	//  use new conn consume new message
+	for i := 0; i < 10; i++ {
+		msgOut := recvNextMsgAndCheckExt(t, conn2, len(msgBody), 0, false, true)
+		test.NotNil(t, msgOut)
+		if msgOut.GetTraceID() >= extTraceID {
+			test.Equal(t, uint8(ext.JSON_HEADER_EXT_VER), msgOut.ExtVer)
+			test.Equal(t, []byte(jsonHeaderStr), msgOut.ExtBytes)
+			if msgOut.GetTraceID() > 1 && delayedExtMsgID == 0 {
+				_, err := nsq.Requeue(nsq.MessageID(msgOut.GetFullMsgID()), opts.ReqToEndThreshold*2).WriteTo(conn2)
+				test.Nil(t, err)
+				delayedExtMsgID = msgOut.GetTraceID()
+			} else {
+				_, err = nsq.Finish(nsq.MessageID(msgOut.GetFullMsgID())).WriteTo(conn2)
+				test.Nil(t, err)
+				if msgOut.GetTraceID() == delayedExtMsgID {
+					ts := time.Now().UnixNano() - msgOut.Timestamp
+					if ts < opts.ReqToEndThreshold.Nanoseconds()*2 {
+						t.Logf("delay msg %v  , now: %v", msgOut, time.Now().UnixNano())
+						test.Assert(t, false, "delay return early")
+					}
+					delayedRecved++
+				}
+			}
+
+		} else {
+			_, err = nsq.Finish(nsq.MessageID(msgOut.GetFullMsgID())).WriteTo(conn2)
+			test.Nil(t, err)
+			test.Equal(t, uint8(ext.NO_EXT_VER), msgOut.ExtVer)
+			if msgOut.GetTraceID() == delayedNonExtMsgID {
+				ts := time.Now().UnixNano() - msgOut.Timestamp
+				if ts < opts.ReqToEndThreshold.Nanoseconds()*2 {
+					t.Logf("delay msg %v  , now: %v", msgOut, time.Now().UnixNano())
+					test.Assert(t, false, "delay return early")
+				}
+				delayedRecved++
+			}
+		}
+		test.Equal(t, msgBody, msgOut.Body)
+		test.Assert(t, msgOut.Attempts <= 4000, "attempts should less than 4000")
+	}
+	time.Sleep(opts.ReqToEndThreshold*3 + 2*opts.QueueScanInterval)
+	for delayedRecved < 2 {
+		msgOut := recvNextMsgAndCheckExt(t, conn2, len(msgBody), 0, true, true)
+		test.NotNil(t, msgOut)
+		if msgOut.GetTraceID() >= extTraceID {
+			test.Equal(t, uint8(ext.JSON_HEADER_EXT_VER), msgOut.ExtVer)
+			test.Equal(t, []byte(jsonHeaderStr), msgOut.ExtBytes)
+			if msgOut.GetTraceID() == delayedExtMsgID {
+				ts := time.Now().UnixNano() - msgOut.Timestamp
+				if ts < opts.ReqToEndThreshold.Nanoseconds()*2 {
+					t.Logf("delay msg %v  , now: %v", msgOut, time.Now().UnixNano())
+					test.Assert(t, false, "delay return early")
+				}
+				delayedRecved++
+			}
+		} else {
+			test.Equal(t, uint8(ext.NO_EXT_VER), msgOut.ExtVer)
+			if msgOut.GetTraceID() == delayedNonExtMsgID {
+				ts := time.Now().UnixNano() - msgOut.Timestamp
+				if ts < opts.ReqToEndThreshold.Nanoseconds()*2 {
+					t.Logf("delay msg %v  , now: %v", msgOut, time.Now().UnixNano())
+					test.Assert(t, false, "delay return early")
+				}
+				delayedRecved++
+			}
+		}
+		test.Equal(t, msgBody, msgOut.Body)
+		test.Assert(t, msgOut.Attempts <= 4000, "attempts should less than 4000")
+	}
+	conn2.Close()
+	time.Sleep(1 * time.Second)
+	test.Equal(t, 2, delayedRecved)
+}
+
 func TestConsumeMultiTagMessages(t *testing.T) {
 	topicName := "test_tag_multiTag" + strconv.Itoa(int(time.Now().Unix()))
 
