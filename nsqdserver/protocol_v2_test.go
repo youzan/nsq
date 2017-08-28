@@ -2373,6 +2373,77 @@ func TestTcpPub(t *testing.T) {
 	conn.Close()
 }
 
+func TestTcpPubExtToNonExtTopic(t *testing.T) {
+	testTcpPubExtToNonExtTopic(t, true)
+}
+func TestTcpPubExtToNonExtTopicNotAllow(t *testing.T) {
+	testTcpPubExtToNonExtTopic(t, false)
+}
+
+func testTcpPubExtToNonExtTopic(t *testing.T, allow bool) {
+	opts := nsqdNs.NewOptions()
+	opts.Logger = newTestLogger(t)
+	opts.LogLevel = 1
+	opts.MaxMsgSize = 100
+	opts.MaxBodySize = 1000
+	opts.AllowExtCompatible = allow
+	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
+	defer os.RemoveAll(opts.DataPath)
+	defer nsqdServer.Exit()
+
+	conn, err := mustConnectNSQD(tcpAddr)
+	test.Equal(t, err, nil)
+
+	topicName := "test_tcp_pub" + strconv.Itoa(int(time.Now().Unix()))
+	nsqd.GetTopicIgnPart(topicName).GetChannel("ch")
+
+	identify(t, conn, nil, frameTypeResponse)
+
+	// PUB ext to non-ext topic
+	jsonHeaderStr := "{\"##channel_filter_tag\":\"test\",\"custome_header1\":\"test_header\",\"custome_h2\":\"test\"}"
+	jhe := ext.NewJsonHeaderExt()
+	jhe.SetJsonHeaderBytes([]byte(jsonHeaderStr))
+	cmd, err := nsq.PublishWithJsonExt(topicName, "0", make([]byte, 5), jhe.GetBytes())
+	test.Nil(t, err)
+	cmd.WriteTo(conn)
+	resp, _ := nsq.ReadResponse(conn)
+	frameType, data, _ := nsq.UnpackResponse(resp)
+	t.Logf("frameType: %d, data: %s", frameType, data)
+	if !allow {
+		test.Equal(t, frameType, frameTypeError)
+		return
+	}
+	test.Equal(t, frameType, frameTypeResponse)
+	test.Equal(t, len(data), 2)
+	test.Equal(t, data[:], []byte("OK"))
+	conn.Close()
+
+	conn, err = mustConnectNSQD(tcpAddr)
+	identify(t, conn, nil, frameTypeResponse)
+	test.Equal(t, err, nil)
+	sub(t, conn, topicName, "ch")
+	_, err = nsq.Ready(1).WriteTo(conn)
+	test.Equal(t, err, nil)
+
+	for {
+		resp, _ := nsq.ReadResponse(conn)
+		frameType, data, err := nsq.UnpackResponse(resp)
+		test.Nil(t, err)
+		test.NotEqual(t, frameTypeError, frameType)
+		if frameType == frameTypeResponse {
+			t.Logf("got response data: %v", string(data))
+			continue
+		}
+		msgOut, err := nsq.DecodeMessage(data)
+		test.Equal(t, 5, len(msgOut.Body))
+		test.Equal(t, uint8(ext.NO_EXT_VER), msgOut.ExtVer)
+		_, err = nsq.Finish(msgOut.ID).WriteTo(conn)
+		test.Nil(t, err)
+		break
+	}
+	conn.Close()
+}
+
 func TestSizeLimits(t *testing.T) {
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)

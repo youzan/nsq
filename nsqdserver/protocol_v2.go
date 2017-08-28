@@ -1241,11 +1241,11 @@ func (p *protocolV2) internalCreateTopic(client *nsqd.ClientV2, params [][]byte)
 }
 
 //if target topic is not configured as extendable and there is a tag, pub request should be stopped here
-func (p *protocolV2) preparePub(client *nsqd.ClientV2, params [][]byte, maxBody int64, isMpub bool) (int32, *nsqd.Topic, ext.IExtContent, error) {
+func (p *protocolV2) preparePub(client *nsqd.ClientV2, params [][]byte, maxBody int64, isMpub bool) (int32, *nsqd.Topic, error) {
 	var err error
 
 	if len(params) < 2 {
-		return 0, nil, nil, protocol.NewFatalClientErr(nil, E_INVALID, "insufficient number of parameters")
+		return 0, nil, protocol.NewFatalClientErr(nil, E_INVALID, "insufficient number of parameters")
 	}
 
 	topicName := string(params[1])
@@ -1253,7 +1253,7 @@ func (p *protocolV2) preparePub(client *nsqd.ClientV2, params [][]byte, maxBody 
 	if len(params) == 3 {
 		partition, err = strconv.Atoi(string(params[2]))
 		if err != nil {
-			return 0, nil, nil, protocol.NewFatalClientErr(nil, "E_BAD_PARTITION",
+			return 0, nil, protocol.NewFatalClientErr(nil, "E_BAD_PARTITION",
 				fmt.Sprintf("topic partition is not valid: %v", err))
 		}
 	}
@@ -1265,21 +1265,21 @@ func (p *protocolV2) preparePub(client *nsqd.ClientV2, params [][]byte, maxBody 
 
 	bodyLen, err := readLen(client.Reader, client.LenSlice)
 	if err != nil {
-		return 0, nil, nil, protocol.NewFatalClientErr(err, "E_BAD_BODY", "failed to read body size")
+		return 0, nil, protocol.NewFatalClientErr(err, "E_BAD_BODY", "failed to read body size")
 	}
 
 	if bodyLen <= 0 {
-		return bodyLen, nil, nil, protocol.NewFatalClientErr(nil, "E_BAD_BODY",
+		return bodyLen, nil, protocol.NewFatalClientErr(nil, "E_BAD_BODY",
 			fmt.Sprintf("invalid body size %d", bodyLen))
 	}
 
 	if int64(bodyLen) > maxBody {
 		nsqd.NsqLogger().Logf("topic: %v message body too large %v vs %v ", topicName, bodyLen, maxBody)
 		if isMpub {
-			return bodyLen, nil, nil, protocol.NewFatalClientErr(nil, "E_BAD_BODY",
+			return bodyLen, nil, protocol.NewFatalClientErr(nil, "E_BAD_BODY",
 				fmt.Sprintf("body too big %d > %d", bodyLen, maxBody))
 		} else {
-			return bodyLen, nil, nil, protocol.NewFatalClientErr(nil, "E_BAD_MESSAGE",
+			return bodyLen, nil, protocol.NewFatalClientErr(nil, "E_BAD_MESSAGE",
 				fmt.Sprintf("message too big %d > %d", bodyLen, maxBody))
 		}
 	}
@@ -1287,46 +1287,19 @@ func (p *protocolV2) preparePub(client *nsqd.ClientV2, params [][]byte, maxBody 
 	topic, err := p.ctx.getExistingTopic(topicName, partition)
 	if err != nil {
 		nsqd.NsqLogger().Logf("not existing topic: %v-%v, err:%v", topicName, partition, err.Error())
-		return bodyLen, nil, nil, protocol.NewFatalClientErr(nil, E_TOPIC_NOT_EXIST, "")
+		return bodyLen, nil, protocol.NewFatalClientErr(nil, E_TOPIC_NOT_EXIST, "")
 	}
 
 	if origPart == -1 && topic.IsOrdered() {
-		return 0, nil, nil, protocol.NewFatalClientErr(nil, "E_BAD_PARTITION",
+		return 0, nil, protocol.NewFatalClientErr(nil, "E_BAD_PARTITION",
 			fmt.Sprintf("topic partition is not valid for multi partition: %v", origPart))
 	}
 
-	isExt := topic.IsExt()
-	extContent, err := parseExtContent(topicName, isExt, params, p.ctx.getOpts().AllowExtCompatible)
-	if err != nil {
-		return 0, nil, nil, err
-	}
-
 	if err := p.CheckAuth(client, "PUB", topicName, ""); err != nil {
-		return bodyLen, nil, nil, err
+		return bodyLen, nil, err
 	}
 	// mpub
-	return bodyLen, topic, extContent, nil
-}
-
-func parseExtContent(topicName string, isExt bool, params [][]byte, allowExtCompatible bool) (ext.IExtContent, error) {
-	var extContent ext.IExtContent
-	var err error
-	pubExt := isPubExt(params[0])
-	if pubExt && isExt {
-		//parse as json header ext, leave outer logic to parse json ext header
-		extContent = ext.NewJsonHeaderExt()
-	} else if pubExt && !isExt {
-		if allowExtCompatible {
-			extContent = ext.NewNoExt()
-			nsqd.NsqLogger().Debugf("ext content ignored in topic: %v", topicName)
-		} else {
-			err = protocol.NewClientErr(nil, ext.E_EXT_NOT_SUPPORT,
-				fmt.Sprintf("ext content not supported in topic %v", topicName))
-		}
-	} else {
-		extContent = ext.NewNoExt()
-	}
-	return extContent, err
+	return bodyLen, topic, nil
 }
 
 // PUB TRACE data format
@@ -1416,7 +1389,7 @@ pub ext or pub trace or pub, if pubExt is true, traceEnable is ignored.
 */
 func (p *protocolV2) internalPubExtAndTrace(client *nsqd.ClientV2, params [][]byte, pubExt bool, traceEnable bool) ([]byte, error) {
 	startPub := time.Now().UnixNano()
-	bodyLen, topic, extContent, err := p.preparePub(client, params, p.ctx.getOpts().MaxMsgSize, false)
+	bodyLen, topic, err := p.preparePub(client, params, p.ctx.getOpts().MaxMsgSize, false)
 	if err != nil {
 		return nil, err
 	}
@@ -1448,6 +1421,8 @@ func (p *protocolV2) internalPubExtAndTrace(client *nsqd.ClientV2, params [][]by
 	var traceID uint64
 	var needTraceRsp bool
 	var realBody []byte
+	var extContent ext.IExtContent
+	extContent = ext.NewNoExt()
 	if traceEnable && !pubExt {
 		traceID = binary.BigEndian.Uint64(messageBody[:nsqd.MsgTraceIDLength])
 		needTraceRsp = true
@@ -1461,10 +1436,6 @@ func (p *protocolV2) internalPubExtAndTrace(client *nsqd.ClientV2, params [][]by
 				fmt.Sprintf("invalid body size %d in ext json header content length", bodyLen))
 		}
 		extJsonBytes := messageBody[nsqd.MsgJsonHeaderLength : nsqd.MsgJsonHeaderLength+extJsonLen]
-		jhe, ok := extContent.(*ext.JsonHeaderExt)
-		if !ok {
-			return nil, fmt.Errorf("invalid ext content type, Json Header Ext expected, got %v", extContent)
-		}
 		//validate json header passin
 		jsonHeader, err := simpleJson.NewJson(extJsonBytes)
 		if err != nil {
@@ -1485,7 +1456,9 @@ func (p *protocolV2) internalPubExtAndTrace(client *nsqd.ClientV2, params [][]by
 			needTraceRsp = true
 		}
 
+		jhe := ext.NewJsonHeaderExt()
 		jhe.SetJsonHeaderBytes(extJsonBytes)
+		extContent = jhe
 		realBody = messageBody[nsqd.MsgJsonHeaderLength+extJsonLen:]
 	} else {
 		realBody = messageBody
@@ -1494,6 +1467,15 @@ func (p *protocolV2) internalPubExtAndTrace(client *nsqd.ClientV2, params [][]by
 		asyncAction = false
 	}
 	if p.ctx.checkForMasterWrite(topicName, partition) {
+		if !topic.IsExt() && extContent.ExtVersion() != ext.NO_EXT_VER {
+			if p.ctx.getOpts().AllowExtCompatible {
+				extContent = ext.NewNoExt()
+				nsqd.NsqLogger().Debugf("ext content ignored in topic: %v", topicName)
+			} else {
+				return nil, protocol.NewClientErr(nil, ext.E_EXT_NOT_SUPPORT,
+					fmt.Sprintf("ext content not supported in topic %v", topicName))
+			}
+		}
 		id := nsqd.MessageID(0)
 		offset := nsqd.BackendOffset(0)
 		rawSize := int32(0)
@@ -1536,13 +1518,13 @@ func (p *protocolV2) internalPubExtAndTrace(client *nsqd.ClientV2, params [][]by
 
 func (p *protocolV2) internalMPUBAndTrace(client *nsqd.ClientV2, params [][]byte, traceEnable bool) ([]byte, error) {
 	startPub := time.Now().UnixNano()
-	_, topic, extContent, preErr := p.preparePub(client, params, p.ctx.getOpts().MaxBodySize, true)
+	_, topic, preErr := p.preparePub(client, params, p.ctx.getOpts().MaxBodySize, true)
 	if preErr != nil {
 		return nil, preErr
 	}
 
 	messages, buffers, preErr := readMPUB(client.Reader, client.LenSlice, topic,
-		p.ctx.getOpts().MaxMsgSize, p.ctx.getOpts().MaxBodySize, extContent, traceEnable)
+		p.ctx.getOpts().MaxMsgSize, p.ctx.getOpts().MaxBodySize, traceEnable)
 
 	defer func() {
 		for _, b := range buffers {
@@ -1619,7 +1601,7 @@ func (p *protocolV2) TOUCH(client *nsqd.ClientV2, params [][]byte) ([]byte, erro
 }
 
 func readMPUB(r io.Reader, tmp []byte, topic *nsqd.Topic, maxMessageSize int64,
-	maxBodySize int64, extContent ext.IExtContent, traceEnable bool) ([]*nsqd.Message, []*bytes.Buffer, error) {
+	maxBodySize int64, traceEnable bool) ([]*nsqd.Message, []*bytes.Buffer, error) {
 	numMessages, err := readLen(r, tmp)
 	if err != nil {
 		return nil, nil, protocol.NewFatalClientErr(err, "E_BAD_BODY", "MPUB failed to read message count")
@@ -1674,11 +1656,7 @@ func readMPUB(r io.Reader, tmp []byte, topic *nsqd.Topic, maxMessageSize int64,
 		}
 
 		var msg *nsqd.Message
-		if !topic.IsExt() {
-			msg = nsqd.NewMessage(0, realBody)
-		} else {
-			msg = nsqd.NewMessageWithExt(0, realBody, extContent.ExtVersion(), extContent.GetBytes())
-		}
+		msg = nsqd.NewMessage(0, realBody)
 		msg.TraceID = traceID
 		messages = append(messages, msg)
 		topic.GetDetailStats().UpdateTopicMsgStats(int64(len(realBody)), 0)

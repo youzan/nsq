@@ -317,7 +317,7 @@ func (s *httpServer) internalPUB(w http.ResponseWriter, req *http.Request, ps ht
 		}
 
 		//check if request is PUB_WITH_EXT
-		if isExt && pubExt {
+		if pubExt {
 			//parse json header ext
 			headerStr, err := url.QueryUnescape(params.Get("ext"))
 			if err != nil || headerStr == "" {
@@ -367,14 +367,16 @@ func (s *httpServer) internalPUB(w http.ResponseWriter, req *http.Request, ps ht
 			jhe := ext.NewJsonHeaderExt()
 			jhe.SetJsonHeaderBytes(jsonHeaderExtBytes)
 			extContent = jhe
-		} else if !isExt && pubExt {
+		} else {
+			extContent = ext.NewNoExt()
+		}
+		if !isExt && extContent.ExtVersion() != ext.NO_EXT_VER {
 			if s.ctx.getOpts().AllowExtCompatible {
 				extContent = ext.NewNoExt()
+				nsqd.NsqLogger().LogDebugf("topic %v put message with ext to old topic, ignore ext", topic.GetFullName())
 			} else {
 				return nil, http_api.Err{400, ext.E_EXT_NOT_SUPPORT}
 			}
-		} else {
-			extContent = ext.NewNoExt()
 		}
 		if needTraceRsp || atomic.LoadInt32(&topic.EnableTrace) == 1 {
 			asyncAction = false
@@ -433,8 +435,6 @@ func (s *httpServer) doMPUB(w http.ResponseWriter, req *http.Request, ps httprou
 		return nil, err
 	}
 
-	extContent := ext.NewNoExt()
-
 	var msgs []*nsqd.Message
 	var buffers []*bytes.Buffer
 	var exit bool
@@ -443,7 +443,7 @@ func (s *httpServer) doMPUB(w http.ResponseWriter, req *http.Request, ps httprou
 	if ok {
 		tmp := make([]byte, 4)
 		msgs, buffers, err = readMPUB(req.Body, tmp, topic,
-			s.ctx.getOpts().MaxMsgSize, s.ctx.getOpts().MaxBodySize, extContent, false)
+			s.ctx.getOpts().MaxMsgSize, s.ctx.getOpts().MaxBodySize, false)
 		defer func() {
 			for _, b := range buffers {
 				topic.BufferPoolPut(b)
@@ -488,12 +488,7 @@ func (s *httpServer) doMPUB(w http.ResponseWriter, req *http.Request, ps httprou
 				return nil, http_api.Err{413, "MSG_TOO_BIG"}
 			}
 
-			var msg *nsqd.Message
-			if !topic.IsExt() {
-				msg = nsqd.NewMessage(0, block)
-			} else {
-				msg = nsqd.NewMessageWithExt(0, block, extContent.ExtVersion(), extContent.GetBytes())
-			}
+			msg := nsqd.NewMessage(0, block)
 			msgs = append(msgs, msg)
 			topic.GetDetailStats().UpdateTopicMsgStats(int64(len(block)), 0)
 		}
