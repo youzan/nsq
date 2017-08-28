@@ -92,8 +92,9 @@ type Options struct {
 	Logger       levellogger.Logger
 	RemoteTracer string `flag:"remote-tracer"`
 
-	RetentionDays  int32 `flag:"retention-days" cfg:"retention_days"`
-	StartAsFixMode bool  `flag:"start-as-fix-mode"`
+	RetentionDays      int32 `flag:"retention-days" cfg:"retention_days"`
+	StartAsFixMode     bool  `flag:"start-as-fix-mode"`
+	AllowExtCompatible bool  `flag:"allow-ext-compatible"`
 }
 
 func NewOptions() *Options {

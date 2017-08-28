@@ -431,6 +431,8 @@ func (p *protocolV2) messagePump(client *nsqd.ClientV2, startedChan chan bool,
 	//       (ie. we would block in this loop anyway)
 	//
 	flushed := true
+	extCompatible := p.ctx.getOpts().AllowExtCompatible
+	extSupport := client.ExtendSupport()
 
 	// signal to the goroutine that started the messagePump
 	// that we've started up
@@ -513,6 +515,7 @@ func (p *protocolV2) messagePump(client *nsqd.ClientV2, startedChan chan bool,
 			}
 
 			msgTimeout = identifyData.MsgTimeout
+			extSupport = client.ExtendSupport()
 		case <-heartbeatChan:
 			if subChannel != nil && client.IsReadyForMessages() {
 				// try wake up the channel
@@ -578,13 +581,13 @@ func (p *protocolV2) messagePump(client *nsqd.ClientV2, startedChan chan bool,
 
 			lastActiveTime = time.Now()
 			client.SendingMessage()
-			if subChannel.IsExt() && !client.ExtendSupport() {
+			if subChannel.IsExt() && !extSupport && !extCompatible {
 				// while the topic upgraded to the ext, we should close all the old client
 				// which not support the ext.
 				err = errors.New("client should reconnect with extend support since the topic is upgraded to ext")
 				goto exit
 			}
-			err = SendMessage(client, msg, subChannel.IsExt(), &buf, subChannel.IsOrdered())
+			err = SendMessage(client, msg, extSupport && subChannel.IsExt(), &buf, subChannel.IsOrdered())
 			if err != nil {
 				goto exit
 			}
@@ -924,7 +927,7 @@ func (p *protocolV2) internalSUB(client *nsqd.ClientV2, params [][]byte, enableT
 		return nil, protocol.NewFatalClientErr(nil, "E_SUB_ORDER_IS_MUST", "this topic is configured only allow ordered sub")
 	}
 	if topic.IsExt() {
-		if !client.ExtendSupport() {
+		if !p.ctx.getOpts().AllowExtCompatible && !client.ExtendSupport() {
 			nsqd.NsqLogger().Logf("sub failed on extend topic: %v-%v, %v", topicName, channelName, client.String())
 			return nil, protocol.NewFatalClientErr(nil, "E_SUB_EXTEND_NEED", "this topic is extended and should identify as extend support.")
 		}
@@ -1293,7 +1296,7 @@ func (p *protocolV2) preparePub(client *nsqd.ClientV2, params [][]byte, maxBody 
 	}
 
 	isExt := topic.IsExt()
-	extContent, err := parseExtContent(topicName, isExt, params)
+	extContent, err := parseExtContent(topicName, isExt, params, p.ctx.getOpts().AllowExtCompatible)
 	if err != nil {
 		return 0, nil, nil, err
 	}
@@ -1305,7 +1308,7 @@ func (p *protocolV2) preparePub(client *nsqd.ClientV2, params [][]byte, maxBody 
 	return bodyLen, topic, extContent, nil
 }
 
-func parseExtContent(topicName string, isExt bool, params [][]byte) (ext.IExtContent, error) {
+func parseExtContent(topicName string, isExt bool, params [][]byte, allowExtCompatible bool) (ext.IExtContent, error) {
 	var extContent ext.IExtContent
 	var err error
 	pubExt := isPubExt(params[0])
@@ -1313,8 +1316,13 @@ func parseExtContent(topicName string, isExt bool, params [][]byte) (ext.IExtCon
 		//parse as json header ext, leave outer logic to parse json ext header
 		extContent = ext.NewJsonHeaderExt()
 	} else if pubExt && !isExt {
-		err = protocol.NewClientErr(nil, ext.E_EXT_NOT_SUPPORT,
-			fmt.Sprintf("ext content not supported in topic %v", topicName))
+		if allowExtCompatible {
+			extContent = ext.NewNoExt()
+			nsqd.NsqLogger().Debugf("ext content ignored in topic: %v", topicName)
+		} else {
+			err = protocol.NewClientErr(nil, ext.E_EXT_NOT_SUPPORT,
+				fmt.Sprintf("ext content not supported in topic %v", topicName))
+		}
 	} else {
 		extContent = ext.NewNoExt()
 	}
