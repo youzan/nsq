@@ -227,7 +227,7 @@ type DelayQueue struct {
 	SyncEvery   int64
 	lastSyncCnt int64
 	needFixData int32
-	isExt       bool
+	isExt       int32
 	dbLock      sync.Mutex
 	// prevent write while compact db
 	compactMutex           sync.Mutex
@@ -254,13 +254,15 @@ func newDelayQueue(topicName string, part int, dataPath string, opt *Options,
 	dataPath = path.Join(dataPath, "delayed_queue")
 	os.MkdirAll(dataPath, 0755)
 	q := &DelayQueue{
-		tname:       topicName,
-		partition:   part,
-		putBuffer:   bytes.Buffer{},
-		dataPath:    dataPath,
-		msgIDCursor: idGen,
-		isExt:       isExt,
+		tname:                  topicName,
+		partition:              part,
+		putBuffer:              bytes.Buffer{},
+		dataPath:               dataPath,
+		msgIDCursor:            idGen,
 		oldestChannelDelayedTs: make(map[string]int64),
+	}
+	if isExt {
+		q.isExt = 1
 	}
 	q.fullName = GetTopicFullName(q.tname, q.partition)
 	backendName := getDelayQueueBackendName(q.tname, q.partition)
@@ -402,6 +404,14 @@ func (q *DelayQueue) SetTrace(enable bool) {
 	} else {
 		atomic.StoreInt32(&q.EnableTrace, 0)
 	}
+}
+
+func (q *DelayQueue) setExt() {
+	atomic.StoreInt32(&q.isExt, 1)
+}
+
+func (q *DelayQueue) IsExt() bool {
+	return atomic.LoadInt32(&q.isExt) == 1
 }
 
 func (q *DelayQueue) nextMsgID() MessageID {
@@ -627,7 +637,7 @@ func (q *DelayQueue) put(m *Message, rawData []byte, trace bool, checkSize int64
 		if len(rawData) < 4 {
 			return 0, 0, 0, dend, fmt.Errorf("invalid raw message data: %v", rawData)
 		}
-		m, err = DecodeDelayedMessage(rawData[4:], q.isExt)
+		m, err = DecodeDelayedMessage(rawData[4:], q.IsExt())
 		if err != nil {
 			return 0, 0, 0, dend, err
 		}
@@ -645,7 +655,7 @@ func (q *DelayQueue) put(m *Message, rawData []byte, trace bool, checkSize int64
 		}
 	} else {
 		offset, writeBytes, dend, err = writeDelayedMessageToBackendWithCheck(&q.putBuffer,
-			m, checkSize, q.backend, q.isExt)
+			m, checkSize, q.backend, q.IsExt())
 	}
 	atomic.StoreInt32(&q.needFlush, 1)
 	if err != nil {
@@ -669,7 +679,7 @@ func (q *DelayQueue) put(m *Message, rawData []byte, trace bool, checkSize int64
 				return err
 			}
 			if oldV != nil {
-				err = deleteMsgIndex(oldV, tx, q.isExt)
+				err = deleteMsgIndex(oldV, tx, q.IsExt())
 				if err != nil {
 					nsqLog.Infof("failed to delete old delayed index : %v, %v", oldV, err)
 					return err
@@ -818,7 +828,7 @@ func (q *DelayQueue) emptyDelayedUntil(dt int, peekTs int64, id MessageID, ch st
 				continue
 			}
 
-			err = deleteBucketKey(dt, ch, delayedTs, delayedID, tx, q.isExt)
+			err = deleteBucketKey(dt, ch, delayedTs, delayedID, tx, q.IsExt())
 			if err != nil {
 				nsqLog.Infof("failed to delete : %v, %v", k, err)
 			}
@@ -861,7 +871,7 @@ func (q *DelayQueue) emptyAllDelayedType(dt int, ch string) error {
 			if ch != "" && delayedCh != ch {
 				continue
 			}
-			err = deleteBucketKey(int(delayedType), delayedCh, delayedTs, delayedID, tx, q.isExt)
+			err = deleteBucketKey(int(delayedType), delayedCh, delayedTs, delayedID, tx, q.IsExt())
 			if err != nil {
 				nsqLog.Infof("failed to delete : %v, %v", k, err)
 			}
@@ -948,7 +958,7 @@ func (q *DelayQueue) PeekRecentTimeoutWithFilter(results []Message, peekTs int64
 
 			buf := make([]byte, len(v))
 			copy(buf, v)
-			m, err := DecodeDelayedMessage(buf, q.isExt)
+			m, err := DecodeDelayedMessage(buf, q.IsExt())
 			if err != nil {
 				nsqLog.LogErrorf("failed to decode delayed message: %v, %v", m, err)
 				continue
@@ -1029,7 +1039,7 @@ func (q *DelayQueue) ConfirmedMessage(msg *Message) error {
 	q.compactMutex.Lock()
 	err := q.getStore().Update(func(tx *bolt.Tx) error {
 		return deleteBucketKey(int(msg.DelayedType), msg.DelayedChannel,
-			msg.DelayedTs, msg.DelayedOrigID, tx, q.isExt)
+			msg.DelayedTs, msg.DelayedOrigID, tx, q.IsExt())
 	})
 	q.compactMutex.Unlock()
 	if err != nil {
@@ -1188,7 +1198,7 @@ func (q *DelayQueue) TryCleanOldData(retentionSize int64, noRealClean bool, maxC
 			}
 			cleanEndInfo = readInfo
 		} else {
-			msg, decodeErr := DecodeDelayedMessage(data.Data, q.isExt)
+			msg, decodeErr := DecodeDelayedMessage(data.Data, q.IsExt())
 			if decodeErr != nil {
 				nsqLog.LogErrorf("failed to decode message - %s - %v", decodeErr, data)
 			} else {
@@ -1266,10 +1276,10 @@ func (q *DelayQueue) compactStore(force bool) error {
 	}
 	tmpPath := src.Path() + "-tmp.compact"
 	// Open destination database.
-		ro := &bolt.Options{
-			Timeout: time.Second,
-			ReadOnly: false,
-		}
+	ro := &bolt.Options{
+		Timeout:  time.Second,
+		ReadOnly: false,
+	}
 	dst, err := bolt.Open(tmpPath, 0644, ro)
 	if err != nil {
 		return err
