@@ -8,7 +8,8 @@ var Pubsub = require('../lib/pubsub');
 var AppState = require('../app_state');
 
 var BaseView = require('./base');
-
+var click2Show=" >>>";
+var click2Hide=" <<<";
 var ChannelView = BaseView.extend({
     className: 'channel container-fluid',
 
@@ -16,7 +17,26 @@ var ChannelView = BaseView.extend({
 
     events: {
         'click .channel-actions button': 'channelAction',
-        'blur .channel-actions input#resetChannelDatetime': 'resettsValidate'
+        'blur .channel-actions input#resetChannelDatetime': 'resettsValidate',
+        'click .toggle h4': 'onToggle',
+        'click .toggle h4 span a': 'onToggle',
+    },
+
+    onToggle: function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        var canHideClass = "canHide";
+        var parent = $(e.target).parents(".toggle").first();
+        var divCanHide = parent.next();
+        if(divCanHide != null && divCanHide.attr("class") != null && divCanHide.attr("class").indexOf(canHideClass) !== -1) {
+            divCanHide.toggle(300);
+            var anchor = parent.find("a").first();
+            if(anchor.text().indexOf(click2Hide) !== -1) {
+                anchor.text(click2Show);
+            } else {
+                anchor.text(click2Hide);
+            }
+        }
     },
 
     resettsValidate: function(e) {

@@ -140,6 +140,9 @@ type Channel struct {
 	delayedQueue           *DelayQueue
 	delayedConfirmedMsgs   map[MessageID]Message
 	peekedMsgs             []Message
+
+	//channel msg stats
+	channelStatsInfo	*ChannelStatsInfo
 }
 
 // NewChannel creates a new instance of the Channel type and returns a pointer
@@ -184,6 +187,9 @@ func NewChannel(topicName string, part int, channelName string, chEnd BackendQue
 	if syncEvery < 1 {
 		syncEvery = 1
 	}
+
+	//initialize channel stats
+	c.channelStatsInfo = &ChannelStatsInfo{}
 
 	c.initPQ()
 
@@ -843,6 +849,7 @@ func (c *Channel) internalFinishMessage(clientID int64, clientAddr string,
 	if c.e2eProcessingLatencyStream != nil {
 		c.e2eProcessingLatencyStream.Insert(msg.Timestamp)
 	}
+	c.channelStatsInfo.UpdateChannelStats((time.Now().UnixNano() - msg.Timestamp)/int64(time.Millisecond))
 	var offset BackendOffset
 	var cnt int64
 	var changed bool
