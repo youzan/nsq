@@ -285,10 +285,9 @@ func (c *Channel) GetClientTagMsgChan(tag string) (chan *Message, bool) {
 	defer c.tagMsgChansMutex.RUnlock()
 	msgChanData, exist := c.tagMsgChans[tag]
 	if !exist {
-		nsqLog.Warningf("tag message channel fo tag %v not found.", tag)
+		nsqLog.Debugf("channel %v for tag %v not found.", c.GetName(), tag)
 		return nil, false
 	}
-	nsqLog.Logf("tag msg chan %v returned", msgChanData)
 	return msgChanData.MsgChan, true
 }
 
