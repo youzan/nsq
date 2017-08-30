@@ -221,7 +221,7 @@ type ChannelStats struct {
 	Skipped            bool            `json:"skipped"`
 	IsMultiOrdered     bool            `json:"is_multi_ordered"`
 	IsExt              bool            `json:"is_ext"`
-
+	MsgConsumeLatencyStats []int64	   `json:"msg_consume_latency_stats"`
 	E2eProcessingLatency *quantile.E2eProcessingLatencyAggregate `json:"e2e_processing_latency"`
 }
 

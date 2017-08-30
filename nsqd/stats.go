@@ -86,6 +86,7 @@ type ChannelStats struct {
 	DelayedQueueRecent string `json:"delayed_queue_recent"`
 
 	E2eProcessingLatency *quantile.Result `json:"e2e_processing_latency"`
+	MSgConsumeLatencyStats []int64 `json:"msg_consume_latency_stats"`
 }
 
 func NewChannelStats(c *Channel, clients []ClientStats) ChannelStats {
@@ -129,6 +130,7 @@ func NewChannelStats(c *Channel, clients []ClientStats) ChannelStats {
 		DelayedQueueRecent: time.Unix(0, recentTs).String(),
 
 		E2eProcessingLatency: c.e2eProcessingLatencyStream.Result(),
+		MSgConsumeLatencyStats: c.channelStatsInfo.GetChannelLatencyStats(),
 	}
 }
 
@@ -285,10 +287,41 @@ type TopicMsgStatsInfo struct {
 	MsgWriteLatencyStats [16]int64
 }
 
+type ChannelStatsInfo struct {
+	// 16ms, 32ms, 64ms, 128ms, 256ms, 512ms, 1024ms, 2048ms, 4s, 8s, 16s
+	MsgConsumeLatencyStats [11]int64
+}
+
 type TopicHistoryStatsInfo struct {
 	lastHour      int32
 	lastPubSize   int64
 	HourlyPubSize [24]int64
+}
+
+func (self *ChannelStatsInfo) UpdateChannelStats(latencyInMillSec int64) {
+	self.UpdateChannelLatencyStats(latencyInMillSec)
+}
+
+func (self *ChannelStatsInfo) GetChannelLatencyStats() []int64 {
+	latencyStats := make([]int64, len(self.MsgConsumeLatencyStats))
+	for i, _ := range self.MsgConsumeLatencyStats {
+		latencyStats[i] = atomic.LoadInt64(&self.MsgConsumeLatencyStats[i])
+	}
+	return latencyStats
+}
+
+
+//update message consume latency distribution in millisecond
+func (self *ChannelStatsInfo) UpdateChannelLatencyStats(latencyInMillSec int64) {
+	bucket := 0
+	if latencyInMillSec < 16 {
+	} else {
+		bucket = int(math.Log2(float64(latencyInMillSec/16))) + 1
+	}
+	if bucket >= len(self.MsgConsumeLatencyStats) {
+		bucket = len(self.MsgConsumeLatencyStats) - 1
+	}
+	atomic.AddInt64(&self.MsgConsumeLatencyStats[bucket], 1)
 }
 
 func (self *TopicMsgStatsInfo) UpdateMsgSizeStats(msgSize int64) {
@@ -419,8 +452,11 @@ func (self *DetailStatsInfo) GetMsgSizeStats() []int64 {
 }
 
 func (self *DetailStatsInfo) GetMsgWriteLatencyStats() []int64 {
-	s := self.msgStats.MsgWriteLatencyStats
-	return s[:]
+	msgWriteLatencyStats := make([]int64, len(self.msgStats.MsgWriteLatencyStats))
+	for i, _ := range self.msgStats.MsgWriteLatencyStats {
+		msgWriteLatencyStats[i] = atomic.LoadInt64(&self.msgStats.MsgWriteLatencyStats[i])
+	}
+	return msgWriteLatencyStats
 }
 
 func (self *DetailStatsInfo) UpdateHistory(historyList [24]int64) {
