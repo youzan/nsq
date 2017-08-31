@@ -288,8 +288,8 @@ type TopicMsgStatsInfo struct {
 }
 
 type ChannelStatsInfo struct {
-	// 16ms, 32ms, 64ms, 128ms, 256ms, 512ms, 1024ms, 2048ms, 4s, 8s, 16s
-	MsgConsumeLatencyStats [11]int64
+	// 16ms, 32ms, 64ms, 128ms, 256ms, 512ms, 1024ms, 2048ms, 4s, 8s, 16s, above
+	MsgConsumeLatencyStats [12]int64
 }
 
 type TopicHistoryStatsInfo struct {

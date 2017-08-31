@@ -66,7 +66,7 @@
             <table class="table table-bordered table-condensed">
                 <tr>
                     <th colspan="2" class="text-center">&nbsp;</th>
-                    <th class="text-center" colspan="11">Message Consume Latency Distribution</th>
+                    <th class="text-center" colspan="12">Message Consume Latency Distribution</th>
                 </tr>
                 <tr>
                     <th>NSQd Host</th>
@@ -82,6 +82,7 @@
                     <th>< 4s</th>
                     <th>< 8s</th>
                     <th>< 16s</th>
+                    <th>> 16s</th>
                 </tr>
                 {{#each nodes}}
                     <tr>
@@ -95,9 +96,9 @@
                             {{#if paused}} <span class="label label-primary">paused</span>{{/if}}
                         </td>
                         <td>{{topic_partition}}</td>
-                        {{#each msg_consume_latency_stats}}
-                            <td>{{this}}</td>
-                        {{/each}}
+                            {{#each msg_consume_latency_stats}}
+                                <td>{{this}}</td>
+                            {{/each}}
                     </tr>
                 {{/each}}
             </table>
