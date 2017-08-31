@@ -24,6 +24,22 @@ var Channel = Backbone.Model.extend({
             var hostname = node['hostname'];
             node['show_broadcast_address'] = hostname.toLowerCase() !== address.toLowerCase();
             node['hostname_port'] = hostname + ':' + port;
+            //parse node to limit the length
+            if(!node['msg_consume_latency_stats']) {
+                node['msg_consume_latency_stats'] = new Array();
+                for(i = 0; i < 12; i++) {
+                    node['msg_consume_latency_stats'].push("n/a");
+                }
+            } else {
+                var diffInLen = 12 - node['msg_consume_latency_stats'].length;
+                if(diffInLen < 0){
+                    node['msg_consume_latency_stats'] = node['msg_consume_latency_stats'].slice(0, 12);
+                } else {
+                    for (j = 0; j < diffInLen; j++) {
+                        node['msg_consume_latency_stats'].push("n/a");
+                    }
+                }
+            }
             return node;
         });
 
