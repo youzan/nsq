@@ -55,6 +55,58 @@
 
 <div class="row">
     <div class="col-md-12">
+        <div class="toggle">
+            <h4>Message Latency Distribution
+                <span>
+                    <a> >>></a>
+                </span>
+            </h4>
+        </div>
+        <div class="canHide" style="display: none;">
+            <table class="table table-bordered table-condensed">
+                <tr>
+                    <th colspan="2" class="text-center">&nbsp;</th>
+                    <th class="text-center" colspan="11">Message Consume Latency Distribution</th>
+                </tr>
+                <tr>
+                    <th>NSQd Host</th>
+                    <th>Partition</th>
+                    <th>< 16ms</th>
+                    <th>< 32ms</th>
+                    <th>< 64ms</th>
+                    <th>< 128ms</th>
+                    <th>< 256ms</th>
+                    <th>< 512ms</th>
+                    <th>< 1024ms</th>
+                    <th>< 2048ms</th>
+                    <th>< 4s</th>
+                    <th>< 8s</th>
+                    <th>< 16s</th>
+                </tr>
+                {{#each nodes}}
+                    <tr>
+                        <td>
+                            <button class="btn-link red tombstone-link" data-node="{{node}}" data-topic="{{../name}}" style="padding: 0 6px; border: 0;">✘</button>
+                            {{#if show_broadcast_address}}
+                                {{hostname_port}} (<a class="link" href="/nodes/{{node}}">{{node}}</a>)
+                            {{else}}
+                                <a class="link" href="/nodes/{{node}}">{{hostname_port}}</a>
+                            {{/if}}
+                            {{#if paused}} <span class="label label-primary">paused</span>{{/if}}
+                        </td>
+                        <td>{{topic_partition}}</td>
+                        {{#each msg_consume_latency_stats}}
+                            <td>{{this}}</td>
+                        {{/each}}
+                    </tr>
+                {{/each}}
+            </table>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-12">
     <h4>Channel</h4>
     <table class="table table-bordered table-condensed">
         <tr>
