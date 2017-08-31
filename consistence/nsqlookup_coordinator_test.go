@@ -695,8 +695,11 @@ func testNsqLookupNsqdNodesChange(t *testing.T, useFakeLeadership bool) {
 	nodeInfoList[lostNodeID].nsqdCoord.leadership.UnregisterNsqd(nodeInfoList[lostNodeID].nodeInfo)
 	waitClusterStable(lookupCoord1, time.Second*3)
 	t0, err = lookupLeadership.GetTopicInfo(topic, 0)
-	if len(t0.ISR) < t0.Replica {
+	for len(t0.ISR) < t0.Replica {
 		waitClusterStable(lookupCoord1, time.Second*3)
+		t0, err = lookupLeadership.GetTopicInfo(topic, 0)
+		test.Nil(t, err)
+		t.Log(t0)
 	}
 
 	t0, err = lookupLeadership.GetTopicInfo(topic, 0)
@@ -1135,6 +1138,7 @@ func TestNsqLookupUpdateTopicMeta(t *testing.T) {
 	for i := 0; i < tmeta.PartitionNum; i++ {
 		info, err := lookupLeadership.GetTopicInfo(topic_p1_r1, i)
 		test.Nil(t, err)
+		t.Log(info)
 		test.Equal(t, tmeta.Replica, len(info.ISR))
 	}
 

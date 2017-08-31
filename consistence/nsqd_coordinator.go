@@ -312,7 +312,7 @@ func doLogQClean(tcData *coordData, localTopic *nsqd.Topic, retentionSize int64,
 		}
 		coordLog.Infof("clean commit log at : %v, %v, %v", matchIndex, matchOffset, l)
 		if l.MsgOffset > int64(cleanEndInfo.Offset()) {
-			coordLog.Warningf("search log clean position exceed the clean end, something wrong")
+			coordLog.Infof("search log clean position exceed the clean end, something wrong")
 			return
 		}
 		maxCleanOffset := cleanEndInfo.Offset()
@@ -606,7 +606,7 @@ func (self *NsqdCoordinator) loadLocalTopicData() error {
 					if tc.topicInfo.Leader == self.myNode.GetID() {
 						err := self.acquireTopicLeader(&tc.topicInfo)
 						if err != nil {
-							coordLog.Warningf("failed to acquire leader : %v", err)
+							coordLog.Infof("failed to acquire leader : %v", err)
 						}
 					}
 					if FindSlice(tc.topicInfo.ISR, self.myNode.GetID()) != -1 {
@@ -743,7 +743,7 @@ func (self *NsqdCoordinator) loadLocalTopicData() error {
 				tc.DisableWrite(true)
 				err := self.acquireTopicLeader(topicInfo)
 				if err != nil {
-					coordLog.Warningf("failed to acquire leader while start as leader: %v", err)
+					coordLog.Infof("failed to acquire leader while start as leader: %v", err)
 				}
 			}
 			if FindSlice(topicInfo.ISR, self.myNode.GetID()) != -1 {
@@ -1346,7 +1346,7 @@ func (self *NsqdCoordinator) decideCatchupCommitLogInfo(tc *TopicCoordinator,
 	for offset > localLogSegStart.SegmentStartOffset || logIndex > localLogSegStart.SegmentStartIndex {
 		// if leader changed we abort and wait next time
 		if tc.GetData().GetLeader() != topicInfo.Leader {
-			coordLog.Warningf("topic leader changed from %v to %v, abort current catchup: %v",
+			coordLog.Infof("topic leader changed from %v to %v, abort current catchup: %v",
 				topicInfo.Leader, tc.GetData().GetLeader(), topicInfo.GetTopicDesp())
 			return logIndex, offset, needFullSync, ErrTopicLeaderChanged
 		}
@@ -1520,7 +1520,7 @@ func (self *NsqdCoordinator) decideCatchupCommitLogInfo(tc *TopicCoordinator,
 			leaderCommitStartInfo, firstLogData, err := c.GetFullSyncInfo(topicInfo.Name,
 				topicInfo.Partition, fromDelayedQueue)
 			if err != nil {
-				coordLog.Warningf("failed to get full sync info: %v", err)
+				coordLog.Infof("failed to get full sync info: %v", err)
 				if strings.Contains(err.Error(), "unknown service name") {
 					return logIndex, offset, needFullSync, ErrRpcMethodUnknown
 				}
@@ -1585,7 +1585,7 @@ func (self *NsqdCoordinator) pullCatchupDataFromLeader(tc *TopicCoordinator,
 	}
 	for {
 		if tc.GetData().GetLeader() != topicInfo.Leader {
-			coordLog.Warningf("topic leader changed from %v to %v, abort current catchup: %v", topicInfo.Leader, tc.GetData().GetLeader(), topicInfo.GetTopicDesp())
+			coordLog.Infof("topic leader changed from %v to %v, abort current catchup: %v", topicInfo.Leader, tc.GetData().GetLeader(), topicInfo.GetTopicDesp())
 			return ErrTopicLeaderChanged
 		}
 		countNumIndex, localErr := logMgr.ConvertToCountIndex(logIndex, offset)
@@ -1598,11 +1598,14 @@ func (self *NsqdCoordinator) pullCatchupDataFromLeader(tc *TopicCoordinator,
 			countNumIndex, logIndex, offset, MAX_LOG_PULL, fromDelayedQueue)
 		if rpcErr != nil {
 			// if not network error, something wrong with commit log file, we need return to abort.
-			coordLog.Warningf("topic %v error while get logs :%v, offset: %v:%v:%v", topicInfo.GetTopicDesp(),
+			coordLog.Infof("topic %v error while get logs :%v, offset: %v:%v:%v", topicInfo.GetTopicDesp(),
 				rpcErr, logIndex, offset, countNumIndex)
-
 			if strings.Contains(rpcErr.Error(), "unknown service name") {
 				return ErrRpcMethodUnknown
+			}
+			if strings.Contains(rpcErr.Error(), ErrLocalDelayedQueueMissing.ErrMsg) ||
+				strings.Contains(rpcErr.Error(), ErrTopicMissingDelayedLog.ErrMsg) {
+				return &CoordErr{rpcErr.Error(), RpcCommonErr, CoordNetErr}
 			}
 			if retryCnt > MAX_CATCHUP_RETRY {
 				return &CoordErr{rpcErr.Error(), RpcCommonErr, CoordNetErr}
@@ -1719,7 +1722,7 @@ func (self *NsqdCoordinator) catchupFromLeader(topicInfo TopicPartitionMetaInfo,
 	tc.writeHold.Lock()
 	defer tc.writeHold.Unlock()
 	if tc.IsExiting() {
-		coordLog.Warningf("catchup exit since the topic is exited")
+		coordLog.Infof("catchup exit since the topic is exited")
 		return ErrTopicExitingOnSlave
 	}
 	c, coordErr := self.acquireRpcClient(topicInfo.Leader)
@@ -1766,10 +1769,11 @@ func (self *NsqdCoordinator) catchupFromLeader(topicInfo TopicPartitionMetaInfo,
 		} else {
 			syncErr = self.pullCatchupDataFromLeader(tc, topicInfo, localTopic, tc.GetData().delayedLogMgr, true, logIndex, offset)
 			if syncErr != nil {
-				coordLog.Infof("pull topic %v catchup delayed queue data failed:%v", topicInfo.GetTopicDesp(), syncErr)
 				if atomic.LoadInt32(&nsqd.EnableDelayedQueue) == 1 {
+					coordLog.Warningf("pull topic %v catchup delayed queue data error:%v", topicInfo.GetTopicDesp(), syncErr)
 					return syncErr
 				}
+				coordLog.Infof("ignore the failed since not enabled, pull topic %v catchup delayed queue data error:%v", topicInfo.GetTopicDesp(), syncErr)
 			} else if needFullSync {
 				syncErr = self.pullDelayedQueueFromLeader(tc, topicInfo, localTopic, c)
 				if syncErr != nil {
