@@ -63,12 +63,13 @@ type Message struct {
 	// for delayed queue message
 	// 1 - delayed message by channel
 	// 2 - delayed pub
-	// 3 - uncommitted transaction
 	//
 	DelayedType    int32
 	DelayedTs      int64
 	DelayedOrigID  MessageID
 	DelayedChannel string
+	// will be used for delayed pub. (json data to tell different type of delay)
+	DelayedData []byte
 }
 
 func MessageHeaderBytes() int {
@@ -258,6 +259,19 @@ func (m *Message) WriteDelayedTo(w io.Writer, writeExt bool) (int64, error) {
 	if err != nil {
 		return total, err
 	}
+	if m.DelayedType == PubDelayed {
+		binary.BigEndian.PutUint32(buf[:4], uint32(len(m.DelayedData)))
+		n, err = w.Write(buf[:4])
+		total += int64(n)
+		if err != nil {
+			return total, err
+		}
+		n, err = w.Write(m.DelayedData)
+		total += int64(n)
+		if err != nil {
+			return total, err
+		}
+	}
 
 	//write ext content
 	if writeExt {
@@ -418,6 +432,18 @@ func DecodeDelayedMessage(b []byte, isExt bool) (*Message, error) {
 
 	msg.DelayedChannel = string(b[pos : pos+int(nameLen)])
 	pos += int(nameLen)
+	if msg.DelayedType == PubDelayed {
+		if len(b) < pos+4 {
+			return nil, fmt.Errorf("invalid delayed message buffer size (%d)", len(b))
+		}
+		dlen := binary.BigEndian.Uint32(b[pos : pos+4])
+		pos += 4
+		if len(b) < pos+int(dlen) {
+			return nil, fmt.Errorf("invalid delayed message buffer size (%d)", len(b))
+		}
+		msg.DelayedData = b[pos : pos+int(dlen)]
+		pos += int(dlen)
+	}
 	var highBits uint16
 	if combined > maxAttempts {
 		highBits = combined & uint16(0xF000)
