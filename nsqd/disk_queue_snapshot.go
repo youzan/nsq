@@ -4,10 +4,11 @@ import (
 	"bufio"
 	"encoding/binary"
 	"fmt"
-	"github.com/youzan/nsq/internal/levellogger"
 	"io"
 	"os"
 	"sync"
+
+	"github.com/youzan/nsq/internal/levellogger"
 )
 
 // note: the message count info is not kept in snapshot
@@ -319,7 +320,7 @@ CheckFileOpen:
 			return result
 		}
 
-		nsqLog.Logf("DISKQUEUE(%s): readOne() opened %s", d.readFrom, curFileName)
+		nsqLog.Debugf("DISKQUEUE(%s): readOne() opened %s", d.readFrom, curFileName)
 
 		if d.readPos.EndOffset.Pos > 0 {
 			_, result.Err = d.readFile.Seek(d.readPos.EndOffset.Pos, 0)

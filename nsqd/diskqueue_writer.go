@@ -344,7 +344,7 @@ func (d *diskQueueWriter) CleanOldDataByRetention(cleanEndInfo BackendQueueOffse
 					nsqLog.LogErrorf("diskqueue(%s) failed to remove offset meta data file %v - %s", d.name, fn, innerErr)
 				}
 			} else {
-				nsqLog.Logf("DISKQUEUE(%s): removed offset meta data file: %v", d.name, fn)
+				nsqLog.Debugf("DISKQUEUE(%s): removed offset meta data file: %v", d.name, fn)
 			}
 		}
 	}
