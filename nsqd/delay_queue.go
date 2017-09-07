@@ -14,8 +14,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/youzan/nsq/internal/levellogger"
 	"github.com/boltdb/bolt"
+	"github.com/youzan/nsq/internal/levellogger"
 )
 
 var (

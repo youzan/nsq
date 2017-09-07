@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/bitly/go-simplejson"
 	"github.com/youzan/nsq/internal/clusterinfo"
 	"github.com/youzan/nsq/internal/dirlock"
 	"github.com/youzan/nsq/internal/http_api"
@@ -22,7 +23,6 @@ import (
 	"github.com/youzan/nsq/internal/statsd"
 	"github.com/youzan/nsq/internal/util"
 	"github.com/youzan/nsq/internal/version"
-	"github.com/bitly/go-simplejson"
 )
 
 const (
@@ -34,7 +34,6 @@ const (
 type errStore struct {
 	err error
 }
-
 
 var (
 	ErrTopicPartitionMismatch = errors.New("topic partition mismatch")

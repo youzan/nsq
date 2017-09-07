@@ -85,8 +85,8 @@ type ChannelStats struct {
 	DelayedQueueCount  uint64 `json:"delayed_queue_count"`
 	DelayedQueueRecent string `json:"delayed_queue_recent"`
 
-	E2eProcessingLatency *quantile.Result `json:"e2e_processing_latency"`
-	MSgConsumeLatencyStats []int64 `json:"msg_consume_latency_stats"`
+	E2eProcessingLatency   *quantile.Result `json:"e2e_processing_latency"`
+	MSgConsumeLatencyStats []int64          `json:"msg_consume_latency_stats"`
 }
 
 func NewChannelStats(c *Channel, clients []ClientStats) ChannelStats {
@@ -129,7 +129,7 @@ func NewChannelStats(c *Channel, clients []ClientStats) ChannelStats {
 		DelayedQueueCount:  dqCnt,
 		DelayedQueueRecent: time.Unix(0, recentTs).String(),
 
-		E2eProcessingLatency: c.e2eProcessingLatencyStream.Result(),
+		E2eProcessingLatency:   c.e2eProcessingLatencyStream.Result(),
 		MSgConsumeLatencyStats: c.channelStatsInfo.GetChannelLatencyStats(),
 	}
 }
@@ -304,12 +304,11 @@ func (self *ChannelStatsInfo) UpdateChannelStats(latencyInMillSec int64) {
 
 func (self *ChannelStatsInfo) GetChannelLatencyStats() []int64 {
 	latencyStats := make([]int64, len(self.MsgConsumeLatencyStats))
-	for i, _ := range self.MsgConsumeLatencyStats {
+	for i := range self.MsgConsumeLatencyStats {
 		latencyStats[i] = atomic.LoadInt64(&self.MsgConsumeLatencyStats[i])
 	}
 	return latencyStats
 }
-
 
 //update message consume latency distribution in millisecond
 func (self *ChannelStatsInfo) UpdateChannelLatencyStats(latencyInMillSec int64) {
@@ -453,7 +452,7 @@ func (self *DetailStatsInfo) GetMsgSizeStats() []int64 {
 
 func (self *DetailStatsInfo) GetMsgWriteLatencyStats() []int64 {
 	msgWriteLatencyStats := make([]int64, len(self.msgStats.MsgWriteLatencyStats))
-	for i, _ := range self.msgStats.MsgWriteLatencyStats {
+	for i := range self.msgStats.MsgWriteLatencyStats {
 		msgWriteLatencyStats[i] = atomic.LoadInt64(&self.msgStats.MsgWriteLatencyStats[i])
 	}
 	return msgWriteLatencyStats

@@ -319,7 +319,7 @@ func (r *RegistrationDB) FindTopics() []string {
 	r.RLock()
 	defer r.RUnlock()
 	results := make([]string, 0, len(r.registrationTopicMap))
-	for k, _ := range r.registrationTopicMap {
+	for k := range r.registrationTopicMap {
 		results = append(results, k)
 	}
 	return results

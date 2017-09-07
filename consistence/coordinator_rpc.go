@@ -604,9 +604,9 @@ type RpcChannelOffsetArg struct {
 
 type RpcPutMessages struct {
 	RpcTopicData
-	LogData         CommitLogData
-	TopicMessages   []*nsqd.Message
-	// raw message data will include the size header 
+	LogData       CommitLogData
+	TopicMessages []*nsqd.Message
+	// raw message data will include the size header
 	TopicRawMessage []byte
 }
 

@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/absolute8511/gorpc"
-	"github.com/youzan/nsq/internal/quantile"
 	"github.com/blang/semver"
+	"github.com/youzan/nsq/internal/quantile"
 )
 
 type ProducerTopic struct {
@@ -195,34 +195,34 @@ func (t *TopicStats) Add(a *TopicStats) {
 }
 
 type ChannelStats struct {
-	Node               string          `json:"node"`
-	Hostname           string          `json:"hostname"`
-	TopicName          string          `json:"topic_name"`
-	TopicPartition     string          `json:"topic_partition"`
-	StatsdName         string          `json:"statsd_name"`
-	ChannelName        string          `json:"channel_name"`
-	Depth              int64           `json:"depth"`
-	DepthSize          int64           `json:"depth_size"`
-	DepthTimestamp     string          `json:"depth_ts"`
-	MemoryDepth        int64           `json:"memory_depth"`
-	BackendDepth       int64           `json:"backend_depth"`
-	InFlightCount      int64           `json:"in_flight_count"`
-	DeferredCount      int64           `json:"deferred_count"`
-	RequeueCount       int64           `json:"requeue_count"`
-	TimeoutCount       int64           `json:"timeout_count"`
-	MessageCount       int64           `json:"message_count"`
-	DelayedQueueCount  uint64          `json:"delayed_queue_count"`
-	DelayedQueueRecent string          `json:"delayed_queue_recent"`
-	ClientCount        int             `json:"-"`
-	Selected           bool            `json:"-"`
-	NodeStats          []*ChannelStats `json:"nodes"`
-	Clients            []*ClientStats  `json:"clients"`
-	Paused             bool            `json:"paused"`
-	Skipped            bool            `json:"skipped"`
-	IsMultiOrdered     bool            `json:"is_multi_ordered"`
-	IsExt              bool            `json:"is_ext"`
-	MsgConsumeLatencyStats []int64	   `json:"msg_consume_latency_stats"`
-	E2eProcessingLatency *quantile.E2eProcessingLatencyAggregate `json:"e2e_processing_latency"`
+	Node                   string                                  `json:"node"`
+	Hostname               string                                  `json:"hostname"`
+	TopicName              string                                  `json:"topic_name"`
+	TopicPartition         string                                  `json:"topic_partition"`
+	StatsdName             string                                  `json:"statsd_name"`
+	ChannelName            string                                  `json:"channel_name"`
+	Depth                  int64                                   `json:"depth"`
+	DepthSize              int64                                   `json:"depth_size"`
+	DepthTimestamp         string                                  `json:"depth_ts"`
+	MemoryDepth            int64                                   `json:"memory_depth"`
+	BackendDepth           int64                                   `json:"backend_depth"`
+	InFlightCount          int64                                   `json:"in_flight_count"`
+	DeferredCount          int64                                   `json:"deferred_count"`
+	RequeueCount           int64                                   `json:"requeue_count"`
+	TimeoutCount           int64                                   `json:"timeout_count"`
+	MessageCount           int64                                   `json:"message_count"`
+	DelayedQueueCount      uint64                                  `json:"delayed_queue_count"`
+	DelayedQueueRecent     string                                  `json:"delayed_queue_recent"`
+	ClientCount            int                                     `json:"-"`
+	Selected               bool                                    `json:"-"`
+	NodeStats              []*ChannelStats                         `json:"nodes"`
+	Clients                []*ClientStats                          `json:"clients"`
+	Paused                 bool                                    `json:"paused"`
+	Skipped                bool                                    `json:"skipped"`
+	IsMultiOrdered         bool                                    `json:"is_multi_ordered"`
+	IsExt                  bool                                    `json:"is_ext"`
+	MsgConsumeLatencyStats []int64                                 `json:"msg_consume_latency_stats"`
+	E2eProcessingLatency   *quantile.E2eProcessingLatencyAggregate `json:"e2e_processing_latency"`
 }
 
 func (c *ChannelStats) Add(a *ChannelStats) {

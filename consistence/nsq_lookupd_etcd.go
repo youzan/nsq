@@ -16,8 +16,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/coreos/etcd/client"
 	etcdlock "github.com/absolute8511/xlock2"
+	"github.com/coreos/etcd/client"
 	"golang.org/x/net/context"
 )
 
@@ -194,7 +194,7 @@ func (self *NsqLookupdEtcdMgr) AcquireAndWatchLeader(leader chan *NsqLookupdNode
 	master.Start()
 }
 
-func  (self *NsqLookupdEtcdMgr) GetTopicsMetaInfoMap(topics []string) (map[string]*TopicMetaInfo, error) {
+func (self *NsqLookupdEtcdMgr) GetTopicsMetaInfoMap(topics []string) (map[string]*TopicMetaInfo, error) {
 	topicMetaInfoCache := make(map[string]*TopicMetaInfo)
 	if atomic.LoadInt32(&self.ifTopicChanged) == 1 {
 		//fetch from etcd
@@ -214,12 +214,12 @@ func  (self *NsqLookupdEtcdMgr) GetTopicsMetaInfoMap(topics []string) (map[strin
 				coordLog.Infof("meta info for %v not exist", topic)
 				topicMetaInfoCache[topic] = &TopicMetaInfo{
 					OrderedMulti: false,
-					Ext: false,
+					Ext:          false,
 				}
 			} else {
 				topicMetaInfoCache[topic] = &TopicMetaInfo{
 					OrderedMulti: topicMeta.OrderedMulti,
-					Ext: topicMeta.Ext,
+					Ext:          topicMeta.Ext,
 				}
 			}
 		}

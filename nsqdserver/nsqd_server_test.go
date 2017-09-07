@@ -3,6 +3,7 @@ package nsqdserver
 import (
 	"fmt"
 	"github.com/absolute8511/glog"
+	"github.com/bitly/go-simplejson"
 	"github.com/youzan/go-nsq"
 	"github.com/youzan/nsq/internal/clusterinfo"
 	"github.com/youzan/nsq/internal/http_api"
@@ -10,7 +11,6 @@ import (
 	"github.com/youzan/nsq/internal/test"
 	nsqdNs "github.com/youzan/nsq/nsqd"
 	"github.com/youzan/nsq/nsqlookupd"
-	"github.com/bitly/go-simplejson"
 	"io/ioutil"
 	"net"
 	"os"

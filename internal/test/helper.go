@@ -1,7 +1,5 @@
 package test
 
-import ()
-
 type TbLog interface {
 	Log(...interface{})
 }

@@ -1,7 +1,5 @@
 package flume_log
 
-import ()
-
 type DetailInfo struct {
 	module string
 	detail map[string]interface{}

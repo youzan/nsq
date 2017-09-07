@@ -10,10 +10,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/golang/snappy"
 	"github.com/youzan/nsq/internal/auth"
 	"github.com/youzan/nsq/internal/ext"
 	"github.com/youzan/nsq/internal/levellogger"
-	"github.com/golang/snappy"
 )
 
 const defaultBufferSize = 4 * 1024
@@ -616,7 +616,6 @@ func (c *ClientV2) SetMsgTimeout(msgTimeout int) error {
 
 	return nil
 }
-
 
 func (c *ClientV2) UnsetDesiredTag() {
 	c.LockWrite()

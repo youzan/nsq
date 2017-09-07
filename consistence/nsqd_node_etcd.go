@@ -14,8 +14,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/coreos/etcd/client"
 	etcdlock "github.com/absolute8511/xlock2"
+	"github.com/coreos/etcd/client"
 	"golang.org/x/net/context"
 )
 

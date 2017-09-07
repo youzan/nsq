@@ -14,11 +14,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bitly/go-simplejson"
 	"github.com/youzan/nsq/internal/version"
 	"github.com/youzan/nsq/nsqd"
 	"github.com/youzan/nsq/nsqdserver"
 	"github.com/youzan/nsq/nsqlookupd"
-	"github.com/bitly/go-simplejson"
 )
 
 type tbLog interface {

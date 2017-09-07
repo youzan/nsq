@@ -458,7 +458,7 @@ retrysync:
 				// isr may down or some error.
 				// We also need do some work to decide if we
 				// should give up my leadership.
-				for nid, _ := range failedNodes {
+				for nid := range failedNodes {
 					tmpErr := self.requestLeaveFromISRByLeader(topicName, topicPartition, nid)
 					if tmpErr != nil {
 						coordLog.Warningf("failed to request remove the failed isr node: %v, %v", nid, tmpErr)

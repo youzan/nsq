@@ -102,6 +102,10 @@ func main() {
 		}
 		rets := make([]nsqd.Message, *viewCnt)
 		cnt, err := delayQ.PeekRecentChannelTimeout(time.Now().UnixNano(), rets, *viewCh)
+		if err != nil {
+			nsqd.NsqLogger().Infof("peek recent timeout failed: %v", err.Error())
+			return
+		}
 		for _, m := range rets[:cnt] {
 			nsqd.NsqLogger().Infof("peeked channel msg : %v", m)
 		}

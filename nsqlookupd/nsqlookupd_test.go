@@ -10,11 +10,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bitly/go-simplejson"
 	"github.com/youzan/go-nsq"
 	"github.com/youzan/nsq/internal/clusterinfo"
 	"github.com/youzan/nsq/internal/http_api"
 	"github.com/youzan/nsq/internal/levellogger"
-	"github.com/bitly/go-simplejson"
 )
 
 func equal(t *testing.T, act, exp interface{}) {
@@ -511,7 +511,7 @@ func TestTopicPartitions(t *testing.T) {
 	returnedProducers, err := data.Get("producers").Array()
 	equal(t, err, nil)
 	equal(t, len(returnedProducers), 2)
-	for i, _ := range returnedProducers {
+	for i := range returnedProducers {
 		retP, err := data.Get("producers").GetIndex(i).Get("partitions").Map()
 		equal(t, err, nil)
 		equal(t, len(retP), 1)
@@ -701,7 +701,7 @@ func TestOldNsqdTopicRegUnReg(t *testing.T) {
 	returnedProducers, err := data.Get("producers").Array()
 	equal(t, err, nil)
 	equal(t, len(returnedProducers), 2)
-	for i, _ := range returnedProducers {
+	for i := range returnedProducers {
 		retP, err := data.Get("producers").GetIndex(i).Get("partitions").Map()
 		equal(t, err, nil)
 		equal(t, len(retP), 1)

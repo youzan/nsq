@@ -16,13 +16,13 @@ import (
 	"time"
 	"unsafe"
 
+	simpleJson "github.com/bitly/go-simplejson"
 	"github.com/youzan/nsq/consistence"
 	"github.com/youzan/nsq/internal/ext"
 	"github.com/youzan/nsq/internal/levellogger"
 	"github.com/youzan/nsq/internal/protocol"
 	"github.com/youzan/nsq/internal/version"
 	"github.com/youzan/nsq/nsqd"
-	simpleJson "github.com/bitly/go-simplejson"
 )
 
 const (

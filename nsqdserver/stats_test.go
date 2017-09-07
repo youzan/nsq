@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/golang/snappy"
 	"github.com/youzan/go-nsq"
 	"github.com/youzan/nsq/internal/test"
 	nsqdNs "github.com/youzan/nsq/nsqd"
-	"github.com/golang/snappy"
 )
 
 func readValidate2(t *testing.T, conn io.Reader, f int32, d string) []byte {

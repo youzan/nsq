@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"errors"
-	"github.com/youzan/nsq/internal/levellogger"
 	"github.com/julienschmidt/httprouter"
+	"github.com/youzan/nsq/internal/levellogger"
 )
 
 var (

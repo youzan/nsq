@@ -336,7 +336,7 @@ func (s topicLFListT) Less(i, j int) bool {
 
 func (self *NodeTopicStats) GetSortedTopicWriteLevel(leaderOnly bool) topicLFListT {
 	topicLFList := make(topicLFListT, 0)
-	for topicName, _ := range self.TopicHourlyPubDataList {
+	for topicName := range self.TopicHourlyPubDataList {
 		d, ok := self.TopicLeaderDataSize[topicName]
 		if leaderOnly {
 			if !ok || d <= 0 {
@@ -364,7 +364,7 @@ func (self *NodeTopicStats) GetMostBusyAndIdleTopicWriteLevel(leaderOnly bool) (
 	busyTopic := ""
 	idle := float64(math.MaxInt32)
 	idleTopic := ""
-	for topicName, _ := range self.TopicHourlyPubDataList {
+	for topicName := range self.TopicHourlyPubDataList {
 		d, ok := self.TopicLeaderDataSize[topicName]
 		if leaderOnly {
 			if !ok || d <= 0 {
@@ -1720,7 +1720,7 @@ func (self *DataPlacement) getRebalancedOrderedTopicPartitions(
 	// p9       l       x        f     x-f
 	// p10     x-f      x       f-l     f
 	nodeNameList := make(SortableStrings, 0, len(currentNodes))
-	for nid, _ := range currentNodes {
+	for nid := range currentNodes {
 		nodeNameList = append(nodeNameList, nid)
 	}
 	return self.getRebalancedOrderedTopicPartitionsFromNameList(partitionNum, replica, nodeNameList)

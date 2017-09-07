@@ -1,17 +1,17 @@
 package ext
 
 import (
-	"regexp"
 	"fmt"
+	"regexp"
 )
 
 const (
-	E_EXT_NOT_SUPPORT = "E_EXT_NOT_SUPPORT"
-	E_BAD_TAG	= "E_BAD_TAG"
+	E_EXT_NOT_SUPPORT     = "E_EXT_NOT_SUPPORT"
+	E_BAD_TAG             = "E_BAD_TAG"
 	E_INVALID_JSON_HEADER = "E_INVALID_JSON_HEADER"
 
 	CLEINT_DISPATCH_TAG_KEY = "##client_dispatch_tag"
-	TRACE_ID_KEY = "##trace_id"
+	TRACE_ID_KEY            = "##trace_id"
 )
 
 var MAX_TAG_LEN = 100
@@ -22,13 +22,15 @@ type ExtVer uint8
 //ext versions
 // version for message has no ext
 var NO_EXT_VER = ExtVer(uint8(0))
+
 // version for message has tag ext
 var TAG_EXT_VER = ExtVer(uint8(2))
+
 // version for message has json header ext
 var JSON_HEADER_EXT_VER = ExtVer(uint8(4))
 
-
 var noExt = NoExt{}
+
 type NoExt []byte
 
 func NewNoExt() NoExt {
@@ -46,7 +48,7 @@ func (n NoExt) GetBytes() []byte {
 type TagExt []byte
 
 func NewTagExt(tagName []byte) (TagExt, error) {
-	if err:= ValidateTag(string(tagName)); err != nil {
+	if err := ValidateTag(string(tagName)); err != nil {
 		return nil, err
 	}
 	return TagExt(tagName), nil
@@ -89,5 +91,5 @@ func (self *JsonHeaderExt) GetBytes() []byte {
 
 type IExtContent interface {
 	ExtVersion() ExtVer
-	GetBytes()   []byte
+	GetBytes() []byte
 }

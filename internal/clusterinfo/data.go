@@ -9,12 +9,12 @@ import (
 	"strings"
 	"sync"
 
+	"errors"
+	"github.com/blang/semver"
 	"github.com/youzan/nsq/internal/http_api"
 	"github.com/youzan/nsq/internal/stringy"
-	"github.com/blang/semver"
 	"math"
 	"sync/atomic"
-	"errors"
 )
 
 var v1EndpointVersion semver.Version
@@ -92,7 +92,7 @@ func (c *ClusterInfo) GetLookupdTopicsMeta(lookupdHTTPAddrs []string, metaInfo b
 	var errs []error
 
 	type respType struct {
-		Topics []string `json:"topics"`
+		Topics   []string     `json:"topics"`
 		MetaInfo []*TopicInfo `json:"meta_info,omitempty"`
 	}
 
@@ -124,7 +124,7 @@ func (c *ClusterInfo) GetLookupdTopicsMeta(lookupdHTTPAddrs []string, metaInfo b
 			} else {
 				for _, topic := range resp.Topics {
 					topics = append(topics, &TopicInfo{
-						TopicName:topic,
+						TopicName: topic,
 					})
 				}
 			}
@@ -396,15 +396,15 @@ func (c *ClusterInfo) GetLookupdTopicProducers(topic string, lookupdHTTPAddrs []
 }
 
 type TopicInfo struct {
-	TopicName	string	`json:"topic_name"`
-	ExtSupport 	bool 	`json:"extend_support"`
-	Ordered 	bool 	`json:"ordered"`
+	TopicName  string `json:"topic_name"`
+	ExtSupport bool   `json:"extend_support"`
+	Ordered    bool   `json:"ordered"`
 }
 
 type TopicInfoSortByName []*TopicInfo
 
 func (c TopicInfoSortByName) Less(i, j int) bool {
-	return 	c[i].TopicName < c[j].TopicName
+	return c[i].TopicName < c[j].TopicName
 }
 
 func (c TopicInfoSortByName) Swap(i, j int) {
@@ -424,9 +424,9 @@ func (c *ClusterInfo) GetNSQDTopics(nsqdHTTPAddrs []string) ([]*TopicInfo, error
 
 	type respType struct {
 		Topics []struct {
-			Name string `json:"topic_name"`
-			Ordered bool `json:"is_multi_ordered"`
-			ExtSupport bool `json:"is_ext"`
+			Name       string `json:"topic_name"`
+			Ordered    bool   `json:"is_multi_ordered"`
+			ExtSupport bool   `json:"is_ext"`
 		} `json:"topics"`
 	}
 
@@ -450,10 +450,10 @@ func (c *ClusterInfo) GetNSQDTopics(nsqdHTTPAddrs []string) ([]*TopicInfo, error
 			lock.Lock()
 			defer lock.Unlock()
 			for _, topic := range resp.Topics {
-				topics = append(topics,  &TopicInfo{
-					TopicName: topic.Name,
-					Ordered:   topic.Ordered,
-					ExtSupport:topic.ExtSupport,
+				topics = append(topics, &TopicInfo{
+					TopicName:  topic.Name,
+					Ordered:    topic.Ordered,
+					ExtSupport: topic.ExtSupport,
 				})
 			}
 		}(addr)
@@ -464,7 +464,7 @@ func (c *ClusterInfo) GetNSQDTopics(nsqdHTTPAddrs []string) ([]*TopicInfo, error
 		return nil, fmt.Errorf("Failed to query any nsqd: %s", ErrList(errs))
 	}
 
-	sort.Sort(TopicInfoSortByName(topics));
+	sort.Sort(TopicInfoSortByName(topics))
 
 	if len(errs) > 0 {
 		return topics, ErrList(errs)
@@ -921,8 +921,8 @@ func (c *ClusterInfo) GetNSQDStats(producers Producers, selectedTopic string, so
 							StatsdName:     topic.StatsdName,
 							ChannelName:    channel.ChannelName,
 							IsMultiOrdered: topic.IsMultiOrdered,
-							RequeueCount:	channel.RequeueCount,
-							TimeoutCount:	channel.TimeoutCount,
+							RequeueCount:   channel.RequeueCount,
+							TimeoutCount:   channel.TimeoutCount,
 						}
 						channelStatsMap[key] = channelStats
 					}
@@ -1005,7 +1005,7 @@ func (c *ClusterInfo) CreateTopicChannelAfterTopicCreation(topicName string, cha
 	}
 
 	if len(producers) == 0 && len(partitionProducers) == 0 {
-		c.logf(fmt.Sprintf("Producer:%d, PartitionProducers:%d", len(producers), len(partitionProducers)));
+		c.logf(fmt.Sprintf("Producer:%d, PartitionProducers:%d", len(producers), len(partitionProducers)))
 		text := fmt.Sprintf("no producer or partition producer found for Topic:%s, Channel:%s", topicName, channelName)
 		return errors.New(text)
 	}
@@ -1194,7 +1194,7 @@ channelDelete:
 		c.logf("channel %v are not completely deleted", channelName)
 		if retry {
 			//do delete again
-			retry = false;
+			retry = false
 			goto channelDelete
 		} else {
 			c.logf("fail to delete channel %v completely", channelName)

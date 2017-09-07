@@ -16,9 +16,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bitly/go-simplejson"
 	"github.com/youzan/nsq/internal/http_api"
 	"github.com/youzan/nsq/internal/levellogger"
-	"github.com/bitly/go-simplejson"
 )
 
 func init() {

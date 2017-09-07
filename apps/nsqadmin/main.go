@@ -11,10 +11,10 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/absolute8511/glog"
+	"github.com/mreiferson/go-options"
 	"github.com/youzan/nsq/internal/app"
 	"github.com/youzan/nsq/internal/version"
 	"github.com/youzan/nsq/nsqadmin"
-	"github.com/mreiferson/go-options"
 )
 
 var (

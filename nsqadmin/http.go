@@ -18,11 +18,11 @@ import (
 	"bytes"
 	"sort"
 
+	"github.com/julienschmidt/httprouter"
 	"github.com/youzan/nsq/internal/clusterinfo"
 	"github.com/youzan/nsq/internal/http_api"
 	"github.com/youzan/nsq/internal/protocol"
 	"github.com/youzan/nsq/internal/version"
-	"github.com/julienschmidt/httprouter"
 )
 
 func maybeWarnMsg(msgs []string) string {
@@ -265,7 +265,7 @@ func (s *httpServer) topicsHandler(w http.ResponseWriter, req *http.Request, ps 
 
 	return struct {
 		Topics  []*clusterinfo.TopicInfo `json:"topics"`
-		Message string   `json:"message"`
+		Message string                   `json:"message"`
 	}{topics, maybeWarnMsg(messages)}, nil
 }
 
@@ -933,7 +933,7 @@ func (s *httpServer) topicChannelAction(req *http.Request, topicName string, cha
 	var messages []string
 
 	var body struct {
-		Action string `json:"action"`
+		Action    string `json:"action"`
 		Timestamp string `json:"timestamp"`
 	}
 	err := json.NewDecoder(req.Body).Decode(&body)
@@ -1047,13 +1047,13 @@ type counterStats struct {
 }
 
 type rankStats struct {
-	Name         string 	 `json:"name"`
+	Name              string `json:"name"`
 	TotalChannelDepth int64  `json:"total_channel_depth,omitempty"`
 	MessageCount      int64  `json:"message_count,omitempty"`
 	HourlyPubSize     int64  `json:"hourly_pubsize,omitempty"`
 
-	RequeueCount	  int64	 `json:"requeue_count,omitempty"`
-	TimeoutCount      int64  `json:"timeout_count,omitempty"`
+	RequeueCount int64 `json:"requeue_count,omitempty"`
+	TimeoutCount int64 `json:"timeout_count,omitempty"`
 }
 
 type RankList []*rankStats
@@ -1198,7 +1198,7 @@ func (s *httpServer) statisticsHandler(w http.ResponseWriter, req *http.Request,
 			item, ok := topicMap[topicStat.TopicName]
 			if !ok {
 				item = &rankStats{
-					Name:         topicStat.TopicName,
+					Name:              topicStat.TopicName,
 					TotalChannelDepth: 0,
 					MessageCount:      0,
 				}

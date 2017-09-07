@@ -50,8 +50,8 @@ func (self *LogMsgTracer) Start() {
 }
 
 func (self *LogMsgTracer) TracePub(topic string, part int, pubMethod string, traceID uint64, msg *Message, diskOffset BackendOffset, currentCnt int64) {
-	nsqLog.Logf("[TRACE] topic %v-%v trace id %v: message %v( %v) put %v at offset: %v, current count: %v at time %v, delayed: %v", topic, part, 
-	traceID, msg.ID, msg.DelayedOrigID, pubMethod, diskOffset, currentCnt, time.Now().UnixNano(), msg.DelayedTs)
+	nsqLog.Logf("[TRACE] topic %v-%v trace id %v: message %v( %v) put %v at offset: %v, current count: %v at time %v, delayed: %v", topic, part,
+		traceID, msg.ID, msg.DelayedOrigID, pubMethod, diskOffset, currentCnt, time.Now().UnixNano(), msg.DelayedTs)
 }
 
 func (self *LogMsgTracer) TracePubClient(topic string, part int, traceID uint64, msgID MessageID, diskOffset BackendOffset, clientID string) {

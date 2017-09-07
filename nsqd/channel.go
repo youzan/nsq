@@ -11,10 +11,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	simpleJson "github.com/bitly/go-simplejson"
 	"github.com/youzan/nsq/internal/ext"
 	"github.com/youzan/nsq/internal/levellogger"
 	"github.com/youzan/nsq/internal/quantile"
-	simpleJson "github.com/bitly/go-simplejson"
 )
 
 const (
@@ -142,7 +142,7 @@ type Channel struct {
 	peekedMsgs             []Message
 
 	//channel msg stats
-	channelStatsInfo	*ChannelStatsInfo
+	channelStatsInfo *ChannelStatsInfo
 }
 
 // NewChannel creates a new instance of the Channel type and returns a pointer
@@ -232,7 +232,7 @@ func (c *Channel) closeClientMsgChannels() {
 	c.tagMsgChansMutex.Lock()
 	defer c.tagMsgChansMutex.Unlock()
 
-	for tag, _ := range c.tagMsgChans {
+	for tag := range c.tagMsgChans {
 		delete(c.tagMsgChans, tag)
 	}
 }
@@ -848,7 +848,7 @@ func (c *Channel) internalFinishMessage(clientID int64, clientAddr string,
 	if c.e2eProcessingLatencyStream != nil {
 		c.e2eProcessingLatencyStream.Insert(msg.Timestamp)
 	}
-	c.channelStatsInfo.UpdateChannelStats((time.Now().UnixNano() - msg.Timestamp)/int64(time.Millisecond))
+	c.channelStatsInfo.UpdateChannelStats((time.Now().UnixNano() - msg.Timestamp) / int64(time.Millisecond))
 	var offset BackendOffset
 	var cnt int64
 	var changed bool
@@ -1398,10 +1398,10 @@ func (c *Channel) drainChannelWaiting(clearConfirmed bool, lastDataNeedRead *boo
 	reqCnt := 0
 	c.inFlightMutex.Lock()
 	reqCnt += len(c.waitingRequeueMsgs) + len(c.waitingRequeueChanMsgs)
-	for k, _ := range c.waitingRequeueMsgs {
+	for k := range c.waitingRequeueMsgs {
 		delete(c.waitingRequeueMsgs, k)
 	}
-	for k, _ := range c.waitingRequeueChanMsgs {
+	for k := range c.waitingRequeueChanMsgs {
 		delete(c.waitingRequeueChanMsgs, k)
 	}
 	c.inFlightMutex.Unlock()

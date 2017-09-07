@@ -11,12 +11,12 @@ import (
 	"runtime"
 	"strconv"
 
+	"github.com/julienschmidt/httprouter"
 	"github.com/youzan/nsq/consistence"
+	"github.com/youzan/nsq/internal/clusterinfo"
 	"github.com/youzan/nsq/internal/http_api"
 	"github.com/youzan/nsq/internal/protocol"
 	"github.com/youzan/nsq/internal/version"
-	"github.com/julienschmidt/httprouter"
-	"github.com/youzan/nsq/internal/clusterinfo"
 )
 
 const (
@@ -242,14 +242,14 @@ func (s *httpServer) doTopics(w http.ResponseWriter, req *http.Request, ps httpr
 				return nil, fmt.Errorf("topic meta info for %v not exist", topic)
 			}
 			info := &clusterinfo.TopicInfo{
-				TopicName:      topic,
-				ExtSupport:	topicMeta.Ext,
-				Ordered:	topicMeta.OrderedMulti,
+				TopicName:  topic,
+				ExtSupport: topicMeta.Ext,
+				Ordered:    topicMeta.OrderedMulti,
 			}
 			topicsInfo = append(topicsInfo, info)
 		}
 		return map[string]interface{}{
-			"topics": topics,
+			"topics":    topics,
 			"meta_info": topicsInfo,
 		}, nil
 	}

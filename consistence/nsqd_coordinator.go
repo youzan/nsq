@@ -494,7 +494,7 @@ func (self *NsqdCoordinator) getLookupRemoteProxy() (INsqlookupRemoteProxy, *Coo
 		self.lookupMutex.Lock()
 		self.lookupRemoteClients[addr] = c
 		if len(self.lookupRemoteClients) > 3 {
-			for k, _ := range self.lookupRemoteClients {
+			for k := range self.lookupRemoteClients {
 				if k == addr {
 					continue
 				}
@@ -960,7 +960,7 @@ func (self *NsqdCoordinator) checkForUnsyncedTopics() {
 		}
 		self.coordMutex.Unlock()
 		for topic, info := range tmpChecks {
-			for pid, _ := range info {
+			for pid := range info {
 				topicMeta, err := self.leadership.GetTopicInfo(topic, pid)
 				if err != nil {
 					continue
@@ -1822,7 +1822,7 @@ func (self *NsqdCoordinator) catchupFromLeader(topicInfo TopicPartitionMetaInfo,
 					delete(oldChList, chName)
 				}
 				coordLog.Infof("topic %v local channel not on leader: %v", topicInfo.GetTopicDesp(), oldChList)
-				for chName, _ := range oldChList {
+				for chName := range oldChList {
 					localTopic.CloseExistingChannel(chName, false)
 				}
 				localTopic.SaveChannelMeta()

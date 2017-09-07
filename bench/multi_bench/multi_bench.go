@@ -17,12 +17,12 @@ import (
 	"time"
 
 	"github.com/absolute8511/glog"
+	"github.com/spaolacci/murmur3"
 	"github.com/youzan/go-nsq"
 	"github.com/youzan/nsq/internal/app"
 	"github.com/youzan/nsq/internal/clusterinfo"
 	"github.com/youzan/nsq/internal/http_api"
 	"github.com/youzan/nsq/internal/levellogger"
-	"github.com/spaolacci/murmur3"
 )
 
 var (
@@ -454,7 +454,7 @@ func startCheckData2() {
 			continue
 		}
 		log.Printf("topic: %v sub waiting list: %v\n", topicName, len(waitingList))
-		for traceID, _ := range waitingList {
+		for traceID := range waitingList {
 			log.Printf("%v, ", traceID)
 		}
 		log.Printf("\n")
@@ -1216,7 +1216,7 @@ func (c *consumeTraceIDHandler) HandleMessage(message *nsq.Message) error {
 	}
 	c.subTraceWaiting[traceID] = message
 	newMaxTraceID := atomic.LoadInt64(c.subIDCounter)
-	for fid, _ := range c.failedList {
+	for fid := range c.failedList {
 		// we treat as pub failed id already
 		if fid > uint64(newMaxTraceID) {
 			c.subTraceWaiting[fid] = nil
@@ -1235,7 +1235,7 @@ func (c *consumeTraceIDHandler) HandleMessage(message *nsq.Message) error {
 			break
 		}
 	}
-	for traceID, _ := range c.subTraceWaiting {
+	for traceID := range c.subTraceWaiting {
 		if traceID <= uint64(newMaxTraceID) {
 			delete(c.subTraceWaiting, traceID)
 		}

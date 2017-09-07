@@ -489,7 +489,7 @@ func (self *NsqLookupCoordinator) handleRemovingNodes(monitorChan chan struct{})
 			}
 			By(leaderSort).Sort(nodeTopicStats)
 
-			for nid, _ := range removingNodes {
+			for nid := range removingNodes {
 				anyPending := false
 				coordLog.Infof("handle the removing node %v ", nid)
 				// only check the topic with one replica left
@@ -1661,7 +1661,7 @@ func (self *NsqLookupCoordinator) resetJoinISRState(topicInfo TopicPartitionMeta
 				}
 			}
 			topicInfo.CatchupList = make([]string, 0)
-			for n, _ := range newCatchupList {
+			for n := range newCatchupList {
 				topicInfo.CatchupList = append(topicInfo.CatchupList, n)
 			}
 

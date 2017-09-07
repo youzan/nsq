@@ -19,11 +19,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/bitly/go-hostpool"
+	"github.com/bitly/timer_metrics"
 	"github.com/youzan/go-nsq"
 	"github.com/youzan/nsq/internal/app"
 	"github.com/youzan/nsq/internal/version"
-	"github.com/bitly/go-hostpool"
-	"github.com/bitly/timer_metrics"
 )
 
 const (

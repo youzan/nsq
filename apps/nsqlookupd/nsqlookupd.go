@@ -11,11 +11,11 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/absolute8511/glog"
+	"github.com/judwhite/go-svc/svc"
+	"github.com/mreiferson/go-options"
 	"github.com/youzan/nsq/internal/app"
 	"github.com/youzan/nsq/internal/version"
 	"github.com/youzan/nsq/nsqlookupd"
-	"github.com/judwhite/go-svc/svc"
-	"github.com/mreiferson/go-options"
 )
 
 var (

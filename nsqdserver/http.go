@@ -18,6 +18,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/julienschmidt/httprouter"
 	"github.com/youzan/nsq/consistence"
 	"github.com/youzan/nsq/internal/clusterinfo"
 	"github.com/youzan/nsq/internal/ext"
@@ -26,7 +27,6 @@ import (
 	"github.com/youzan/nsq/internal/protocol"
 	"github.com/youzan/nsq/internal/version"
 	"github.com/youzan/nsq/nsqd"
-	"github.com/julienschmidt/httprouter"
 )
 
 const HTTP_EXT_HEADER_PREFIX = "X-Nsqext-"
@@ -331,7 +331,7 @@ func (s *httpServer) internalPUB(w http.ResponseWriter, req *http.Request, ps ht
 			}
 
 			//check header X-Nsqext-XXX:value
-			for hKey, _ := range req.Header {
+			for hKey := range req.Header {
 				if strings.HasPrefix(hKey, HTTP_EXT_HEADER_PREFIX) {
 					key := strings.TrimPrefix(hKey, HTTP_EXT_HEADER_PREFIX)
 					//key parse from X-Nsqext- will always be convert to lowercase
