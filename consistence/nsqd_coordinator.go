@@ -788,7 +788,7 @@ func checkAndFixLocalLogQueueEnd(tc *coordData,
 							cntNum--
 							logIndex, logOffset, localErr = logMgr.ConvertToOffsetIndex(cntNum)
 							if localErr != nil {
-								coordLog.Errorf("topic %v try fix failed: %v , %v:%v", tname, localErr, cntNum)
+								coordLog.Errorf("topic %v try fix failed: %v , %v", tname, localErr, cntNum)
 								panic(localErr)
 							}
 							logData, localErr = logMgr.GetCommitLogFromOffsetV2(logIndex, logOffset)

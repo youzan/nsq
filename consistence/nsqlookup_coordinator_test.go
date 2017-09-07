@@ -398,7 +398,6 @@ func (self *FakeNsqlookupLeadership) WatchTopicLeader(leader chan *TopicLeaderSe
 			}
 		}
 	}
-	return nil
 }
 
 func (self *FakeNsqlookupLeadership) RegisterNsqd(nodeData *NsqdNodeInfo) error {
@@ -486,7 +485,6 @@ func (self *FakeNsqlookupLeadership) WatchLookupdLeader(leader chan *NsqLookupdN
 			return nil
 		}
 	}
-	return nil
 }
 
 func startNsqLookupCoord(t *testing.T, useFakeLeadership bool) (*NsqLookupCoordinator, int, *NsqLookupdNodeInfo) {
@@ -1552,7 +1550,7 @@ func TestNsqLookupMovePartition(t *testing.T) {
 		break
 	}
 	if toNode == "" {
-		t.Fatalf("toNode error: %v, %v, %v", t0, nodeInfoList)
+		t.Fatalf("toNode error: %v, %v", t0, nodeInfoList)
 	}
 	test.Equal(t, true, toNode != "")
 	oldLeader = t0.Leader
@@ -1657,7 +1655,7 @@ func TestNsqLookupMovePartition(t *testing.T) {
 		break
 	}
 	if toNode == "" {
-		t.Fatalf("toNode error: %v, %v, %v", t0, nodeInfoList)
+		t.Fatalf("toNode error: %v, %v", t0, nodeInfoList)
 	}
 	test.Equal(t, true, toNode != "")
 	t.Logf("move leader to %v", toNode)
@@ -1693,7 +1691,7 @@ func TestNsqLookupMovePartition(t *testing.T) {
 		break
 	}
 	if toNode == "" {
-		t.Fatalf("toNode error: %v, %v, %v", t0, nodeInfoList)
+		t.Fatalf("toNode error: %v, %v", t0, nodeInfoList)
 	}
 	test.Equal(t, true, toNode != "")
 
