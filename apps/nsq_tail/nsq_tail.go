@@ -10,7 +10,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/absolute8511/go-nsq"
+	"github.com/youzan/go-nsq"
 	"github.com/youzan/nsq/internal/app"
 	"github.com/youzan/nsq/internal/version"
 )
@@ -57,7 +57,7 @@ func main() {
 	cfg := nsq.NewConfig()
 	// TODO: remove, deprecated
 	flag.Var(&nsq.ConfigFlag{cfg}, "reader-opt", "(deprecated) use --consumer-opt")
-	flag.Var(&nsq.ConfigFlag{cfg}, "consumer-opt", "option to passthrough to nsq.Consumer (may be given multiple times, http://godoc.org/github.com/absolute8511/go-nsq#Config)")
+	flag.Var(&nsq.ConfigFlag{cfg}, "consumer-opt", "option to passthrough to nsq.Consumer (may be given multiple times, http://godoc.org/github.com/youzan/go-nsq#Config)")
 
 	flag.Parse()
 

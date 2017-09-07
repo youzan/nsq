@@ -13,7 +13,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/absolute8511/go-nsq"
+	"github.com/youzan/go-nsq"
 	"github.com/youzan/nsq/internal/app"
 	"github.com/youzan/nsq/internal/version"
 )
@@ -32,7 +32,7 @@ func init() {
 
 func main() {
 	cfg := nsq.NewConfig()
-	flag.Var(&nsq.ConfigFlag{cfg}, "producer-opt", "option to passthrough to nsq.Producer (may be given multiple times, http://godoc.org/github.com/absolute8511/go-nsq#Config)")
+	flag.Var(&nsq.ConfigFlag{cfg}, "producer-opt", "option to passthrough to nsq.Producer (may be given multiple times, http://godoc.org/github.com/youzan/go-nsq#Config)")
 
 	flag.Parse()
 

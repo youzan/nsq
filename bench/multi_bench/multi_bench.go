@@ -17,7 +17,7 @@ import (
 	"time"
 
 	"github.com/absolute8511/glog"
-	"github.com/absolute8511/go-nsq"
+	"github.com/youzan/go-nsq"
 	"github.com/youzan/nsq/internal/app"
 	"github.com/youzan/nsq/internal/clusterinfo"
 	"github.com/youzan/nsq/internal/http_api"

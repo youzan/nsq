@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/absolute8511/go-nsq"
+	"github.com/youzan/go-nsq"
 	"github.com/youzan/nsq/internal/clusterinfo"
 	"github.com/youzan/nsq/internal/version"
 	"github.com/youzan/nsq/nsqd"

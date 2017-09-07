@@ -18,7 +18,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/absolute8511/go-nsq"
+	"github.com/youzan/go-nsq"
 	"github.com/youzan/nsq/internal/ext"
 	"github.com/youzan/nsq/internal/test"
 	"github.com/youzan/nsq/internal/version"

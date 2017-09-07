@@ -57,7 +57,7 @@ Other deploy can be the same as the Official.
 Most client SDK can be used to communication with the new server without using the new features and for new features in this 
 fork the new client SDK should be used.
 
-Golang: <a href="https://github.com/absolute8511/go-nsq" >https://github.com/absolute8511/go-nsq</a>
+Golang: <a href="https://github.com/youzan/go-nsq" >https://github.com/youzan/go-nsq</a>
 
 Java: <a href="https://github.com/youzan/nsqJavaSDK">https://github.com/youzan/nsqJavaSDK</a>
 

@@ -1,6 +1,6 @@
 github.com/cenkalti/backoff
 github.com/absolute8511/gorpc  
-github.com/absolute8511/go-nsq          
+github.com/youzan/go-nsq          
 github.com/absolute8511/xlock2
 github.com/spaolacci/murmur3
 github.com/Workiva/go-datastructures/rangetree

@@ -59,7 +59,7 @@ We will disclose the technical details about all these new features in future ar
 
 [Redesigned NSQ Server](https://github.com/youzan/nsq)
 
-[Golang SDK](https://github.com/absolute8511/go-nsq)
+[Golang SDK](https://github.com/youzan/go-nsq)
 
 [Java SDK](https://github.com/youzan/nsqJavaSDK)
 
