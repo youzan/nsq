@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/absolute8511/go-nsq"
-	"github.com/absolute8511/nsq/internal/test"
-	nsqdNs "github.com/absolute8511/nsq/nsqd"
+	"github.com/youzan/nsq/internal/test"
+	nsqdNs "github.com/youzan/nsq/nsqd"
 	"github.com/golang/snappy"
 )
 

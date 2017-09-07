@@ -13,9 +13,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/absolute8511/nsq/internal/levellogger"
-	"github.com/absolute8511/nsq/internal/protocol"
-	"github.com/absolute8511/nsq/internal/version"
+	"github.com/youzan/nsq/internal/levellogger"
+	"github.com/youzan/nsq/internal/protocol"
+	"github.com/youzan/nsq/internal/version"
 )
 
 const (

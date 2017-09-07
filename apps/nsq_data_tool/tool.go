@@ -7,10 +7,10 @@ import (
 	"path"
 	"time"
 
-	"github.com/absolute8511/nsq/consistence"
-	"github.com/absolute8511/nsq/internal/levellogger"
-	"github.com/absolute8511/nsq/internal/version"
-	"github.com/absolute8511/nsq/nsqd"
+	"github.com/youzan/nsq/consistence"
+	"github.com/youzan/nsq/internal/levellogger"
+	"github.com/youzan/nsq/internal/version"
+	"github.com/youzan/nsq/nsqd"
 )
 
 var (

@@ -4,7 +4,7 @@ import (
 	"bufio"
 	"encoding/binary"
 	"fmt"
-	"github.com/absolute8511/nsq/internal/levellogger"
+	"github.com/youzan/nsq/internal/levellogger"
 	"io"
 	"os"
 	"sync"

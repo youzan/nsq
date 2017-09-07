@@ -5,7 +5,7 @@ import (
 	"os"
 	//"runtime"
 	"github.com/absolute8511/glog"
-	"github.com/absolute8511/nsq/internal/test"
+	"github.com/youzan/nsq/internal/test"
 	"path"
 	"path/filepath"
 	"strconv"

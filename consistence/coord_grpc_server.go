@@ -1,9 +1,9 @@
 package consistence
 
 import (
-	pb "github.com/absolute8511/nsq/consistence/coordgrpc"
-	"github.com/absolute8511/nsq/internal/levellogger"
-	"github.com/absolute8511/nsq/nsqd"
+	pb "github.com/youzan/nsq/consistence/coordgrpc"
+	"github.com/youzan/nsq/internal/levellogger"
+	"github.com/youzan/nsq/nsqd"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	"net"

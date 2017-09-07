@@ -14,8 +14,8 @@ import (
 	"syscall"
 
 	"github.com/absolute8511/go-nsq"
-	"github.com/absolute8511/nsq/internal/app"
-	"github.com/absolute8511/nsq/internal/version"
+	"github.com/youzan/nsq/internal/app"
+	"github.com/youzan/nsq/internal/version"
 )
 
 var (

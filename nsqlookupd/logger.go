@@ -1,8 +1,8 @@
 package nsqlookupd
 
 import (
-	"github.com/absolute8511/nsq/consistence"
-	"github.com/absolute8511/nsq/internal/levellogger"
+	"github.com/youzan/nsq/consistence"
+	"github.com/youzan/nsq/internal/levellogger"
 )
 
 var nsqlookupLog = levellogger.NewLevelLogger(1, &levellogger.SimpleLogger{})

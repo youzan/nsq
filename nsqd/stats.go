@@ -13,8 +13,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/absolute8511/nsq/internal/quantile"
-	"github.com/absolute8511/nsq/internal/util"
+	"github.com/youzan/nsq/internal/quantile"
+	"github.com/youzan/nsq/internal/util"
 )
 
 type TopicStats struct {

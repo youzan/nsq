@@ -1,7 +1,7 @@
 package consistence
 
 import (
-	"github.com/absolute8511/nsq/internal/levellogger"
+	"github.com/youzan/nsq/internal/levellogger"
 )
 
 var coordLog = levellogger.NewLevelLogger(levellogger.LOG_INFO, nil)

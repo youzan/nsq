@@ -4,7 +4,7 @@ import (
 	"container/heap"
 	"errors"
 	"fmt"
-	"github.com/absolute8511/nsq/nsqd"
+	"github.com/youzan/nsq/nsqd"
 	"math"
 	"sort"
 	"strconv"

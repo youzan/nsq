@@ -19,11 +19,11 @@ import (
 	"strings"
 
 	"github.com/absolute8511/go-nsq"
-	"github.com/absolute8511/nsq/internal/ext"
-	"github.com/absolute8511/nsq/internal/test"
-	"github.com/absolute8511/nsq/internal/version"
-	"github.com/absolute8511/nsq/nsqd"
-	"github.com/absolute8511/nsq/nsqlookupd"
+	"github.com/youzan/nsq/internal/ext"
+	"github.com/youzan/nsq/internal/test"
+	"github.com/youzan/nsq/internal/version"
+	"github.com/youzan/nsq/nsqd"
+	"github.com/youzan/nsq/nsqlookupd"
 )
 
 func TestHTTPpub(t *testing.T) {

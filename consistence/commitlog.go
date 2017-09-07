@@ -5,7 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"github.com/absolute8511/nsq/internal/util"
+	"github.com/youzan/nsq/internal/util"
 	"io"
 	"os"
 	"path/filepath"

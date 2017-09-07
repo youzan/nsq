@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/absolute8511/nsq/internal/flume_log"
-	"github.com/absolute8511/nsq/internal/levellogger"
+	"github.com/youzan/nsq/internal/flume_log"
+	"github.com/youzan/nsq/internal/levellogger"
 )
 
 const (

@@ -15,10 +15,10 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/absolute8511/glog"
-	"github.com/absolute8511/nsq/internal/app"
-	"github.com/absolute8511/nsq/internal/version"
-	"github.com/absolute8511/nsq/nsqd"
-	"github.com/absolute8511/nsq/nsqdserver"
+	"github.com/youzan/nsq/internal/app"
+	"github.com/youzan/nsq/internal/version"
+	"github.com/youzan/nsq/nsqd"
+	"github.com/youzan/nsq/nsqdserver"
 	"github.com/judwhite/go-svc/svc"
 	"github.com/mreiferson/go-options"
 )

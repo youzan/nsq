@@ -1,7 +1,7 @@
 package nsqd
 
 import (
-	//"github.com/absolute8511/nsq/internal/levellogger"
+	//"github.com/youzan/nsq/internal/levellogger"
 	"os"
 	"strconv"
 	"testing"

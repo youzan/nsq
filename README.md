@@ -1,8 +1,8 @@
 <p align="center">
 <img align="left" width="175" src="http://nsq.io/static/img/nsq_blue.png">
 <ul>
-<li><strong>Source</strong>: https://github.com/absolute8511/nsq
-<li><strong>Issues</strong>: https://github.com/absolute8511/nsq/issues
+<li><strong>Source</strong>: https://github.com/youzan/nsq
+<li><strong>Issues</strong>: https://github.com/youzan/nsq/issues
 <li><strong>Mailing List</strong>: <a href="https://groups.google.com/d/forum/nsq-users">nsq-users@googlegroups.com</a>
 <li><strong>IRC</strong>: #nsq on freenode
 <li><strong>Docs</strong>: http://nsq.io
@@ -10,8 +10,8 @@
 </ul>
 </p>
 
-[![Build Status](https://travis-ci.org/absolute8511/nsq.svg?branch=master)](https://travis-ci.org/absolute8511/nsq) [![GitHub release](https://img.shields.io/github/release/absolute8511/nsq.svg)](https://github.com/absolute8511/nsq/releases/latest)
-[![Go Report Card](https://goreportcard.com/badge/github.com/absolute8511/nsq)](https://goreportcard.com/report/github.com/absolute8511/nsq)
+[![Build Status](https://travis-ci.org/youzan/nsq.svg?branch=master)](https://travis-ci.org/youzan/nsq) [![GitHub release](https://img.shields.io/github/release/youzan/nsq.svg)](https://github.com/youzan/nsq/releases/latest)
+[![Go Report Card](https://goreportcard.com/badge/github.com/youzan/nsq)](https://goreportcard.com/report/github.com/youzan/nsq)
 
 **NSQ** is a realtime distributed messaging platform designed to operate at scale, handling
 billions of messages per day.
@@ -160,7 +160,7 @@ NSQ was designed and developed by Matt Reiferson ([@imsnakes][snakes_twitter]) a
 Logo created by Wolasi Konu ([@kisalow][wolasi_twitter]).
 
 [protocol]: http://nsq.io/clients/tcp_protocol_spec.html
-[installing]: https://github.com/absolute8511/nsq/releases/latest
+[installing]: https://github.com/youzan/nsq/releases/latest
 [snakes_twitter]: https://twitter.com/imsnakes
 [jehiah_twitter]: https://twitter.com/jehiah
 [bitly]: https://bitly.com

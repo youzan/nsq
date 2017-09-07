@@ -4,9 +4,9 @@ import (
 	"io"
 	"net"
 
-	"github.com/absolute8511/nsq/internal/levellogger"
-	"github.com/absolute8511/nsq/internal/protocol"
-	"github.com/absolute8511/nsq/nsqd"
+	"github.com/youzan/nsq/internal/levellogger"
+	"github.com/youzan/nsq/internal/protocol"
+	"github.com/youzan/nsq/nsqd"
 	"time"
 )
 

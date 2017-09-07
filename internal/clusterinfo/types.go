@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/absolute8511/gorpc"
-	"github.com/absolute8511/nsq/internal/quantile"
+	"github.com/youzan/nsq/internal/quantile"
 	"github.com/blang/semver"
 )
 

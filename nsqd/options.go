@@ -10,7 +10,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/absolute8511/nsq/internal/levellogger"
+	"github.com/youzan/nsq/internal/levellogger"
 )
 
 const (

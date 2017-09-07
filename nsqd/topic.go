@@ -14,11 +14,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/absolute8511/nsq/internal/ext"
-	"github.com/absolute8511/nsq/internal/levellogger"
-	"github.com/absolute8511/nsq/internal/protocol"
-	"github.com/absolute8511/nsq/internal/quantile"
-	"github.com/absolute8511/nsq/internal/util"
+	"github.com/youzan/nsq/internal/ext"
+	"github.com/youzan/nsq/internal/levellogger"
+	"github.com/youzan/nsq/internal/protocol"
+	"github.com/youzan/nsq/internal/quantile"
+	"github.com/youzan/nsq/internal/util"
 )
 
 const (

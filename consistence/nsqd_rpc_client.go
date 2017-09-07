@@ -2,8 +2,8 @@ package consistence
 
 import (
 	"github.com/absolute8511/gorpc"
-	pb "github.com/absolute8511/nsq/consistence/coordgrpc"
-	"github.com/absolute8511/nsq/nsqd"
+	pb "github.com/youzan/nsq/consistence/coordgrpc"
+	"github.com/youzan/nsq/nsqd"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	"sync"

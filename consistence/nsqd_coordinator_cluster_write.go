@@ -6,8 +6,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/absolute8511/nsq/internal/levellogger"
-	"github.com/absolute8511/nsq/nsqd"
+	"github.com/youzan/nsq/internal/levellogger"
+	"github.com/youzan/nsq/nsqd"
 )
 
 type localWriteFunc func(*coordData) *CoordErr

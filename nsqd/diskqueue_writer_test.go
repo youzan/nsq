@@ -3,8 +3,8 @@ package nsqd
 import (
 	"bytes"
 	"fmt"
-	_ "github.com/absolute8511/nsq/internal/levellogger"
-	"github.com/absolute8511/nsq/internal/test"
+	_ "github.com/youzan/nsq/internal/levellogger"
+	"github.com/youzan/nsq/internal/test"
 	"io/ioutil"
 	"os"
 	"strconv"

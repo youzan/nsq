@@ -14,10 +14,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/absolute8511/nsq/internal/version"
-	"github.com/absolute8511/nsq/nsqd"
-	"github.com/absolute8511/nsq/nsqdserver"
-	"github.com/absolute8511/nsq/nsqlookupd"
+	"github.com/youzan/nsq/internal/version"
+	"github.com/youzan/nsq/nsqd"
+	"github.com/youzan/nsq/nsqdserver"
+	"github.com/youzan/nsq/nsqlookupd"
 	"github.com/bitly/go-simplejson"
 )
 

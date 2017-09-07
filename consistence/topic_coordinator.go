@@ -1,7 +1,7 @@
 package consistence
 
 import (
-	"github.com/absolute8511/nsq/nsqd"
+	"github.com/youzan/nsq/nsqd"
 	"os"
 	"path"
 	"sync"

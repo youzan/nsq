@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/absolute8511/nsq/internal/test"
+	"github.com/youzan/nsq/internal/test"
 	etcdlock "github.com/reechou/xlock2"
 	"golang.org/x/net/context"
 )

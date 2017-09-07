@@ -9,9 +9,9 @@ import (
 	"time"
 
 	"github.com/absolute8511/go-nsq"
-	"github.com/absolute8511/nsq/internal/clusterinfo"
-	"github.com/absolute8511/nsq/internal/version"
-	"github.com/absolute8511/nsq/nsqd"
+	"github.com/youzan/nsq/internal/clusterinfo"
+	"github.com/youzan/nsq/internal/version"
+	"github.com/youzan/nsq/nsqd"
 )
 
 func connectCallback(ctx *context, hostname string, syncTopicChan chan *clusterinfo.LookupPeer, exitChan chan int) func(*clusterinfo.LookupPeer) {

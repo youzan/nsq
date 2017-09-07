@@ -7,9 +7,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/absolute8511/nsq/consistence"
-	"github.com/absolute8511/nsq/internal/ext"
-	"github.com/absolute8511/nsq/nsqd"
+	"github.com/youzan/nsq/consistence"
+	"github.com/youzan/nsq/internal/ext"
+	"github.com/youzan/nsq/nsqd"
 )
 
 const (

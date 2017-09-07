@@ -10,13 +10,13 @@ import (
 	"strconv"
 	"sync/atomic"
 
-	"github.com/absolute8511/nsq/consistence"
-	"github.com/absolute8511/nsq/nsqd"
+	"github.com/youzan/nsq/consistence"
+	"github.com/youzan/nsq/nsqd"
 
-	"github.com/absolute8511/nsq/internal/http_api"
-	"github.com/absolute8511/nsq/internal/protocol"
-	"github.com/absolute8511/nsq/internal/util"
-	"github.com/absolute8511/nsq/internal/version"
+	"github.com/youzan/nsq/internal/http_api"
+	"github.com/youzan/nsq/internal/protocol"
+	"github.com/youzan/nsq/internal/util"
+	"github.com/youzan/nsq/internal/version"
 )
 
 type NsqdServer struct {

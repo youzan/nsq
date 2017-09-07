@@ -14,14 +14,14 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/absolute8511/nsq/internal/clusterinfo"
-	"github.com/absolute8511/nsq/internal/dirlock"
-	"github.com/absolute8511/nsq/internal/http_api"
-	"github.com/absolute8511/nsq/internal/levellogger"
-	"github.com/absolute8511/nsq/internal/protocol"
-	"github.com/absolute8511/nsq/internal/statsd"
-	"github.com/absolute8511/nsq/internal/util"
-	"github.com/absolute8511/nsq/internal/version"
+	"github.com/youzan/nsq/internal/clusterinfo"
+	"github.com/youzan/nsq/internal/dirlock"
+	"github.com/youzan/nsq/internal/http_api"
+	"github.com/youzan/nsq/internal/levellogger"
+	"github.com/youzan/nsq/internal/protocol"
+	"github.com/youzan/nsq/internal/statsd"
+	"github.com/youzan/nsq/internal/util"
+	"github.com/youzan/nsq/internal/version"
 	"github.com/bitly/go-simplejson"
 )
 

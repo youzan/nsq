@@ -13,8 +13,8 @@ import (
 	"time"
 
 	"github.com/absolute8511/glog"
-	"github.com/absolute8511/nsq/internal/levellogger"
-	"github.com/absolute8511/nsq/internal/test"
+	"github.com/youzan/nsq/internal/levellogger"
+	"github.com/youzan/nsq/internal/test"
 )
 
 const (

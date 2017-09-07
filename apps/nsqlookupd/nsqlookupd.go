@@ -11,9 +11,9 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/absolute8511/glog"
-	"github.com/absolute8511/nsq/internal/app"
-	"github.com/absolute8511/nsq/internal/version"
-	"github.com/absolute8511/nsq/nsqlookupd"
+	"github.com/youzan/nsq/internal/app"
+	"github.com/youzan/nsq/internal/version"
+	"github.com/youzan/nsq/nsqlookupd"
 	"github.com/judwhite/go-svc/svc"
 	"github.com/mreiferson/go-options"
 )

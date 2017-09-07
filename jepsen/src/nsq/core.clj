@@ -54,7 +54,7 @@
             (c/exec :chmod :-R "a+rwx" "/opt/nsq")
             (c/exec :rm :-f (c/lit (str "/opt/nsq/" nsq-package ".tar.gz*")))
             (info node "downloading nsq")
-            ;(c/exec :wget "https://github.com/absolute8511/nsq/releases/download/v0.3.7-HA.1.5.3.1/nsq-0.3.7-HA.1.5.3.1.linux-amd64.go1.7.4.tar.gz")
+            ;(c/exec :wget "https://github.com/youzan/nsq/releases/download/v0.3.7-HA.1.5.3.1/nsq-0.3.7-HA.1.5.3.1.linux-amd64.go1.7.4.tar.gz")
             (c/upload (.getFile (io/resource (str nsq-package ".tar.gz"))) (str "/opt/nsq/" nsq-package ".tar.gz"))
             (info node "tar nsq")
             (c/exec :tar :-xvzf (str nsq-package ".tar.gz"))

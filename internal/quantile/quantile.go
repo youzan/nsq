@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/absolute8511/nsq/internal/stringy"
+	"github.com/youzan/nsq/internal/stringy"
 	"github.com/bmizerany/perks/quantile"
 )
 

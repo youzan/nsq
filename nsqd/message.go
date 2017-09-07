@@ -8,7 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/absolute8511/nsq/internal/ext"
+	"github.com/youzan/nsq/internal/ext"
 )
 
 const (

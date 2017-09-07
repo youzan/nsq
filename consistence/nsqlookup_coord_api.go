@@ -6,7 +6,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/absolute8511/nsq/internal/protocol"
+	"github.com/youzan/nsq/internal/protocol"
 )
 
 const (

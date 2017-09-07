@@ -2,7 +2,7 @@ package consistence
 
 import (
 	"fmt"
-	"github.com/absolute8511/nsq/internal/test"
+	"github.com/youzan/nsq/internal/test"
 	"testing"
 	"time"
 )

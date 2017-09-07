@@ -1,10 +1,10 @@
 package nsqd
 
 import (
-	//"github.com/absolute8511/nsq/internal/levellogger"
+	//"github.com/youzan/nsq/internal/levellogger"
 	"fmt"
-	"github.com/absolute8511/nsq/internal/ext"
-	"github.com/absolute8511/nsq/internal/test"
+	"github.com/youzan/nsq/internal/ext"
+	"github.com/youzan/nsq/internal/test"
 	"io/ioutil"
 	"os"
 	"path"

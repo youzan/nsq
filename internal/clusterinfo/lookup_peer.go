@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/absolute8511/go-nsq"
-	"github.com/absolute8511/nsq/internal/levellogger"
+	"github.com/youzan/nsq/internal/levellogger"
 )
 
 // lookupPeer is a low-level type for connecting/reading/writing to nsqlookupd

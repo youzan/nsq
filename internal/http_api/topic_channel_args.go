@@ -3,7 +3,7 @@ package http_api
 import (
 	"errors"
 
-	"github.com/absolute8511/nsq/internal/protocol"
+	"github.com/youzan/nsq/internal/protocol"
 	"strconv"
 )
 

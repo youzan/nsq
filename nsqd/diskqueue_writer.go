@@ -14,7 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/absolute8511/nsq/internal/util"
+	"github.com/youzan/nsq/internal/util"
 )
 
 const (

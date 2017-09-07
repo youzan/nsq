@@ -11,9 +11,9 @@ import (
 	"time"
 
 	"github.com/absolute8511/glog"
-	"github.com/absolute8511/nsq/internal/levellogger"
-	"github.com/absolute8511/nsq/internal/test"
-	nsqdNs "github.com/absolute8511/nsq/nsqd"
+	"github.com/youzan/nsq/internal/levellogger"
+	"github.com/youzan/nsq/internal/test"
+	nsqdNs "github.com/youzan/nsq/nsqd"
 )
 
 type fakeConsumer struct {
