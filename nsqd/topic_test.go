@@ -4,13 +4,14 @@ import (
 	"errors"
 	"os"
 	//"runtime"
-	"github.com/absolute8511/glog"
-	"github.com/youzan/nsq/internal/test"
 	"path"
 	"path/filepath"
 	"strconv"
 	"testing"
 	"time"
+
+	"github.com/absolute8511/glog"
+	"github.com/youzan/nsq/internal/test"
 )
 
 func TestGetTopic(t *testing.T) {
@@ -508,7 +509,7 @@ func TestTopicResetWithQueueStart(t *testing.T) {
 
 	for i := 0; i < msgNum; i++ {
 		msg.ID = 0
-		_, _, msgSize, _, _ = topic.PutMessage(msg)
+		topic.PutMessage(msg)
 	}
 	topic.ForceFlush()
 	newEnd = topic.backend.GetQueueWriteEnd().(*diskQueueEndInfo)

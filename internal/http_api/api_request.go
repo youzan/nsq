@@ -189,7 +189,7 @@ retry:
 }
 
 func (c *Client) POSTV1WithContent(endpoint string, content string) (int, error) {
-	retry:
+retry:
 	req, err := http.NewRequest("POST", endpoint, strings.NewReader(content))
 	if err != nil {
 		return -1, err

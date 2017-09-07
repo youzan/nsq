@@ -106,7 +106,7 @@ func main() {
 			nsqd.NsqLogger().Infof("peeked channel msg : %v", m)
 		}
 
-		cnt, err = delayQ.PeekAll(rets)
+		cnt, _ = delayQ.PeekAll(rets)
 		for _, m := range rets[:cnt] {
 			nsqd.NsqLogger().Infof("peeked msg : %v", m)
 		}

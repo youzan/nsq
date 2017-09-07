@@ -25,13 +25,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/golang/snappy"
 	"github.com/youzan/go-nsq"
 	"github.com/youzan/nsq/internal/ext"
 	"github.com/youzan/nsq/internal/levellogger"
 	"github.com/youzan/nsq/internal/protocol"
 	"github.com/youzan/nsq/internal/test"
 	nsqdNs "github.com/youzan/nsq/nsqd"
-	"github.com/golang/snappy"
 )
 
 func identify(t *testing.T, conn io.ReadWriter, extra map[string]interface{}, f int32) []byte {
@@ -118,6 +118,7 @@ func subFail(t *testing.T, conn io.ReadWriter, topicName string, channelName str
 	_, err := nsq.Subscribe(topicName, channelName).WriteTo(conn)
 	test.Equal(t, err, nil)
 	resp, err := nsq.ReadResponse(conn)
+	test.Nil(t, err)
 	frameType, _, _ := nsq.UnpackResponse(resp)
 	test.Equal(t, frameType, frameTypeError)
 }

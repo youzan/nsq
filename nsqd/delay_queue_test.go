@@ -2,15 +2,16 @@ package nsqd
 
 import (
 	//"github.com/youzan/nsq/internal/levellogger"
+	"encoding/json"
 	"fmt"
-	"github.com/youzan/nsq/internal/ext"
-	"github.com/youzan/nsq/internal/test"
 	"io/ioutil"
 	"os"
 	"path"
 	"testing"
 	"time"
-	"encoding/json"
+
+	"github.com/youzan/nsq/internal/ext"
+	"github.com/youzan/nsq/internal/test"
 )
 
 func TestDelayQueuePutChannelDelayed(t *testing.T) {
@@ -158,6 +159,7 @@ func TestDelayQueueEmptyUntil(t *testing.T) {
 		msg.DelayedChannel = "test2"
 		msg.DelayedOrigID = MessageID(i + 1)
 		_, _, _, _, err = dq.PutDelayMessage(msg)
+		test.Nil(t, err)
 		time.Sleep(time.Millisecond * 100)
 	}
 
@@ -170,6 +172,7 @@ func TestDelayQueueEmptyUntil(t *testing.T) {
 	recent, _, _ := dq.GetOldestConsumedState([]string{"test"}, true)
 	test.Equal(t, 1, len(recent))
 	_, ts, id, ch, err := decodeDelayedMsgDBKey(recent[0])
+	test.Nil(t, err)
 	test.Equal(t, middle.DelayedChannel, ch)
 	test.Equal(t, middle.ID, id)
 	test.Equal(t, middle.DelayedTs, ts)
@@ -215,6 +218,7 @@ func TestDelayQueuePeekRecent(t *testing.T) {
 		msg.DelayedChannel = "test2"
 		msg.DelayedOrigID = MessageID(i + 1)
 		_, _, _, _, err = dq.PutDelayMessage(msg)
+		test.Nil(t, err)
 		time.Sleep(time.Millisecond * 100)
 	}
 
@@ -272,6 +276,7 @@ func TestDelayQueueConfirmMsg(t *testing.T) {
 		msg.DelayedChannel = "test2"
 		msg.DelayedOrigID = MessageID(i + 1)
 		_, _, _, _, err = dq.PutDelayMessage(msg)
+		test.Nil(t, err)
 		time.Sleep(time.Millisecond * 100)
 	}
 
@@ -381,6 +386,7 @@ func TestDelayQueueBackupRestore(t *testing.T) {
 		msg.DelayedChannel = "test2"
 		msg.DelayedOrigID = MessageID(i + 1)
 		_, _, _, _, err = dq.PutDelayMessage(msg)
+		test.Nil(t, err)
 		time.Sleep(time.Millisecond * 100)
 	}
 
@@ -509,6 +515,7 @@ func TestDelayQueueCompactStore(t *testing.T) {
 	err = dq.compactStore(false)
 	test.Nil(t, err)
 	fi2, err = os.Stat(dq.getStore().Path())
+	test.Nil(t, err)
 	t.Log(fi)
 	t.Log(fi2)
 	afterCompact, _ = dq.GetCurrentDelayedCnt(ChannelDelayed, "test")

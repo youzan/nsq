@@ -4,13 +4,14 @@ import (
 	"container/heap"
 	"errors"
 	"fmt"
-	"github.com/youzan/nsq/nsqd"
 	"math"
 	"sort"
 	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"github.com/youzan/nsq/nsqd"
 )
 
 // new topic can have an advice load factor to give the suggestion about the

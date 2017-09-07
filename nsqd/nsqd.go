@@ -35,6 +35,7 @@ type errStore struct {
 	err error
 }
 
+
 var (
 	ErrTopicPartitionMismatch = errors.New("topic partition mismatch")
 	ErrTopicNotExist          = errors.New("topic does not exist")
