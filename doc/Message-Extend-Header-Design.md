@@ -104,3 +104,13 @@ The meta info responsed from lookup api in the nsqlookupd will add new json fiel
  ...
 ```
 
+## create or upgrade a topic with extend support 
+Send http api to nsqlookupd to create topic with ext
+```
+curl -X POST "http://127.0.0.1:4161/topic/creat?topic=xxx&partition_num=2&replicator=2&extend=true"
+```
+If you want upgrade the old topic to new topic with ext supported, use the below api
+```
+curl -X POST "http://127.0.0.1:4161/topic/meta/update?topic=replay_rpc_copy&upgradeext=true"
+```
+
