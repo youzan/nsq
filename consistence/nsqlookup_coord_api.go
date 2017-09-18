@@ -426,6 +426,9 @@ func (self *NsqLookupCoordinator) ChangeTopicMetaParam(topic string,
 				coordLog.Infof("failed get info for topic : %v-%v, %v", topic, i, err)
 				continue
 			}
+			if topicInfo.TopicMetaInfo != meta {
+				coordLog.Warningf("topic partition meta info %v should match topic meta %v", topicInfo, meta)
+			}
 			topicReplicaInfo := &topicInfo.TopicPartitionReplicaInfo
 			err = self.leadership.UpdateTopicNodeInfo(topic, i, topicReplicaInfo, topicReplicaInfo.Epoch)
 			if err != nil {

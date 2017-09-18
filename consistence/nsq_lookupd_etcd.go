@@ -653,18 +653,20 @@ func (self *NsqLookupdEtcdMgr) UpdateTopicMetaInfo(topic string, meta *TopicMeta
 
 	self.tmiMutex.Lock()
 	defer self.tmiMutex.Unlock()
-	delete(self.topicMetaMap, topic)
-	atomic.StoreInt32(&self.ifTopicChanged, 1)
 	rsp, err := self.client.CompareAndSwap(self.createTopicMetaPath(topic), string(value), 0, "", uint64(oldGen))
 	if err != nil {
 		return err
 	}
-	err = json.Unmarshal([]byte(rsp.Node.Value), &meta)
+	delete(self.topicMetaMap, topic)
+	var newMeta TopicMetaInfo
+	err = json.Unmarshal([]byte(rsp.Node.Value), &newMeta)
 	if err != nil {
 		coordLog.Errorf("unmarshal meta info failed: %v, %v", err, rsp.Node.Value)
+		atomic.StoreInt32(&self.ifTopicChanged, 1)
 		return err
 	}
-	self.topicMetaMap[topic] = meta
+	self.topicMetaMap[topic] = &newMeta
+	atomic.StoreInt32(&self.ifTopicChanged, 1)
 
 	return nil
 }

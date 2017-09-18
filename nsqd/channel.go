@@ -1036,11 +1036,10 @@ func (c *Channel) RequeueMessage(clientID int64, clientAddr string, id MessageID
 			msg.GetClientID(), clientID)
 	}
 	newTimeout := time.Now().Add(timeout)
-	if (newTimeout.Sub(msg.deliveryTS) >
-		c.option.ReqToEndThreshold) ||
+	if (timeout > c.option.ReqToEndThreshold) ||
 		(newTimeout.Sub(msg.deliveryTS) >=
 			c.option.MaxReqTimeout) {
-		nsqLog.Logf("too long timeout %v, %v, %v, should req message: %v to delayed queue",
+		nsqLog.Logf("ch %v too long timeout %v, %v, %v, should req message: %v to delayed queue", c.GetName(),
 			newTimeout, msg.deliveryTS, timeout, id)
 	}
 	deCnt := atomic.LoadInt64(&c.deferredCount)
