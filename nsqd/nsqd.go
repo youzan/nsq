@@ -79,10 +79,12 @@ type NSQD struct {
 
 	ci              *clusterinfo.ClusterInfo
 	exiting         bool
-	persisting      int32
 	pubLoopFunc     func(t *Topic)
 	reqToEndCB      ReqToEndFunc
 	scanTriggerChan chan *Channel
+	persistNotifyCh chan struct{}
+	persistClosed   chan struct{}
+	persistWaitGroup     util.WaitGroupWrapper
 }
 
 func New(opts *Options) *NSQD {
@@ -108,6 +110,8 @@ func New(opts *Options) *NSQD {
 		ci:                   clusterinfo.New(opts.Logger, http_api.NewClient(nil)),
 		dl:                   dirlock.New(dataPath),
 		scanTriggerChan:      make(chan *Channel, 1),
+		persistNotifyCh:      make(chan struct{}, 2),
+		persistClosed:        make(chan struct{}),
 	}
 	n.SwapOpts(opts)
 
@@ -252,6 +256,7 @@ func (n *NSQD) GetTopicMapCopy() map[string]map[int]*Topic {
 
 func (n *NSQD) Start() {
 	n.waitGroup.Wrap(func() { n.queueScanLoop() })
+	n.persistWaitGroup.Wrap(func() { n.persistLoop() })
 }
 
 func (n *NSQD) LoadMetadata(disabled int32) {
@@ -345,12 +350,28 @@ func (n *NSQD) LoadMetadata(disabled int32) {
 	}
 }
 
-func (n *NSQD) PersistMetadata(currentTopicMap map[string]map[int]*Topic) error {
-	if !atomic.CompareAndSwapInt32(&n.persisting, 0, 1) {
-		nsqLog.Logf("NSQ: persisting is already running")
-		return nil
+func (n *NSQD) persistLoop() {
+	for {
+		select {
+		case <-n.persistClosed:
+			tmpMap := n.GetTopicMapCopy()
+			n.persistMetadata(tmpMap)
+			return
+		case <-n.persistNotifyCh:
+			tmpMap := n.GetTopicMapCopy()
+			n.persistMetadata(tmpMap)
+		}
 	}
-	defer atomic.StoreInt32(&n.persisting, 0)
+}
+
+func (n *NSQD) NotifyPersistMetadata() {
+	select {
+	case n.persistNotifyCh <- struct{}{}:
+	default:
+	}
+}
+
+func (n *NSQD) persistMetadata(currentTopicMap map[string]map[int]*Topic) error {
 	// persist metadata about what topics/channels we have
 	// so that upon restart we can get back to the same state
 	fileName := fmt.Sprintf(path.Join(n.GetOpts().DataPath, "nsqd.%d.dat"), n.GetOpts().ID)
@@ -418,11 +439,9 @@ func (n *NSQD) Exit() {
 	n.exiting = true
 	n.Unlock()
 
+	close(n.persistClosed)
+	n.persistWaitGroup.Wait()
 	tmpMap := n.GetTopicMapCopy()
-	err := n.PersistMetadata(tmpMap)
-	if err != nil {
-		nsqLog.LogErrorf(" failed to persist metadata - %s", err)
-	}
 	nsqLog.Logf("NSQ: closing topics")
 	for _, topics := range tmpMap {
 		for _, topic := range topics {
@@ -723,11 +742,7 @@ func (n *NSQD) NotifyStateChanged(v interface{}, needPersist bool) {
 			if !persist || !needPersist {
 				return
 			}
-			tmpMap := n.GetTopicMapCopy()
-			err := n.PersistMetadata(tmpMap)
-			if err != nil {
-				nsqLog.LogErrorf("failed to persist metadata - %s", err)
-			}
+			n.NotifyPersistMetadata()
 		}
 	})
 }

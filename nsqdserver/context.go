@@ -115,8 +115,7 @@ func (c *context) deleteExistingTopic(name string, part int) error {
 }
 
 func (c *context) persistMetadata() {
-	tmpMap := c.nsqd.GetTopicMapCopy()
-	c.nsqd.PersistMetadata(tmpMap)
+	c.nsqd.NotifyPersistMetadata()
 }
 
 func (c *context) GetDistributedID() string {

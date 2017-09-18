@@ -621,6 +621,7 @@ func TestDiskQueueWriterTorture(t *testing.T) {
 					equal(t, nil, m.Err)
 					newr := atomic.AddInt64(&read, int64(4+len(m.Data)))
 					if newr >= depth {
+						t.Logf("confirmed to %v, msg: %v", newr, m)
 						dqReader.ConfirmRead(BackendOffset(newr), m.CurCnt)
 					}
 				}
@@ -639,6 +640,7 @@ func TestDiskQueueWriterTorture(t *testing.T) {
 			break
 		}
 		if time.Since(start) > time.Minute {
+			t.Errorf("test cost too long")
 			break
 		}
 		time.Sleep(time.Second)

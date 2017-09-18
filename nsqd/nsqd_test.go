@@ -141,7 +141,7 @@ func TestStartup(t *testing.T) {
 	}()
 
 	// verify nsqd metadata shows no topics
-	err := nsqd.PersistMetadata(nsqd.GetTopicMapCopy())
+	err := nsqd.persistMetadata(nsqd.GetTopicMapCopy())
 	equal(t, err, nil)
 	atomic.StoreInt32(&nsqd.isLoading, 1)
 	nsqd.GetTopicIgnPart(topicName) // will not persist if `flagLoading`
@@ -173,7 +173,7 @@ func TestStartup(t *testing.T) {
 	equal(t, backEnd.TotalMsgCnt(), int64(iterations))
 	channel2 := topic.GetChannel("ch2")
 
-	err = nsqd.PersistMetadata(nsqd.GetTopicMapCopy())
+	err = nsqd.persistMetadata(nsqd.GetTopicMapCopy())
 	equal(t, err, nil)
 	t.Logf("msgs: depth: %v. %v", channel1.Depth(), channel1.DepthSize())
 	equal(t, channel1.Depth(), int64(iterations))
@@ -275,13 +275,13 @@ func TestPauseMetadata(t *testing.T) {
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqd.Exit()
 
-	// avoid concurrency issue of async PersistMetadata() calls
+	// avoid concurrency issue of async persistMetadata() calls
 	atomic.StoreInt32(&nsqd.isLoading, 1)
 	topicName := "pause_metadata" + strconv.Itoa(int(time.Now().Unix()))
 	topic := nsqd.GetTopicIgnPart(topicName)
 	channel := topic.GetChannel("ch")
 	atomic.StoreInt32(&nsqd.isLoading, 0)
-	nsqd.PersistMetadata(nsqd.GetTopicMapCopy())
+	nsqd.persistMetadata(nsqd.GetTopicMapCopy())
 
 	b, _ := metadataForChannel(nsqd, topic, 0).Get("paused").Bool()
 	equal(t, b, false)
@@ -290,7 +290,7 @@ func TestPauseMetadata(t *testing.T) {
 	b, _ = metadataForChannel(nsqd, topic, 0).Get("paused").Bool()
 	equal(t, b, false)
 
-	nsqd.PersistMetadata(nsqd.GetTopicMapCopy())
+	nsqd.persistMetadata(nsqd.GetTopicMapCopy())
 	b, _ = metadataForChannel(nsqd, topic, 0).Get("paused").Bool()
 	equal(t, b, true)
 
@@ -298,7 +298,7 @@ func TestPauseMetadata(t *testing.T) {
 	b, _ = metadataForChannel(nsqd, topic, 0).Get("paused").Bool()
 	equal(t, b, true)
 
-	nsqd.PersistMetadata(nsqd.GetTopicMapCopy())
+	nsqd.persistMetadata(nsqd.GetTopicMapCopy())
 	b, _ = metadataForChannel(nsqd, topic, 0).Get("paused").Bool()
 	equal(t, b, false)
 }
@@ -310,13 +310,13 @@ func TestSkipMetaData(t *testing.T) {
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqd.Exit()
 
-	// avoid concurrency issue of async PersistMetadata() calls
+	// avoid concurrency issue of async persistMetadata() calls
 	atomic.StoreInt32(&nsqd.isLoading, 1)
 	topicName := "skip_metadata" + strconv.Itoa(int(time.Now().Unix()))
 	topic := nsqd.GetTopicIgnPart(topicName)
 	channel := topic.GetChannel("ch")
 	atomic.StoreInt32(&nsqd.isLoading, 0)
-	nsqd.PersistMetadata(nsqd.GetTopicMapCopy())
+	nsqd.persistMetadata(nsqd.GetTopicMapCopy())
 
 	b, _ := metadataForChannel(nsqd, topic, 0).Get("skipped").Bool()
 	equal(t, b, false)
@@ -325,7 +325,7 @@ func TestSkipMetaData(t *testing.T) {
 	b, _ = metadataForChannel(nsqd, topic, 0).Get("skipped").Bool()
 	equal(t, b, false)
 
-	nsqd.PersistMetadata(nsqd.GetTopicMapCopy())
+	nsqd.persistMetadata(nsqd.GetTopicMapCopy())
 	b, _ = metadataForChannel(nsqd, topic, 0).Get("skipped").Bool()
 	equal(t, b, true)
 
@@ -333,7 +333,7 @@ func TestSkipMetaData(t *testing.T) {
 	b, _ = metadataForChannel(nsqd, topic, 0).Get("skipped").Bool()
 	equal(t, b, true)
 
-	nsqd.PersistMetadata(nsqd.GetTopicMapCopy())
+	nsqd.persistMetadata(nsqd.GetTopicMapCopy())
 	b, _ = metadataForChannel(nsqd, topic, 0).Get("skipped").Bool()
 	equal(t, b, false)
 }
@@ -368,7 +368,7 @@ func TestLoadTopicMetaExt(t *testing.T) {
 	defer os.RemoveAll(opts.DataPath)
 	//defer nsqd.Exit()
 
-	// avoid concurrency issue of async PersistMetadata() calls
+	// avoid concurrency issue of async persistMetadata() calls
 	atomic.StoreInt32(&nsqd.isLoading, 1)
 	topicName := "load_topic_meta" + strconv.Itoa(int(time.Now().Unix()))
 	topic := nsqd.GetTopicIgnPart(topicName)
@@ -385,7 +385,7 @@ func TestLoadTopicMetaExt(t *testing.T) {
 	topicExt.GetChannel("ch")
 
 	atomic.StoreInt32(&nsqd.isLoading, 0)
-	nsqd.PersistMetadata(nsqd.GetTopicMapCopy())
+	nsqd.persistMetadata(nsqd.GetTopicMapCopy())
 	nsqd.Exit()
 
 	_, _, nsqd = mustStartNSQD(opts)

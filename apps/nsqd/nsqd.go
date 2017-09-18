@@ -253,10 +253,8 @@ func (p *program) Start() error {
 	nsqd, nsqdServer := nsqdserver.NewNsqdServer(opts)
 
 	nsqd.LoadMetadata(initDisabled)
-	err := nsqd.PersistMetadata(nsqd.GetTopicMapCopy())
-	if err != nil {
-		log.Fatalf("ERROR: failed to persist metadata - %s", err.Error())
-	}
+	nsqd.NotifyPersistMetadata()
+
 	nsqdServer.Main()
 	p.nsqdServer = nsqdServer
 	return nil
