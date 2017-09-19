@@ -12,21 +12,21 @@ import (
 	"os"
 	"strings"
 
+	etcdlock "github.com/absolute8511/xlock2"
 	"github.com/coreos/etcd/client"
-	"github.com/coreos/go-etcd/etcd"
 )
 
 var (
 	hostname string
 )
 
-func NewEtcdClient(etcdHost string) *etcd.Client {
+func NewEtcdClient(etcdHost string) *etcdlock.EtcdClient {
 	machines := strings.Split(etcdHost, ",")
 	initEtcdPeers(machines)
 	if len(machines) == 1 && machines[0] == "" {
 		machines[0] = "http://127.0.0.1:4001"
 	}
-	return etcd.NewClient(machines)
+	return etcdlock.NewEClient(etcdHost)
 }
 
 func initEtcdPeers(machines []string) error {
@@ -44,8 +44,7 @@ func initEtcdPeers(machines []string) error {
 }
 
 func CheckKeyIfExist(err error) bool {
-	etcdErr, ok := err.(*etcd.EtcdError)
-	return ok && etcdErr != nil && etcdErr.ErrorCode == 100
+	return isEtcdErrorNum(err, client.ErrorCodeKeyNotFound)
 }
 
 func IsEtcdNotFile(err error) bool {
