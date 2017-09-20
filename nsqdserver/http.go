@@ -77,6 +77,7 @@ func newHTTPServer(ctx *context, tlsEnabled bool, tlsRequired bool) *httpServer 
 	router.Handle("POST", "/channel/create", http_api.Decorate(s.doCreateChannel, log, http_api.V1))
 	router.Handle("POST", "/channel/delete", http_api.Decorate(s.doDeleteChannel, log, http_api.V1))
 	router.Handle("POST", "/channel/empty", http_api.Decorate(s.doEmptyChannel, log, http_api.V1))
+	router.Handle("POST", "/channel/emptydelayed", http_api.Decorate(s.doEmptyChannelDelayed, log, http_api.V1))
 	router.Handle("POST", "/channel/setoffset", http_api.Decorate(s.doSetChannelOffset, log, http_api.V1))
 	router.Handle("POST", "/channel/setorder", http_api.Decorate(s.doSetChannelOrder, log, http_api.V1))
 	router.Handle("GET", "/config/:opt", http_api.Decorate(s.doConfig, log, http_api.V1))
@@ -575,6 +576,30 @@ func (s *httpServer) doEmptyChannel(w http.ResponseWriter, req *http.Request, ps
 		err = s.ctx.EmptyChannelDelayedQueue(channel)
 		if err != nil {
 			nsqd.NsqLogger().Logf("empty the channel %v failed to empty delayed: %v, by client:%v",
+				channelName, err, req.RemoteAddr)
+		}
+	} else {
+		nsqd.NsqLogger().LogDebugf("should request to master: %v, from %v",
+			topic.GetFullName(), req.RemoteAddr)
+		return nil, http_api.Err{400, FailedOnNotLeader}
+	}
+	return nil, nil
+}
+
+func (s *httpServer) doEmptyChannelDelayed(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {
+	_, topic, channelName, err := s.getExistingTopicChannelFromQuery(req)
+	if err != nil {
+		return nil, err
+	}
+	channel, err := topic.GetExistingChannel(channelName)
+	if err != nil {
+		return nil, http_api.Err{404, "CHANNEL_NOT_FOUND"}
+	}
+
+	if s.ctx.checkForMasterWrite(topic.GetTopicName(), topic.GetTopicPart()) {
+		err = s.ctx.EmptyChannelDelayedQueue(channel)
+		if err != nil {
+			nsqd.NsqLogger().Logf("failed to empty the channel %v delayed data: %v, by client:%v",
 				channelName, err, req.RemoteAddr)
 		}
 	} else {
