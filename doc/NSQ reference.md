@@ -1,5 +1,10 @@
 # 新版使用指南
 
+## 源码编译步骤
+- 首先确保安装了依赖管理工具, wget https://raw.githubusercontent.com/pote/gpm/v1.4.0/bin/gpm && chmod +x gpm && sudo mv gpm /usr/local/bin
+- 执行 ./pre-dist.sh, 准备编译环境并安装依赖
+- 执行 ./dist.sh, 编译并打包
+
 ## 简易部署配置指南
 大部分参数和原版本一致, 除了几个新的集群相关的配置之外. 简单的配置步骤如下:
 
