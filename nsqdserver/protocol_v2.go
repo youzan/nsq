@@ -1168,8 +1168,8 @@ func (p *protocolV2) REQ(client *nsqd.ClientV2, params [][]byte) ([]byte, error)
 	if err != nil {
 		client.IncrSubError(int64(1))
 
-		nsqd.NsqLogger().LogWarningf("client %v req failed for topic: %v, %v, %v, %v",
-			client, client.Channel.GetTopicName(), client.Channel.GetName(), msgID, timeoutDuration)
+		nsqd.NsqLogger().LogWarningf("client %v req failed %v for topic: %v, %v, %v, %v",
+			client, err.Error(), client.Channel.GetTopicName(), client.Channel.GetName(), msgID, timeoutDuration)
 		return nil, protocol.NewClientErr(err, "E_REQ_FAILED",
 			fmt.Sprintf("REQ %v failed %s", *id, err.Error()))
 	}
