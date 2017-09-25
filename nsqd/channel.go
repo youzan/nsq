@@ -1790,10 +1790,9 @@ func parseTagIfAny(msg *Message) (string, error) {
 }
 
 func (c *Channel) GetChannelDebugStats() string {
-	debugStr := "channel :" + c.GetName() + "\n"
 	c.inFlightMutex.Lock()
 	inFlightCount := len(c.inFlightMessages)
-	debugStr += fmt.Sprintf("inflight %v messages : ", inFlightCount)
+	debugStr := fmt.Sprintf("topic %v channel %v \ninflight %v messages : ", c.GetTopicName(), c.GetName(), inFlightCount)
 	if nsqLog.Level() >= levellogger.LOG_DEBUG || c.IsTraced() {
 		for _, msg := range c.inFlightMessages {
 			debugStr += fmt.Sprintf("%v(%v, %v),", msg.ID, msg.Offset, msg.DelayedType)

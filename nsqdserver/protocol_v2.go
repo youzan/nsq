@@ -527,7 +527,8 @@ func (p *protocolV2) messagePump(client *nsqd.ClientV2, startedChan chan bool,
 			}
 			// close this client if depth is large and the active is long ago.
 			// maybe some bug blocking this client, reconnect can solve bug.
-			if subChannel != nil &&
+			// ignore the tagged client since it can be idle while no tagged messages
+			if subChannel != nil && client.GetTagMsgChannel() == nil &&
 				time.Since(lastActiveTime) > (msgTimeout*10+client.HeartbeatInterval) &&
 				!subChannel.IsOrdered() && subChannel.Depth() > 10 &&
 				subChannel.GetInflightNum() <= 0 && !subChannel.IsPaused() {
