@@ -1423,6 +1423,7 @@ func (p *protocolV2) internalPubExtAndTrace(client *nsqd.ClientV2, params [][]by
 	var needTraceRsp bool
 	var realBody []byte
 	var extContent ext.IExtContent
+	var jsonHeader *simpleJson.Json
 	extContent = ext.NewNoExt()
 	if traceEnable && !pubExt {
 		traceID = binary.BigEndian.Uint64(messageBody[:nsqd.MsgTraceIDLength])
@@ -1438,7 +1439,7 @@ func (p *protocolV2) internalPubExtAndTrace(client *nsqd.ClientV2, params [][]by
 		}
 		extJsonBytes := messageBody[nsqd.MsgJsonHeaderLength : nsqd.MsgJsonHeaderLength+extJsonLen]
 		//validate json header passin
-		jsonHeader, err := simpleJson.NewJson(extJsonBytes)
+		jsonHeader, err = simpleJson.NewJson(extJsonBytes)
 		if err != nil {
 			return nil, protocol.NewClientErr(err, ext.E_INVALID_JSON_HEADER, "fail to parse json header")
 		}
@@ -1469,7 +1470,20 @@ func (p *protocolV2) internalPubExtAndTrace(client *nsqd.ClientV2, params [][]by
 	}
 	if p.ctx.checkForMasterWrite(topicName, partition) {
 		if !topic.IsExt() && extContent.ExtVersion() != ext.NO_EXT_VER {
-			if p.ctx.getOpts().AllowExtCompatible {
+			canIgnoreExt := true
+			if jsonHeader != nil {
+				// if only internal header, we can ignore
+				m, _ := jsonHeader.Map()
+				for k, _ := range m {
+					// for future, if any internal header can not be ignored, we should check here
+					if !strings.HasPrefix(k, "##") {
+						canIgnoreExt = false
+						nsqd.NsqLogger().Debugf("custom ext content can not be ignored in topic: %v, %v", topicName, k)
+						break
+					}
+				}
+			}
+			if p.ctx.getOpts().AllowExtCompatible && canIgnoreExt {
 				extContent = ext.NewNoExt()
 				nsqd.NsqLogger().Debugf("ext content ignored in topic: %v", topicName)
 			} else {

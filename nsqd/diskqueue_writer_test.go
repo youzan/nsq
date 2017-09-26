@@ -3,8 +3,6 @@ package nsqd
 import (
 	"bytes"
 	"fmt"
-	_ "github.com/youzan/nsq/internal/levellogger"
-	"github.com/youzan/nsq/internal/test"
 	"io/ioutil"
 	"os"
 	"strconv"
@@ -13,6 +11,9 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	_ "github.com/youzan/nsq/internal/levellogger"
+	"github.com/youzan/nsq/internal/test"
 )
 
 func TestDiskQueueWriter(t *testing.T) {
@@ -621,8 +622,8 @@ func TestDiskQueueWriterTorture(t *testing.T) {
 					equal(t, nil, m.Err)
 					newr := atomic.AddInt64(&read, int64(4+len(m.Data)))
 					if newr >= depth {
-						t.Logf("confirmed to %v, msg: %v", newr, m)
-						dqReader.ConfirmRead(BackendOffset(newr), m.CurCnt)
+						err := dqReader.ConfirmRead(BackendOffset(newr), m.CurCnt)
+						t.Logf("confirmed to %v, msg: %v, err: %v", newr, m, err)
 					}
 				}
 				select {

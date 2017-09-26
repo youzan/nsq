@@ -634,7 +634,7 @@ func TestSkipping(t *testing.T) {
 
 func createJsonHeaderExtWithTag(t *testing.T, tag string) *ext.JsonHeaderExt {
 	jsonHeader := make(map[string]interface{})
-	jsonHeader[ext.CLEINT_DISPATCH_TAG_KEY] = tag
+	jsonHeader[ext.CLIENT_DISPATCH_TAG_KEY] = tag
 	jsonHeaderBytes, err := json.Marshal(&jsonHeader)
 	test.Nil(t, err)
 	jhe := ext.NewJsonHeaderExt()
@@ -644,7 +644,7 @@ func createJsonHeaderExtWithTag(t *testing.T, tag string) *ext.JsonHeaderExt {
 
 func createJsonHeaderExtWithTagBenchmark(b *testing.B, tag string) *ext.JsonHeaderExt {
 	jsonHeader := make(map[string]interface{})
-	jsonHeader[ext.CLEINT_DISPATCH_TAG_KEY] = tag
+	jsonHeader[ext.CLIENT_DISPATCH_TAG_KEY] = tag
 	jsonHeaderBytes, err := json.Marshal(&jsonHeader)
 	if err != nil {
 		b.FailNow()
@@ -908,6 +908,83 @@ func TestConsumeJsonHeaderMessageTag(t *testing.T) {
 	conn1.Close()
 	conn2.Close()
 	time.Sleep(1 * time.Second)
+}
+
+func TestPubJsonHeaderIgnored(t *testing.T) {
+	topicName := "test_json_header_ignore" + strconv.Itoa(int(time.Now().Unix()))
+
+	opts := nsqdNs.NewOptions()
+	opts.Logger = newTestLogger(t)
+	opts.AllowExtCompatible = true
+	if testing.Verbose() {
+		opts.LogLevel = 4
+		nsqdNs.SetLogger(opts.Logger)
+	}
+	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
+	defer os.RemoveAll(opts.DataPath)
+	defer nsqdServer.Exit()
+	topic := nsqd.GetTopicIgnPart(topicName)
+	topicDynConf := nsqdNs.TopicDynamicConf{
+		AutoCommit: 1,
+		SyncEvery:  1,
+		Ext:        false,
+	}
+	topic.SetDynamicInfo(topicDynConf, nil)
+
+	topic.GetChannel("ch")
+
+	conn, err := mustConnectNSQD(tcpAddr)
+	test.Equal(t, err, nil)
+	identify(t, conn, nil, frameTypeResponse)
+	var jext nsq.MsgExt
+	jext.TraceID = 1
+	cmd, _ := nsq.PublishWithJsonExt(topicName, "0", make([]byte, 5), jext.ToJson())
+	cmd.WriteTo(conn)
+	resp, _ := nsq.ReadResponse(conn)
+	frameType, data, _ := nsq.UnpackResponse(resp)
+	t.Logf("frameType: %d, data: %s", frameType, data)
+	test.Equal(t, frameType, frameTypeResponse)
+	test.Equal(t, len(data) >= 2, true)
+	test.Equal(t, data[:2], []byte("OK"))
+
+	jext.DispatchTag = "tag"
+	cmd, _ = nsq.PublishWithJsonExt(topicName, "0", make([]byte, 5), jext.ToJson())
+	cmd.WriteTo(conn)
+	resp, _ = nsq.ReadResponse(conn)
+	frameType, data, _ = nsq.UnpackResponse(resp)
+	t.Logf("frameType: %d, data: %s", frameType, data)
+	test.Equal(t, frameType, frameTypeResponse)
+	test.Equal(t, len(data) >= 2, true)
+	test.Equal(t, data[:2], []byte("OK"))
+
+	jext.TraceID = 0
+	jext.DispatchTag = "tag"
+	cmd, _ = nsq.PublishWithJsonExt(topicName, "0", make([]byte, 5), jext.ToJson())
+	cmd.WriteTo(conn)
+	resp, _ = nsq.ReadResponse(conn)
+	frameType, data, _ = nsq.UnpackResponse(resp)
+	t.Logf("frameType: %d, data: %s", frameType, data)
+	test.Equal(t, frameType, frameTypeResponse)
+	test.Equal(t, len(data) >= 2, true)
+	test.Equal(t, data[:2], []byte("OK"))
+
+	cmd, _ = nsq.PublishWithJsonExt(topicName, "0", make([]byte, 5), []byte("{}"))
+	cmd.WriteTo(conn)
+	resp, _ = nsq.ReadResponse(conn)
+	frameType, data, _ = nsq.UnpackResponse(resp)
+	t.Logf("frameType: %d, data: %s", frameType, data)
+	test.Equal(t, frameType, frameTypeResponse)
+	test.Equal(t, len(data) >= 2, true)
+	test.Equal(t, data[:2], []byte("OK"))
+
+	jext.Custom["k1"] = "v1"
+	cmd, _ = nsq.PublishWithJsonExt(topicName, "0", make([]byte, 5), jext.ToJson())
+	cmd.WriteTo(conn)
+	resp, _ = nsq.ReadResponse(conn)
+	frameType, data, _ = nsq.UnpackResponse(resp)
+	t.Logf("frameType: %d, data: %s", frameType, data)
+	test.Equal(t, frameType, frameTypeError)
+	test.Equal(t, true, strings.Contains(string(data), ext.E_EXT_NOT_SUPPORT))
 }
 
 func TestConsumeMessageWhileUpgrade(t *testing.T) {
@@ -2000,7 +2077,7 @@ func TestWriteAndConsumeTagMix(t *testing.T) {
 			var jsonHeader map[string]interface{}
 			err = json.Unmarshal(msgOut.ExtBytes, &jsonHeader)
 			test.Nil(t, err)
-			test.Equal(t, tagName, jsonHeader[ext.CLEINT_DISPATCH_TAG_KEY])
+			test.Equal(t, tagName, jsonHeader[ext.CLIENT_DISPATCH_TAG_KEY])
 			tagCnt++
 			if tagCnt == 10 {
 				break

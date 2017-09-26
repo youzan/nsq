@@ -57,7 +57,7 @@ func TestDelayQueuePutChannelDelayed(t *testing.T) {
 
 func createJsonHeaderExtWithTag(t *testing.T, tag string) *ext.JsonHeaderExt {
 	jsonHeader := make(map[string]interface{})
-	jsonHeader[ext.CLEINT_DISPATCH_TAG_KEY] = tag
+	jsonHeader[ext.CLIENT_DISPATCH_TAG_KEY] = tag
 	jsonHeaderBytes, err := json.Marshal(&jsonHeader)
 	test.Nil(t, err)
 	jhe := ext.NewJsonHeaderExt()

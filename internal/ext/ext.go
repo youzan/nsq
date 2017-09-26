@@ -10,7 +10,7 @@ const (
 	E_BAD_TAG             = "E_BAD_TAG"
 	E_INVALID_JSON_HEADER = "E_INVALID_JSON_HEADER"
 
-	CLEINT_DISPATCH_TAG_KEY = "##client_dispatch_tag"
+	CLIENT_DISPATCH_TAG_KEY = "##client_dispatch_tag"
 	TRACE_ID_KEY            = "##trace_id"
 )
 

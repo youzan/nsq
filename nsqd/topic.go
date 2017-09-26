@@ -1023,7 +1023,7 @@ func (t *Topic) updateChannelsEnd(forceReload bool) {
 			} else {
 				if e.Offset() < oldEnd.Offset() {
 					nsqLog.LogWarningf(
-						"update topic new end is less than old channel(%s) - %v, %v",
+						"update topic %v new end is less than old channel(%s) - %v, %v", t.GetTopicName(),
 						channel.name, oldEnd, e)
 				}
 			}
