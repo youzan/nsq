@@ -2478,7 +2478,7 @@ func testTcpPubExtToNonExtTopic(t *testing.T, allow bool) {
 	identify(t, conn, nil, frameTypeResponse)
 
 	// PUB ext to non-ext topic
-	jsonHeaderStr := "{\"##channel_filter_tag\":\"test\",\"custome_header1\":\"test_header\",\"custome_h2\":\"test\"}"
+	jsonHeaderStr := "{\"##channel_filter_tag\":\"test\"}"
 	jhe := ext.NewJsonHeaderExt()
 	jhe.SetJsonHeaderBytes([]byte(jsonHeaderStr))
 	cmd, err := nsq.PublishWithJsonExt(topicName, "0", make([]byte, 5), jhe.GetBytes())
