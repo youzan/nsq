@@ -1487,6 +1487,7 @@ func (p *protocolV2) internalPubExtAndTrace(client *nsqd.ClientV2, params [][]by
 				extContent = ext.NewNoExt()
 				nsqd.NsqLogger().Debugf("ext content ignored in topic: %v", topicName)
 			} else {
+				nsqd.NsqLogger().Infof("ext content not supported in topic: %v", topicName)
 				return nil, protocol.NewClientErr(nil, ext.E_EXT_NOT_SUPPORT,
 					fmt.Sprintf("ext content not supported in topic %v", topicName))
 			}
