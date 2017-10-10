@@ -434,6 +434,8 @@ func (c *context) internalRequeueToEnd(ch *nsqd.Channel,
 	newMsg.DelayedChannel = ch.GetName()
 
 	nsqd.NsqLogger().LogDebugf("requeue to end with delayed %v message: %v", timeoutDuration, oldMsg.ID)
+	// TODO: maybe use group commit to reduce io, we should use another loop for req, since it will be written to
+	// delayed commit log
 	_, _, _, _, putErr := c.PutMessageObj(topic, newMsg)
 	if putErr != nil {
 		nsqd.NsqLogger().Logf("req message %v to end failed, channel %v, put error: %v ",

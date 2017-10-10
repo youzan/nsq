@@ -42,7 +42,7 @@ var (
 
 var DEFAULT_RETENTION_DAYS = 7
 
-var EnableDelayedQueue = int32(0)
+var EnableDelayedQueue = int32(1)
 
 const (
 	FLUSH_DISTANCE = 4
@@ -276,13 +276,6 @@ func (n *NSQD) LoadMetadata(disabled int32) {
 		nsqLog.LogErrorf("failed to parse metadata - %s", err)
 		return
 	}
-
-	enabled, err := js.Get("enabled_delayedqueue").Int()
-	if err != nil {
-	} else {
-		atomic.StoreInt32(&EnableDelayedQueue, int32(enabled))
-	}
-	nsqLog.Logf("delayed queue enable state %v", enabled)
 
 	topics, err := js.Get("topics").Array()
 	if err != nil {
