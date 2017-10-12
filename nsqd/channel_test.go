@@ -352,8 +352,8 @@ func TestChannelDepthTimestamp(t *testing.T) {
 
 func TestRangeTree(t *testing.T) {
 	//tr := NewIntervalTree()
-	//tr := NewIntervalSkipList()
-	tr := NewIntervalHash()
+	tr := NewIntervalSkipList()
+	//tr := NewIntervalHash()
 	m1 := &queueInterval{0, 10, 2}
 	m2 := &queueInterval{10, 20, 3}
 	m3 := &queueInterval{20, 30, 4}
@@ -468,8 +468,8 @@ func BenchmarkRangeTree(b *testing.B) {
 	b.StartTimer()
 	for i := 0; i <= b.N; i++ {
 		//tr := NewIntervalTree()
-		//tr := NewIntervalSkipList()
-		tr := NewIntervalHash()
+		tr := NewIntervalSkipList()
+		//tr := NewIntervalHash()
 		for index, q := range mn {
 			if index%2 == 0 {
 				tr.AddOrMerge(q)

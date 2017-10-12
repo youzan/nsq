@@ -117,7 +117,7 @@ type Channel struct {
 	inFlightPQ       inFlightPqueue
 	inFlightMutex    sync.Mutex
 
-	confirmedMsgs   *IntervalHash
+	confirmedMsgs   *IntervalSkipList
 	confirmMutex    sync.Mutex
 	waitingConfirm  int32
 	tryReadBackend  chan bool
@@ -164,7 +164,7 @@ func NewChannel(topicName string, part int, channelName string, chEnd BackendQue
 		exitChan:               make(chan int),
 		exitSyncChan:           make(chan bool),
 		clients:                make(map[int64]Consumer),
-		confirmedMsgs:          NewIntervalHash(),
+		confirmedMsgs:          NewIntervalSkipList(),
 		tryReadBackend:         make(chan bool, 1),
 		readerChanged:          make(chan resetChannelData, 10),
 		endUpdatedChan:         make(chan bool, 1),
@@ -738,7 +738,7 @@ func (c *Channel) ConfirmBackendQueue(msg *Message) (BackendOffset, int64, bool)
 				nsqLog.Logf("channel %v merge msg %v( %v) to interval %v, confirmed to %v", c.GetName(),
 					msg.Offset, msg.queueCntIndex, mergedInterval, newConfirmed)
 			}
-			c.confirmedMsgs.DeleteInterval(mergedInterval)
+			c.confirmedMsgs.DeleteLower(int64(newConfirmed))
 			atomic.StoreInt32(&c.waitingConfirm, int32(c.confirmedMsgs.Len()))
 		}
 		if int64(c.confirmedMsgs.Len()) < c.option.MaxConfirmWin/2 &&
@@ -750,10 +750,10 @@ func (c *Channel) ConfirmBackendQueue(msg *Message) (BackendOffset, int64, bool)
 			}
 		}
 	}
-	if int64(c.confirmedMsgs.Len()) > c.option.MaxConfirmWin {
+	if nsqLog.Level() >= levellogger.LOG_DEBUG && int64(c.confirmedMsgs.Len()) > c.option.MaxConfirmWin {
 		curConfirm = c.GetConfirmed()
 		flightCnt := len(c.inFlightMessages)
-		if flightCnt == 0 && nsqLog.Level() >= levellogger.LOG_DEBUG {
+		if flightCnt == 0 {
 			nsqLog.LogDebugf("lots of confirmed messages : %v, %v, %v",
 				c.confirmedMsgs.Len(), curConfirm, flightCnt)
 		}
@@ -957,12 +957,18 @@ func (c *Channel) ShouldRequeueToEnd(clientID int64, clientAddr string, id Messa
 			return msg.GetCopy(), true
 		}
 	}
-	if msg.Attempts < 3 {
-		return nil, false
-	}
+
 	ts := time.Now().UnixNano() - c.DepthTimestamp()
 	isBlocking := atomic.LoadInt32(&c.waitingConfirm) >= int32(c.option.MaxConfirmWin)
 	if isBlocking {
+		if timeout > threshold/2 || (timeout > 2*time.Minute) {
+			return msg.GetCopy(), true
+		}
+
+		if msg.Attempts < 3 {
+			return nil, false
+		}
+
 		if msg.Timestamp > c.DepthTimestamp()+threshold.Nanoseconds() {
 			return nil, false
 		}
@@ -1045,6 +1051,10 @@ func (c *Channel) RequeueMessage(clientID int64, clientAddr string, id MessageID
 	deCnt := atomic.LoadInt64(&c.deferredCount)
 	if c.isTooMuchDeferredInMem(deCnt) {
 		nsqLog.Logf("failed to requeue msg %v, since too much delayed in memory: %v", id, deCnt)
+		return ErrMsgDeferredTooMuch
+	}
+	if int64(atomic.LoadInt32(&c.waitingConfirm)) > c.option.MaxConfirmWin {
+		nsqLog.Logf("failed to requeue msg %v, since too much waiting confirmed: %v", id, atomic.LoadInt32(&c.waitingConfirm))
 		return ErrMsgDeferredTooMuch
 	}
 
@@ -1186,7 +1196,7 @@ func (c *Channel) UpdateConfirmedInterval(intervals []MsgQueueInterval) {
 		nsqLog.Logf("update confirmed interval, before: %v", c.confirmedMsgs.ToString())
 	}
 	if c.confirmedMsgs.Len() != 0 {
-		c.confirmedMsgs = NewIntervalHash()
+		c.confirmedMsgs = NewIntervalSkipList()
 	}
 	for _, qi := range intervals {
 		c.confirmedMsgs.AddOrMerge(&queueInterval{start: qi.Start, end: qi.End, endCnt: qi.EndCnt})
@@ -1363,7 +1373,7 @@ func (c *Channel) drainChannelWaiting(clearConfirmed bool, lastDataNeedRead *boo
 	c.initPQ()
 	c.confirmMutex.Lock()
 	if clearConfirmed {
-		c.confirmedMsgs = NewIntervalHash()
+		c.confirmedMsgs = NewIntervalSkipList()
 		atomic.StoreInt32(&c.waitingConfirm, 0)
 	} else {
 		curConfirm := c.GetConfirmed()
@@ -1947,35 +1957,6 @@ exit:
 	waitingDelayCnt := atomic.LoadInt64(&c.deferredFromDelay)
 	if waitingDelayCnt < 0 {
 		nsqLog.Logf("delayed waiting count error %v ", waitingDelayCnt)
-	}
-	c.confirmMutex.Lock()
-	confirmed := c.GetConfirmed()
-	c.confirmedMsgs.DeleteLower(int64(confirmed.Offset()))
-	// it may happen that the confirmed is moved to older
-	// Since all the confirmed intervals below than the confirmed offset will be cleaned,
-	// in this case, we need make sure all the history intervals should be lied in the hash intervals.
-	hashedIntervals := c.confirmedMsgs
-	fixConsistence := false
-	for s, e := range hashedIntervals.historyMsg {
-		overlaps := hashedIntervals.QueryExist(&queueInterval{
-			start: s,
-			end:   e,
-		}, true)
-		if len(overlaps) == 0 || hashedIntervals.Len() == 0 {
-			nsqLog.Logf("history confirmed are not consistentant %v-%v", s, e)
-			fixConsistence = true
-			delete(hashedIntervals.historyMsg, s)
-		}
-	}
-	if fixConsistence {
-		nsqLog.Logf("confirmed intervals are not consistentant %v, need reset reader, cur: %v ", c.confirmedMsgs.ToString(), confirmed)
-	}
-	c.confirmMutex.Unlock()
-	if fixConsistence {
-		select {
-		case c.readerChanged <- resetChannelData{BackendOffset(-1), 0, false}:
-		default:
-		}
 	}
 	needPeekDelay := waitingDelayCnt <= 0
 	if !c.IsConsumeDisabled() && !c.IsOrdered() && delayedQueue != nil &&
