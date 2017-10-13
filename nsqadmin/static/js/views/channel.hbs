@@ -105,6 +105,22 @@
                             <td>{{this}}</td>
                         {{/each}}
                     </tr>
+                     {{#if ../graph_active}}
+                    <tr class="graph-row">
+                        <td></td>
+                        <td></td>
+                        <td colspan="6">
+                            <a href="{{large_graph " channel " node statsd_name channel_name "consume_above500ms_count "}}">
+                                <img width="120" height="40" src="{{sparkline " channel " node statsd_name channel_name "consume_above500ms_count "}}">
+                            </a>
+                        </td>
+                        <td colspan="6">
+                            <a href="{{large_graph " channel " node statsd_name channel_name "consume_above1s_count "}}">
+                                <img width="120" height="40" src="{{sparkline " channel " node statsd_name channel_name "consume_above1s_count "}}">
+                            </a>
+                        </td>
+                    </tr>
+                    {{/if}}
                 {{/each}}
             </table>
         </div>

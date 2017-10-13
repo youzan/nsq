@@ -112,6 +112,26 @@ func (n *NsqdServer) statsdLoop() {
 					stat = fmt.Sprintf("topic.%s.channel.%s.timeout_count", statdName, channel.ChannelName)
 					client.Incr(stat, int64(diff))
 
+					// 16ms, 32ms, 64ms, 128ms, 256ms, 512ms, 1024ms, 2048ms, 4s, 8s, 16s, above
+					old500ms := int64(0)
+					for i := 6; i < len(lastChannel.MsgConsumeLatencyStats); i++ {
+						old500ms += lastChannel.MsgConsumeLatencyStats[i]
+					}
+					old1s := old500ms - lastChannel.MsgConsumeLatencyStats[6]
+					new500ms := int64(0)
+					for i := 6; i < len(channel.MsgConsumeLatencyStats); i++ {
+						new500ms += channel.MsgConsumeLatencyStats[i]
+					}
+					new1s := new500ms - channel.MsgConsumeLatencyStats[6]
+
+					diff = uint64(new500ms - old500ms)
+					stat = fmt.Sprintf("topic.%s.channel.%s.consume_above500ms_count", statdName, channel.ChannelName)
+					client.Incr(stat, int64(diff))
+
+					diff = uint64(new1s - old1s)
+					stat = fmt.Sprintf("topic.%s.channel.%s.consume_above1s_count", statdName, channel.ChannelName)
+					client.Incr(stat, int64(diff))
+
 					stat = fmt.Sprintf("topic.%s.channel.%s.clients", statdName, channel.ChannelName)
 					client.Gauge(stat, int64(len(channel.Clients)))
 
