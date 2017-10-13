@@ -34,25 +34,27 @@ var statsdPrefix = function(host) {
     if (prefix.substring(prefix.length, 1) !== '.') {
         prefix += '.';
     }
-    
+
     return prefix;
 };
 
 /* eslint-disable key-spacing */
 var metricType = function(key) {
     return {
-        'depth':                  'gauge',
-        'depth_size':             'gauge',
-        'in_flight_count':        'gauge',
-        'deferred_count':         'gauge',
-        'requeue_count':          'counter',
-        'timeout_count':          'counter',
-        'message_count':          'counter',
-        'clients':                'gauge',
-        '*_bytes':                'gauge',
-        'gc_pause_*':             'gauge',
-        'gc_runs':                'counter',
-        'heap_objects':           'gauge',
+        'depth': 'gauge',
+        'depth_size': 'gauge',
+        'in_flight_count': 'gauge',
+        'deferred_count': 'gauge',
+        'requeue_count': 'counter',
+        'timeout_count': 'counter',
+        'message_count': 'counter',
+        'consume_above1s_count': 'counter',
+        'consume_above500ms_count': 'counter',
+        'clients': 'gauge',
+        '*_bytes': 'gauge',
+        'gc_pause_*': 'gauge',
+        'gc_runs': 'counter',
+        'heap_objects': 'gauge',
         'e2e_processing_latency': 'gauge'
     }[key];
 };
