@@ -117,12 +117,18 @@ func (n *NsqdServer) statsdLoop() {
 					for i := 6; i < len(lastChannel.MsgConsumeLatencyStats); i++ {
 						old500ms += lastChannel.MsgConsumeLatencyStats[i]
 					}
-					old1s := old500ms - lastChannel.MsgConsumeLatencyStats[6]
+					old1s := int64(0)
+					if len(lastChannel.MsgConsumeLatencyStats) > 6 {
+						old1s = old500ms - lastChannel.MsgConsumeLatencyStats[6]
+					}
 					new500ms := int64(0)
 					for i := 6; i < len(channel.MsgConsumeLatencyStats); i++ {
 						new500ms += channel.MsgConsumeLatencyStats[i]
 					}
-					new1s := new500ms - channel.MsgConsumeLatencyStats[6]
+					new1s := int64(0)
+					if len(channel.MsgConsumeLatencyStats) > 6 {
+						new1s = new500ms - channel.MsgConsumeLatencyStats[6]
+					}
 
 					diff = uint64(new500ms - old500ms)
 					stat = fmt.Sprintf("topic.%s.channel.%s.consume_above500ms_count", statdName, channel.ChannelName)
