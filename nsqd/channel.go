@@ -1176,9 +1176,12 @@ func (c *Channel) StartInFlightTimeout(msg *Message, client Consumer, clientAddr
 		}
 		return shouldSend, err
 	}
+
+	c.channelStatsInfo.UpdateDeliveryStats((now.UnixNano() - msg.Timestamp) / int64(time.Millisecond))
 	if msg.TraceID != 0 || c.IsTraced() || nsqLog.Level() >= levellogger.LOG_DETAIL {
 		nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "START", msg.TraceID, msg, clientAddr)
 	}
+
 	return shouldSend, nil
 }
 

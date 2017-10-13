@@ -86,7 +86,8 @@ type ChannelStats struct {
 	DelayedQueueRecent string `json:"delayed_queue_recent"`
 
 	E2eProcessingLatency   *quantile.Result `json:"e2e_processing_latency"`
-	MSgConsumeLatencyStats []int64          `json:"msg_consume_latency_stats"`
+	MsgConsumeLatencyStats []int64          `json:"msg_consume_latency_stats"`
+	MsgDeliveryLatencyStats []int64          `json:"msg_delivery_latency_stats"`
 }
 
 func NewChannelStats(c *Channel, clients []ClientStats) ChannelStats {
@@ -130,7 +131,8 @@ func NewChannelStats(c *Channel, clients []ClientStats) ChannelStats {
 		DelayedQueueRecent: time.Unix(0, recentTs).String(),
 
 		E2eProcessingLatency:   c.e2eProcessingLatencyStream.Result(),
-		MSgConsumeLatencyStats: c.channelStatsInfo.GetChannelLatencyStats(),
+		MsgConsumeLatencyStats: c.channelStatsInfo.GetChannelLatencyStats(),
+		MsgDeliveryLatencyStats: c.channelStatsInfo.GetDeliveryLatencyStats(),
 	}
 }
 
@@ -290,6 +292,7 @@ type TopicMsgStatsInfo struct {
 type ChannelStatsInfo struct {
 	// 16ms, 32ms, 64ms, 128ms, 256ms, 512ms, 1024ms, 2048ms, 4s, 8s, 16s, above
 	MsgConsumeLatencyStats [12]int64
+	MsgDeliveryLatencyStats [12]int64
 }
 
 type TopicHistoryStatsInfo struct {
@@ -321,6 +324,31 @@ func (self *ChannelStatsInfo) UpdateChannelLatencyStats(latencyInMillSec int64) 
 		bucket = len(self.MsgConsumeLatencyStats) - 1
 	}
 	atomic.AddInt64(&self.MsgConsumeLatencyStats[bucket], 1)
+}
+
+func (self *ChannelStatsInfo) UpdateDeliveryStats(latencyInMillSec int64) {
+	self.UpdateDeliveryLatencyStats(latencyInMillSec)
+}
+
+func (self *ChannelStatsInfo) GetDeliveryLatencyStats() []int64 {
+	latencyStats := make([]int64, len(self.MsgDeliveryLatencyStats))
+	for i := range self.MsgDeliveryLatencyStats {
+		latencyStats[i] = atomic.LoadInt64(&self.MsgDeliveryLatencyStats[i])
+	}
+	return latencyStats
+}
+
+//update message consume latency distribution in millisecond
+func (self *ChannelStatsInfo) UpdateDeliveryLatencyStats(latencyInMillSec int64) {
+	bucket := 0
+	if latencyInMillSec < 16 {
+	} else {
+		bucket = int(math.Log2(float64(latencyInMillSec/16))) + 1
+	}
+	if bucket >= len(self.MsgDeliveryLatencyStats) {
+		bucket = len(self.MsgDeliveryLatencyStats) - 1
+	}
+	atomic.AddInt64(&self.MsgDeliveryLatencyStats[bucket], 1)
 }
 
 func (self *TopicMsgStatsInfo) UpdateMsgSizeStats(msgSize int64) {
