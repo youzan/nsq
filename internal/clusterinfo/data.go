@@ -10,11 +10,12 @@ import (
 	"sync"
 
 	"errors"
+	"math"
+	"sync/atomic"
+
 	"github.com/blang/semver"
 	"github.com/youzan/nsq/internal/http_api"
 	"github.com/youzan/nsq/internal/stringy"
-	"math"
-	"sync/atomic"
 )
 
 var v1EndpointVersion semver.Version
@@ -911,6 +912,9 @@ func (c *ClusterInfo) GetNSQDStats(producers Producers, selectedTopic string, so
 					key := channel.ChannelName
 					if selectedTopic == "" {
 						key = fmt.Sprintf("%s:%s", topic.TopicName, channel.ChannelName)
+					}
+					if len(channel.MsgDeliveryLatencyStats) == 0 {
+						channel.MsgDeliveryLatencyStats = make([]int64, 12)
 					}
 					channelStats, ok := channelStatsMap[key]
 					if !ok {

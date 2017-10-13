@@ -66,7 +66,7 @@
             <table class="table table-bordered table-condensed">
                 <tr>
                     <th colspan="2" class="text-center">&nbsp;</th>
-                    <th class="text-center" colspan="12">Message Consume Latency Distribution</th>
+                    <th class="text-center" colspan="12">Message Consume Latency Distribution(pub~sub ack & pub~sub send)</th>
                 </tr>
                 <tr>
                     <th>NSQd Host</th>
@@ -86,7 +86,7 @@
                 </tr>
                 {{#each nodes}}
                     <tr>
-                        <td>
+                        <td rowspan="2">
                             <button class="btn-link red tombstone-link" data-node="{{node}}" data-topic="{{../name}}" style="padding: 0 6px; border: 0;">✘</button>
                             {{#if show_broadcast_address}}
                                 {{hostname_port}} (<a class="link" href="/nodes/{{node}}">{{node}}</a>)
@@ -95,10 +95,15 @@
                             {{/if}}
                             {{#if paused}} <span class="label label-primary">paused</span>{{/if}}
                         </td>
-                        <td>{{topic_partition}}</td>
-                            {{#each msg_consume_latency_stats}}
-                                <td>{{this}}</td>
-                            {{/each}}
+                        <td rowspan="2">{{topic_partition}}</td>
+                        {{#each msg_consume_latency_stats}}
+                            <td>{{this}}</td>
+                        {{/each}}
+                    </tr>
+                    <tr>
+                        {{#each msg_delivery_latency_stats}}
+                            <td>{{this}}</td>
+                        {{/each}}
                     </tr>
                 {{/each}}
             </table>
