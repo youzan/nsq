@@ -157,6 +157,11 @@ func nsqdFlagSet(opts *nsqd.Options) *flag.FlagSet {
 	flagSet.Bool("start-as-fix-mode", opts.StartAsFixMode, "enable data fix at start")
 	flagSet.Bool("allow-ext-compatible", opts.AllowExtCompatible, "allow pub ext to non-ext topic(ignore ext) and allow sub ext-topic without ext in message.")
 
+	flagSet.Duration("queue-scan-interval", opts.QueueScanInterval, "scan interval")
+	flagSet.Duration("queue-scan-refresh-interval", opts.QueueScanRefreshInterval, "scan refresh interval for new channels")
+	flagSet.Int("queue-scan-selection-count", opts.QueueScanSelectionCount, "select count for each scan")
+	flagSet.Int("queue-scan-worker-pool-max", opts.QueueScanWorkerPoolMax, "the max scan worker pool")
+	flagSet.Float64("queue-scan-dirty-percent", opts.QueueScanDirtyPercent, "retry scan immediately if dirty percent happened in last scan")
 	return flagSet
 }
 

@@ -41,11 +41,11 @@ type Options struct {
 	SyncEvery       int64         `flag:"sync-every"`
 	SyncTimeout     time.Duration `flag:"sync-timeout"`
 
-	QueueScanInterval        time.Duration
-	QueueScanRefreshInterval time.Duration
-	QueueScanSelectionCount  int
-	QueueScanWorkerPoolMax   int
-	QueueScanDirtyPercent    float64
+	QueueScanInterval        time.Duration `flag:"queue-scan-interval"`
+	QueueScanRefreshInterval time.Duration `flag:"queue-scan-refresh-interval"`
+	QueueScanSelectionCount  int           `flag:"queue-scan-selection-count"`
+	QueueScanWorkerPoolMax   int           `flag:"queue-scan-worker-pool-max"`
+	QueueScanDirtyPercent    float64       `flag:"queue-scan-dirty-percent"`
 
 	// msg and command options
 	MsgTimeout        time.Duration `flag:"msg-timeout" arg:"60s"`

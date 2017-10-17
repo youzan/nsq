@@ -77,14 +77,14 @@ type NSQD struct {
 	exitChan             chan int
 	waitGroup            util.WaitGroupWrapper
 
-	ci              *clusterinfo.ClusterInfo
-	exiting         bool
-	pubLoopFunc     func(t *Topic)
-	reqToEndCB      ReqToEndFunc
-	scanTriggerChan chan *Channel
-	persistNotifyCh chan struct{}
-	persistClosed   chan struct{}
-	persistWaitGroup     util.WaitGroupWrapper
+	ci               *clusterinfo.ClusterInfo
+	exiting          bool
+	pubLoopFunc      func(t *Topic)
+	reqToEndCB       ReqToEndFunc
+	scanTriggerChan  chan *Channel
+	persistNotifyCh  chan struct{}
+	persistClosed    chan struct{}
+	persistWaitGroup util.WaitGroupWrapper
 }
 
 func New(opts *Options) *NSQD {
