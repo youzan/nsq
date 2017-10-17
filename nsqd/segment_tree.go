@@ -278,8 +278,13 @@ func (self *IntervalSkipList) ToIntervalList() []MsgQueueInterval {
 func (self *IntervalSkipList) ToString() string {
 	dataStr := ""
 	it := self.sl.Iterator()
+	cnt := 0
 	for it.Next() {
 		dataStr += fmt.Sprintf("interval %v, ", it.Value())
+		cnt++
+		if cnt > 100 {
+			break
+		}
 	}
 	it.Close()
 	return dataStr
