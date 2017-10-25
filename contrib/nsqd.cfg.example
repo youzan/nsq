@@ -148,3 +148,12 @@ auto_clean_interval = ["2", "4"]
 
 ## whether we should fix the data if only one ISR is available
 start_as_fix_mode = true
+
+## the interval for scan for channel timeout messages
+queue_scan_interval = "100ms"
+## selection channel count for each timeout scan 
+queue_scan_selection_count = 100
+## max timeout scan worker
+queue_scan_worker_pool_max = 8
+## re-scan trigger if there is dirty percent channels timeout
+queue_scan_dirty_percent = 0.1

@@ -318,6 +318,7 @@ func (s *httpServer) internalPUB(w http.ResponseWriter, req *http.Request, ps ht
 		}
 
 		//check if request is PUB_WITH_EXT
+		var jsonHeaderExt map[string]interface{}
 		if pubExt {
 			//parse json header ext
 			headerStr, err := url.QueryUnescape(params.Get("ext"))
@@ -325,7 +326,6 @@ func (s *httpServer) internalPUB(w http.ResponseWriter, req *http.Request, ps ht
 				return nil, http_api.Err{400, ext.E_INVALID_JSON_HEADER}
 			}
 
-			var jsonHeaderExt map[string]interface{}
 			err = json.Unmarshal([]byte(headerStr), &jsonHeaderExt)
 			if err != nil {
 				return nil, http_api.Err{400, ext.E_INVALID_JSON_HEADER}
@@ -372,7 +372,19 @@ func (s *httpServer) internalPUB(w http.ResponseWriter, req *http.Request, ps ht
 			extContent = ext.NewNoExt()
 		}
 		if !isExt && extContent.ExtVersion() != ext.NO_EXT_VER {
-			if s.ctx.getOpts().AllowExtCompatible {
+			canIgnoreExt := true
+			if jsonHeaderExt != nil {
+				// if only internal header, we can ignore
+				for k, _ := range jsonHeaderExt {
+					// for future, if any internal header can not be ignored, we should check here
+					if !strings.HasPrefix(k, "##") {
+						canIgnoreExt = false
+						nsqd.NsqLogger().Debugf("custom ext content can not be ignored in topic: %v, %v", topic.GetFullName(), k)
+						break
+					}
+				}
+			}
+			if s.ctx.getOpts().AllowExtCompatible && canIgnoreExt {
 				extContent = ext.NewNoExt()
 				nsqd.NsqLogger().LogDebugf("topic %v put message with ext to old topic, ignore ext", topic.GetFullName())
 			} else {

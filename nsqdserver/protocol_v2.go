@@ -431,7 +431,7 @@ func (p *protocolV2) messagePump(client *nsqd.ClientV2, startedChan chan bool,
 	//       (ie. we would block in this loop anyway)
 	//
 	flushed := true
-	extCompatible := p.ctx.getOpts().AllowExtCompatible
+	extCompatible := p.ctx.getOpts().AllowSubExtCompatible
 	extSupport := client.ExtendSupport()
 
 	// signal to the goroutine that started the messagePump
@@ -928,7 +928,7 @@ func (p *protocolV2) internalSUB(client *nsqd.ClientV2, params [][]byte, enableT
 		return nil, protocol.NewFatalClientErr(nil, "E_SUB_ORDER_IS_MUST", "this topic is configured only allow ordered sub")
 	}
 	if topic.IsExt() {
-		if !p.ctx.getOpts().AllowExtCompatible && !client.ExtendSupport() {
+		if !p.ctx.getOpts().AllowSubExtCompatible && !client.ExtendSupport() {
 			nsqd.NsqLogger().Logf("sub failed on extend topic: %v-%v, %v", topicName, channelName, client.String())
 			return nil, protocol.NewFatalClientErr(nil, "E_SUB_EXTEND_NEED", "this topic is extended and should identify as extend support.")
 		}

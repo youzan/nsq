@@ -228,19 +228,27 @@ func TestHTTPPubExt(t *testing.T) {
 }
 
 func TestHTTPPubExtToOldTopicNotAllow(t *testing.T) {
-	testHTTPPubExtToOldTopic(t, false)
+	testHTTPPubExtToOldTopic(t, false, true)
 }
 func TestHTTPPubExtToOldTopic(t *testing.T) {
-	testHTTPPubExtToOldTopic(t, true)
+	testHTTPPubExtToOldTopic(t, true, true)
+}
+func TestHTTPPubExtToOldTopicNotAllow2(t *testing.T) {
+	testHTTPPubExtToOldTopic(t, false, false)
 }
 
-func testHTTPPubExtToOldTopic(t *testing.T, allow bool) {
+func TestHTTPPubExtToOldTopic2(t *testing.T) {
+	testHTTPPubExtToOldTopic(t, true, false)
+}
+
+func testHTTPPubExtToOldTopic(t *testing.T, allow bool, customHeader bool) {
 
 	topicName := "test_json_header_tag_http" + strconv.Itoa(int(time.Now().Unix()))
 
 	opts := nsqd.NewOptions()
 	opts.Logger = newTestLogger(t)
 	opts.AllowExtCompatible = allow
+	opts.AllowSubExtCompatible = allow
 	tcpAddr, httpAddr, nsqdNs, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqdServer.Exit()
@@ -266,6 +274,9 @@ func testHTTPPubExtToOldTopic(t *testing.T, allow bool) {
 	test.Equal(t, err, nil)
 
 	jsonHeaderTagStr := "{\"##client_dispatch_tag\":\"test_tag\",\"##channel_filter_tag\":\"test\",\"custome_header1\":\"test_header\",\"custome_h2\":\"test\"}"
+	if !customHeader {
+		jsonHeaderTagStr = "{\"##client_dispatch_tag\":\"test_tag\",\"##channel_filter_tag\":\"test\"}"
+	}
 	messageBody := "test message"
 	aUrl, err := url.Parse(fmt.Sprintf("http://%s/pub_ext?topic=%s&ext=%s", httpAddr, topicName, url.QueryEscape(jsonHeaderTagStr)))
 	if err != nil {
@@ -275,7 +286,9 @@ func testHTTPPubExtToOldTopic(t *testing.T, allow bool) {
 	if err != nil {
 		t.FailNow()
 	}
-	req.Header.Set("X-NSQEXT-Key-Test", "val-http")
+	if customHeader {
+		req.Header.Set("X-NSQEXT-Key-Test", "val-http")
+	}
 	req.Header.Set("accept", "application/vnd.nsq; version=1.0")
 	client := &http.Client{}
 	resp, err := client.Do(req)
@@ -283,11 +296,12 @@ func testHTTPPubExtToOldTopic(t *testing.T, allow bool) {
 		t.FailNow()
 	}
 	defer resp.Body.Close()
-	if !allow {
+	if !allow || customHeader {
 		t.Logf("%v", resp)
 		test.Equal(t, 400, resp.StatusCode)
 		return
 	}
+
 	test.Equal(t, 200, resp.StatusCode)
 	msgOut := recvNextMsgAndCheck(t, conn1, len(messageBody), 0, true)
 	test.NotNil(t, msgOut)

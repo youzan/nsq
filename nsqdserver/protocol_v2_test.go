@@ -916,6 +916,7 @@ func TestPubJsonHeaderIgnored(t *testing.T) {
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
 	opts.AllowExtCompatible = true
+	opts.AllowSubExtCompatible = true
 	if testing.Verbose() {
 		opts.LogLevel = 4
 		nsqdNs.SetLogger(opts.Logger)
@@ -2465,6 +2466,7 @@ func testTcpPubExtToNonExtTopic(t *testing.T, allow bool) {
 	opts.MaxMsgSize = 100
 	opts.MaxBodySize = 1000
 	opts.AllowExtCompatible = allow
+	opts.AllowSubExtCompatible = allow
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqdServer.Exit()
@@ -4689,11 +4691,10 @@ func TestResetChannelToOld(t *testing.T) {
 			}
 			t.Logf("got error response: %v", string(data))
 		}
-		test.NotEqual(t, frameTypeError, frameType)
-
 		if channel.GetConfirmed().Offset() == realEnd.Offset() {
 			break
 		}
+		test.NotEqual(t, frameTypeError, frameType)
 		if frameType == frameTypeResponse {
 			t.Logf("got response data: %v", string(data))
 			if bytes.Equal(data, heartbeatBytes) {
@@ -4722,11 +4723,12 @@ func TestResetChannelToOld(t *testing.T) {
 			test.Equal(t, end, resetOldEnd)
 		}
 		_, err = nsq.Finish(msgOut.ID).WriteTo(conn)
-		if err != nil {
-			t.Errorf("FIN msg %v error: %v", msgOut.ID, err.Error())
-		}
+
 		if channel.GetConfirmed().Offset() == realEnd.Offset() {
 			break
+		}
+		if err != nil {
+			t.Errorf("FIN msg %v error: %v", msgOut.ID, err.Error())
 		}
 		if recvCnt > int(opts.MaxConfirmWin)*2+1 {
 			localTopic.ForceFlush()
