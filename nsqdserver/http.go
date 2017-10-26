@@ -1234,6 +1234,20 @@ func (s *httpServer) doConfig(w http.ResponseWriter, req *http.Request, ps httpr
 				return nil, http_api.Err{400, "INVALID_VALUE"}
 			}
 			nsqd.NsqLogger().Logf("log level set to : %v", opts.LogLevel)
+		case "allow_ext_compatible":
+			err := json.Unmarshal(body, &opts.AllowExtCompatible)
+			if err != nil {
+				nsqd.NsqLogger().Logf("invalid value : %v", string(body))
+				return nil, http_api.Err{400, "INVALID_VALUE"}
+			}
+			nsqd.NsqLogger().Logf("pub ext compatible set to : %v", opts.AllowExtCompatible)
+		case "allow_sub_ext_compatible":
+			err := json.Unmarshal(body, &opts.AllowSubExtCompatible)
+			if err != nil {
+				nsqd.NsqLogger().Logf("invalid value : %v", string(body))
+				return nil, http_api.Err{400, "INVALID_VALUE"}
+			}
+			nsqd.NsqLogger().Logf("sub ext compatible set to : %v", opts.AllowSubExtCompatible)
 		default:
 			return nil, http_api.Err{400, "INVALID_OPTION"}
 		}

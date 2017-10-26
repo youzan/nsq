@@ -75,6 +75,74 @@ func TestHTTPpub(t *testing.T) {
 	conn.Close()
 }
 
+func TestHTTPChangeConfig(t *testing.T) {
+	opts := nsqd.NewOptions()
+	opts.LogLevel = 2
+	opts.Logger = newTestLogger(t)
+	nsqd.SetLogger(opts.Logger)
+	//opts.Logger = &levellogger.SimpleLogger{}
+	_, httpAddr, nsqd, nsqdServer := mustStartNSQD(opts)
+	defer os.RemoveAll(opts.DataPath)
+	defer nsqdServer.Exit()
+
+	url := fmt.Sprintf("http://%s/config/allow_ext_compatible", httpAddr)
+	req, err := http.NewRequest("PUT", url, strings.NewReader("true"))
+	if err != nil {
+		t.FailNow()
+	}
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.FailNow()
+	}
+	defer resp.Body.Close()
+	test.Equal(t, 200, resp.StatusCode)
+	test.Equal(t, true, nsqd.GetOpts().AllowExtCompatible)
+	test.Equal(t, false, nsqd.GetOpts().AllowSubExtCompatible)
+
+	url = fmt.Sprintf("http://%s/config/allow_ext_compatible", httpAddr)
+	req, err = http.NewRequest("PUT", url, strings.NewReader("false"))
+	if err != nil {
+		t.FailNow()
+	}
+	resp, err = client.Do(req)
+	if err != nil {
+		t.FailNow()
+	}
+	defer resp.Body.Close()
+	test.Equal(t, 200, resp.StatusCode)
+	test.Equal(t, false, nsqd.GetOpts().AllowExtCompatible)
+	test.Equal(t, false, nsqd.GetOpts().AllowSubExtCompatible)
+
+	url = fmt.Sprintf("http://%s/config/allow_sub_ext_compatible", httpAddr)
+	req, err = http.NewRequest("PUT", url, strings.NewReader("true"))
+	if err != nil {
+		t.FailNow()
+	}
+	resp, err = client.Do(req)
+	if err != nil {
+		t.FailNow()
+	}
+	defer resp.Body.Close()
+	test.Equal(t, 200, resp.StatusCode)
+	test.Equal(t, false, nsqd.GetOpts().AllowExtCompatible)
+	test.Equal(t, true, nsqd.GetOpts().AllowSubExtCompatible)
+
+	url = fmt.Sprintf("http://%s/config/allow_sub_ext_compatible", httpAddr)
+	req, err = http.NewRequest("PUT", url, strings.NewReader("false"))
+	if err != nil {
+		t.FailNow()
+	}
+	resp, err = client.Do(req)
+	if err != nil {
+		t.FailNow()
+	}
+	defer resp.Body.Close()
+	test.Equal(t, 200, resp.StatusCode)
+	test.Equal(t, false, nsqd.GetOpts().AllowExtCompatible)
+	test.Equal(t, false, nsqd.GetOpts().AllowSubExtCompatible)
+}
+
 func TestHTTPPubExt(t *testing.T) {
 	topicName := "test_json_header_tag_http" + strconv.Itoa(int(time.Now().Unix()))
 
