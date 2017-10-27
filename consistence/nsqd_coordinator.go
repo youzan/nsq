@@ -677,11 +677,17 @@ func (self *NsqdCoordinator) loadLocalTopicData() error {
 				tc.writeHold.Lock()
 				var coordErr *CoordErr
 				topic, coordErr = self.updateLocalTopic(topicInfo, tc.GetData())
+				tc.writeHold.Unlock()
 				if coordErr != nil {
 					coordLog.Errorf("failed to update local topic %v: %v", topicInfo.GetTopicDesp(), coordErr)
-					panic(coordErr)
+					self.coordMutex.Lock()
+					coords, ok := self.topicCoords[topicInfo.Name]
+					if ok {
+						delete(coords, topicInfo.Partition)
+					}
+					self.coordMutex.Unlock()
+					continue
 				}
-				tc.writeHold.Unlock()
 			} else {
 				coordLog.Infof("topic %v starting as not relevant", topicInfo.GetTopicDesp())
 				if len(topicInfo.ISR) >= topicInfo.Replica {
