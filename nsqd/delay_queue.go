@@ -14,7 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/boltdb/bolt"
+	"github.com/absolute8511/bolt"
 	"github.com/youzan/nsq/internal/levellogger"
 )
 
