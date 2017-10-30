@@ -260,6 +260,13 @@ func (d *diskQueueWriter) CleanOldDataByRetention(cleanEndInfo BackendQueueOffse
 		if endInfo.FileNum >= d.diskReadEnd.EndOffset.FileNum-1 {
 			endInfo.FileNum = d.diskReadEnd.EndOffset.FileNum - 1
 		}
+		// it may happen while the disk is started with (filenum, offset) = (2, 0) because
+		// of truncated from leader to replica
+		// so we should ignore clean file less than queue start file num.
+		// TODO: add test case for this
+		if endInfo.FileNum <= d.diskQueueStart.EndOffset.FileNum {
+			return nil, nil
+		}
 		if maxCleanOffset != BackendOffset(0) && cleanOffset > maxCleanOffset {
 			nsqLog.LogWarningf("disk %v clean position %v exceed the max allowed clean end: %v", d.name, cleanOffset, maxCleanOffset)
 			return nil, nil
@@ -275,7 +282,7 @@ func (d *diskQueueWriter) CleanOldDataByRetention(cleanEndInfo BackendQueueOffse
 	cleanFileNum := int64(0)
 	if endInfo != nil {
 		cleanFileNum = endInfo.FileNum
-		if cleanFileNum <= 0 {
+		if cleanFileNum <= d.diskQueueStart.EndOffset.FileNum {
 			return &newStart, nil
 		}
 		cnt, _, endPos, err := getQueueFileOffsetMeta(d.fileName(cleanFileNum - 1))
