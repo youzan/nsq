@@ -99,11 +99,11 @@ statsd_mem_stats = true
 
 
 ## message processing time percentiles to keep track of (float)
-e2e_processing_latency_percentiles = [
-    100.0,
-    99.0,
-    95.0
-]
+##e2e_processing_latency_percentiles = [
+##    100.0,
+##    99.0,
+##    95.0
+##]
 
 ## calculate end to end latency quantiles for this duration of time (time.Duration)
 e2e_processing_latency_window_time = "10m"
@@ -147,7 +147,7 @@ log_dir = "./"
 auto_clean_interval = ["2", "4"]
 
 ## whether we should fix the data if only one ISR is available
-start_as_fix_mode = true
+# start_as_fix_mode = true
 
 ## the interval for scan for channel timeout messages
 queue_scan_interval = "100ms"

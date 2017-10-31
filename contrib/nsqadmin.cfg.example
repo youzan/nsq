@@ -26,10 +26,10 @@ nsqlookupd_http_addresses = [
     "127.0.0.1:4161"
 ]
 
-## nsqd HTTP addresses (optional)
-nsqd_http_addresses = [
-    "127.0.0.1:4151"
-]
+## nsqd HTTP addresses (optional), not used anymore. 
+#nsqd_http_addresses = [
+#    "127.0.0.1:4151"
+#]
 
 log_dir = "/data/logs/nsqadmin"
 

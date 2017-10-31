@@ -349,6 +349,7 @@ func (t *Topic) MarkAsRemoved() (string, error) {
 
 	t.channelLock.Lock()
 	for _, channel := range t.channelMap {
+		t.channelMap[channel.name] = nil
 		delete(t.channelMap, channel.name)
 		channel.Delete()
 	}
@@ -750,6 +751,7 @@ func (t *Topic) CloseExistingChannel(channelName string, deleteData bool) error 
 		t.channelLock.Unlock()
 		return errors.New("channel does not exist")
 	}
+	t.channelMap[channelName] = nil
 	delete(t.channelMap, channelName)
 	// not defered so that we can continue while the channel async closes
 	numChannels := len(t.channelMap)

@@ -667,7 +667,10 @@ func (c *Channel) ConfirmBackendQueueOnSlave(offset BackendOffset, cnt int64, al
 // should clean the waiting state from requeue
 func (c *Channel) CleanWaitingRequeueChan(msg *Message) {
 	c.inFlightMutex.Lock()
-	delete(c.waitingRequeueChanMsgs, msg.ID)
+	if _, ok := c.waitingRequeueChanMsgs[msg.ID]; ok {
+		c.waitingRequeueChanMsgs[msg.ID] = nil
+		delete(c.waitingRequeueChanMsgs, msg.ID)
+	}
 	c.inFlightMutex.Unlock()
 }
 
@@ -1150,6 +1153,7 @@ func (c *Channel) RemoveClient(clientID int64, clientTag string) {
 	if !ok {
 		return
 	}
+	c.clients[clientID] = nil
 	delete(c.clients, clientID)
 
 	if len(c.clients) == 0 && c.ephemeral == true {
@@ -1274,7 +1278,10 @@ func (c *Channel) pushInFlightMessage(msg *Message) (*Message, error) {
 	}
 	c.inFlightMessages[msg.ID] = msg
 	c.inFlightPQ.Push(msg)
-	delete(c.waitingRequeueChanMsgs, msg.ID)
+	if _, ok := c.waitingRequeueChanMsgs[msg.ID]; ok {
+		c.waitingRequeueChanMsgs[msg.ID] = nil
+		delete(c.waitingRequeueChanMsgs, msg.ID)
+	}
 	return nil, nil
 }
 
@@ -1292,6 +1299,7 @@ func (c *Channel) popInFlightMessage(clientID int64, id MessageID, force bool) (
 		nsqLog.Logf("channel (%v): should never pop a deferred message here unless the timeout : %v", c.GetName(), msg.ID)
 		return nil, ErrMsgDeferred
 	}
+	c.inFlightMessages[id] = nil
 	delete(c.inFlightMessages, id)
 	if msg.index != -1 {
 		c.inFlightPQ.Remove(msg.index)
@@ -1411,9 +1419,11 @@ func (c *Channel) drainChannelWaiting(clearConfirmed bool, lastDataNeedRead *boo
 	c.inFlightMutex.Lock()
 	reqCnt += len(c.waitingRequeueMsgs) + len(c.waitingRequeueChanMsgs)
 	for k := range c.waitingRequeueMsgs {
+		c.waitingRequeueMsgs[k] = nil
 		delete(c.waitingRequeueMsgs, k)
 	}
 	for k := range c.waitingRequeueChanMsgs {
+		c.waitingRequeueChanMsgs[k] = nil
 		delete(c.waitingRequeueChanMsgs, k)
 	}
 	c.inFlightMutex.Unlock()
@@ -1892,6 +1902,7 @@ func (c *Channel) processInFlightQueue(tnow int64) (bool, bool) {
 			c.inFlightMutex.Unlock()
 			goto exit
 		}
+		c.inFlightMessages[msg.ID] = nil
 		delete(c.inFlightMessages, msg.ID)
 		// note: if this message is deferred by client, we treat it as a delay message,
 		// so we consider it is by demanded to delay not timeout of message.
@@ -1940,6 +1951,7 @@ exit:
 		for k, m := range c.waitingRequeueMsgs {
 			select {
 			case c.requeuedMsgChan <- m:
+				c.waitingRequeueMsgs[k] = nil
 				delete(c.waitingRequeueMsgs, k)
 				c.waitingRequeueChanMsgs[m.ID] = m
 				requeuedCnt++

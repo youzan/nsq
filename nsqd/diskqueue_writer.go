@@ -227,8 +227,6 @@ func (d *diskQueueWriter) ResetWriteWithQueueStart(queueStart BackendQueueEnd) e
 		d.diskQueueStart, d.diskWriteEnd, queueStart)
 	d.cleanOldData()
 
-	d.diskWriteEnd.EndOffset.FileNum++
-	d.diskWriteEnd.EndOffset.Pos = 0
 	d.diskQueueStart = d.diskWriteEnd
 	d.diskQueueStart.virtualEnd = queueStart.Offset()
 	d.diskQueueStart.totalMsgCnt = queueStart.TotalMsgCnt()
@@ -263,7 +261,6 @@ func (d *diskQueueWriter) CleanOldDataByRetention(cleanEndInfo BackendQueueOffse
 		// it may happen while the disk is started with (filenum, offset) = (2, 0) because
 		// of truncated from leader to replica
 		// so we should ignore clean file less than queue start file num.
-		// TODO: add test case for this
 		if endInfo.FileNum <= d.diskQueueStart.EndOffset.FileNum {
 			return nil, nil
 		}

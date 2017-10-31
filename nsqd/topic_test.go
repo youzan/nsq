@@ -442,6 +442,78 @@ func TestTopicCleanOldDataByRetentionDay(t *testing.T) {
 	}
 }
 
+func TestTopicCleanOldDataByRetentionDayWithResetStart(t *testing.T) {
+	opts := NewOptions()
+	opts.Logger = newTestLogger(t)
+	opts.MaxBytesPerFile = 1024 * 1024
+	if testing.Verbose() {
+		opts.LogLevel = 3
+		glog.SetFlags(0, "", "", true, true, 1)
+		glog.StartWorker(time.Second)
+		SetLogger(opts.Logger)
+	}
+	_, _, nsqd := mustStartNSQD(opts)
+	defer os.RemoveAll(opts.DataPath)
+	defer nsqd.Exit()
+
+	topic := nsqd.GetTopic("test", 0)
+	topic.dynamicConf.AutoCommit = 1
+	topic.dynamicConf.SyncEvery = 10
+
+	readStart := *(topic.backend.GetQueueReadStart().(*diskQueueEndInfo))
+	test.Equal(t, int64(0), readStart.EndOffset.FileNum)
+	topic.DisableForSlave()
+	err := topic.ResetBackendWithQueueStartNoLock(0, 0)
+	test.Nil(t, err)
+	readStart = *(topic.backend.GetQueueReadStart().(*diskQueueEndInfo))
+	test.Equal(t, int64(1), readStart.EndOffset.FileNum)
+	err = topic.ResetBackendWithQueueStartNoLock(0, 0)
+	test.Nil(t, err)
+	readStart = *(topic.backend.GetQueueReadStart().(*diskQueueEndInfo))
+	test.Equal(t, int64(2), readStart.EndOffset.FileNum)
+	topic.EnableForMaster()
+	msgNum := 1000
+	channel := topic.GetChannel("ch")
+	test.NotNil(t, channel)
+	msg := NewMessage(0, make([]byte, 1000))
+	msg.Timestamp = time.Now().Add(-1 * time.Hour * time.Duration(24*4)).UnixNano()
+	msgSize := int32(0)
+	var dend BackendQueueEnd
+	for i := 0; i < msgNum; i++ {
+		msg.ID = 0
+		_, _, msgSize, dend, _ = topic.PutMessage(msg)
+		msg.Timestamp = time.Now().Add(-1 * time.Hour * 24 * time.Duration(4-dend.(*diskQueueEndInfo).EndOffset.FileNum)).UnixNano()
+	}
+	topic.ForceFlush()
+
+	fileNum := topic.backend.diskWriteEnd.EndOffset.FileNum
+	test.Equal(t, int64(readStart.EndOffset.FileNum), topic.backend.GetQueueReadStart().(*diskQueueEndInfo).EndOffset.FileNum)
+
+	test.Equal(t, true, fileNum == 2)
+	for i := 0; i < msgNum; i++ {
+		msg := <-channel.clientMsgChan
+		channel.ConfirmBackendQueue(msg)
+	}
+
+	topic.dynamicConf.RetentionDay = 1
+	_, err = topic.TryCleanOldData(0, false, 0)
+	test.Equal(t, readStart, *(topic.backend.GetQueueReadStart().(*diskQueueEndInfo)))
+	test.Nil(t, err)
+	startFileName := topic.backend.fileName(readStart.EndOffset.FileNum)
+	fStat, err := os.Stat(startFileName)
+	test.Nil(t, err)
+	fileSize := fStat.Size()
+	fileCnt := fileSize / int64(msgSize)
+	test.Equal(t, int64(msgNum), fileCnt)
+
+	_, err = topic.TryCleanOldData(0, false, 0)
+	test.Nil(t, err)
+	test.Equal(t, readStart, *(topic.backend.GetQueueReadStart().(*diskQueueEndInfo)))
+	startFileName = topic.backend.fileName(int64(fileNum))
+	_, err = os.Stat(startFileName)
+	test.Nil(t, err)
+}
+
 func TestTopicResetWithQueueStart(t *testing.T) {
 	opts := NewOptions()
 	opts.Logger = newTestLogger(t)
