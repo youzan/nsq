@@ -923,7 +923,6 @@ func main() {
 	config.PubStrategy = nsq.PubRR
 	config.OutputBufferSize = 1024 * 32
 	if config.EnableOrdered {
-		config.PubStrategy = nsq.PubIDHash
 		config.Hasher = murmur3.New32()
 	}
 	log.Printf("check test flag: order: %v, pub strategy: %v, config: %v", *ordered, config.PubStrategy, config)
