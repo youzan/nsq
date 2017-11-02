@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"bytes"
 	"encoding/binary"
 	"errors"
 	"flag"
@@ -1195,24 +1194,16 @@ type consumeTraceIDHandler struct {
 }
 
 func (c *consumeTraceIDHandler) HandleMessage(message *nsq.Message) error {
-	traceID := binary.BigEndian.Uint64(message.ID[8:16])
 	c.locker.Lock()
 	defer c.locker.Unlock()
-	if traceID <= 0 {
-		if len(message.Body) != 8 {
-			return nil
-		}
-		traceID = binary.BigEndian.Uint64(message.Body[:8])
-		if traceID <= 0 {
-			return nil
-		}
-	} else {
-		if !bytes.Equal(message.Body, message.ID[8:16]) {
-			log.Printf("the trace id should be equal to body: %v\n", message)
-			// ignore this message
-			return nil
-		}
+	if len(message.Body) != 8 {
+		return nil
 	}
+	traceID := binary.BigEndian.Uint64(message.Body[:8])
+	if traceID <= 0 {
+		return nil
+	}
+
 	c.subTraceWaiting[traceID] = message
 	newMaxTraceID := atomic.LoadInt64(c.subIDCounter)
 	for fid := range c.failedList {
