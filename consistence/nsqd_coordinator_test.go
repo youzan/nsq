@@ -1502,6 +1502,78 @@ func TestNsqdCoordISRChangedWhileWrite(t *testing.T) {
 	// RESULT: all new isr nodes should be synced
 }
 
+func TestNsqdCoordSyncChannelList(t *testing.T) {
+	topic := "coordTestTopicSyncChannel"
+	partition := 1
+
+	if testing.Verbose() {
+		SetCoordLogger(newTestLogger(t), levellogger.LOG_DETAIL)
+		glog.SetFlags(0, "", "", true, true, 1)
+		glog.StartWorker(time.Second)
+	} else {
+		SetCoordLogger(newTestLogger(t), levellogger.LOG_DEBUG)
+	}
+
+	nsqd1, randPort1, nodeInfo1, data1 := newNsqdNode(t, "id1")
+	defer os.RemoveAll(data1)
+	defer nsqd1.Exit()
+	nsqdCoord1 := startNsqdCoord(t, strconv.Itoa(randPort1), data1, "id1", nsqd1, true)
+	nsqdCoord1.Start()
+	defer nsqdCoord1.Stop()
+	time.Sleep(time.Second)
+
+	nsqd2, randPort2, _, data2 := newNsqdNode(t, "id2")
+	defer os.RemoveAll(data2)
+	defer nsqd2.Exit()
+	nsqdCoord2 := startNsqdCoord(t, strconv.Itoa(randPort2), data2, "id2", nsqd2, true)
+	nsqdCoord2.Start()
+	defer nsqdCoord2.Stop()
+
+	var topicInitInfo RpcAdminTopicInfo
+	topicInitInfo.Name = topic
+	topicInitInfo.Partition = partition
+	topicInitInfo.Epoch = 1
+	topicInitInfo.EpochForWrite = 1
+	topicInitInfo.ISR = append(topicInitInfo.ISR, nsqdCoord1.myNode.GetID())
+	topicInitInfo.ISR = append(topicInitInfo.ISR, nsqdCoord2.myNode.GetID())
+	topicInitInfo.Leader = nsqdCoord1.myNode.GetID()
+	topicInitInfo.Replica = 2
+	ensureTopicOnNsqdCoord(nsqdCoord1, topicInitInfo)
+	ensureTopicOnNsqdCoord(nsqdCoord2, topicInitInfo)
+	leaderSession := &TopicLeaderSession{
+		LeaderNode:  nodeInfo1,
+		LeaderEpoch: 1,
+		Session:     "fake123",
+	}
+	// normal test
+	ensureTopicLeaderSession(nsqdCoord1, topic, partition, leaderSession)
+	ensureTopicLeaderSession(nsqdCoord2, topic, partition, leaderSession)
+	ensureTopicDisableWrite(nsqdCoord1, topic, partition, false)
+	ensureTopicDisableWrite(nsqdCoord2, topic, partition, false)
+	topicData1 := nsqd1.GetTopic(topic, partition)
+	topicData1.GetChannel("ch1")
+	topicData1.GetChannel("ch2")
+	topicData1.GetChannel("ch3_closed")
+	_, _, _, _, err := nsqdCoord1.PutMessageBodyToCluster(topicData1, []byte("123"), 0)
+	test.Nil(t, err)
+
+	topicData2 := nsqd2.GetTopic(topic, partition)
+	topicData1.ForceFlush()
+	topicData2.ForceFlush()
+
+	tc1, _ := nsqdCoord1.getTopicCoord(topic, partition)
+	nsqdCoord1.trySyncTopicChannels(tc1.GetData(), true, true)
+	time.Sleep(time.Second)
+	chListOnNode2 := topicData2.GetChannelMapCopy()
+	test.Equal(t, 3, len(chListOnNode2))
+
+	topicData1.CloseExistingChannel("ch3_closed", false)
+	nsqdCoord1.trySyncTopicChannels(tc1.GetData(), true, true)
+	time.Sleep(time.Second)
+	chListOnNode2 = topicData2.GetChannelMapCopy()
+	test.Equal(t, 2, len(chListOnNode2))
+}
+
 func benchmarkNsqdCoordPubWithArg(b *testing.B, replica int, size int) {
 	b.StopTimer()
 	topicBase := "coordBenchTestTopic"

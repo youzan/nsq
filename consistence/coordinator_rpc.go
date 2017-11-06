@@ -602,6 +602,11 @@ type RpcChannelOffsetArg struct {
 	ChannelOffset ChannelConsumerOffset
 }
 
+type RpcChannelListArg struct {
+	RpcTopicData
+	ChannelList []string
+}
+
 type RpcPutMessages struct {
 	RpcTopicData
 	LogData       CommitLogData
@@ -738,6 +743,25 @@ func (self *NsqdCoordRpcServer) UpdateChannelOffset(info *RpcChannelOffsetArg) *
 	}
 	// update local channel offset
 	err = self.nsqdCoord.updateChannelOffsetOnSlave(tc.GetData(), info.Channel, info.ChannelOffset)
+	if err != nil {
+		ret = *err
+		return &ret
+	}
+	return &ret
+}
+
+func (self *NsqdCoordRpcServer) UpdateChannelList(info *RpcChannelListArg) *CoordErr {
+	var ret CoordErr
+	defer coordErrStats.incCoordErr(&ret)
+	tc, err := self.nsqdCoord.checkWriteForRpcCall(info.RpcTopicData)
+	if err != nil {
+		ret = *err
+		return &ret
+	}
+	if tc.IsWriteDisabled() {
+		return &ret
+	}
+	err = self.nsqdCoord.updateChannelListOnSlave(tc.GetData(), info.ChannelList)
 	if err != nil {
 		ret = *err
 		return &ret

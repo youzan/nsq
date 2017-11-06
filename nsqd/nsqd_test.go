@@ -408,3 +408,51 @@ func TestLoadTopicMetaExt(t *testing.T) {
 		t.FailNow()
 	}
 }
+
+func TestLoadTopicChannel(t *testing.T) {
+	opts := NewOptions()
+	opts.Logger = newTestLogger(t)
+	_, _, nsqd := mustStartNSQD(opts)
+	defer os.RemoveAll(opts.DataPath)
+
+	atomic.StoreInt32(&nsqd.isLoading, 1)
+	topicName := "load_topic_meta" + strconv.Itoa(int(time.Now().Unix()))
+	topic := nsqd.GetTopicIgnPart(topicName)
+	topic.GetChannel("ch")
+	topic.GetChannel("ch_closed")
+	ch, err := topic.GetExistingChannel("ch_closed")
+	if err != nil || ch == nil {
+		t.FailNow()
+	}
+
+	atomic.StoreInt32(&nsqd.isLoading, 0)
+	nsqd.persistMetadata(nsqd.GetTopicMapCopy())
+
+	topic.CloseExistingChannel("ch_closed", false)
+	atomic.StoreInt32(&nsqd.isLoading, 0)
+	nsqd.persistMetadata(nsqd.GetTopicMapCopy())
+	_, err = topic.GetExistingChannel("ch_closed")
+	if err == nil {
+		t.Errorf("should closed this channel after reload")
+	}
+
+	nsqd.Exit()
+
+	_, _, nsqd = mustStartNSQD(opts)
+	defer nsqd.Exit()
+	nsqd.LoadMetadata(1)
+
+	topic, err = nsqd.GetExistingTopic(topicName, 0)
+	if err != nil {
+		t.FailNow()
+	}
+
+	ch, err = topic.GetExistingChannel("ch")
+	if err != nil || ch == nil {
+		t.FailNow()
+	}
+	_, err = topic.GetExistingChannel("ch_closed")
+	if err == nil {
+		t.Errorf("should closed this channel after reload")
+	}
+}

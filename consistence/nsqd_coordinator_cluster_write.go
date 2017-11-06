@@ -1392,3 +1392,34 @@ func (self *NsqdCoordinator) updateDelayedQueueStateOnSlave(tc *coordData, chann
 	}
 	return nil
 }
+
+func (self *NsqdCoordinator) updateChannelListOnSlave(tc *coordData, chList []string) *CoordErr {
+	topicName := tc.topicInfo.Name
+	partition := tc.topicInfo.Partition
+
+	if !tc.IsMineISR(self.myNode.GetID()) {
+		return ErrTopicWriteOnNonISR
+	}
+	topic, localErr := self.localNsqd.GetExistingTopic(topicName, partition)
+	if localErr != nil {
+		coordLog.Warningf("slave missing topic : %v", topicName)
+		return nil
+	}
+	if len(chList) > 0 {
+		coordLog.Debugf("topic %v sync channel from leader: %v", topicName , chList)
+		oldChList := topic.GetChannelMapCopy()
+		for _, chName := range chList {
+			delete(oldChList, chName)
+		}
+		changed := false
+		for chName := range oldChList {
+			coordLog.Infof("topic %v local channel not on leader: %v", topicName , chName)
+			topic.CloseExistingChannel(chName, false)
+			changed = true
+		}
+		if changed {
+			topic.SaveChannelMeta()
+		}
+	}
+	return nil
+}

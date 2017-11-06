@@ -442,11 +442,10 @@ func (self *NsqdCoordinator) periodFlushCommitLogs() {
 						}
 					}
 				}
-				if !tpc.IsExiting() {
-					if tcData.GetLeader() == self.myNode.GetID() {
-						if ((pid + 1) % FLUSH_DISTANCE) == matchCnt {
-							self.trySyncTopicChannels(tcData, false)
-						}
+				if !tpc.IsExiting() && tcData.GetLeader() == self.myNode.GetID() {
+					syncChList := !tpc.IsWriteDisabled() && flushAll
+					if ((pid + 1) % FLUSH_DISTANCE) == matchCnt {
+						self.trySyncTopicChannels(tcData, false, syncChList)
 					}
 				}
 				delete(tc, pid)
@@ -2022,7 +2021,7 @@ func (self *NsqdCoordinator) switchStateForMaster(topicCoord *TopicCoordinator,
 		localTopic.Unlock()
 
 		if !isWriteDisabled {
-			self.trySyncTopicChannels(tcData, true)
+			self.trySyncTopicChannels(tcData, true, false)
 		}
 
 		coordLog.Infof("current topic %v write state: %v",
@@ -2245,9 +2244,29 @@ func (self *NsqdCoordinator) removeTopicCoord(topic string, partition int, remov
 	return topicCoord, err
 }
 
-func (self *NsqdCoordinator) trySyncTopicChannels(tcData *coordData, syncDelayedQueue bool) {
+func (self *NsqdCoordinator) trySyncTopicChannels(tcData *coordData, syncDelayedQueue bool, syncChannelList bool) {
 	localTopic, _ := self.localNsqd.GetExistingTopic(tcData.topicInfo.Name, tcData.topicInfo.Partition)
 	if localTopic != nil {
+		if localTopic.IsOrdered() && !syncChannelList {
+			return
+		}
+		channels := localTopic.GetChannelMapCopy()
+		if syncChannelList {
+			chNameList := make([]string, 0, len(channels))
+			for _, ch := range channels {
+				chNameList = append(chNameList, ch.GetName())
+			}
+			for _, nodeID := range tcData.topicInfo.ISR {
+				if nodeID == self.myNode.GetID() {
+					continue
+				}
+				c, rpcErr := self.acquireRpcClient(nodeID)
+				if rpcErr != nil {
+					continue
+				}
+				c.NotifyChannelList(&tcData.topicLeaderSession, &tcData.topicInfo, chNameList)
+			}
+		}
 		if localTopic.IsOrdered() {
 			// ordered topic update in sync mode, no need sync in background
 			return
@@ -2275,7 +2294,6 @@ func (self *NsqdCoordinator) trySyncTopicChannels(tcData *coordData, syncDelayed
 			}
 		}
 
-		channels := localTopic.GetChannelMapCopy()
 		var syncOffset ChannelConsumerOffset
 		syncOffset.Flush = true
 		for _, ch := range channels {
@@ -2437,7 +2455,7 @@ func (self *NsqdCoordinator) prepareLeavingCluster() {
 
 			tpCoord.Exiting()
 			if tcData.GetLeader() == self.myNode.GetID() {
-				self.trySyncTopicChannels(tcData, true)
+				self.trySyncTopicChannels(tcData, true, false)
 			}
 			// TODO: if we release leader first, we can not transfer the leader properly,
 			// if we leave isr first, we would get the state that the leader not in isr
