@@ -841,7 +841,7 @@ func (c *Channel) internalFinishMessage(clientID int64, clientAddr string,
 	}
 	isOldDeferred := msg.IsDeferred()
 	if msg.TraceID != 0 || c.IsTraced() || nsqLog.Level() >= levellogger.LOG_DETAIL {
-		// if fin by no client address, means fin by internal delayed queue
+		// if fin by no client address, means fin by internal delayed queue or by http api
 		if clientAddr != "" {
 			nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "FIN", msg.TraceID, msg, clientAddr)
 		} else {
@@ -875,12 +875,14 @@ func (c *Channel) internalFinishMessage(clientID int64, clientAddr string,
 		atomic.AddInt64(&c.deferredCount, -1)
 		atomic.StoreInt32(&msg.deferredCnt, 0)
 		if clientAddr != "" {
+			// delayed message should be requeued and then send to client
+			// if some client finish delayed message directly, something may be wrong.
 			nsqLog.Infof("channel %v delayed msg %v finished by client %v ", c.GetName(),
 				msg, clientAddr)
 		}
 		if nsqLog.Level() >= levellogger.LOG_DEBUG {
 			if clientAddr == "" {
-				nsqLog.Debugf("channel %v delay msg %v to delayed queue with timeout %v ", c.GetName(),
+				nsqLog.Debugf("channel %v delay msg %v finished by force ", c.GetName(),
 					msg)
 			}
 		}
@@ -2085,4 +2087,16 @@ func (c *Channel) GetDelayedQueueConsumedState() (RecentKeyList, map[int]uint64,
 	}
 
 	return dq.GetOldestConsumedState([]string{c.GetName()}, false)
+}
+
+func (c *Channel) GetMemDelayedMsgs() []MessageID {
+	idList := make([]MessageID, 0)
+	c.inFlightMutex.Lock()
+	for _, msg := range c.inFlightMessages {
+		if msg.IsDeferred() {
+			idList = append(idList, msg.ID)
+		}
+	}
+	c.inFlightMutex.Unlock()
+	return idList
 }

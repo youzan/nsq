@@ -616,6 +616,74 @@ func TestHTTPFinish(t *testing.T) {
 	conn.Close()
 }
 
+func TestHTTPFinishMemDelayed(t *testing.T) {
+	opts := nsqd.NewOptions()
+	opts.LogLevel = 2
+	opts.Logger = newTestLogger(t)
+	if testing.Verbose() {
+		opts.LogLevel = 4
+		nsqd.SetLogger(opts.Logger)
+	}
+
+	//opts.Logger = &levellogger.SimpleLogger{}
+	tcpAddr, httpAddr, nsqd, nsqdServer := mustStartNSQD(opts)
+	defer os.RemoveAll(opts.DataPath)
+	defer nsqdServer.Exit()
+
+	topicName := "test_http_finish" + strconv.Itoa(int(time.Now().Unix()))
+	topic := nsqd.GetTopicIgnPart(topicName)
+	conn, err := mustConnectNSQD(tcpAddr)
+	test.Equal(t, err, nil)
+	identify(t, conn, nil, frameTypeResponse)
+	sub(t, conn, topicName, "ch")
+
+	buf := bytes.NewBuffer([]byte("test message"))
+	url := fmt.Sprintf("http://%s/pub?topic=%s", httpAddr, topicName)
+	resp, err := http.Post(url, "application/octet-stream", buf)
+	test.Equal(t, err, nil)
+	defer resp.Body.Close()
+	body, _ := ioutil.ReadAll(resp.Body)
+	test.Equal(t, string(body), "OK")
+
+	time.Sleep(5 * time.Millisecond)
+
+	_, err = nsq.Ready(1).WriteTo(conn)
+	test.Equal(t, err, nil)
+	// sleep to allow the RDY state to take effect
+	time.Sleep(50 * time.Millisecond)
+	ch, err := topic.GetExistingChannel("ch")
+	test.Nil(t, err)
+
+	for {
+		resp, _ := nsq.ReadResponse(conn)
+		frameType, data, err := nsq.UnpackResponse(resp)
+		test.Nil(t, err)
+		test.NotEqual(t, frameTypeError, frameType)
+		if frameType == frameTypeResponse {
+			t.Logf("got response data: %v", string(data))
+			continue
+		}
+		msgOut, err := nsq.DecodeMessage(data)
+		test.Equal(t, []byte("test message"), msgOut.Body)
+		nsq.Requeue(msgOut.ID, time.Second*10).WriteTo(conn)
+		time.Sleep(time.Second)
+		delayedMsgs := ch.GetMemDelayedMsgs()
+		test.Equal(t, 1, len(delayedMsgs))
+
+		url := fmt.Sprintf("http://%s/channel/finishmemdelayed?topic=%s&partition=0&channel=%s", httpAddr,
+			topicName, "ch")
+		ret, err := http.Post(url, "", nil)
+		test.Equal(t, err, nil)
+		test.Equal(t, 200, ret.StatusCode)
+		ioutil.ReadAll(ret.Body)
+		ret.Body.Close()
+		break
+	}
+	delayedMsgs := ch.GetMemDelayedMsgs()
+	test.Equal(t, 0, len(delayedMsgs))
+	conn.Close()
+}
+
 func TestHTTPSRequire(t *testing.T) {
 	opts := nsqd.NewOptions()
 	opts.Logger = newTestLogger(t)

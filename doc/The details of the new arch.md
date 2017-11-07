@@ -141,7 +141,7 @@ topic写入落盘改造之后, 再来看看如何增加数据副本和HA特性. 
 ### 元数据存储
 一些少量的元数据存储在etcd, 保证整个集群的元数据的一致性. 具体包括每个topic的配置信息, 副本节点的分布, 选举出来的leader节点信息, nsqd数据节点的配置信息以及nsqlookupd数据查询节点的配置信息. 元数据树结构图如下:
 
-![IMAGE](resources/95E00DB10AC70C9E9EDA2B4CCB36E925.jpg =608x393)
+![IMAGE](resources/95E00DB10AC70C9E9EDA2B4CCB36E925.jpg)
 
 由于元数据数据量很少, 变更也非常少, 因此本身对etcd的性能并没有什么要求. 另外nsqd数据节点和nsqlookupd查询节点的保活也通过etcd来做. 
 

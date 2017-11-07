@@ -2889,11 +2889,11 @@ func TestDelayMessageToQueueEnd(t *testing.T) {
 		recvCnt++
 		t.Logf("recv msg %v, %v", msgClientOut.ID, recvCnt)
 
-		finCnt++
 		traceID := binary.BigEndian.Uint64(msgClientOut.ID[8:])
 		if traceID == longestDelayOutMsg.GetTraceID() {
 			if reqToEndAttempts < 0 {
 				nsq.Finish(msgClientOut.ID).WriteTo(conn)
+			finCnt++
 				break
 			}
 			reqToEndAttempts--
@@ -2906,6 +2906,7 @@ func TestDelayMessageToQueueEnd(t *testing.T) {
 			longestDelay += delayTime
 			test.Nil(t, err)
 		} else {
+			finCnt++
 			nsq.Finish(msgClientOut.ID).WriteTo(conn)
 		}
 	}
@@ -2923,6 +2924,7 @@ func TestDelayMessageToQueueEnd(t *testing.T) {
 	test.Equal(t, delayDone < longestDelay+opts.MsgTimeout+5*opts.QueueScanInterval, true)
 	test.Equal(t, true, int(msgClientOut.Attempts) > reqToEndAttempts)
 
+	t.Logf("put %v,  fin : %v, recv: %v", putCnt, finCnt, recvCnt)
 	test.Equal(t, true, putCnt <= finCnt)
 	test.Equal(t, true, recvCnt-finCnt > 10)
 	time.Sleep(time.Second)
@@ -3049,7 +3051,7 @@ func testDelayManyMessagesToQueueEnd(t *testing.T, changedLeader bool) {
 						continue
 					} else if now-delayTs > int(opts.QueueScanInterval*3+500*time.Millisecond) {
 						t.Logf("\033[31m got delayed message too late: %v (id %v), now: %v\033[39m\n\n", string(msgOut.Body), msgOut.ID, now)
-						if msgOut.Attempts > 1 {
+						if msgOut.Attempts > 3 {
 							t.Errorf("\033[31m got delayed message too late: %v (id %v), now: %v\033[39m\n\n", string(msgOut.Body), msgOut.ID, now)
 						} else if now-delayTs > int(opts.QueueScanInterval*3+time.Second*10) {
 							t.Errorf("\033[31m got delayed message too late: %v (id %v), now: %v\033[39m\n\n", string(msgOut.Body), msgOut.ID, now)

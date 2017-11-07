@@ -77,6 +77,7 @@ func newHTTPServer(ctx *context, tlsEnabled bool, tlsRequired bool) *httpServer 
 	router.Handle("POST", "/channel/create", http_api.Decorate(s.doCreateChannel, log, http_api.V1))
 	router.Handle("POST", "/channel/delete", http_api.Decorate(s.doDeleteChannel, log, http_api.V1))
 	router.Handle("POST", "/channel/empty", http_api.Decorate(s.doEmptyChannel, log, http_api.V1))
+	router.Handle("POST", "/channel/finishmemdelayed", http_api.Decorate(s.doFinishMemDelayed, log, http_api.V1))
 	router.Handle("POST", "/channel/emptydelayed", http_api.Decorate(s.doEmptyChannelDelayed, log, http_api.V1))
 	router.Handle("POST", "/channel/setoffset", http_api.Decorate(s.doSetChannelOffset, log, http_api.V1))
 	router.Handle("POST", "/channel/setorder", http_api.Decorate(s.doSetChannelOrder, log, http_api.V1))
@@ -986,50 +987,24 @@ func (s *httpServer) doMessageGet(w http.ResponseWriter, req *http.Request, ps h
 }
 
 func (s *httpServer) doMessageStats(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {
-	reqParams, err := url.ParseQuery(req.URL.RawQuery)
+	_, t, chName, err := s.getExistingTopicChannelFromQuery(req)
 	if err != nil {
-		nsqd.NsqLogger().LogErrorf("failed to parse request params - %s", err)
-		return nil, http_api.Err{400, "INVALID_REQUEST"}
+		return nil, err
 	}
-	topicName := reqParams.Get("topic")
-	topicPartStr := reqParams.Get("partition")
-	topicPart, err := strconv.Atoi(topicPartStr)
-	if err != nil {
-		nsqd.NsqLogger().LogErrorf("failed to get partition - %s", err)
-		return nil, http_api.Err{400, "INVALID_REQUEST"}
-	}
-	channelName := reqParams.Get("channel")
 
-	t, err := s.ctx.getExistingTopic(topicName, topicPart)
-	if err != nil {
-		return nil, http_api.Err{404, E_TOPIC_NOT_EXIST}
-	}
-	statStr := t.GetTopicChannelDebugStat(channelName)
-
+	statStr := t.GetTopicChannelDebugStat(chName)
 	return statStr, nil
 }
 
 func (s *httpServer) doMessageFinish(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {
-	reqParams, err := url.ParseQuery(req.URL.RawQuery)
+	reqParams, t, chName, err := s.getExistingTopicChannelFromQuery(req)
 	if err != nil {
-		nsqd.NsqLogger().LogErrorf("failed to parse request params - %s", err)
-		return nil, http_api.Err{400, "INVALID_REQUEST"}
+		return nil, err
 	}
-	topicName := reqParams.Get("topic")
-	topicPartStr := reqParams.Get("partition")
-	topicPart, err := strconv.Atoi(topicPartStr)
-	if err != nil {
-		nsqd.NsqLogger().LogErrorf("failed to get partition - %s", err)
-		return nil, http_api.Err{400, "INVALID_REQUEST"}
-	}
-	channelName := reqParams.Get("channel")
+	topicName := t.GetTopicName()
+	topicPart := t.GetTopicPart()
 
-	t, err := s.ctx.getExistingTopic(topicName, topicPart)
-	if err != nil {
-		return nil, http_api.Err{404, E_TOPIC_NOT_EXIST}
-	}
-
-	ch, err := t.GetExistingChannel(channelName)
+	ch, err := t.GetExistingChannel(chName)
 	if err != nil {
 		return nil, http_api.Err{404, "CHANNEL_NOT_FOUND"}
 	}
@@ -1051,7 +1026,35 @@ func (s *httpServer) doMessageFinish(w http.ResponseWriter, req *http.Request, p
 	}
 
 	nsqd.NsqLogger().Logf("topic %v-%v channel %v msgid %v is finished by api", topicName,
-		topicPart, channelName, msgID)
+		topicPart, chName, msgID)
+	return nil, nil
+}
+
+func (s *httpServer) doFinishMemDelayed(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {
+	_, t, chName, err := s.getExistingTopicChannelFromQuery(req)
+	if err != nil {
+		return nil, err
+	}
+
+	ch, err := t.GetExistingChannel(chName)
+	if err != nil {
+		return nil, http_api.Err{404, "CHANNEL_NOT_FOUND"}
+	}
+
+	if !s.ctx.checkForMasterWrite(t.GetTopicName(), t.GetTopicPart()) {
+		nsqd.NsqLogger().Logf("topic %v fin message failed for not leader", t.GetTopicName())
+		return nil, http_api.Err{400, FailedOnNotLeader}
+	}
+
+	memDelayedMsgs := ch.GetMemDelayedMsgs()
+	for _, id := range memDelayedMsgs {
+		err = s.ctx.FinishMessageForce(ch, id)
+		if err != nil {
+			return nil, http_api.Err{500, err.Error()}
+		}
+	}
+		nsqd.NsqLogger().Logf("topic %v-%v channel %v msgids %v is finished by api", t.GetTopicName(),
+			t.GetTopicPart(), chName, memDelayedMsgs)
 	return nil, nil
 }
 
