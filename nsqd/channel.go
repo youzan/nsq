@@ -297,6 +297,17 @@ func (c *Channel) GetClientTagMsgChan(tag string) (chan *Message, bool) {
 	return msgChanData.MsgChan, true
 }
 
+func (c *Channel) isNeedParseMsgExt() bool {
+	c.tagMsgChansMutex.RLock()
+	tagChLen := len(c.tagMsgChans)
+	c.tagMsgChansMutex.RUnlock()
+	if tagChLen > 0 {
+		return true
+	}
+	// TODO: if the channel need filter, we need parse ext
+	return false
+}
+
 func (c *Channel) IsTraced() bool {
 	return atomic.LoadInt32(&c.EnableTrace) == 1
 }
@@ -1741,15 +1752,21 @@ LOOP:
 			readBackendWait = true
 		}
 
-		var msgHasTag bool
+		var msgTag string
+		var extParsed bool
+
 	tagMsgLoop:
-		//deliver according to tag value in message
-		msgTag, err := parseTagIfAny(msg)
-		if err != nil {
-			nsqLog.Errorf("error parse tag from message %v, offset %v", msg.ID, msg.Offset)
+		needParseExt := !extParsed && c.isNeedParseMsgExt()
+		if needParseExt {
+			//deliver according to tag value in message
+			msgTag, err = parseTagIfAny(msg)
+			if err != nil {
+				nsqLog.Errorf("error parse tag from message %v, offset %v, data: %v", msg.ID, msg.Offset, PrintMessage(msg))
+			}
+			extParsed = true
 		}
+
 		if msgTag != "" {
-			msgHasTag = true
 			tagMsgChan, chanExist := c.GetClientTagMsgChan(msgTag)
 			if chanExist {
 				select {
@@ -1772,7 +1789,7 @@ LOOP:
 	msgDefaultLoop:
 		select {
 		case newTag := <-c.tagChanInitChan:
-			if msgHasTag && newTag == msgTag {
+			if !extParsed || newTag == msgTag {
 				nsqLog.Infof("client with tag %v initialized, try deliver in tag loop", newTag)
 				goto tagMsgLoop
 			} else {

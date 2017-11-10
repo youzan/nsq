@@ -1038,7 +1038,7 @@ func (self *NsqdCoordinator) FinishMessageToCluster(channel *nsqd.Channel, clien
 		}
 		offset, cnt, tmpChanged, msg, localErr := channel.FinishMessageForce(clientID, clientAddr, msgID, forceFin)
 		if localErr != nil {
-			coordLog.Infof("channel %v finish local msg %v error: %v", channel.GetName(), msgID, localErr)
+			coordLog.Debugf("channel %v finish local msg %v error: %v", channel.GetName(), msgID, localErr)
 			changed = false
 			return &CoordErr{localErr.Error(), RpcNoErr, CoordLocalErr}
 		}
@@ -1406,14 +1406,14 @@ func (self *NsqdCoordinator) updateChannelListOnSlave(tc *coordData, chList []st
 		return nil
 	}
 	if len(chList) > 0 {
-		coordLog.Debugf("topic %v sync channel from leader: %v", topicName , chList)
+		coordLog.Debugf("topic %v sync channel from leader: %v", topicName, chList)
 		oldChList := topic.GetChannelMapCopy()
 		for _, chName := range chList {
 			delete(oldChList, chName)
 		}
 		changed := false
 		for chName := range oldChList {
-			coordLog.Infof("topic %v local channel not on leader: %v", topicName , chName)
+			coordLog.Infof("topic %v local channel not on leader: %v", topicName, chName)
 			topic.CloseExistingChannel(chName, false)
 			changed = true
 		}
