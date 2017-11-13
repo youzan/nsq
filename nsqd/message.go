@@ -178,6 +178,9 @@ func (m *Message) internalWriteTo(w io.Writer, writeExt bool, writeCompatible bo
 		}
 
 		if m.ExtVer != ext.NO_EXT_VER {
+			if len(m.ExtBytes) >= ext.MaxExtLen {
+				return total, errors.New("extend data exceed the limit")
+			}
 			binary.BigEndian.PutUint16(buf[1:1+2], uint16(len(m.ExtBytes)))
 			n, err = w.Write(buf[1 : 1+2])
 			total += int64(n)
@@ -284,7 +287,7 @@ func (m *Message) WriteDelayedTo(w io.Writer, writeExt bool) (int64, error) {
 		}
 
 		if m.ExtVer != ext.NO_EXT_VER {
-			if len(m.ExtBytes) >= 65535 {
+			if len(m.ExtBytes) >= ext.MaxExtLen {
 				return total, errors.New("extend data exceed the limit")
 			}
 			binary.BigEndian.PutUint16(buf[:2], uint16(len(m.ExtBytes)))

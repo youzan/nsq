@@ -2524,6 +2524,483 @@ func testTcpPubExtToNonExtTopic(t *testing.T, allow bool) {
 	conn.Close()
 }
 
+func TestConsumeWithFilter(t *testing.T) {
+	topicName := "test_channel_filter" + strconv.Itoa(int(time.Now().Unix()))
+	opts := nsqdNs.NewOptions()
+	opts.Logger = newTestLogger(t)
+	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
+	defer os.RemoveAll(opts.DataPath)
+	defer nsqdServer.Exit()
+
+	topic := nsqd.GetTopicIgnPart(topicName)
+	topicDynConf := nsqdNs.TopicDynamicConf{
+		AutoCommit: 1,
+		SyncEvery:  1,
+		Ext:        true,
+	}
+	topic.SetDynamicInfo(topicDynConf, nil)
+	topic.GetChannel("chA")
+	topic.GetChannel("chB")
+	topic.GetChannel("chC")
+	topic.GetChannel("chGlob")
+	topic.GetChannel("chRegexp")
+
+	conn, err := mustConnectNSQD(tcpAddr)
+	test.Equal(t, err, nil)
+	identify(t, conn, nil, frameTypeResponse)
+
+	var jext nsq.MsgExt
+	jext.Custom = make(map[string]string)
+	filterExtKey := "my_filter_key"
+	for i := 0; i < 10; i++ {
+		jext.Custom[filterExtKey] = "filterA"
+		msgBody := fmt.Sprintf("this is message A %v", i)
+		cmd, _ := nsq.PublishWithJsonExt(topicName, "0", []byte(msgBody), jext.ToJson())
+		cmd.WriteTo(conn)
+		resp, _ := nsq.ReadResponse(conn)
+		frameType, data, _ := nsq.UnpackResponse(resp)
+		t.Logf("frameType: %d, data: %s", frameType, data)
+		test.Equal(t, frameType, frameTypeResponse)
+		test.Equal(t, len(data) >= 2, true)
+		test.Equal(t, data[:2], []byte("OK"))
+
+		jext.Custom[filterExtKey] = "filterAB"
+		msgBody = fmt.Sprintf("this is message AB %v", i)
+		cmd, _ = nsq.PublishWithJsonExt(topicName, "0", []byte(msgBody), jext.ToJson())
+		cmd.WriteTo(conn)
+		resp, _ = nsq.ReadResponse(conn)
+		frameType, data, _ = nsq.UnpackResponse(resp)
+		t.Logf("frameType: %d, data: %s", frameType, data)
+		test.Equal(t, frameType, frameTypeResponse)
+		test.Equal(t, len(data) >= 2, true)
+		test.Equal(t, data[:2], []byte("OK"))
+
+		jext.Custom[filterExtKey] = "filterB"
+		msgBody = fmt.Sprintf("this is message B %v", i)
+		cmd, _ = nsq.PublishWithJsonExt(topicName, "0", []byte(msgBody), jext.ToJson())
+		cmd.WriteTo(conn)
+		resp, _ = nsq.ReadResponse(conn)
+		frameType, data, _ = nsq.UnpackResponse(resp)
+		t.Logf("frameType: %d, data: %s", frameType, data)
+		test.Equal(t, frameType, frameTypeResponse)
+		test.Equal(t, len(data) >= 2, true)
+		test.Equal(t, data[:2], []byte("OK"))
+
+		jext.Custom[filterExtKey] = "filterBA"
+		msgBody = fmt.Sprintf("this is message BA %v", i)
+		cmd, _ = nsq.PublishWithJsonExt(topicName, "0", []byte(msgBody), jext.ToJson())
+		cmd.WriteTo(conn)
+		resp, _ = nsq.ReadResponse(conn)
+		frameType, data, _ = nsq.UnpackResponse(resp)
+		t.Logf("frameType: %d, data: %s", frameType, data)
+		test.Equal(t, frameType, frameTypeResponse)
+		test.Equal(t, len(data) >= 2, true)
+		test.Equal(t, data[:2], []byte("OK"))
+
+		jext.Custom[filterExtKey] = "filterA"
+		msgBody = fmt.Sprintf("this is message A %v", i)
+		cmd, _ = nsq.PublishWithJsonExt(topicName, "0", []byte(msgBody), jext.ToJson())
+		cmd.WriteTo(conn)
+		resp, _ = nsq.ReadResponse(conn)
+		frameType, data, _ = nsq.UnpackResponse(resp)
+		t.Logf("frameType: %d, data: %s", frameType, data)
+		test.Equal(t, frameType, frameTypeResponse)
+		test.Equal(t, len(data) >= 2, true)
+		test.Equal(t, data[:2], []byte("OK"))
+		// write some message with no ext to test filter non-ext message
+		delete(jext.Custom, filterExtKey)
+		msgBody = fmt.Sprintf("this is message no ext %v", i)
+		cmd, _ = nsq.PublishWithJsonExt(topicName, "0", []byte(msgBody), jext.ToJson())
+		cmd.WriteTo(conn)
+		resp, _ = nsq.ReadResponse(conn)
+		frameType, data, _ = nsq.UnpackResponse(resp)
+		t.Logf("frameType: %d, data: %s", frameType, data)
+		test.Equal(t, frameType, frameTypeResponse)
+		test.Equal(t, len(data) >= 2, true)
+		test.Equal(t, data[:2], []byte("OK"))
+	}
+	conn.Close()
+	t.Logf("starts consumers")
+	conn, err = mustConnectNSQD(tcpAddr)
+	test.Equal(t, err, nil)
+	clientParams := make(map[string]interface{})
+	clientParams["client_id"] = "client_a"
+	clientParams["hostname"] = "client_a"
+
+	clientParams["ext_filter"] = nsqdNs.ExtFilterData{1, filterExtKey, "filterA", nil}
+	clientParams["extend_support"] = true
+	identify(t, conn, clientParams, frameTypeResponse)
+	sub(t, conn, topicName, "chA")
+	_, err = nsq.Ready(1).WriteTo(conn)
+	test.Equal(t, err, nil)
+	defer conn.Close()
+
+	conn1, err := mustConnectNSQD(tcpAddr)
+	test.Equal(t, err, nil)
+	client1Params := make(map[string]interface{})
+	client1Params["client_id"] = "client_b"
+	client1Params["hostname"] = "client_b"
+	client1Params["ext_filter"] = nsqdNs.ExtFilterData{1, filterExtKey, "filterB", nil}
+	client1Params["extend_support"] = true
+	identify(t, conn1, client1Params, frameTypeResponse)
+	sub(t, conn1, topicName, "chB")
+	_, err = nsq.Ready(1).WriteTo(conn1)
+	test.Equal(t, err, nil)
+	defer conn1.Close()
+
+	conn2, err := mustConnectNSQD(tcpAddr)
+	test.Equal(t, err, nil)
+	client2Params := make(map[string]interface{})
+	client2Params["client_id"] = "client_c"
+	client2Params["hostname"] = "client_c"
+	client2Params["extend_support"] = true
+	identify(t, conn2, client2Params, frameTypeResponse)
+	sub(t, conn2, topicName, "chC")
+	_, err = nsq.Ready(1).WriteTo(conn2)
+	test.Equal(t, err, nil)
+	defer conn2.Close()
+
+	conn3, err := mustConnectNSQD(tcpAddr)
+	test.Equal(t, err, nil)
+	client3Params := make(map[string]interface{})
+	client3Params["client_id"] = "client_c"
+	client3Params["hostname"] = "client_c"
+	client3Params["ext_filter"] = nsqdNs.ExtFilterData{3, filterExtKey, "filterA*", nil}
+	client3Params["extend_support"] = true
+	identify(t, conn3, client3Params, frameTypeResponse)
+	sub(t, conn3, topicName, "chGlob")
+	_, err = nsq.Ready(1).WriteTo(conn3)
+	test.Equal(t, err, nil)
+	defer conn3.Close()
+
+	conn4, err := mustConnectNSQD(tcpAddr)
+	test.Equal(t, err, nil)
+	client4Params := make(map[string]interface{})
+	client4Params["client_id"] = "client_c"
+	client4Params["hostname"] = "client_c"
+	client4Params["ext_filter"] = nsqdNs.ExtFilterData{2, filterExtKey, "^filterA$|^filterB$", nil}
+	client4Params["extend_support"] = true
+	identify(t, conn4, client4Params, frameTypeResponse)
+	sub(t, conn4, topicName, "chRegexp")
+	_, err = nsq.Ready(1).WriteTo(conn4)
+	test.Equal(t, err, nil)
+	defer conn4.Close()
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	var cntA int32
+	var cntB int32
+	var cntAPrefix int32
+	var cntAOrB int32
+	go func() {
+		defer wg.Done()
+		msgPrefix := "this is message A"
+		for {
+			msgOut := recvNextMsgAndCheckExt(t, conn, 0, 0, true, true)
+			test.NotNil(t, msgOut)
+			test.Assert(t, len(msgOut.Body) >= len(msgPrefix), "body should have enough length")
+			test.Equal(t, msgPrefix, string(msgOut.Body)[:len(msgPrefix)])
+			var jsonHeader map[string]interface{}
+			err = json.Unmarshal(msgOut.ExtBytes, &jsonHeader)
+			test.Nil(t, err)
+			test.Equal(t, "filterA", jsonHeader[filterExtKey])
+			if atomic.AddInt32(&cntA, 1) >= 20 {
+				break
+			}
+		}
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		msgPrefix := "this is message B"
+		for {
+			msgOut := recvNextMsgAndCheckExt(t, conn1, 0, 0, true, true)
+			test.NotNil(t, msgOut)
+			test.Assert(t, len(msgOut.Body) >= len(msgPrefix), "body should have enough length")
+			test.Equal(t, msgPrefix, string(msgOut.Body)[:len(msgPrefix)])
+			var jsonHeader map[string]interface{}
+			err = json.Unmarshal(msgOut.ExtBytes, &jsonHeader)
+			test.Nil(t, err)
+			test.Equal(t, "filterB", jsonHeader[filterExtKey])
+			if atomic.AddInt32(&cntB, 1) >= 10 {
+				break
+			}
+		}
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		msgPrefix := "this is message A"
+		for {
+			msgOut := recvNextMsgAndCheckExt(t, conn3, 0, 0, true, true)
+			test.NotNil(t, msgOut)
+			test.Assert(t, len(msgOut.Body) >= len(msgPrefix), "body should have enough length")
+			test.Equal(t, msgPrefix, string(msgOut.Body)[:len(msgPrefix)])
+			var jsonHeader map[string]interface{}
+			err = json.Unmarshal(msgOut.ExtBytes, &jsonHeader)
+			test.Nil(t, err)
+			if len(jsonHeader[filterExtKey].(string)) == 7 {
+				test.Equal(t, "filterA", jsonHeader[filterExtKey])
+			} else {
+				test.Equal(t, "filterAB", jsonHeader[filterExtKey])
+			}
+			if atomic.AddInt32(&cntAPrefix, 1) >= 30 {
+				break
+			}
+		}
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		msgPrefix := "this is message"
+		for {
+			msgOut := recvNextMsgAndCheckExt(t, conn4, 0, 0, true, true)
+			test.NotNil(t, msgOut)
+			test.Assert(t, len(msgOut.Body) >= len(msgPrefix), "body should have enough length")
+			test.Equal(t, msgPrefix, string(msgOut.Body)[:len(msgPrefix)])
+			var jsonHeader map[string]interface{}
+			err = json.Unmarshal(msgOut.ExtBytes, &jsonHeader)
+			test.Nil(t, err)
+			filterData := jsonHeader[filterExtKey]
+			if filterData != "filterA" && filterData != "filterB" {
+				test.Assert(t, false, "filter should match: "+filterData.(string))
+			}
+			if atomic.AddInt32(&cntAOrB, 1) >= 30 {
+				break
+			}
+		}
+	}()
+	wg.Wait()
+	test.Equal(t, 20, int(cntA))
+	test.Equal(t, 10, int(cntB))
+	test.Equal(t, 30, int(cntAPrefix))
+	test.Equal(t, 30, int(cntAOrB))
+	totalCnt := 0
+	for {
+		msgOut := recvNextMsgAndCheckExt(t, conn2, 0, 0, true, true)
+		test.NotNil(t, msgOut)
+		totalCnt++
+		if totalCnt >= 60 {
+			break
+		}
+	}
+	test.Equal(t, 60, totalCnt)
+}
+
+func TestConsumeWithFilterComplex(t *testing.T) {
+	topicName := "test_channel_filter" + strconv.Itoa(int(time.Now().Unix()))
+	opts := nsqdNs.NewOptions()
+	opts.Logger = newTestLogger(t)
+	opts.LogLevel = 3
+	if testing.Verbose() {
+		nsqdNs.SetLogger(opts.Logger)
+	}
+	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
+	defer os.RemoveAll(opts.DataPath)
+	defer nsqdServer.Exit()
+
+	topic := nsqd.GetTopicIgnPart(topicName)
+	topicDynConf := nsqdNs.TopicDynamicConf{
+		AutoCommit: 1,
+		SyncEvery:  1,
+		Ext:        true,
+	}
+	topic.SetDynamicInfo(topicDynConf, nil)
+	topic.GetChannel("ch")
+	topic.GetChannel("chMultiFilter1")
+	topic.GetChannel("chMultiFilter2")
+
+	conn, err := mustConnectNSQD(tcpAddr)
+	test.Equal(t, err, nil)
+	identify(t, conn, nil, frameTypeResponse)
+
+	jext := make(map[string]interface{})
+	filterExtKey := "my_filter_key"
+	filterExtKey1 := "my_filter_key2"
+	for i := 0; i < 10; i++ {
+		jext[filterExtKey] = true
+		msgBody := fmt.Sprintf("this is message true %v", i)
+		jextJson, _ := json.Marshal(jext)
+		cmd, _ := nsq.PublishWithJsonExt(topicName, "0", []byte(msgBody), jextJson)
+		cmd.WriteTo(conn)
+		resp, _ := nsq.ReadResponse(conn)
+		frameType, data, _ := nsq.UnpackResponse(resp)
+		t.Logf("frameType: %d, data: %s", frameType, data)
+		test.Equal(t, frameType, frameTypeResponse)
+		test.Equal(t, len(data) >= 2, true)
+		test.Equal(t, data[:2], []byte("OK"))
+
+		jext[filterExtKey] = false
+		msgBody = fmt.Sprintf("this is message false %v", i)
+		jextJson, _ = json.Marshal(jext)
+		cmd, _ = nsq.PublishWithJsonExt(topicName, "0", []byte(msgBody), jextJson)
+		cmd.WriteTo(conn)
+		resp, _ = nsq.ReadResponse(conn)
+		frameType, data, _ = nsq.UnpackResponse(resp)
+		t.Logf("frameType: %d, data: %s", frameType, data)
+		test.Equal(t, frameType, frameTypeResponse)
+		test.Equal(t, len(data) >= 2, true)
+		test.Equal(t, data[:2], []byte("OK"))
+
+		jext[filterExtKey] = "filterA"
+		jext[filterExtKey1] = "filter1A"
+		msgBody = fmt.Sprintf("this is message Multi %v", i)
+		jextJson, _ = json.Marshal(jext)
+		cmd, _ = nsq.PublishWithJsonExt(topicName, "0", []byte(msgBody), jextJson)
+		cmd.WriteTo(conn)
+		resp, _ = nsq.ReadResponse(conn)
+		frameType, data, _ = nsq.UnpackResponse(resp)
+		t.Logf("frameType: %d, data: %s", frameType, data)
+		test.Equal(t, frameType, frameTypeResponse)
+		test.Equal(t, len(data) >= 2, true)
+		test.Equal(t, data[:2], []byte("OK"))
+
+		jext[filterExtKey] = "filterB"
+		jext[filterExtKey1] = "filter1B"
+		msgBody = fmt.Sprintf("this is message Multi %v", i)
+		jextJson, _ = json.Marshal(jext)
+		cmd, _ = nsq.PublishWithJsonExt(topicName, "0", []byte(msgBody), jextJson)
+		cmd.WriteTo(conn)
+		resp, _ = nsq.ReadResponse(conn)
+		frameType, data, _ = nsq.UnpackResponse(resp)
+		t.Logf("frameType: %d, data: %s", frameType, data)
+		test.Equal(t, frameType, frameTypeResponse)
+		test.Equal(t, len(data) >= 2, true)
+		test.Equal(t, data[:2], []byte("OK"))
+
+		jext[filterExtKey] = "filterA"
+		delete(jext, filterExtKey1)
+		msgBody = fmt.Sprintf("this is message A %v", i)
+		jextJson, _ = json.Marshal(jext)
+		cmd, _ = nsq.PublishWithJsonExt(topicName, "0", []byte(msgBody), jextJson)
+		cmd.WriteTo(conn)
+		resp, _ = nsq.ReadResponse(conn)
+		frameType, data, _ = nsq.UnpackResponse(resp)
+		t.Logf("frameType: %d, data: %s", frameType, data)
+		test.Equal(t, frameType, frameTypeResponse)
+		test.Equal(t, len(data) >= 2, true)
+		test.Equal(t, data[:2], []byte("OK"))
+
+		// write some message with no ext to test filter non-ext message
+		delete(jext, filterExtKey)
+		delete(jext, filterExtKey1)
+		jextJson, _ = json.Marshal(jext)
+		msgBody = fmt.Sprintf("this is message no ext %v", i)
+		cmd, _ = nsq.PublishWithJsonExt(topicName, "0", []byte(msgBody), jextJson)
+		cmd.WriteTo(conn)
+		resp, _ = nsq.ReadResponse(conn)
+		frameType, data, _ = nsq.UnpackResponse(resp)
+		t.Logf("frameType: %d, data: %s", frameType, data)
+		test.Equal(t, frameType, frameTypeResponse)
+		test.Equal(t, len(data) >= 2, true)
+		test.Equal(t, data[:2], []byte("OK"))
+	}
+	conn.Close()
+	t.Logf("starts consumers")
+	conn, err = mustConnectNSQD(tcpAddr)
+	test.Equal(t, err, nil)
+	clientParams := make(map[string]interface{})
+	clientParams["client_id"] = "client_a"
+	clientParams["hostname"] = "client_a"
+
+	clientParams["ext_filter"] = nsqdNs.ExtFilterData{1, filterExtKey, "true", nil}
+	clientParams["extend_support"] = true
+	identify(t, conn, clientParams, frameTypeResponse)
+	sub(t, conn, topicName, "ch")
+	_, err = nsq.Ready(1).WriteTo(conn)
+	test.Equal(t, err, nil)
+	cnt := int32(0)
+	time.AfterFunc(time.Second, func() {
+		conn.Close()
+	})
+	for {
+		msgOut := recvNextMsgAndCheckExt(t, conn, 0, 0, true, true)
+		if msgOut != nil {
+			test.Assert(t, false, "should not match any string extend")
+		} else {
+			break
+		}
+	}
+
+	conn1, err := mustConnectNSQD(tcpAddr)
+	test.Equal(t, err, nil)
+	client1Params := make(map[string]interface{})
+	client1Params["client_id"] = "client_b"
+	client1Params["hostname"] = "client_b"
+	client1Params["ext_filter"] = nsqdNs.ExtFilterData{4, "any", "",
+		[]nsqdNs.MultiFilterData{
+			nsqdNs.MultiFilterData{filterExtKey, "filterA"},
+			nsqdNs.MultiFilterData{filterExtKey, "filterB"},
+		},
+	}
+	client1Params["extend_support"] = true
+	identify(t, conn1, client1Params, frameTypeResponse)
+	sub(t, conn1, topicName, "chMultiFilter1")
+	_, err = nsq.Ready(1).WriteTo(conn1)
+	test.Equal(t, err, nil)
+
+	msgPrefix := "this is message"
+	cnt = int32(0)
+	for {
+		msgOut := recvNextMsgAndCheckExt(t, conn1, 0, 0, true, true)
+		test.NotNil(t, msgOut)
+		test.Assert(t, len(msgOut.Body) >= len(msgPrefix), "body should have enough length")
+		test.Equal(t, msgPrefix, string(msgOut.Body)[:len(msgPrefix)])
+		var jsonHeader map[string]interface{}
+		err = json.Unmarshal(msgOut.ExtBytes, &jsonHeader)
+		test.Nil(t, err)
+		filterData := jsonHeader[filterExtKey]
+		if filterData != "filterA" && filterData != "filterB" {
+			t.Logf("got messgae: %v", string(msgOut.ExtBytes))
+			test.Assert(t, false, "filter should match: "+filterData.(string))
+		}
+
+		if atomic.AddInt32(&cnt, 1) >= 20 {
+			break
+		}
+	}
+	conn1.Close()
+	test.Equal(t, 20, int(cnt))
+
+	conn1, err = mustConnectNSQD(tcpAddr)
+	test.Equal(t, err, nil)
+	client1Params = make(map[string]interface{})
+	client1Params["client_id"] = "client_b"
+	client1Params["hostname"] = "client_b"
+	client1Params["ext_filter"] = nsqdNs.ExtFilterData{4, "all", "",
+		[]nsqdNs.MultiFilterData{
+			nsqdNs.MultiFilterData{filterExtKey, "filterA"},
+			nsqdNs.MultiFilterData{filterExtKey1, "filter1A"},
+		},
+	}
+	client1Params["extend_support"] = true
+	identify(t, conn1, client1Params, frameTypeResponse)
+	sub(t, conn1, topicName, "chMultiFilter2")
+	_, err = nsq.Ready(1).WriteTo(conn1)
+	test.Equal(t, err, nil)
+	msgPrefix = "this is message Multi"
+	cnt = int32(0)
+	for {
+		msgOut := recvNextMsgAndCheckExt(t, conn1, 0, 0, true, true)
+		test.NotNil(t, msgOut)
+		test.Assert(t, len(msgOut.Body) >= len(msgPrefix), "body should have enough length")
+		test.Equal(t, msgPrefix, string(msgOut.Body)[:len(msgPrefix)])
+		var jsonHeader map[string]interface{}
+		err = json.Unmarshal(msgOut.ExtBytes, &jsonHeader)
+		test.Nil(t, err)
+		test.Equal(t, "filterA", jsonHeader[filterExtKey])
+		test.Equal(t, "filter1A", jsonHeader[filterExtKey1])
+		if atomic.AddInt32(&cnt, 1) >= 10 {
+			break
+		}
+	}
+	conn1.Close()
+	test.Equal(t, 10, int(cnt))
+}
+
 func TestSizeLimits(t *testing.T) {
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
@@ -2893,7 +3370,7 @@ func TestDelayMessageToQueueEnd(t *testing.T) {
 		if traceID == longestDelayOutMsg.GetTraceID() {
 			if reqToEndAttempts < 0 {
 				nsq.Finish(msgClientOut.ID).WriteTo(conn)
-			finCnt++
+				finCnt++
 				break
 			}
 			reqToEndAttempts--

@@ -31,21 +31,22 @@ type IdentifyDataV2 struct {
 	ShortID string `json:"short_id"` // TODO: deprecated, remove in 1.0
 	LongID  string `json:"long_id"`  // TODO: deprecated, remove in 1.0
 
-	ClientID            string `json:"client_id"`
-	Hostname            string `json:"hostname"`
-	HeartbeatInterval   int    `json:"heartbeat_interval"`
-	OutputBufferSize    int    `json:"output_buffer_size"`
-	OutputBufferTimeout int    `json:"output_buffer_timeout"`
-	FeatureNegotiation  bool   `json:"feature_negotiation"`
-	TLSv1               bool   `json:"tls_v1"`
-	Deflate             bool   `json:"deflate"`
-	DeflateLevel        int    `json:"deflate_level"`
-	Snappy              bool   `json:"snappy"`
-	SampleRate          int32  `json:"sample_rate"`
-	UserAgent           string `json:"user_agent"`
-	MsgTimeout          int    `json:"msg_timeout"`
-	DesiredTag          string `json:"desired_tag,omitempty"`
-	ExtendSupport       bool   `json:"extend_support"`
+	ClientID            string        `json:"client_id"`
+	Hostname            string        `json:"hostname"`
+	HeartbeatInterval   int           `json:"heartbeat_interval"`
+	OutputBufferSize    int           `json:"output_buffer_size"`
+	OutputBufferTimeout int           `json:"output_buffer_timeout"`
+	FeatureNegotiation  bool          `json:"feature_negotiation"`
+	TLSv1               bool          `json:"tls_v1"`
+	Deflate             bool          `json:"deflate"`
+	DeflateLevel        int           `json:"deflate_level"`
+	Snappy              bool          `json:"snappy"`
+	SampleRate          int32         `json:"sample_rate"`
+	UserAgent           string        `json:"user_agent"`
+	MsgTimeout          int           `json:"msg_timeout"`
+	DesiredTag          string        `json:"desired_tag,omitempty"`
+	ExtendSupport       bool          `json:"extend_support"`
+	ExtFilter           ExtFilterData `json:"ext_filter"`
 }
 
 type identifyEvent struct {
@@ -53,6 +54,7 @@ type identifyEvent struct {
 	HeartbeatInterval   time.Duration
 	SampleRate          int32
 	MsgTimeout          time.Duration
+	ExtFilter           ExtFilterData
 }
 
 type ClientV2 struct {
@@ -126,6 +128,7 @@ type ClientV2 struct {
 	DesiredTag      string
 	IsExtendSupport bool
 	TagMsgChannel   chan *Message
+	ExtFilter       ExtFilterData
 }
 
 func NewClientV2(id int64, conn net.Conn, opts *Options, tls *tls.Config) *ClientV2 {
@@ -277,13 +280,17 @@ func (c *ClientV2) Identify(data IdentifyDataV2) error {
 	if data.ExtendSupport {
 		c.SetExtendSupport()
 	}
+	c.SetExtFilter(data.ExtFilter)
 
+	c.LockRead()
 	ie := identifyEvent{
 		OutputBufferTimeout: c.OutputBufferTimeout,
 		HeartbeatInterval:   c.HeartbeatInterval,
-		SampleRate:          c.SampleRate,
+		SampleRate:          atomic.LoadInt32(&c.SampleRate),
 		MsgTimeout:          c.MsgTimeout,
+		ExtFilter:           c.ExtFilter,
 	}
+	c.UnlockRead()
 
 	// update the client's message pump
 	select {
@@ -552,6 +559,12 @@ func (c *ClientV2) SetOutputBufferSize(desiredSize int) error {
 	}
 
 	return nil
+}
+
+func (c *ClientV2) SetExtFilter(filter ExtFilterData) {
+	c.writeLock.Lock()
+	defer c.writeLock.Unlock()
+	c.ExtFilter = filter
 }
 
 func (c *ClientV2) SetOutputBufferTimeout(desiredTimeout int) error {

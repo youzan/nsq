@@ -424,6 +424,7 @@ func (p *protocolV2) messagePump(client *nsqd.ClientV2, startedChan chan bool,
 	heartbeatFailedCnt := 0
 	msgTimeout := client.MsgTimeout
 	lastActiveTime := time.Now()
+	var extFilter nsqd.IExtFilter
 	// v2 opportunistically buffers data to clients to reduce write system calls
 	// we force flush in two cases:
 	//    1. when the client is not ready to receive messages
@@ -513,6 +514,14 @@ func (p *protocolV2) messagePump(client *nsqd.ClientV2, startedChan chan bool,
 			if identifyData.SampleRate > 0 {
 				sampleRate = identifyData.SampleRate
 			}
+			if identifyData.ExtFilter.Type != 0 {
+				extFilter, err = nsqd.NewExtFilter(identifyData.ExtFilter)
+				if err != nil {
+					nsqd.NsqLogger().Infof("channel filter %v init failed: %v", identifyData.ExtFilter, err)
+				} else {
+					nsqd.NsqLogger().Infof("channel filter %v init for client: %v ", identifyData.ExtFilter, client.String())
+				}
+			}
 
 			msgTimeout = identifyData.MsgTimeout
 			extSupport = client.ExtendSupport()
@@ -562,6 +571,11 @@ func (p *protocolV2) messagePump(client *nsqd.ClientV2, startedChan chan bool,
 				}
 				continue
 			}
+			if extFilter != nil && !extFilter.Match(msg) {
+				subChannel.ConfirmBackendQueue(msg)
+				subChannel.CleanWaitingRequeueChan(msg)
+				continue
+			}
 			if subChannel.ShouldWaitDelayed(msg) {
 				subChannel.ConfirmBackendQueue(msg)
 				subChannel.CleanWaitingRequeueChan(msg)
@@ -575,6 +589,7 @@ func (p *protocolV2) messagePump(client *nsqd.ClientV2, startedChan chan bool,
 				subChannel.ContinueConsumeForOrder()
 				continue
 			}
+
 			shouldSend, err := subChannel.StartInFlightTimeout(msg, client, client.String(), msgTimeout)
 			if !shouldSend || err != nil {
 				continue
