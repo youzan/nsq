@@ -211,7 +211,7 @@ func startBenchSub() {
 	quitChan := make(chan int)
 	goChan := make(chan int)
 	rdyChan := make(chan int)
-	for j := 0; j < *concurrency; j++ {
+	for j := 0; j < len(topics); j++ {
 		for chIndex := 0; chIndex < *channelNum; chIndex++ {
 			wg.Add(1)
 			go func(id int, topic string, chSuffix string) {
@@ -379,7 +379,7 @@ func startCheckData2() {
 	}
 
 	quitChan := make(chan int)
-	for j := 0; j < *concurrency; j++ {
+	for j := 0; j < len(topics); j++ {
 		for chIndex := 0; chIndex < *channelNum; chIndex++ {
 			wg.Add(1)
 			go func(id int, topic string, chSuffix string) {
@@ -510,7 +510,7 @@ func startCheckData(msg []byte, batch [][]byte, testDelay bool) {
 	}
 
 	quitChan := make(chan int)
-	for j := 0; j < *concurrency; j++ {
+	for j := 0; j < len(topics); j++ {
 		for chIndex := 0; chIndex < *channelNum; chIndex++ {
 			wg.Add(1)
 			go func(id int, topic string, chSuffix string) {
@@ -915,8 +915,8 @@ func main() {
 	config.DefaultRequeueDelay = time.Second * 30
 	config.MaxRequeueDelay = time.Minute * 60
 	config.MaxBackoffDuration = time.Second * 3
-	config.MaxAttempts = 65534
-	config.MaxInFlight = 20
+	config.MaxAttempts = 50
+	config.MaxInFlight = 2 * (*concurrency)
 	config.EnableTrace = *trace
 	config.EnableOrdered = *ordered
 	config.PubStrategy = nsq.PubRR
@@ -1165,11 +1165,11 @@ func subWorker(quitChan chan int, td time.Duration, lookupAddr string, topic str
 	}
 	consumer.SetLogger(log.New(os.Stderr, "", log.LstdFlags), nsq.LogLevelInfo)
 	if *benchCase == "checkdata" {
-		consumer.AddHandler(&consumeHandler{topic, true, false})
+		consumer.AddConcurrentHandlers(&consumeHandler{topic, true, false}, *concurrency/len(topics))
 	} else if *benchCase == "benchdelaysub" {
-		consumer.AddHandler(&consumeHandler{topic, true, true})
+		consumer.AddConcurrentHandlers(&consumeHandler{topic, true, true}, *concurrency/len(topics))
 	} else {
-		consumer.AddHandler(&consumeHandler{topic, false, false})
+		consumer.AddConcurrentHandlers(&consumeHandler{topic, false, false}, *concurrency/len(topics))
 	}
 	rdyChan <- 1
 	<-goChan
@@ -1250,7 +1250,7 @@ func subWorker2(quitChan chan int, td time.Duration, lookupAddr string, topic st
 	mutex.Unlock()
 
 	consumer.SetLogger(log.New(os.Stderr, "", log.LstdFlags), nsq.LogLevelInfo)
-	consumer.AddHandler(&consumeTraceIDHandler{topic, locker, subIDCounter, subTraceWaiting, failedList})
+	consumer.AddConcurrentHandlers(&consumeTraceIDHandler{topic, locker, subIDCounter, subTraceWaiting, failedList}, *concurrency/len(topics))
 	rdyChan <- 1
 	<-goChan
 	done := make(chan struct{})

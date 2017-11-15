@@ -571,7 +571,7 @@ func (p *protocolV2) messagePump(client *nsqd.ClientV2, startedChan chan bool,
 				}
 				continue
 			}
-			if extFilter != nil && !extFilter.Match(msg) {
+			if extFilter != nil && subChannel.IsExt() && !extFilter.Match(msg) {
 				subChannel.ConfirmBackendQueue(msg)
 				subChannel.CleanWaitingRequeueChan(msg)
 				continue

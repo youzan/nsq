@@ -2700,8 +2700,8 @@ func TestConsumeWithFilter(t *testing.T) {
 			test.NotNil(t, msgOut)
 			test.Assert(t, len(msgOut.Body) >= len(msgPrefix), "body should have enough length")
 			test.Equal(t, msgPrefix, string(msgOut.Body)[:len(msgPrefix)])
-			var jsonHeader map[string]interface{}
-			err = json.Unmarshal(msgOut.ExtBytes, &jsonHeader)
+			jsonHeader := make(map[string]interface{})
+			err := json.Unmarshal(msgOut.ExtBytes, &jsonHeader)
 			test.Nil(t, err)
 			test.Equal(t, "filterA", jsonHeader[filterExtKey])
 			if atomic.AddInt32(&cntA, 1) >= 20 {
@@ -2719,8 +2719,8 @@ func TestConsumeWithFilter(t *testing.T) {
 			test.NotNil(t, msgOut)
 			test.Assert(t, len(msgOut.Body) >= len(msgPrefix), "body should have enough length")
 			test.Equal(t, msgPrefix, string(msgOut.Body)[:len(msgPrefix)])
-			var jsonHeader map[string]interface{}
-			err = json.Unmarshal(msgOut.ExtBytes, &jsonHeader)
+			jsonHeader := make(map[string]interface{})
+			err := json.Unmarshal(msgOut.ExtBytes, &jsonHeader)
 			test.Nil(t, err)
 			test.Equal(t, "filterB", jsonHeader[filterExtKey])
 			if atomic.AddInt32(&cntB, 1) >= 10 {
@@ -2738,8 +2738,8 @@ func TestConsumeWithFilter(t *testing.T) {
 			test.NotNil(t, msgOut)
 			test.Assert(t, len(msgOut.Body) >= len(msgPrefix), "body should have enough length")
 			test.Equal(t, msgPrefix, string(msgOut.Body)[:len(msgPrefix)])
-			var jsonHeader map[string]interface{}
-			err = json.Unmarshal(msgOut.ExtBytes, &jsonHeader)
+			jsonHeader := make(map[string]interface{})
+			err := json.Unmarshal(msgOut.ExtBytes, &jsonHeader)
 			test.Nil(t, err)
 			if len(jsonHeader[filterExtKey].(string)) == 7 {
 				test.Equal(t, "filterA", jsonHeader[filterExtKey])
@@ -2761,8 +2761,8 @@ func TestConsumeWithFilter(t *testing.T) {
 			test.NotNil(t, msgOut)
 			test.Assert(t, len(msgOut.Body) >= len(msgPrefix), "body should have enough length")
 			test.Equal(t, msgPrefix, string(msgOut.Body)[:len(msgPrefix)])
-			var jsonHeader map[string]interface{}
-			err = json.Unmarshal(msgOut.ExtBytes, &jsonHeader)
+			jsonHeader := make(map[string]interface{})
+			err := json.Unmarshal(msgOut.ExtBytes, &jsonHeader)
 			test.Nil(t, err)
 			filterData := jsonHeader[filterExtKey]
 			if filterData != "filterA" && filterData != "filterB" {
