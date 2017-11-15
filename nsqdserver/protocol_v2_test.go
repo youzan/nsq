@@ -3000,6 +3000,68 @@ func TestConsumeWithFilterComplex(t *testing.T) {
 	conn1.Close()
 	test.Equal(t, 10, int(cnt))
 }
+func TestConsumeWithFilterOnNonExtendTopic(t *testing.T) {
+	topicName := "test_channel_filter" + strconv.Itoa(int(time.Now().Unix()))
+	opts := nsqdNs.NewOptions()
+	opts.Logger = newTestLogger(t)
+	opts.LogLevel = 3
+	if testing.Verbose() {
+		nsqdNs.SetLogger(opts.Logger)
+	}
+	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
+	defer os.RemoveAll(opts.DataPath)
+	defer nsqdServer.Exit()
+
+	topic := nsqd.GetTopicIgnPart(topicName)
+	topicDynConf := nsqdNs.TopicDynamicConf{
+		AutoCommit: 1,
+		SyncEvery:  1,
+		Ext:        false,
+	}
+	topic.SetDynamicInfo(topicDynConf, nil)
+	topic.GetChannel("ch")
+
+	conn, err := mustConnectNSQD(tcpAddr)
+	test.Equal(t, err, nil)
+	identify(t, conn, nil, frameTypeResponse)
+
+	for i := 0; i < 10; i++ {
+		msgBody := fmt.Sprintf("this is message %v", i)
+		cmd := nsq.Publish(topicName, []byte(msgBody))
+		cmd.WriteTo(conn)
+		resp, _ := nsq.ReadResponse(conn)
+		frameType, data, _ := nsq.UnpackResponse(resp)
+		t.Logf("frameType: %d, data: %s", frameType, data)
+		test.Equal(t, frameType, frameTypeResponse)
+		test.Equal(t, len(data) >= 2, true)
+		test.Equal(t, data[:2], []byte("OK"))
+	}
+	conn.Close()
+	t.Logf("starts consumers")
+	conn, err = mustConnectNSQD(tcpAddr)
+	test.Equal(t, err, nil)
+	clientParams := make(map[string]interface{})
+	clientParams["client_id"] = "client_a"
+	clientParams["hostname"] = "client_a"
+	clientParams["ext_filter"] = nsqdNs.ExtFilterData{1, "test_ext", "true", nil}
+	identify(t, conn, clientParams, frameTypeResponse)
+	sub(t, conn, topicName, "ch")
+	_, err = nsq.Ready(1).WriteTo(conn)
+	test.Equal(t, err, nil)
+	cnt := int32(0)
+	msgPrefix := "this is message"
+	for {
+		msgOut := recvNextMsgAndCheckExt(t, conn, 0, 0, true, false)
+		test.NotNil(t, msgOut)
+		test.Assert(t, len(msgOut.Body) >= len(msgPrefix), "body should have enough length")
+		test.Equal(t, msgPrefix, string(msgOut.Body)[:len(msgPrefix)])
+		if atomic.AddInt32(&cnt, 1) >= 10 {
+			break
+		}
+	}
+	conn.Close()
+	test.Equal(t, 10, int(cnt))
+}
 
 func TestSizeLimits(t *testing.T) {
 	opts := nsqdNs.NewOptions()
