@@ -11,7 +11,7 @@ type QueryPairs struct {
 	FieldValue string `json:"fieldValue"`
 }
 
-type IndexFieldsQuery []QueryPairs
+type IndexFieldsQuery map[string]string
 
 type TraceLogQueryInfo struct {
 	Sort         string `json:"sort"`
@@ -37,7 +37,7 @@ func NewLogQueryInfo(appName string,
 		LogIndexName: logIndexName,
 		Level:        "ALL",
 		EndTime:      time.Now().Format("2006-01-02 15:04:05"),
-		Type: 1,
+		Type:         1,
 	}
 	q.StartTime = time.Now().Add(-1 * span).Format("2006-01-02 15:04:05")
 	d, _ := json.Marshal(indexFields)

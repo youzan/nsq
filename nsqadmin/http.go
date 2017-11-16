@@ -604,24 +604,19 @@ func (s *httpServer) searchMessageTrace(w http.ResponseWriter, req *http.Request
 	if topicName == "" && len(v) > 0 {
 		topicName = v[0]
 	}
-	var kv QueryPairs
-	kv.FieldName = "topic"
-	kv.FieldValue = topicName
-	filters = append(filters, kv)
+	filters["topic"] = topicName
 
 	isHashed := queryParam.IsHashed
-	kv.FieldName = "traceid"
+	var tid string
 	if isHashed {
-		kv.FieldValue = queryParam.TraceID
+		tid = queryParam.TraceID
 	} else {
-		kv.FieldValue = strconv.Itoa(hashTraceID(queryParam.TraceID))
+		tid = strconv.Itoa(hashTraceID(queryParam.TraceID))
 	}
-	filters = append(filters, kv)
+	filters["traceid"] = tid
 	requestMsgID := int64(0)
-	kv.FieldName = "msgid"
-	kv.FieldValue = queryParam.MsgID
 	requestMsgID, _ = strconv.ParseInt(queryParam.MsgID, 10, 64)
-	filters = append(filters, kv)
+	filters["msgid"] = queryParam.MsgID
 
 	for k, v := range reqParams.Values {
 		if len(v) == 0 {
@@ -630,10 +625,7 @@ func (s *httpServer) searchMessageTrace(w http.ResponseWriter, req *http.Request
 		if k == "hashed" {
 			continue
 		}
-		var kv QueryPairs
-		kv.FieldName = k
-		kv.FieldValue = v[0]
-		filters = append(filters, kv)
+		filters[k] = v[0]
 	}
 
 	recentHour := 2
