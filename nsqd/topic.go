@@ -1274,7 +1274,7 @@ func (t *Topic) TryCleanOldData(retentionSize int64, noRealClean bool, maxCleanO
 		return nil, nil
 	}
 	cleanStart := t.backend.GetQueueReadStart()
-	nsqLog.Logf("clean topic %v data current start: %v, oldest confirmed %v, max clean end: %v",
+	nsqLog.Debugf("clean topic %v data current start: %v, oldest confirmed %v, max clean end: %v",
 		t.GetFullName(), cleanStart, oldestPos, maxCleanOffset)
 	if cleanStart.Offset()+BackendOffset(retentionSize) >= oldestPos.Offset() {
 		return nil, nil
@@ -1338,15 +1338,15 @@ func (t *Topic) TryCleanOldData(retentionSize int64, noRealClean bool, maxCleanO
 		}
 	}
 
-	nsqLog.Infof("clean topic %v data from %v under retention %v, %v",
-		t.GetFullName(), cleanEndInfo, cleanTime, retentionSize)
 	if cleanEndInfo == nil || cleanEndInfo.Offset()+BackendOffset(retentionSize) >= maxCleanOffset {
 		if cleanEndInfo != nil {
-			nsqLog.Warningf("clean topic %v data at position: %v could not exceed current oldest confirmed %v and max clean end: %v",
+			nsqLog.Infof("clean topic %v data at position: %v could not exceed current oldest confirmed %v and max clean end: %v",
 				t.GetFullName(), cleanEndInfo, oldestPos, maxCleanOffset)
 		}
 		return nil, nil
 	}
+	nsqLog.Infof("clean topic %v data from %v under retention %v, %v",
+		t.GetFullName(), cleanEndInfo, cleanTime, retentionSize)
 	return t.backend.CleanOldDataByRetention(cleanEndInfo, noRealClean, maxCleanOffset)
 }
 

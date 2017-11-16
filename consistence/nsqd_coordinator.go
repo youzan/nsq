@@ -303,8 +303,8 @@ func doLogQClean(tcData *coordData, localTopic *nsqd.Topic, retentionSize int64,
 	if err != nil {
 		coordLog.Infof("failed to get clean end: %v", err)
 	}
-	coordLog.Infof("topic %v try clean to : %v", tcData.topicInfo.GetTopicDesp(), cleanEndInfo)
 	if cleanEndInfo != nil {
+		coordLog.Infof("topic %v try clean to : %v", tcData.topicInfo.GetTopicDesp(), cleanEndInfo)
 		matchIndex, matchOffset, l, err := logMgr.SearchLogDataByMsgOffset(int64(cleanEndInfo.Offset()))
 		if err != nil {
 			coordLog.Infof("search log failed: %v", err)
