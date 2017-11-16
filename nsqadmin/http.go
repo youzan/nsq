@@ -636,16 +636,15 @@ func (s *httpServer) searchMessageTrace(w http.ResponseWriter, req *http.Request
 		filters = append(filters, kv)
 	}
 
-	recentHour := 24
+	recentHour := 2
 	if queryParam.Hours != "" {
 		recentHour, err = strconv.Atoi(queryParam.Hours)
 		if err != nil {
-			recentHour = 24
+			recentHour = 2
 		}
 	}
-	queryBody := NewLogQueryInfo(s.ctx.nsqadmin.opts.TraceAppID,
+	queryBody := NewLogQueryInfo(
 		s.ctx.nsqadmin.opts.TraceAppName,
-		s.ctx.nsqadmin.opts.TraceLogIndexID,
 		s.ctx.nsqadmin.opts.TraceLogIndexName,
 		time.Hour*time.Duration(recentHour),
 		filters, s.ctx.nsqadmin.opts.TraceLogPageCount)

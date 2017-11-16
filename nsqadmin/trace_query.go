@@ -15,10 +15,8 @@ type IndexFieldsQuery []QueryPairs
 
 type TraceLogQueryInfo struct {
 	Sort         string `json:"sort"`
-	AppID        string `json:"appId"`
 	AppName      string `json:"appName"`
-	LogStoreID   string `json:"logStoreId"`
-	LogStoreName string `json:"logStoreName"`
+	LogIndexName string `json:"logIndexName"`
 	Level        string `json:"level"`
 	Host         string `json:"host"`
 	Content      string `json:"content"`
@@ -28,18 +26,18 @@ type TraceLogQueryInfo struct {
 	IndexFields string `json:"indexFields"`
 	PageNumber  int    `json:"pageNumber"`
 	PageSize    int    `json:"pageSize"`
+	Type        int    `json:"type"`
 }
 
-func NewLogQueryInfo(appID string, appName string, logStoreID string,
-	logStoreName string, span time.Duration, indexFields IndexFieldsQuery, pageCnt int) *TraceLogQueryInfo {
+func NewLogQueryInfo(appName string,
+	logIndexName string, span time.Duration, indexFields IndexFieldsQuery, pageCnt int) *TraceLogQueryInfo {
 	q := &TraceLogQueryInfo{
 		Sort:         "score",
-		AppID:        appID,
 		AppName:      appName,
-		LogStoreID:   logStoreID,
-		LogStoreName: logStoreName,
+		LogIndexName: logIndexName,
 		Level:        "ALL",
 		EndTime:      time.Now().Format("2006-01-02 15:04:05"),
+		Type: 1,
 	}
 	q.StartTime = time.Now().Add(-1 * span).Format("2006-01-02 15:04:05")
 	d, _ := json.Marshal(indexFields)
