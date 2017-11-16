@@ -463,13 +463,25 @@ func (c *ClientV2) IncrSubError(delta int64) {
 			return
 		}
 	}
-	atomic.AddInt64(&c.subErrCnt, delta)
+	newCnt := atomic.AddInt64(&c.subErrCnt, delta)
+	if newCnt < 0 {
+		atomic.StoreInt64(&c.subErrCnt, 0)
+	} else if newCnt > 0 {
+		rdy := atomic.LoadInt64(&c.ReadyCount)
+		if newCnt > rdy*2 {
+			atomic.StoreInt64(&c.subErrCnt, rdy*2)
+		} else if delta < 0 && newCnt < rdy/2 {
+			// try speed up error recover
+			atomic.StoreInt64(&c.subErrCnt, newCnt/2)
+		}
+	}
+
 }
 
 func (c *ClientV2) FinishedMessage() {
 	atomic.AddUint64(&c.FinishCount, 1)
 	atomic.AddInt64(&c.InFlightCount, -1)
-	c.IncrSubError(int64(-1))
+	c.IncrSubError(int64(-2))
 	c.tryUpdateReadyState()
 }
 
