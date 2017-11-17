@@ -499,13 +499,8 @@ func (c *ClientV2) SendingMessage() {
 func (c *ClientV2) TimedOutMessage() {
 	atomic.AddInt64(&c.InFlightCount, -1)
 	atomic.AddUint64(&c.TimeoutCount, 1)
-	lct := atomic.LoadInt64(&c.lastConsumeTimeout)
-	now := time.Now().Unix()
-	if now != lct {
-		atomic.StoreInt64(&c.lastConsumeTimeout, now)
-		// only incr error by 1 in one second for timeout
-		c.IncrSubError(int64(1))
-	}
+	c.IncrSubError(int64(1))
+	atomic.StoreInt64(&c.lastConsumeTimeout, time.Now().Unix())
 	c.tryUpdateReadyState()
 }
 
