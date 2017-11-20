@@ -35,7 +35,7 @@ In redesigned nsq, producers also uses nsqlookupd to discovery nsqd nodes which 
 
 Since in redesigned nsq, producer also consumes lookup services in nsqlookupd, and partition is introduced in redesigned nsq, producer may have more than one node to write. Prodcuers in nsq client could consume lookup services to fetch nsqd partitions which it could write to.
 
-Besides the load baclance from redesigned nsq server, nsq client could also balance data flow to writable nodes. Take nsq java client 2.2 as example, round robin  policy applies for publish, messages are send to all writable partitions evenly. Round robin also applies in publish retry. for one topic which has moren than one partition nsqd node, if Pub to first failed with exception which nsq client should retry, nsq client will retry with next nsqd partition node. As to "exception which nsq client shoudl retry",  examples are connection problem or timeout, if Pub fail with exception like MESSAEG\_INVALID or_ \_E_\_\_INVALID\_TOPIC, nsq client should exit publish process, without retry.
+Besides the load baclance from redesigned nsq server, nsq client could also balance data flow to writable nodes. Take nsq java client 2.2 as example, round robin  policy applies for publish, messages are send to all writable partitions evenly. Round robin also applies in publish retry. for one topic which has moren than one partition nsqd node, if Pub to first failed with exception which nsq client should retry, nsq client will retry with next nsqd partition node. As to "exception which nsq client shoudl retry",  examples are connection problem or timeout, if Pub fail with exception like E\_BAD\_MESSAGE or E\_INVALID\_TOPIC, nsq client should exit publish process, without retry.
 
 ## Connection Handling Cont.
 
