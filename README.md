@@ -34,6 +34,8 @@ NOTE: master is our *development* branch and may not be stable at all times.
 
 ## About this fork
 
+**This fork has been moved to https://github.com/youzan/nsq**
+
 This fork add many features missing in the original and has been used in Youzan.com.
 Features:
 * Replication
