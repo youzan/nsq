@@ -92,11 +92,20 @@ func (n *NsqdServer) statsdLoop() {
 					stat := fmt.Sprintf("topic.%s.channel.%s.message_count", statdName, channel.ChannelName)
 					client.Incr(stat, int64(diff))
 
+					var cnt int64
+					cnt = channel.Depth
+					if topic.IsMultiOrdered && !topic.IsLeader {
+						cnt = 0
+					}
 					stat = fmt.Sprintf("topic.%s.channel.%s.depth", statdName, channel.ChannelName)
-					client.Gauge(stat, channel.Depth)
+					client.Gauge(stat, cnt)
 
+					cnt = channel.BackendDepth
+					if topic.IsMultiOrdered && !topic.IsLeader {
+						cnt = 0
+					}
 					stat = fmt.Sprintf("topic.%s.channel.%s.backend_depth", statdName, channel.ChannelName)
-					client.Gauge(stat, channel.BackendDepth)
+					client.Gauge(stat, cnt)
 
 					stat = fmt.Sprintf("topic.%s.channel.%s.in_flight_count", statdName, channel.ChannelName)
 					client.Gauge(stat, int64(channel.InFlightCount))
