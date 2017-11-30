@@ -8,9 +8,6 @@ import (
 	"net/url"
 	"encoding/json"
 	"strings"
-	"github.com/youzan/nsq/internal/topic_migrate_manager"
-	"github.com/youzan/nsq/internal/context"
-	"github.com/youzan/nsq/internal/log"
 	"github.com/viki-org/dnscache"
 	"sync"
 	"github.com/twinj/uuid"
@@ -56,29 +53,29 @@ func (e *Err) Error() string {
 type httpServer struct {
 	lookupAddrOri, lookupAddrTar string
 	Router http.Handler
-	context *context.Context
-	mg topic_migrate_manager.ITopicMigrateGuard
+	context *Context
+	mg ITopicMigrateGuard
 	client *http.Client
 }
 
 
 
-var mLog *log.MigrateLogger
+var mLog *MigrateLogger
 var listlookup_not_found_msg = "{\"message\":\"NOT_FOUND\"}"
 
-func SetupLogger(context *context.Context) {
+func SetupLogger(context *Context) {
 	mLog = context.Logger
 }
 
-func NewHTTPServer(context *context.Context) (*httpServer, error) {
-	mLog = log.NewMigrateLogger(context.LogLevel)
+func NewHTTPServer(context *Context) (*httpServer, error) {
+	mLog = NewMigrateLogger(context.LogLevel)
 	context.Logger = mLog
 	router := httprouter.New()
 	router.HandleMethodNotAllowed = true
 	router.PanicHandler = LogPanicHandler()
 	router.NotFound = LogNotFoundHandler()
 	router.MethodNotAllowed = LogMethodNotAllowedHandler()
-	mg, err := topic_migrate_manager.NewTopicMigrateGuard(context)
+	mg, err := NewTopicMigrateGuard(context)
 	if err != nil {
 		mLog.Error("Fail to initialize topic migrate guard.")
 		return nil, err

@@ -1,6 +1,4 @@
-package context
-
-import "github.com/youzan/nsq/internal/log"
+package nsqlookupd_migrate
 
 type Context struct {
 	ProxyHttpAddr string  `flag:"http-address" cfg:"http-address"`
@@ -13,9 +11,8 @@ type Context struct {
 	LogLevel	int32	`flag:"log-level" cfg:"log-level"`
 	LogDir		string	`flag:"log_dir" cfg:"log-dir"`
 	DCC_key		string	`flag:"migrate-dcc-key" cfg:"migrate-dcc-key"`
-	Logger		*log.MigrateLogger
+	Logger		*MigrateLogger
 	Test            bool	`flag:"test" cfg:"test"`
 	TestClientNum   int64    `flag:"test_client_num" cfg:"test-client-num"`
 	MCTest		bool 	`flag:"mc_test" cfg:"mc-test"`
-	MigrateGuard	string  `flag:"migrate-guard" cfg:"migrate-guard"`
 }

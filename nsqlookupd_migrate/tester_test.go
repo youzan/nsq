@@ -2,12 +2,10 @@ package nsqlookupd_migrate
 
 import (
 	"testing"
-	"github.com/youzan/nsq/internal/context"
 	"time"
 	"github.com/absolute8511/glog"
 	"io/ioutil"
 	"os"
-	"github.com/youzan/nsq/internal/log"
 )
 
 func TestNewTester(t *testing.T) {
@@ -16,7 +14,7 @@ func TestNewTester(t *testing.T) {
 
 	glog.SetGLogDir(dir)
 	glog.StartWorker(1*time.Second)
-	context := &context.Context{
+	context := &Context{
 		TestClientNum: 1,
 		Test:true,
 		ProxyHttpAddrTest:"http://127.0.0.1:4161",
@@ -37,7 +35,7 @@ func TestCalculateQps(t *testing.T) {
 
 	glog.SetGLogDir(dir)
 	glog.StartWorker(1*time.Second)
-	context := &context.Context{
+	context := &Context{
 		TestClientNum: 100,
 		Test:true,
 		ProxyHttpAddrTest:"http://127.0.0.1:4161",
@@ -65,7 +63,7 @@ func benchmarkCalculateQps(b *testing.B, clientNum int64) {
 
 	glog.SetGLogDir(dir)
 	glog.StartWorker(1*time.Second)
-	context := &context.Context{
+	context := &Context{
 		TestClientNum: clientNum,
 		Test:true,
 		ProxyHttpAddr:"http://127.0.0.1:4161",
@@ -103,7 +101,7 @@ func TestMCTester(t *testing.T) {
 
 	glog.SetGLogDir(dir)
 	glog.StartWorker(1*time.Second)
-	context := &context.Context{
+	context := &Context{
 		TestClientNum: 100,
 		Test:true,
 		ProxyHttpAddrTest:"http://127.0.0.1:4161",
@@ -111,7 +109,7 @@ func TestMCTester(t *testing.T) {
 		DccUrl:"http://10.9.7.75:8089",
 		DccBackupFile:dir,
 		DCC_key:"nsq-dev.to.sqs-qa",
-		Logger:log.NewMigrateLogger(2),
+		Logger:NewMigrateLogger(2),
 	}
 	NewTester(context)
 	mcTester, err :=  NewMCTester(context)

@@ -1,9 +1,11 @@
-package topic_migrate_manager
+package nsqlookupd_migrate
 
 import (
 	"sync"
-	"github.com/youzan/nsq/internal/context"
+	"errors"
 )
+
+var errorMigrateGuardInitErr = errors.New("fail to initialize topic migrate guard")
 
 type ITopicMigrateGuard interface {
 	GetTopicSwitch(topic string) int
@@ -34,31 +36,17 @@ func (g *HttpTopicMigrateGuard) UpdateTopicSwitches(switches map[string]int) int
 }
 
 func (g *HttpTopicMigrateGuard) Init() {
-	gLog.Info("http topic migrate guard inited.")
 }
 
-
-
-
-func NewTopicMigrateGuard(context *context.Context) (ITopicMigrateGuard, error) {
-	gLog = context.Logger
+func NewTopicMigrateGuard(context *Context) (ITopicMigrateGuard, error) {
 	mc, err := NewMigrateConfig(context)
 	if err != nil {
 		return nil, errorMigrateGuardInitErr
 	}
 
-	var guard ITopicMigrateGuard
-	if context.MigrateGuard == "http" {
-		guard = &HttpTopicMigrateGuard{
+	guard := &HttpTopicMigrateGuard{
 			mc:        mc,
 		}
-	} else {
-		guard, err = NewDCCTopicMigrateGuard(context)
-		if(nil != err) {
-			return nil, err
-		}
-		//log
-		gLog.Info("topic migrate guard initialized with url:%v, backupFile:%v, env:%v", context.DccUrl, context.DccBackupFile, context.Env)
-	}
+
 	return guard, nil
 }

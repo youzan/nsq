@@ -9,11 +9,6 @@ ifeq (${GOOS},windows)
     EXT=.exe
 endif
 
-DCCMG=
-ifeq (${DCC},true)
-    DCCMG=internal/topic_migrate_manager/dcc_topic_migrate_guard.go
-endif
-
 APPS = nsqd nsqlookupd nsqadmin nsq_pubsub nsq_to_nsq nsq_to_file nsq_to_http nsq_tail nsq_stat to_nsq nsq_data_tool nsqlookupd_migrate_proxy
 all: $(APPS)
 
@@ -28,7 +23,7 @@ $(BLDDIR)/nsq_tail:    $(wildcard apps/nsq_tail/*.go  internal/*/*.go)
 $(BLDDIR)/nsq_stat:    $(wildcard apps/nsq_stat/*.go             internal/*/*.go)
 $(BLDDIR)/to_nsq:      $(wildcard apps/to_nsq/*.go               internal/*/*.go)
 $(BLDDIR)/nsq_data_tool:  $(wildcard apps/nsq_data_tool/*.go consistence/*.go nsqd/*.go internal/*/*.go)
-$(BLDDIR)/nsqlookupd_migrate_proxy:  $(wildcard apps/nsqlookupd_migrate/*.go nsqd/*.go internal/nsqlookupd_migrate/*.go internal/topic_migrate_manager/topic_migrate_manager*.go)    internal/topic_migrate_manager/migrate_config.go    internal/topic_migrate_manager/migrate_config.go   ${DCCMG}
+$(BLDDIR)/nsqlookupd_migrate_proxy:  $(wildcard apps/nsqlookupd_migrate_proxy/*.go nsqlookupd_migrate/*.go)
 
 
 $(BLDDIR)/%:

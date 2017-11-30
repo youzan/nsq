@@ -1,7 +1,6 @@
 package nsqlookupd_migrate
 
 import (
-	"github.com/youzan/nsq/internal/context"
 	"net/http"
 	"time"
 	"github.com/DoraALin/docker/docker/pkg/random"
@@ -9,22 +8,20 @@ import (
 	"encoding/json"
 	"math/rand"
 	"fmt"
-	"github.com/youzan/nsq/internal/log"
 	"sync"
 	"github.com/julienschmidt/httprouter"
 	"github.com/twinj/uuid"
 	"strings"
-	"github.com/youzan/nsq/internal/topic_migrate_manager"
 	dcc "gitlab.qima-inc.com/wangjian/go-dcc-sdk"
 )
 
 var LIST_LOOKUP_PATH = "/listlookup"
 var LOOKUP_PATH = "/lookup?topic=%v&access=%v&metainfo=%v"
 var LIST_TOPICS_PATH = "/topics"
-var testerLog *log.MigrateLogger
+var testerLog *MigrateLogger
 
 type MCTester struct {
-	mc *topic_migrate_manager.MigrateConfig
+	mc *MigrateConfig
 	client	*http.Client
 	lookupdAddr string
 	topiclist []string
@@ -35,8 +32,8 @@ type MCTester struct {
 	dccClient	*dcc.DccClient
 }
 
-func NewMCTester(cxt *context.Context) (*MCTester, error) {
-	mc, err := topic_migrate_manager.NewMigrateConfig(cxt)
+func NewMCTester(cxt *Context) (*MCTester, error) {
+	mc, err := NewMigrateConfig(cxt)
 	if err != nil {
 		testerLog.Error("fail to creat migrate config %v", err)
 		return nil, err
@@ -227,9 +224,9 @@ func (t *Tester) GetQps() float32 {
 	return t.qps
 }
 
-func NewTester(context *context.Context) (*Tester, error) {
+func NewTester(context *Context) (*Tester, error) {
 	if testerLog == nil {
-		testerLog = log.NewMigrateLogger(context.LogLevel)
+		testerLog = NewMigrateLogger(context.LogLevel)
 	}
 	test := &Tester{
 		ProxyAddr:	context.ProxyHttpAddrTest,
@@ -382,12 +379,12 @@ exit:
 
 type httpTester struct {
 	Router http.Handler
-	context *context.Context
+	context *Context
 	Tester *Tester
 }
 
-func NewProxyTester(context *context.Context) (*httpTester, error) {
-	testerLog = log.NewMigrateLogger(context.LogLevel)
+func NewProxyTester(context *Context) (*httpTester, error) {
+	testerLog = NewMigrateLogger(context.LogLevel)
 	context.Logger = testerLog
 	router := httprouter.New()
 	router.HandleMethodNotAllowed = true

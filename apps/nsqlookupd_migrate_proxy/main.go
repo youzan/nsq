@@ -3,10 +3,9 @@ package main
 import (
 	"flag"
 	"net/http"
-	migrate "github.com/youzan/nsq/internal/nsqlookupd_migrate"
+	migrate "github.com/youzan/nsq/nsqlookupd_migrate"
 
 	"log"
-	"github.com/youzan/nsq/internal/context"
 	"github.com/BurntSushi/toml"
 	"github.com/mreiferson/go-options"
 	"os"
@@ -30,8 +29,6 @@ var (
 	test = flagSet.Bool("test", false, "performance test flag for nsqlookup_migrate")
 	testClientNum = flagSet.Int64("test_client_num", 100, "access client number")
 	mcTest = flagSet.Bool("mc_test", false, "migrate config test")
-	migrateGuard = flagSet.String("migrate-guard", "dcc", "migrate guard type")
-
 )
 
 func main() {
@@ -45,7 +42,7 @@ func main() {
 		}
 	}
 
-	context := &context.Context{}
+	context := &migrate.Context{}
 	options.Resolve(context, flagSet, cfg)
 	log.Printf("origin lookup http address: %v", context.LookupAddrOri)
 	log.Printf("target lookup http address: %v", context.LookupAddrTar)

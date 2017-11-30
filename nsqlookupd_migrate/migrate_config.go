@@ -1,11 +1,9 @@
-package topic_migrate_manager
+package nsqlookupd_migrate
 
 import (
 	"strings"
 	"errors"
 	"fmt"
-	"github.com/youzan/nsq/internal/log"
-	"github.com/youzan/nsq/internal/context"
 	"regexp"
 )
 
@@ -17,7 +15,7 @@ type MigrateConfig struct {
 	Switches   map[string]int
 }
 
-var cnfLog *log.MigrateLogger
+var cnfLog *MigrateLogger
 var keyFormat = "%s.to.%s"
 var appFormat = "nsqlookupd.migrate"
 var typeFormat = "COMBINATION"
@@ -56,7 +54,7 @@ func initKey(originLookupd, targetLookupd, key_in_cnf string) (string, error) {
 /**
 init and answer a new migrate config with no topic switches
  */
-func NewMigrateConfig(context *context.Context) (*MigrateConfig, error) {
+func NewMigrateConfig(context *Context) (*MigrateConfig, error) {
 	cnfLog = context.Logger
 	app := appFormat
 	key, err := initKey(context.LookupAddrOri, context.LookupAddrTar, context.DCC_key)

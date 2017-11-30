@@ -1,4 +1,4 @@
-package log
+package nsqlookupd_migrate
 
 import (
 	"github.com/absolute8511/glog"

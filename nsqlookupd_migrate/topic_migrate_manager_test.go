@@ -1,16 +1,15 @@
-package topic_migrate_manager
+package nsqlookupd_migrate
 
 import (
 	"testing"
 	"github.com/DoraALin/docker/pkg/testutil/assert"
 	"time"
-	"github.com/youzan/nsq/internal/context"
 )
 
 func TestNewMigrateConfig(t *testing.T) {
 	lookupdOri := "http://127.0.0.2:4161"
 	lookupdTar := "http://127.0.0.1:4161"
-	context := &context.Context{
+	context := &Context{
 		LookupAddrOri:lookupdOri,
 		LookupAddrTar:lookupdTar,
 		Env:"qa",
@@ -27,7 +26,7 @@ func TestNewMigrateConfig(t *testing.T) {
 
 
 func TestNewTopicMigrateGuard(t *testing.T) {
-	context := &context.Context{
+	context := &Context{
 		LookupAddrOri: "http://127.0.0.2:4161",
 		LookupAddrTar: "http://127.0.0.1:4161",
 		DccUrl: "http://10.9.7.75:8089",
