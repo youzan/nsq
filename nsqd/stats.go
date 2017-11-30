@@ -38,10 +38,14 @@ type TopicStats struct {
 	E2eProcessingLatency *quantile.Result `json:"e2e_processing_latency"`
 }
 
-func NewTopicStats(t *Topic, channels []ChannelStats) TopicStats {
+func NewTopicStats(t *Topic, channels []ChannelStats, filterClients bool) TopicStats {
 	statsdName := t.GetTopicName()
 	if t.IsOrdered() {
 		statsdName += "." + strconv.Itoa(t.GetTopicPart())
+	}
+	var clients []ClientPubStats
+	if !filterClients {
+		clients = t.detailStats.GetPubClientStats()
 	}
 	return TopicStats{
 		TopicName:            t.GetTopicName(),
@@ -53,7 +57,7 @@ func NewTopicStats(t *Topic, channels []ChannelStats) TopicStats {
 		BackendStart:         t.GetQueueReadStart(),
 		MessageCount:         t.TotalMessageCnt(),
 		IsLeader:             !t.IsWriteDisabled(),
-		Clients:              t.detailStats.GetPubClientStats(),
+		Clients:              clients,
 		MsgSizeStats:         t.detailStats.GetMsgSizeStats(),
 		MsgWriteLatencyStats: t.detailStats.GetMsgWriteLatencyStats(),
 		IsMultiOrdered:       t.IsOrdered(),
@@ -79,18 +83,19 @@ type ChannelStats struct {
 	RequeueCount  uint64        `json:"requeue_count"`
 	TimeoutCount  uint64        `json:"timeout_count"`
 	Clients       []ClientStats `json:"clients"`
+	ClientNum     int64         `json:"client_num"`
 	Paused        bool          `json:"paused"`
 	Skipped       bool          `json:"skipped"`
 
 	DelayedQueueCount  uint64 `json:"delayed_queue_count"`
 	DelayedQueueRecent string `json:"delayed_queue_recent"`
 
-	E2eProcessingLatency   *quantile.Result `json:"e2e_processing_latency"`
-	MsgConsumeLatencyStats []int64          `json:"msg_consume_latency_stats"`
+	E2eProcessingLatency    *quantile.Result `json:"e2e_processing_latency"`
+	MsgConsumeLatencyStats  []int64          `json:"msg_consume_latency_stats"`
 	MsgDeliveryLatencyStats []int64          `json:"msg_delivery_latency_stats"`
 }
 
-func NewChannelStats(c *Channel, clients []ClientStats) ChannelStats {
+func NewChannelStats(c *Channel, clients []ClientStats, clientNum int) ChannelStats {
 	c.inFlightMutex.Lock()
 	inflightCnt := len(c.inFlightMessages)
 	c.inFlightMutex.Unlock()
@@ -125,13 +130,14 @@ func NewChannelStats(c *Channel, clients []ClientStats) ChannelStats {
 		DeferredCount:      int(atomic.LoadInt64(&c.deferredCount)),
 		TimeoutCount:       atomic.LoadUint64(&c.timeoutCount),
 		Clients:            clients,
+		ClientNum:          int64(clientNum),
 		Paused:             c.IsPaused(),
 		Skipped:            c.IsSkipped(),
 		DelayedQueueCount:  dqCnt,
 		DelayedQueueRecent: time.Unix(0, recentTs).String(),
 
-		E2eProcessingLatency:   c.e2eProcessingLatencyStream.Result(),
-		MsgConsumeLatencyStats: c.channelStatsInfo.GetChannelLatencyStats(),
+		E2eProcessingLatency:    c.e2eProcessingLatencyStream.Result(),
+		MsgConsumeLatencyStats:  c.channelStatsInfo.GetChannelLatencyStats(),
 		MsgDeliveryLatencyStats: c.channelStatsInfo.GetDeliveryLatencyStats(),
 	}
 }
@@ -203,7 +209,7 @@ type ChannelsByName struct {
 
 func (c ChannelsByName) Less(i, j int) bool { return c.Channels[i].name < c.Channels[j].name }
 
-func (n *NSQD) GetStats(leaderOnly bool) []TopicStats {
+func (n *NSQD) GetStats(leaderOnly bool, filterClients bool) []TopicStats {
 	n.RLock()
 	realTopics := make([]*Topic, 0, len(n.topicMap))
 	for _, topicParts := range n.topicMap {
@@ -216,10 +222,10 @@ func (n *NSQD) GetStats(leaderOnly bool) []TopicStats {
 	}
 	n.RUnlock()
 
-	return n.getTopicStats(realTopics)
+	return n.getTopicStats(realTopics, filterClients)
 }
 
-func (n *NSQD) getTopicStats(realTopics []*Topic) []TopicStats {
+func (n *NSQD) getTopicStats(realTopics []*Topic, filterClients bool) []TopicStats {
 	sort.Sort(TopicsByName{realTopics})
 	topics := make([]TopicStats, 0, len(realTopics))
 	for _, t := range realTopics {
@@ -232,20 +238,26 @@ func (n *NSQD) getTopicStats(realTopics []*Topic) []TopicStats {
 		sort.Sort(ChannelsByName{realChannels})
 		channels := make([]ChannelStats, 0, len(realChannels))
 		for _, c := range realChannels {
+			var clients []ClientStats
 			c.RLock()
-			clients := make([]ClientStats, 0, len(c.clients))
-			for _, client := range c.clients {
-				clients = append(clients, client.Stats())
+			clientNum := len(c.clients)
+			if filterClients {
+				clients = nil
+			} else {
+				clients = make([]ClientStats, 0, len(c.clients))
+				for _, client := range c.clients {
+					clients = append(clients, client.Stats())
+				}
 			}
 			c.RUnlock()
-			channels = append(channels, NewChannelStats(c, clients))
+			channels = append(channels, NewChannelStats(c, clients, clientNum))
 		}
-		topics = append(topics, NewTopicStats(t, channels))
+		topics = append(topics, NewTopicStats(t, channels, filterClients))
 	}
 	return topics
 }
 
-func (n *NSQD) GetTopicStats(leaderOnly bool, topic string) []TopicStats {
+func (n *NSQD) GetTopicStatsWithFilter(leaderOnly bool, topic string, filterClients bool) []TopicStats {
 	n.RLock()
 	realTopics := make([]*Topic, 0, len(n.topicMap))
 	for name, topicParts := range n.topicMap {
@@ -260,7 +272,11 @@ func (n *NSQD) GetTopicStats(leaderOnly bool, topic string) []TopicStats {
 		}
 	}
 	n.RUnlock()
-	return n.getTopicStats(realTopics)
+	return n.getTopicStats(realTopics, filterClients)
+}
+
+func (n *NSQD) GetTopicStats(leaderOnly bool, topic string) []TopicStats {
+	return n.GetTopicStatsWithFilter(leaderOnly, topic, false)
 }
 
 type DetailStatsInfo struct {
@@ -291,7 +307,7 @@ type TopicMsgStatsInfo struct {
 
 type ChannelStatsInfo struct {
 	// 16ms, 32ms, 64ms, 128ms, 256ms, 512ms, 1024ms, 2048ms, 4s, 8s, 16s, above
-	MsgConsumeLatencyStats [12]int64
+	MsgConsumeLatencyStats  [12]int64
 	MsgDeliveryLatencyStats [12]int64
 }
 

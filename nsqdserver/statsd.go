@@ -45,7 +45,7 @@ func (n *NsqdServer) statsdLoop() {
 
 			nsqd.NsqLogger().LogDebugf("STATSD: pushing stats to %s, using prefix: %v", client, opts.StatsdPrefix)
 
-			stats := n.ctx.nsqd.GetStats(false)
+			stats := n.ctx.nsqd.GetStats(false, true)
 			for _, topic := range stats {
 				// try to find the topic in the last collection
 				lastTopic := nsqd.TopicStats{}
@@ -148,7 +148,7 @@ func (n *NsqdServer) statsdLoop() {
 					client.Incr(stat, int64(diff))
 
 					stat = fmt.Sprintf("topic.%s.channel.%s.clients", statdName, channel.ChannelName)
-					client.Gauge(stat, int64(len(channel.Clients)))
+					client.Gauge(stat, int64(channel.ClientNum))
 
 					for _, item := range channel.E2eProcessingLatency.Percentiles {
 						stat = fmt.Sprintf("topic.%s.channel.%s.e2e_processing_latency_%.0f", statdName, channel.ChannelName, item["quantile"]*100.0)

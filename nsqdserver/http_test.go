@@ -1045,7 +1045,7 @@ func TestNSQDStatsFilter(t *testing.T) {
 
 	//delete existing topics if there is any
 	topicCnt := 0
-	for _, topic := range nsqd.GetStats(false) {
+	for _, topic := range nsqd.GetStats(false, false) {
 		parNum, _ := strconv.Atoi(topic.TopicPartition)
 		nsqd.DeleteExistingTopic(topic.TopicName, parNum)
 		topicCnt++

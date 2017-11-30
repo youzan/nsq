@@ -857,7 +857,7 @@ func (s *httpServer) doMessageHistoryStats(w http.ResponseWriter, req *http.Requ
 	}
 
 	if topicName == "" && topicPartStr == "" {
-		topicStats := s.ctx.getStats(true, "")
+		topicStats := s.ctx.getStats(true, "", true)
 		var topicHourlyPubStatsList []*clusterinfo.NodeHourlyPubsize
 		for _, topicStat := range topicStats {
 			partitionNum, err := strconv.Atoi(topicStat.TopicPartition)
@@ -1053,8 +1053,8 @@ func (s *httpServer) doFinishMemDelayed(w http.ResponseWriter, req *http.Request
 			return nil, http_api.Err{500, err.Error()}
 		}
 	}
-		nsqd.NsqLogger().Logf("topic %v-%v channel %v msgids %v is finished by api", t.GetTopicName(),
-			t.GetTopicPart(), chName, memDelayedMsgs)
+	nsqd.NsqLogger().Logf("topic %v-%v channel %v msgids %v is finished by api", t.GetTopicName(),
+		t.GetTopicPart(), chName, memDelayedMsgs)
 	return nil, nil
 }
 
@@ -1092,12 +1092,14 @@ func (s *httpServer) doStats(w http.ResponseWriter, req *http.Request, ps httpro
 	topicPart := reqParams.Get("partition")
 	channelName := reqParams.Get("channel")
 	leaderOnlyStr := reqParams.Get("leaderOnly")
+	needClients := reqParams.Get("needClients")
 	var leaderOnly bool
 	leaderOnly, _ = strconv.ParseBool(leaderOnlyStr)
 
 	jsonFormat := formatString == "json"
+	filterClients := len(needClients) == 0
 
-	stats := s.ctx.getStats(leaderOnly, topicName)
+	stats := s.ctx.getStats(leaderOnly, topicName, filterClients)
 	health := s.ctx.getHealth()
 	startTime := s.ctx.getStartTime()
 	uptime := time.Since(startTime)

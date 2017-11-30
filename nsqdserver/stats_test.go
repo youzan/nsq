@@ -51,12 +51,20 @@ func TestStats(t *testing.T) {
 	identify(t, conn, nil, frameTypeResponse)
 	sub(t, conn, topicName, "ch")
 
-	stats := nsqd.GetStats(false)
+	stats := nsqd.GetStats(false, false)
 	t.Logf("stats: %+v", stats)
 
 	test.Equal(t, len(stats), 1)
 	test.Equal(t, len(stats[0].Channels), 1)
 	test.Equal(t, len(stats[0].Channels[0].Clients), 1)
+
+	stats = nsqd.GetStats(false, true)
+	t.Logf("stats: %+v", stats)
+
+	test.Equal(t, len(stats), 1)
+	test.Equal(t, len(stats[0].Channels), 1)
+	test.Equal(t, len(stats[0].Channels[0].Clients), 0)
+	test.Equal(t, stats[0].Channels[0].ClientNum, int64(1))
 }
 
 func TestClientAttributes(t *testing.T) {
@@ -94,7 +102,7 @@ func TestClientAttributes(t *testing.T) {
 	topic.GetChannel("ch")
 	sub(t, readWriter{r, w}, topicName, "ch")
 
-	testURL := fmt.Sprintf("http://127.0.0.1:%d/stats?format=json", httpAddr.Port)
+	testURL := fmt.Sprintf("http://127.0.0.1:%d/stats?format=json&needClients=true", httpAddr.Port)
 
 	statsData, err := API(testURL)
 	test.Equal(t, err, nil)

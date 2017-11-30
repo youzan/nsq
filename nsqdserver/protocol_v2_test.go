@@ -3715,7 +3715,7 @@ func TestTouch(t *testing.T) {
 	_, err = nsq.Finish(nsq.MessageID(msg.GetFullMsgID())).WriteTo(conn)
 	test.Equal(t, err, nil)
 
-	stats := nsqdNs.NewChannelStats(ch, nil)
+	stats := nsqdNs.NewChannelStats(ch, nil, 0)
 	test.Equal(t, stats.TimeoutCount, uint64(0))
 }
 
