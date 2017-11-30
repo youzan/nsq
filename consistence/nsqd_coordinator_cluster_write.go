@@ -1173,7 +1173,8 @@ func (self *NsqdCoordinator) updateChannelOffsetOnSlave(tc *coordData, channelNa
 	}
 
 	if coordLog.Level() >= levellogger.LOG_DETAIL {
-		coordLog.Debugf("got update channel(%v) offset on slave : %v", channelName, offset)
+		coordLog.Debugf("topic %v got update channel(%v) offset on slave : %v",
+			tc.topicInfo.GetTopicDesp(), channelName, offset)
 	}
 	coord, coordErr := self.getTopicCoord(topicName, partition)
 	if coordErr != nil {
@@ -1204,7 +1205,8 @@ func (self *NsqdCoordinator) updateChannelOffsetOnSlave(tc *coordData, channelNa
 	}
 	currentEnd := ch.GetChannelEnd()
 	if nsqd.BackendOffset(offset.VOffset) > currentEnd.Offset() {
-		coordLog.Debugf("update channel(%v) consume offset exceed end %v on slave : %v", channelName, offset, currentEnd)
+		coordLog.Debugf("topic %v update channel(%v) consume offset exceed end %v on slave : %v",
+			tc.topicInfo.GetTopicDesp(), channelName, offset, currentEnd)
 		// cache the offset (using map?) to reduce the slave channel flush.
 		coord.consumeMgr.Lock()
 		cur, ok := coord.consumeMgr.channelConsumeOffset[channelName]
@@ -1213,14 +1215,19 @@ func (self *NsqdCoordinator) updateChannelOffsetOnSlave(tc *coordData, channelNa
 		}
 		coord.consumeMgr.Unlock()
 
-		if offset.Flush {
-			topic.ForceFlush()
+		// TODO: it may always ignore the exceed end update
+		if offset.Flush || ch.IsOrdered() {
+			topic.ForceFlushForChannels()
 			currentEnd = ch.GetChannelEnd()
 			if nsqd.BackendOffset(offset.VOffset) > currentEnd.Offset() {
 				offset.VOffset = int64(currentEnd.Offset())
 				offset.VCnt = currentEnd.TotalMsgCnt()
 			}
 		} else {
+			if coordLog.Level() >= levellogger.LOG_DEBUG {
+			coordLog.Debugf("topic %v update channel(%v) consume offset %v ignored on slave : %v",
+				tc.topicInfo.GetTopicDesp(), channelName, offset, currentEnd)
+			}
 			return nil
 		}
 	}

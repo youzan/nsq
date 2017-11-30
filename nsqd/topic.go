@@ -836,6 +836,13 @@ func (t *Topic) PutMessageNoLock(m *Message) (MessageID, BackendOffset, int32, B
 	return id, offset, writeBytes, &dend, err
 }
 
+func (t *Topic) ForceFlushForChannels() {
+	// flush buffer only to allow the channel read recent write
+	// no need sync to disk, since sync is heavy IO.
+	t.backend.FlushBuffer()
+	t.updateChannelsEnd(false)
+}
+
 func (t *Topic) flushForChannels() {
 	if t.IsWriteDisabled() {
 		return

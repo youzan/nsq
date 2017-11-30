@@ -700,7 +700,8 @@ func (d *diskQueueReader) internalSkipTo(voffset BackendOffset, cnt int64, backT
 	}
 
 	if voffset < d.readQueueInfo.Offset() || nsqLog.Level() >= levellogger.LOG_DEBUG {
-		nsqLog.Logf("==== read skip from %v to : %v, %v", d.readQueueInfo, voffset, newPos)
+		nsqLog.Logf("==== diskqueue(%s) read skip from %v to : %v, %v", 
+			d.readerMetaName, d.readQueueInfo, voffset, newPos)
 	}
 	d.readQueueInfo.EndOffset = newPos
 	d.readQueueInfo.virtualEnd = voffset

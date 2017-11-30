@@ -2247,9 +2247,6 @@ func (self *NsqdCoordinator) removeTopicCoord(topic string, partition int, remov
 func (self *NsqdCoordinator) trySyncTopicChannels(tcData *coordData, syncDelayedQueue bool, syncChannelList bool) {
 	localTopic, _ := self.localNsqd.GetExistingTopic(tcData.topicInfo.Name, tcData.topicInfo.Partition)
 	if localTopic != nil {
-		if localTopic.IsOrdered() && !syncChannelList {
-			return
-		}
 		channels := localTopic.GetChannelMapCopy()
 		if syncChannelList {
 			chNameList := make([]string, 0, len(channels))
@@ -2267,10 +2264,7 @@ func (self *NsqdCoordinator) trySyncTopicChannels(tcData *coordData, syncDelayed
 				c.NotifyChannelList(&tcData.topicLeaderSession, &tcData.topicInfo, chNameList)
 			}
 		}
-		if localTopic.IsOrdered() {
-			// ordered topic update in sync mode, no need sync in background
-			return
-		}
+
 		if syncDelayedQueue {
 			keyList, cntList, channelCntList := localTopic.GetDelayedQueueConsumedState()
 			if keyList == nil && cntList == nil && channelCntList == nil {
@@ -2297,6 +2291,11 @@ func (self *NsqdCoordinator) trySyncTopicChannels(tcData *coordData, syncDelayed
 		var syncOffset ChannelConsumerOffset
 		syncOffset.Flush = true
 		for _, ch := range channels {
+			// skipped ordered channel will not sync offset, 
+			// so we need sync here
+			if ch.IsOrdered() && !ch.IsSkipped() {
+				continue
+			}
 			confirmed := ch.GetConfirmed()
 			// try fix message count here, since old version has no count info.
 			if confirmed.Offset() > 0 && confirmed.TotalMsgCnt() <= 0 {
