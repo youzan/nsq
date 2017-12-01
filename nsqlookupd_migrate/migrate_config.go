@@ -33,7 +33,7 @@ func parseClusterName(lookupdAddr string) string {
 func initKey(originLookupd, targetLookupd, key_in_cnf string) (string, error) {
 	var hostOri, hostTar string
 	if key_in_cnf != "" {
-		cnfLog.Info("DCC key in config applied: %v", key_in_cnf)
+		cnfLog.Info("key in config applied: %v", key_in_cnf)
 		return key_in_cnf, nil
 	}
 	if hostOri = parseClusterName(originLookupd); hostOri == "" {
@@ -57,7 +57,7 @@ init and answer a new migrate config with no topic switches
 func NewMigrateConfig(context *Context) (*MigrateConfig, error) {
 	cnfLog = context.Logger
 	app := appFormat
-	key, err := initKey(context.LookupAddrOri, context.LookupAddrTar, context.DCC_key)
+	key, err := initKey(context.LookupAddrOri, context.LookupAddrTar, context.Migrate_key)
 	if err != nil {
 		return nil, err
 	}

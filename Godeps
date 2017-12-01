@@ -22,6 +22,5 @@ google.golang.org/grpc  4f14d195bf76d2b7e8c1bd379549b88ffe5f4ee3
 github.com/gobwas/glob
 github.com/tidwall/gjson
 github.com/absolute8511/bolt
-github.com/golang/glog
 github.com/twinj/uuid
 github.com/viki-org/dnscache

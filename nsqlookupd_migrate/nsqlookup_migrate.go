@@ -2,7 +2,6 @@ package nsqlookupd_migrate
 
 import (
 	"fmt"
-	"github.com/golang/glog"
 	"net/http"
 	"github.com/julienschmidt/httprouter"
 	"net/url"
@@ -14,6 +13,7 @@ import (
 	"strconv"
 	"time"
 	"net"
+	"github.com/absolute8511/glog"
 )
 
 type Decorator func(APIHandler) APIHandler

@@ -29,8 +29,6 @@ func TestNewTopicMigrateGuard(t *testing.T) {
 	context := &Context{
 		LookupAddrOri: "http://127.0.0.2:4161",
 		LookupAddrTar: "http://127.0.0.1:4161",
-		DccUrl: "http://10.9.7.75:8089",
-		DccBackupFile: "backup.dat",
 		Env: "qa",
 	}
 	mg, error := NewTopicMigrateGuard(context)

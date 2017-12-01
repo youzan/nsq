@@ -25,11 +25,9 @@ start with config file:
 properties defined in nsqlookup migrate:
 <pre>
 origin-lookupd-http = "http://origin.nsqlookupd:4161"
-target-lookupd-http = "http://127.0.0.1:4161"
-dcc-url = "http://10.9.7.75:8089"
-dcc-backup-file = "/tmp/nsqlookupd_migrate/backup"
+target-lookupd-http = "http://target.nsqlookupd:4161"
 env = "qa"
 log-level = 2
 log-dir = "/data/logs/nsqlookup_migrate"
-migrate-dcc-key = ""
+migrate-key = "origin.to.target"
 </pre>

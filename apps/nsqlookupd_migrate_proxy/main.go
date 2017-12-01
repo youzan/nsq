@@ -19,12 +19,10 @@ var (
 	testPort        = flagSet.String("http-address-test", "0.0.0.0:4161", "<hostname>:<port> to listen on for HTTP tester")
 	originalLookupdHttpAddr = flagSet.String("origin-lookupd-http", "http://0.0.0.0:4161", "<hostname>:<port> original lookupd to access to fetch lookup info.")
 	targetLookupdHttpAddr = flagSet.String("target-lookupd-http", "http://0.0.0.0:4161", "<hostname>:<port> target lookupd to access to fetch lookup info.")
-	dccRemoteUrl = flagSet.String("dcc-url", "0.0.0.0:8089", "http://<hostname>:<port> dcc remote url for migrate control in topic base.")
-	dccBackupFile = flagSet.String("dcc-backup-file", "dccbackup.bak", "backup file for dcc.")
 	env = flagSet.String("env", "", "env")
 	log_level = flagSet.Int64("log-level", 2, "log level")
 	config = flagSet.String("config", "", "path to config file")
-	migrate_dcc_key  = flagSet.String("migrate-dcc-key", "", "dcc key for migrate switches, it not specified, migrate proxy try parse DCC key from origin&target lookupd addresses.")
+	migrate_key  = flagSet.String("migrate-key", "", "key for migrate switches, it not specified, migrate proxy try parse key from origin&target lookupd addresses.")
 	log_dir = flagSet.String("log_dir", "", "dir for log files")
 )
 
