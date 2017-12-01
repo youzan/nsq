@@ -140,8 +140,8 @@ func (p *protocolV2) IOLoop(conn net.Conn) error {
 	<-messagePumpStartedChan
 
 	for {
-		if client.HeartbeatInterval > 0 {
-			client.SetReadDeadline(time.Now().Add(client.HeartbeatInterval * 3))
+		if client.GetHeartbeatInterval() > 0 {
+			client.SetReadDeadline(time.Now().Add(client.GetHeartbeatInterval() * 3))
 		} else {
 			client.SetReadDeadline(zeroTime)
 		}
@@ -418,11 +418,11 @@ func (p *protocolV2) messagePump(client *nsqd.ClientV2, startedChan chan bool,
 
 	subEventChan := client.SubEventChan
 	identifyEventChan := client.IdentifyEventChan
-	outputBufferTicker := time.NewTicker(client.OutputBufferTimeout)
-	heartbeatTicker := time.NewTicker(client.HeartbeatInterval)
+	outputBufferTicker := time.NewTicker(client.GetOutputBufferTimeout())
+	heartbeatTicker := time.NewTicker(client.GetHeartbeatInterval())
 	heartbeatChan := heartbeatTicker.C
 	heartbeatFailedCnt := 0
-	msgTimeout := client.MsgTimeout
+	msgTimeout := client.GetMsgTimeout()
 	lastActiveTime := time.Now()
 	var extFilter nsqd.IExtFilter
 	// v2 opportunistically buffers data to clients to reduce write system calls
@@ -538,7 +538,7 @@ func (p *protocolV2) messagePump(client *nsqd.ClientV2, startedChan chan bool,
 			// maybe some bug blocking this client, reconnect can solve bug.
 			// ignore the tagged client since it can be idle while no tagged messages
 			if subChannel != nil && client.GetTagMsgChannel() == nil &&
-				time.Since(lastActiveTime) > (msgTimeout*10+client.HeartbeatInterval) &&
+				time.Since(lastActiveTime) > (msgTimeout*10+client.GetHeartbeatInterval()) &&
 				!subChannel.IsOrdered() && subChannel.Depth() > 10 &&
 				subChannel.GetInflightNum() <= 0 && !subChannel.IsPaused() {
 				nsqd.NsqLogger().Warningf("client %s not active since %v, current : %v, %v, %v", client, lastActiveTime,
@@ -706,7 +706,7 @@ func (p *protocolV2) IDENTIFY(client *nsqd.ClientV2, params [][]byte) ([]byte, e
 		MaxRdyCount:         p.ctx.getOpts().MaxRdyCount,
 		Version:             version.Binary,
 		MaxMsgTimeout:       int64(p.ctx.getOpts().MaxMsgTimeout / time.Millisecond),
-		MsgTimeout:          int64(client.MsgTimeout / time.Millisecond),
+		MsgTimeout:          int64(client.GetMsgTimeout() / time.Millisecond),
 		TLSv1:               tlsv1,
 		Deflate:             deflate,
 		DeflateLevel:        deflateLevel,
@@ -714,8 +714,8 @@ func (p *protocolV2) IDENTIFY(client *nsqd.ClientV2, params [][]byte) ([]byte, e
 		Snappy:              snappy,
 		SampleRate:          client.SampleRate,
 		AuthRequired:        p.ctx.isAuthEnabled(),
-		OutputBufferSize:    client.OutputBufferSize,
-		OutputBufferTimeout: int64(client.OutputBufferTimeout / time.Millisecond),
+		OutputBufferSize:    int(client.GetOutputBufferSize()),
+		OutputBufferTimeout: int64(client.GetOutputBufferTimeout() / time.Millisecond),
 		DesiredTag:          client.GetDesiredTag(),
 	})
 	if err != nil {
@@ -895,7 +895,7 @@ func (p *protocolV2) internalSUB(client *nsqd.ClientV2, params [][]byte, enableT
 		return nil, protocol.NewFatalClientErr(nil, E_INVALID, "cannot SUB in current state")
 	}
 
-	if client.HeartbeatInterval <= 0 {
+	if client.GetHeartbeatInterval() <= 0 {
 		return nil, protocol.NewFatalClientErr(nil, E_INVALID, "cannot SUB with heartbeats disabled")
 	}
 
@@ -1615,9 +1615,7 @@ func (p *protocolV2) TOUCH(client *nsqd.ClientV2, params [][]byte) ([]byte, erro
 		return nil, protocol.NewFatalClientErr(nil, E_INVALID, err.Error())
 	}
 
-	client.LockRead()
-	msgTimeout := client.MsgTimeout
-	client.UnlockRead()
+	msgTimeout := client.GetMsgTimeout()
 
 	if client.Channel == nil {
 		return nil, protocol.NewFatalClientErr(nil, E_INVALID, "No channel")

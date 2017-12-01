@@ -84,12 +84,12 @@ type ClientV2 struct {
 	Reader *bufio.Reader
 	Writer *bufio.Writer
 
-	OutputBufferSize    int
-	OutputBufferTimeout time.Duration
+	outputBufferSize    int64
+	outputBufferTimeout int64
 
-	HeartbeatInterval time.Duration
+	heartbeatInterval int64
 
-	MsgTimeout time.Duration
+	msgTimeout int64
 
 	State          int32
 	ConnectTime    time.Time
@@ -125,10 +125,10 @@ type ClientV2 struct {
 	subErrCnt          int64
 	lastConsumeTimeout int64
 
-	DesiredTag      string
-	IsExtendSupport bool
+	desiredTag      string
+	isExtendSupport int32
 	TagMsgChannel   chan *Message
-	ExtFilter       ExtFilterData
+	extFilter       ExtFilterData
 }
 
 func NewClientV2(id int64, conn net.Conn, opts *Options, tls *tls.Config) *ClientV2 {
@@ -149,10 +149,10 @@ func NewClientV2(id int64, conn net.Conn, opts *Options, tls *tls.Config) *Clien
 		Reader: NewBufioReader(conn),
 		Writer: newBufioWriterSize(conn, defaultBufferSize),
 
-		OutputBufferSize:    defaultBufferSize,
-		OutputBufferTimeout: 250 * time.Millisecond,
+		outputBufferSize:    int64(defaultBufferSize),
+		outputBufferTimeout: int64(250 * time.Millisecond),
 
-		MsgTimeout: opts.MsgTimeout,
+		msgTimeout: int64(opts.MsgTimeout),
 
 		// ReadyStateChan has a buffer of 1 to guarantee that in the event
 		// there is a race the state update is not lost
@@ -168,12 +168,12 @@ func NewClientV2(id int64, conn net.Conn, opts *Options, tls *tls.Config) *Clien
 		IdentifyEventChan: make(chan identifyEvent, 1),
 
 		// heartbeats are client configurable but default to 30s
-		HeartbeatInterval: opts.ClientTimeout / 2,
+		heartbeatInterval: int64(opts.ClientTimeout / 2),
 		tlsConfig:         tls,
 		PubTimeout:        time.NewTimer(time.Second * 5),
 	}
-	if c.OutputBufferTimeout > opts.MaxOutputBufferTimeout {
-		c.OutputBufferTimeout = opts.MaxOutputBufferTimeout
+	if c.outputBufferTimeout > int64(opts.MaxOutputBufferTimeout) {
+		c.outputBufferTimeout = int64(opts.MaxOutputBufferTimeout)
 	}
 	c.LenSlice = c.lenBuf[:]
 	c.remoteAddr = identifier
@@ -210,14 +210,6 @@ func (c *ClientV2) FinalClose() {
 		c.tlsConn = nil
 	}
 	c.Conn.Close()
-}
-
-func (c *ClientV2) LockRead() {
-	c.writeLock.RLock()
-}
-
-func (c *ClientV2) UnlockRead() {
-	c.writeLock.RUnlock()
 }
 
 func (c *ClientV2) LockWrite() {
@@ -282,15 +274,15 @@ func (c *ClientV2) Identify(data IdentifyDataV2) error {
 	}
 	c.SetExtFilter(data.ExtFilter)
 
-	c.LockRead()
+	c.metaLock.RLock()
 	ie := identifyEvent{
-		OutputBufferTimeout: c.OutputBufferTimeout,
-		HeartbeatInterval:   c.HeartbeatInterval,
+		OutputBufferTimeout: time.Duration(atomic.LoadInt64(&c.outputBufferTimeout)),
+		HeartbeatInterval:   time.Duration(atomic.LoadInt64(&c.heartbeatInterval)),
 		SampleRate:          atomic.LoadInt32(&c.SampleRate),
-		MsgTimeout:          c.MsgTimeout,
-		ExtFilter:           c.ExtFilter,
+		MsgTimeout:          time.Duration(atomic.LoadInt64(&c.msgTimeout)),
+		ExtFilter:           c.extFilter,
 	}
-	c.UnlockRead()
+	c.metaLock.RUnlock()
 
 	// update the client's message pump
 	select {
@@ -417,9 +409,7 @@ func (c *ClientV2) IsReadyForMessages() bool {
 		adjustReadyCount := readyCount - errCnt + slowDownThreshold
 		if adjustReadyCount <= 0 {
 			lct := atomic.LoadInt64(&c.lastConsumeTimeout)
-			c.LockRead()
-			msgTimeout := c.MsgTimeout
-			c.UnlockRead()
+			msgTimeout := time.Duration(atomic.LoadInt64(&c.msgTimeout))
 			readyCount = 1
 			if time.Now().Add(-2*msgTimeout).Unix() < lct {
 				// the wait time maybe large than the msgtimeout (maybe need wait heartbeat to trigge channel wakeup)
@@ -525,23 +515,28 @@ func (c *ClientV2) UnPause() {
 	c.tryUpdateReadyState()
 }
 
-func (c *ClientV2) SetHeartbeatInterval(desiredInterval int) error {
-	c.writeLock.Lock()
-	defer c.writeLock.Unlock()
+func (c *ClientV2) GetHeartbeatInterval() time.Duration {
+	return time.Duration(atomic.LoadInt64(&c.heartbeatInterval))
+}
 
+func (c *ClientV2) SetHeartbeatInterval(desiredInterval int) error {
 	switch {
 	case desiredInterval == -1:
-		c.HeartbeatInterval = 0
+		atomic.StoreInt64(&c.heartbeatInterval, 0)
 	case desiredInterval == 0:
 		// do nothing (use default)
 	case desiredInterval >= 1000 &&
 		desiredInterval <= int(c.ctxOpts.MaxHeartbeatInterval/time.Millisecond):
-		c.HeartbeatInterval = time.Duration(desiredInterval) * time.Millisecond
+		atomic.StoreInt64(&c.heartbeatInterval, int64(time.Duration(desiredInterval)*time.Millisecond))
 	default:
 		return fmt.Errorf("heartbeat interval (%d) is invalid", desiredInterval)
 	}
 
 	return nil
+}
+
+func (c *ClientV2) GetOutputBufferSize() int64 {
+	return atomic.LoadInt64(&c.outputBufferSize)
 }
 
 func (c *ClientV2) SetOutputBufferSize(desiredSize int) error {
@@ -562,7 +557,7 @@ func (c *ClientV2) SetOutputBufferSize(desiredSize int) error {
 	if size > 0 {
 		c.writeLock.Lock()
 		defer c.writeLock.Unlock()
-		c.OutputBufferSize = size
+		atomic.StoreInt64(&c.outputBufferSize, int64(size))
 		err := c.Writer.Flush()
 		if err != nil {
 			return err
@@ -574,23 +569,24 @@ func (c *ClientV2) SetOutputBufferSize(desiredSize int) error {
 }
 
 func (c *ClientV2) SetExtFilter(filter ExtFilterData) {
-	c.writeLock.Lock()
-	defer c.writeLock.Unlock()
-	c.ExtFilter = filter
+	c.metaLock.Lock()
+	defer c.metaLock.Unlock()
+	c.extFilter = filter
+}
+
+func (c *ClientV2) GetOutputBufferTimeout() time.Duration {
+	return time.Duration(atomic.LoadInt64(&c.outputBufferTimeout))
 }
 
 func (c *ClientV2) SetOutputBufferTimeout(desiredTimeout int) error {
-	c.writeLock.Lock()
-	defer c.writeLock.Unlock()
-
 	switch {
 	case desiredTimeout == -1:
-		c.OutputBufferTimeout = 0
+		atomic.StoreInt64(&c.outputBufferTimeout, 0)
 	case desiredTimeout == 0:
 		// do nothing (use default)
 	case desiredTimeout >= 1 &&
 		desiredTimeout <= int(c.ctxOpts.MaxOutputBufferTimeout/time.Millisecond):
-		c.OutputBufferTimeout = time.Duration(desiredTimeout) * time.Millisecond
+		atomic.StoreInt64(&c.outputBufferTimeout, int64(desiredTimeout)*int64(time.Millisecond))
 	default:
 		return fmt.Errorf("output buffer timeout (%d) is invalid", desiredTimeout)
 	}
@@ -607,34 +603,31 @@ func (c *ClientV2) SetSampleRate(sampleRate int32) error {
 }
 
 func (c *ClientV2) GetDesiredTag() string {
-	c.LockRead()
-	defer c.UnlockRead()
-	return c.DesiredTag
+	c.metaLock.RLock()
+	defer c.metaLock.RUnlock()
+	return c.desiredTag
 }
 
 func (c *ClientV2) ExtendSupport() bool {
-	c.LockRead()
-	es := c.IsExtendSupport
-	c.UnlockRead()
-	return es
+	es := atomic.LoadInt32(&c.isExtendSupport)
+	return es != 0
 }
 
 func (c *ClientV2) SetExtendSupport() {
-	c.LockWrite()
-	c.IsExtendSupport = true
-	c.UnlockWrite()
+	atomic.StoreInt32(&c.isExtendSupport, 1)
+}
+
+func (c *ClientV2) GetMsgTimeout() time.Duration {
+	return time.Duration(atomic.LoadInt64(&c.msgTimeout))
 }
 
 func (c *ClientV2) SetMsgTimeout(msgTimeout int) error {
-	c.writeLock.Lock()
-	defer c.writeLock.Unlock()
-
 	switch {
 	case msgTimeout == 0:
 		// do nothing (use default)
 	case msgTimeout >= 1000 &&
 		msgTimeout <= int(c.ctxOpts.MaxMsgTimeout/time.Millisecond):
-		c.MsgTimeout = time.Duration(msgTimeout) * time.Millisecond
+		atomic.StoreInt64(&c.msgTimeout, int64(msgTimeout)*int64(time.Millisecond))
 	default:
 		return fmt.Errorf("msg timeout (%d) is invalid", msgTimeout)
 	}
@@ -643,9 +636,9 @@ func (c *ClientV2) SetMsgTimeout(msgTimeout int) error {
 }
 
 func (c *ClientV2) UnsetDesiredTag() {
-	c.LockWrite()
-	defer c.UnlockWrite()
-	c.DesiredTag = ""
+	c.metaLock.Lock()
+	defer c.metaLock.Unlock()
+	c.desiredTag = ""
 }
 
 func (c *ClientV2) SetDesiredTag(tagStr string) error {
@@ -657,14 +650,15 @@ func (c *ClientV2) SetDesiredTag(tagStr string) error {
 		return err
 	}
 
-	c.LockWrite()
-	defer c.UnlockWrite()
-	if tagStr != "" && c.DesiredTag != tagStr {
-		c.DesiredTag = tagStr
+	c.metaLock.Lock()
+	defer c.metaLock.Unlock()
+	if tagStr != "" && c.desiredTag != tagStr {
+		c.desiredTag = tagStr
 	}
 	return nil
 }
 
+// since only used in messagePump loop, no lock needed
 func (c *ClientV2) SetTagMsgChannel(tagMsgChan chan *Message) error {
 	c.TagMsgChannel = tagMsgChan
 	return nil
@@ -687,7 +681,7 @@ func (c *ClientV2) UpgradeTLS() error {
 	c.tlsConn = tlsConn
 
 	c.Reader = NewBufioReader(c.tlsConn)
-	c.Writer = newBufioWriterSize(c.tlsConn, c.OutputBufferSize)
+	c.Writer = newBufioWriterSize(c.tlsConn, int(atomic.LoadInt64(&c.outputBufferSize)))
 
 	atomic.StoreInt32(&c.TLS, 1)
 
@@ -707,7 +701,7 @@ func (c *ClientV2) UpgradeDeflate(level int) error {
 
 	fw, _ := flate.NewWriter(conn, level)
 	c.flateWriter = fw
-	c.Writer = newBufioWriterSize(fw, c.OutputBufferSize)
+	c.Writer = newBufioWriterSize(fw, int(atomic.LoadInt64(&c.outputBufferSize)))
 
 	atomic.StoreInt32(&c.Deflate, 1)
 
@@ -724,7 +718,7 @@ func (c *ClientV2) UpgradeSnappy() error {
 	}
 
 	c.Reader = NewBufioReader(snappy.NewReader(conn))
-	c.Writer = newBufioWriterSize(snappy.NewWriter(conn), c.OutputBufferSize)
+	c.Writer = newBufioWriterSize(snappy.NewWriter(conn), int(atomic.LoadInt64(&c.outputBufferSize)))
 
 	atomic.StoreInt32(&c.Snappy, 1)
 

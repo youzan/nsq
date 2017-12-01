@@ -3567,9 +3567,11 @@ func testDelayManyMessagesToQueueEnd(t *testing.T, changedLeader bool) {
 						goto RECONNECT
 					}
 					if atomic.LoadInt32(&finCnt) < int32(putCnt) {
-						t.Errorf("\033error recv: %v, %v, %v", atomic.LoadInt32(&recvCnt),
+						t.Logf("\033[31m error recv: %v, %v, %v", atomic.LoadInt32(&recvCnt),
 							atomic.LoadInt32(&reqCnt), atomic.LoadInt32(&finCnt))
-						test.NotNil(t, msgOut)
+						conn.Close()
+						time.Sleep(time.Millisecond * 3)
+						goto RECONNECT
 					}
 					break
 				}
