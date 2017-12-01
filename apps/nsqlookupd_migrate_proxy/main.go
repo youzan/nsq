@@ -26,9 +26,6 @@ var (
 	config = flagSet.String("config", "", "path to config file")
 	migrate_dcc_key  = flagSet.String("migrate-dcc-key", "", "dcc key for migrate switches, it not specified, migrate proxy try parse DCC key from origin&target lookupd addresses.")
 	log_dir = flagSet.String("log_dir", "", "dir for log files")
-	test = flagSet.Bool("test", false, "performance test flag for nsqlookup_migrate")
-	testClientNum = flagSet.Int64("test_client_num", 100, "access client number")
-	mcTest = flagSet.Bool("mc_test", false, "migrate config test")
 )
 
 func main() {
@@ -51,17 +48,6 @@ func main() {
 		log.Printf("log dir: %v", context.LogDir)
 	}
 	glog.StartWorker(time.Second * 2)
-	if context.Test {
-		log.Printf("proxy starts as tester")
-		httpTester, err := migrate.NewProxyTester(context)
-		if err != nil {
-			panic(err)
-		}
-		migrate.SetupLogger(context)
-		log.Printf("http server listen on %v", context.ProxyHttpAddr)
-		log.Fatal(http.ListenAndServe(context.ProxyHttpAddr, httpTester.Router))
-		return
-	}
 
 	httpServer, err := migrate.NewHTTPServer(context)
 	if err != nil {

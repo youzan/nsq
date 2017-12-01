@@ -32,10 +32,4 @@ env = "qa"
 log-level = 2
 log-dir = "/data/logs/nsqlookup_migrate"
 migrate-dcc-key = ""
-
-//following config applies for migrate proxy tester, including tester accesses nsqlookup proxy and tester modifies migrate configs
-test=true
-http-address-test = "http://10.9.152.26:4171"
-test-client-num = 100
-mc-test = true
 </pre>
