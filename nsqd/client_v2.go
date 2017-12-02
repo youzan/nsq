@@ -66,6 +66,8 @@ type ClientV2 struct {
 	RequeueCount  uint64
 	TimeoutCount  uint64
 
+	// this lock used only for connection writer
+	// do not use it while get/set stats for client, use meta lock instead
 	writeLock sync.RWMutex
 	metaLock  sync.RWMutex
 
