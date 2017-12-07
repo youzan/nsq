@@ -154,6 +154,11 @@ func (p *protocolV2) IOLoop(conn net.Conn) error {
 				err = nil
 			} else {
 				err = fmt.Errorf("failed to read command - %s", err)
+				if strings.Contains(err.Error(), "timeout") {
+					// force close conn to wake up conn.write if timeout since
+					// the connection may be dead.
+					client.Exit()
+				}
 			}
 			break
 		}
