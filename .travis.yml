@@ -3,10 +3,10 @@ go:
   - 1.6.x
   - 1.7.x
 env:
-  - GOARCH=amd64
-  - GOARCH=386
-  - TEST_RACE=true
-  - TEST_RACE=false
+  - GOARCH=amd64 TEST_RACE=false
+  - GOARCH=amd64 TEST_RACE=true
+  - GOARCH=386 TEST_RACE=false
+  - GOARCH=386 TEST_RACE=true
 sudo: false
 script:
   - curl -s https://raw.githubusercontent.com/pote/gpm/v1.4.0/bin/gpm > gpm
