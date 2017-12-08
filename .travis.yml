@@ -5,6 +5,8 @@ go:
 env:
   - GOARCH=amd64
   - GOARCH=386
+  - TEST_RACE=true
+  - TEST_RACE=false
 sudo: false
 script:
   - curl -s https://raw.githubusercontent.com/pote/gpm/v1.4.0/bin/gpm > gpm
