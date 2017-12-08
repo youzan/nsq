@@ -72,6 +72,9 @@ topic副本分布信息: 展示topic的每个分区的所有副本的分布情�
 
 [有赞NSQ运维指南](nsq-operation-reference.md)
 
+## 升级注意事项汇总
+
+[有赞NSQ升级指南](upgrade-notes.md)
 ## 其他FAQ
 
 - 客户端处理消息抛异常, 是否会丢消息?

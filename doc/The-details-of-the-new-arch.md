@@ -5,7 +5,7 @@
 ## 重构后架构图
 首先, 再回顾下重构后的整体架构图:
 
-![New Arch](https://raw.githubusercontent.com/absolute8511/nsq/master/doc/NSQ%20redesigned%20arch.png "New arch")
+![New Arch](resources/nsq-redesigned-arch.png "New arch")
 
 原来的几个NSQ组件大部分功能是复用的, 图中新增的就是元数据存储服务-etcd, 以及数据同步和HA处理逻辑. 下面我们按照我们的改造流程一一披露具体的技术细节.
 

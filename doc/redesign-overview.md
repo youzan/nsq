@@ -54,7 +54,7 @@ We did so many changes to the original NSQ, so we need make sure it will work. T
 ## Summary
 
 Putting all the works together we got the architecture overview below: 
-![New Arch](https://raw.githubusercontent.com/youzan/nsq/master/doc/NSQ%20redesigned%20arch.png "New arch")
+![New Arch](resources/nsq-redesigned-arch.png "New arch")
 We will disclose the technical details about all these new features in future articles and open source all these works on Github.
 
 [Redesigned NSQ Server](https://github.com/youzan/nsq)
