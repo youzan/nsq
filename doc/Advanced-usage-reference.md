@@ -16,7 +16,12 @@ Golang示例
     lookupAddress := "127.0.0.1:4161"
     config := nsq.NewConfig()
     // 启用顺序生产
-    config.EnableOrdered = true
+	config.EnableOrdered = true
+	// 默认pub返回的id, offset, rawSize数据无效, 当需要跟踪或者调试的时候, 可以开启
+	// trace, 这时id, offset, rawSize会返回服务端写入的队列位置便于跟踪. 注意不要一直开启
+	// 影响写入性能.
+	// config.EnableTrace = true
+
     // 顺序生产的分区hash算法, 针对pub传入的sharding key做hash分区, 保证同样的订单id落到同一个分区保证顺序,
     // 并且保证不同的订单id, 均匀的分散到多个分区保证不同订单id的并发能力
 	config.Hasher = murmur3.New32()
@@ -73,7 +78,7 @@ func main() {
 		close(done)
     }()
     // 连接lookup地址开始消费
-    consumer.ConnectToNSQLookupd(lookupAddr)
+	consumer.ConnectToNSQLookupd(lookupAddr)
     // 等待消费完成或者消费被停止
     <-done
 }
