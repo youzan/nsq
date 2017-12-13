@@ -238,10 +238,10 @@ func (d *diskQueueWriter) ResetWriteWithQueueStart(queueStart BackendQueueEnd) e
 	return nil
 }
 
-func (d *diskQueueWriter) CleanOldDataByRetention(cleanEndInfo BackendQueueOffset,
-	noRealClean bool, maxCleanOffset BackendOffset) (BackendQueueEnd, error) {
+func (d *diskQueueWriter) prepareCleanByRetention(cleanEndInfo BackendQueueOffset,
+	noRealClean bool, maxCleanOffset BackendOffset) (BackendQueueEnd, int64, int64, error) {
 	if cleanEndInfo == nil {
-		return nil, nil
+		return nil, 0, 0, nil
 	}
 	d.Lock()
 	defer d.Unlock()
@@ -262,11 +262,11 @@ func (d *diskQueueWriter) CleanOldDataByRetention(cleanEndInfo BackendQueueOffse
 		// of truncated from leader to replica
 		// so we should ignore clean file less than queue start file num.
 		if endInfo.FileNum <= d.diskQueueStart.EndOffset.FileNum {
-			return nil, nil
+			return nil, 0, 0, nil
 		}
 		if maxCleanOffset != BackendOffset(0) && cleanOffset > maxCleanOffset {
 			nsqLog.LogWarningf("disk %v clean position %v exceed the max allowed clean end: %v", d.name, cleanOffset, maxCleanOffset)
-			return nil, nil
+			return nil, 0, 0, nil
 		}
 	} else {
 		if cleanOffset >= d.diskReadEnd.Offset()-BackendOffset(d.diskReadEnd.EndOffset.Pos) {
@@ -280,16 +280,16 @@ func (d *diskQueueWriter) CleanOldDataByRetention(cleanEndInfo BackendQueueOffse
 	if endInfo != nil {
 		cleanFileNum = endInfo.FileNum
 		if cleanFileNum <= d.diskQueueStart.EndOffset.FileNum {
-			return &newStart, nil
+			return &newStart, 0, 0, nil
 		}
 		cnt, _, endPos, err := getQueueFileOffsetMeta(d.fileName(cleanFileNum - 1))
 		if err != nil {
 			nsqLog.Logf("disk %v failed to get queue offset meta: %v", d.fileName(cleanFileNum), err)
-			return &newStart, err
+			return &newStart, 0, 0, err
 		}
 		if maxCleanOffset != BackendOffset(0) && BackendOffset(endPos) > maxCleanOffset {
 			nsqLog.LogWarningf("disk %v clean position %v exceed the max allowed clean end: %v", d.name, endPos, maxCleanOffset)
-			return &newStart, errors.New("clean exceed the max allowed")
+			return &newStart, 0, 0, errors.New("clean exceed the max allowed")
 		}
 		newStart.EndOffset.FileNum = cleanFileNum
 		newStart.EndOffset.Pos = 0
@@ -300,7 +300,7 @@ func (d *diskQueueWriter) CleanOldDataByRetention(cleanEndInfo BackendQueueOffse
 			cnt, _, endPos, err := getQueueFileOffsetMeta(d.fileName(newStart.EndOffset.FileNum))
 			if err != nil {
 				nsqLog.LogWarningf("disk %v failed to get queue offset meta: %v", newStart, err)
-				return &newStart, err
+				return &newStart, 0, 0, err
 			}
 			if BackendOffset(endPos) < cleanOffset {
 				if cleanFileNum >= d.diskReadEnd.EndOffset.FileNum-1 {
@@ -318,16 +318,29 @@ func (d *diskQueueWriter) CleanOldDataByRetention(cleanEndInfo BackendQueueOffse
 	}
 
 	if noRealClean {
-		return &newStart, nil
+		return &newStart, 0, 0, nil
 	}
 
 	nsqLog.Infof("DISKQUEUE %v clean queue from %v, %v to new start : %v", d.name,
 		d.diskQueueStart, d.diskWriteEnd, newStart)
 
+	cleanStartFileNum := d.diskQueueStart.EndOffset.FileNum - MAX_QUEUE_OFFSET_META_DATA_KEEP - 1
+	if cleanStartFileNum < 0 {
+		cleanStartFileNum = 0
+	}
 	d.diskQueueStart = newStart
 	d.saveExtraMeta()
+	return &newStart, cleanStartFileNum, cleanFileNum, nil
+}
+
+func (d *diskQueueWriter) CleanOldDataByRetention(cleanEndInfo BackendQueueOffset,
+	noRealClean bool, maxCleanOffset BackendOffset) (BackendQueueEnd, error) {
+	newStart, cleanStartFileNum, cleanFileNum, err := d.prepareCleanByRetention(cleanEndInfo, noRealClean, maxCleanOffset)
+	if err != nil {
+		return nil, err
+	}
 	cleanMetaFileNum := cleanFileNum - MAX_QUEUE_OFFSET_META_DATA_KEEP
-	for i := int64(0); i < cleanFileNum; i++ {
+	for i := cleanStartFileNum; i < cleanFileNum; i++ {
 		fn := d.fileName(i)
 		innerErr := os.Remove(fn)
 		if innerErr != nil {
@@ -353,7 +366,7 @@ func (d *diskQueueWriter) CleanOldDataByRetention(cleanEndInfo BackendQueueOffse
 		}
 	}
 
-	return &newStart, nil
+	return newStart, nil
 }
 
 func (d *diskQueueWriter) closeCurrentFile() {
@@ -543,8 +556,12 @@ func (d *diskQueueWriter) deleteAllFiles(deleted bool) error {
 			nsqLog.LogErrorf("diskqueue(%s) failed to remove metadata file - %s", d.name, innerErr)
 			return innerErr
 		}
+		cleanStartFileNum := d.diskQueueStart.EndOffset.FileNum - MAX_QUEUE_OFFSET_META_DATA_KEEP - 1
+		if cleanStartFileNum < 0 {
+			cleanStartFileNum = 0
+		}
 		os.Remove(d.extraMetaFileName())
-		for i := int64(0); i <= d.diskWriteEnd.EndOffset.FileNum; i++ {
+		for i := cleanStartFileNum; i <= d.diskWriteEnd.EndOffset.FileNum; i++ {
 			fName := d.fileName(i) + ".offsetmeta.dat"
 			innerErr := os.Remove(fName)
 			nsqLog.Logf("DISKQUEUE(%s): removed offset meta file: %v", d.name, fName)
@@ -562,7 +579,11 @@ func (d *diskQueueWriter) cleanOldData() error {
 
 	d.saveFileOffsetMeta()
 
-	for i := int64(0); i <= d.diskWriteEnd.EndOffset.FileNum; i++ {
+	cleanStartFileNum := d.diskQueueStart.EndOffset.FileNum - MAX_QUEUE_OFFSET_META_DATA_KEEP - 1
+	if cleanStartFileNum < 0 {
+		cleanStartFileNum = 0
+	}
+	for i := cleanStartFileNum; i <= d.diskWriteEnd.EndOffset.FileNum; i++ {
 		fn := d.fileName(i)
 		innerErr := os.Remove(fn)
 		nsqLog.Logf("DISKQUEUE(%s): removed data file: %v", d.name, fn)
