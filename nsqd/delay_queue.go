@@ -440,7 +440,7 @@ func (q *DelayQueue) ResetBackendEndNoLock(vend BackendOffset, totalCnt int64) e
 	nsqLog.Logf("topic %v reset the backend from %v to : %v, %v", q.GetFullName(), old, vend, totalCnt)
 	_, err := q.backend.ResetWriteEndV2(vend, totalCnt)
 	if err != nil {
-		nsqLog.LogErrorf("reset backend to %v error: %v", vend, err)
+		nsqLog.LogErrorf("topic %v reset backend to %v error: %v", q.fullName, vend, err)
 	}
 	atomic.StoreInt32(&q.needFlush, 1)
 	return err
@@ -960,7 +960,8 @@ func (q *DelayQueue) PeekRecentTimeoutWithFilter(results []Message, peekTs int64
 			copy(buf, v)
 			m, err := DecodeDelayedMessage(buf, q.IsExt())
 			if err != nil {
-				nsqLog.LogErrorf("failed to decode delayed message: %v, %v", m, err)
+				nsqLog.LogErrorf("topic %v failed to decode delayed message: %v, %v, %v", 
+					q.fullName, v, k, err)
 				continue
 			}
 			if nsqLog.Level() > levellogger.LOG_DETAIL {
@@ -1013,7 +1014,7 @@ func (q *DelayQueue) GetSyncedOffset() (BackendOffset, error) {
 		return nil
 	})
 	if err != nil {
-		nsqLog.LogErrorf("failed to get synced offset: %v", err)
+		nsqLog.LogErrorf("topic %v failed to get synced offset: %v", q.fullName, err)
 	}
 	return synced, err
 }
@@ -1200,7 +1201,7 @@ func (q *DelayQueue) TryCleanOldData(retentionSize int64, noRealClean bool, maxC
 		} else {
 			msg, decodeErr := DecodeDelayedMessage(data.Data, q.IsExt())
 			if decodeErr != nil {
-				nsqLog.LogErrorf("failed to decode message - %s - %v", decodeErr, data)
+				nsqLog.LogErrorf("topic %v failed to decode message - %s - %v", q.fullName, decodeErr, data)
 			} else {
 				if msg.Timestamp >= cleanTime.UnixNano() {
 					break
@@ -1219,7 +1220,7 @@ func (q *DelayQueue) TryCleanOldData(retentionSize int64, noRealClean bool, maxC
 		readInfo = snapReader.GetCurrentReadQueueOffset()
 		data = snapReader.ReadOne()
 		if data.Err != nil {
-			nsqLog.LogErrorf("failed to read - %s ", data.Err)
+			nsqLog.LogErrorf("topic %v failed to read - %s ", q.fullName, data.Err)
 			break
 		}
 	}
@@ -1236,7 +1237,7 @@ func (q *DelayQueue) TryCleanOldData(retentionSize int64, noRealClean bool, maxC
 	if !noRealClean {
 		err := q.compactStore(false)
 		if err != nil {
-			nsqLog.Errorf("failed to compact the bolt db: %v", err)
+			nsqLog.Errorf("topic %v failed to compact the bolt db: %v", q.fullName, err)
 			return nil, err
 		}
 	}
