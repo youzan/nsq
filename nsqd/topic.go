@@ -1041,7 +1041,7 @@ func (t *Topic) updateChannelsEnd(forceReload bool) {
 	t.channelLock.RUnlock()
 	cost := time.Now().Sub(s)
 	if cost > time.Second {
-		nsqLog.Logf("topic(%s): update channels end cost: %v", t.GetFullName(), cost)
+		nsqLog.LogWarningf("topic(%s): update channels end cost: %v", t.GetFullName(), cost)
 	}
 }
 
@@ -1191,7 +1191,7 @@ func (t *Topic) ForceFlush() {
 	t.flush(true)
 	cost := time.Now().Sub(s)
 	if cost > time.Second {
-		nsqLog.Logf("topic(%s): flush cost: %v", t.GetFullName(), cost)
+		nsqLog.LogWarningf("topic(%s): flush cost: %v", t.GetFullName(), cost)
 	}
 	s = time.Now()
 	t.channelLock.RLock()
