@@ -115,6 +115,7 @@ func (self *NsqdCoordRpcServer) toggleDisableRpcTest(disable bool) {
 	coordLog.Infof("rpc is disabled on node: %v", self.nsqdCoord.myNode.GetID())
 }
 
+// coord rpc server is used for communication with other replicas and the nsqlookupd
 func (self *NsqdCoordRpcServer) start(ip, port string) (string, error) {
 	self.rpcDispatcher.AddService("NsqdCoordRpcServer", self)
 	self.rpcServer = gorpc.NewTCPServer(net.JoinHostPort(ip, port), self.rpcDispatcher.NewHandlerFunc())

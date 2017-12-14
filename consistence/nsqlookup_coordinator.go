@@ -78,6 +78,9 @@ type Options struct {
 	BalanceEnd   int
 }
 
+// nsqlookup coordinator is used for the topic leader and isr coordinator, all the changes for leader or isr
+// will be handled by the nsqlookup coordinator.
+// In a cluster, only one nsqlookup coordinator will be the leader which will handle the event for cluster changes.
 type NsqLookupCoordinator struct {
 	clusterKey         string
 	myNode             NsqLookupdNodeInfo
@@ -445,6 +448,8 @@ func (self *NsqLookupCoordinator) handleNsqdNodes(monitorChan chan struct{}) {
 	}
 }
 
+// this will permanently remove a node from cluster by hand , it will try move all the topics on
+// this node to others, make sure we have enough nodes to safely remove a node.
 func (self *NsqLookupCoordinator) handleRemovingNodes(monitorChan chan struct{}) {
 	coordLog.Debugf("start handle the removing nsqd nodes.")
 	defer func() {
@@ -559,39 +564,6 @@ func (self *NsqLookupCoordinator) handleRemovingNodes(monitorChan chan struct{})
 	}
 }
 
-func (self *NsqLookupCoordinator) watchTopicLeaderSession(monitorChan chan struct{}) {
-	leaderChan := make(chan *TopicLeaderSession, 1)
-	// close monitor channel should cause the leaderChan closed, so we can quit normally
-	if self.leadership != nil {
-		go self.leadership.WatchTopicLeader(leaderChan, monitorChan)
-	}
-	defer func() {
-		coordLog.Infof("stop watch the topic leader session.")
-	}()
-
-	coordLog.Infof("begin watching leader session")
-	for {
-		select {
-		case n, ok := <-leaderChan:
-			if !ok {
-				return
-			}
-			if n == nil {
-				coordLog.Warningf("got nil topic leader session")
-			} else if n.LeaderNode == nil {
-				// try do election for topic
-				self.triggerCheckTopics("", 0, time.Millisecond)
-				coordLog.Warningf("topic leader is missing: %v", n)
-				atomic.StoreInt32(&self.isClusterUnstable, 1)
-			} else {
-				coordLog.Warningf("topic leader session changed : %v, %v", n, n.LeaderNode)
-				atomic.StoreInt32(&self.isClusterUnstable, 1)
-				go self.revokeEnableTopicWrite(n.Topic, n.Partition, true)
-			}
-		}
-	}
-}
-
 func (self *NsqLookupCoordinator) triggerCheckTopics(topic string, part int, delay time.Duration) {
 	time.Sleep(delay)
 
@@ -700,6 +672,8 @@ func (self *NsqLookupCoordinator) doCheckTopics(monitorChan chan struct{}, faile
 			continue
 		}
 
+		// check if any ISR waiting join the topic, if so 
+		// we check later.
 		self.joinStateMutex.Lock()
 		state, ok := self.joinISRState[t.Name]
 		self.joinStateMutex.Unlock()
@@ -735,13 +709,14 @@ func (self *NsqLookupCoordinator) doCheckTopics(monitorChan chan struct{}, faile
 		}
 		// should copy to avoid reused
 		topicInfo := t
-		// handle remove this node from ISR
+		// move the failed node from ISR to catchup
 		coordErr := self.handleRemoveFailedISRNodes(failedNodes, &topicInfo)
 		if coordErr != nil {
 			go self.triggerCheckTopics(t.Name, t.Partition, time.Second*2)
 			continue
 		}
 
+		// if leader of topic is down, we need elect new leader first
 		if _, ok := currentNodes[t.Leader]; !ok {
 			needMigrate = true
 			checkOK = false
@@ -816,6 +791,7 @@ func (self *NsqLookupCoordinator) doCheckTopics(monitorChan chan struct{}, faile
 				continue
 			}
 
+			// isr is not enough for replicator, we try migrate some data to new node.
 			failedTime := partitions[t.Partition]
 			emergency := (aliveCount <= t.Replica/2) && failedTime.Before(time.Now().Add(-1*waitEmergencyMigrateInterval))
 			if emergency ||
@@ -868,7 +844,7 @@ func (self *NsqLookupCoordinator) doCheckTopics(monitorChan chan struct{}, faile
 				}
 			}
 			if aliveCount > t.Replica && atomic.LoadInt32(&self.balanceWaiting) == 0 {
-				//remove the unwanted node in isr
+				//remove the unwanted node in isr, it may happen that the nodes in isr is more than the configured replicator
 				coordLog.Infof("isr is more than replicator: %v, %v", aliveCount, t.Replica)
 				removeNode := self.dpm.decideUnwantedISRNode(&topicInfo, currentNodes)
 				if removeNode != "" {
@@ -957,6 +933,7 @@ func (self *NsqLookupCoordinator) handleTopicLeaderElection(topicInfo *TopicPart
 		coordLog.Infof("Leader is not released: %v", topicInfo)
 		return ErrLeaderSessionNotReleased
 	}
+	// notify new leader to all isr nodes
 	coordLog.Infof("topic %v leader election result: %v", topicInfo, newLeader)
 	coordErr = self.makeNewTopicLeaderAcknowledged(topicInfo, newLeader, newestLogID, isOldLeaderAlive)
 	if coordErr != nil {

@@ -406,6 +406,8 @@ func (self *NsqdCoordinator) checkAndCleanOldData() {
 	}
 }
 
+// since we only commit log in buffer, we need flush period,
+// also we will flush while the leader switched.
 func (self *NsqdCoordinator) periodFlushCommitLogs() {
 	const FLUSH_DISTANCE = 4
 	tmpCoords := make(map[string]map[int]*TopicCoordinator)
@@ -428,6 +430,8 @@ func (self *NsqdCoordinator) periodFlushCommitLogs() {
 		self.coordMutex.RUnlock()
 		flushAll := syncCounter%30 == 0
 		matchCnt := syncCounter % FLUSH_DISTANCE
+		// to reduce the io, we just choose parts of topic to flush for each time
+		// and sync channels for topic if needed.
 		for _, tc := range tmpCoords {
 			for pid, tpc := range tc {
 				tcData := tpc.GetData()
@@ -464,18 +468,7 @@ func (self *NsqdCoordinator) periodFlushCommitLogs() {
 	}
 }
 
-//func (self *NsqdCoordinator) putLookupRemoteProxy(c INsqlookupRemoteProxy) {
-//	self.lookupMutex.Lock()
-//	ch, ok := self.lookupRemoteClients[c.RemoteAddr()]
-//	self.lookupMutex.Unlock()
-//	if ok {
-//		select {
-//		case ch <- c:
-//		default:
-//		}
-//	}
-//}
-
+// get the lookup connection from pool for rpc communicate with nsqlookupd
 func (self *NsqdCoordinator) getLookupRemoteProxy() (INsqlookupRemoteProxy, *CoordErr) {
 	self.lookupMutex.Lock()
 	l := self.lookupLeader
@@ -541,6 +534,7 @@ func (self *NsqdCoordinator) watchNsqLookupd() {
 	}
 }
 
+// check the magic code to avoid we reuse some deleted topic after re-created it.
 func (self *NsqdCoordinator) checkLocalTopicMagicCode(topicInfo *TopicPartitionMetaInfo, tryFix bool) error {
 	removedPath, err := self.localNsqd.CheckMagicCode(topicInfo.Name, topicInfo.Partition, topicInfo.MagicCode, tryFix)
 	if err != nil {
@@ -590,6 +584,7 @@ func (self *NsqdCoordinator) forceCleanTopicData(topicName string, partition int
 	return nil
 }
 
+// check cluster meta info and load topic from disk
 func (self *NsqdCoordinator) loadLocalTopicData() error {
 	if self.localNsqd == nil {
 		return nil
@@ -648,6 +643,12 @@ func (self *NsqdCoordinator) loadLocalTopicData() error {
 				continue
 			}
 
+			// while load topic from cluster, we need check the current state of replica.
+			// If we are one of ISR, that means we still have the newest data for this topic, we just check 
+			// the data with leader. 
+			// Otherwise we need catchup from leader.
+			// In some case, we still keep leader (maybe only one replica), We need check local data and try to get the leader session again.
+			// If we are removed from both ISR and catchups, we can safely remove local topic data
 			shouldLoad := FindSlice(topicInfo.ISR, self.myNode.GetID()) != -1 || FindSlice(topicInfo.CatchupList, self.myNode.GetID()) != -1
 			if shouldLoad {
 				basepath := GetTopicPartitionBasePath(self.dataRootPath, topicInfo.Name, topicInfo.Partition)
@@ -714,9 +715,9 @@ func (self *NsqdCoordinator) loadLocalTopicData() error {
 			tc.GetData().updateBufferSize(int(dyConf.SyncEvery - 1))
 			maybeInitDelayedQ(tc.GetData(), topic)
 			topic.SetDynamicInfo(*dyConf, tc.GetData().logMgr)
-			// TODO: check the last commit log data logid is equal with the disk queue message
+			// here we will check the last commit log data logid is equal with the disk queue message
 			// this can avoid data corrupt, if not equal we need rollback and find backward for the right data.
-			// check the first log commit log is valid on the disk queue, so that we can fix the wrong start of the commit log
+			// and check the first log commit log is valid on the disk queue, so that we can fix the wrong start of the commit log
 			forceFixLeader := false
 			if ForceFixLeaderData && self.GetMyID() == tc.GetLeader() && len(tc.topicInfo.ISR) <= 1 {
 				forceFixLeader = true
@@ -896,6 +897,7 @@ func checkAndFixLocalLogQueueData(tc *coordData,
 	return nil
 }
 
+// check with current leader whether we have the same logs with leader
 func (self *NsqdCoordinator) checkLocalTopicForISR(tc *coordData) *CoordErr {
 	if tc.topicInfo.Leader == self.myNode.GetID() {
 		// leader should always has the newest local data
@@ -1014,6 +1016,7 @@ func (self *NsqdCoordinator) checkForUnsyncedTopics() {
 	}
 }
 
+// while leader is leaving by self, we can release the leader lock and let other replica became leader
 func (self *NsqdCoordinator) releaseTopicLeader(topicInfo *TopicPartitionMetaInfo, session *TopicLeaderSession) *CoordErr {
 	if session != nil && session.LeaderNode != nil {
 		if self.GetMyID() != session.LeaderNode.GetID() {
@@ -1029,6 +1032,7 @@ func (self *NsqdCoordinator) releaseTopicLeader(topicInfo *TopicPartitionMetaInf
 	return nil
 }
 
+// New leader should acquire the leader lock and check if success to avoid multi leader session
 func (self *NsqdCoordinator) acquireTopicLeader(topicInfo *TopicPartitionMetaInfo) *CoordErr {
 	coordLog.Infof("acquiring leader for topic(%v): %v", topicInfo.Name, self.myNode.GetID())
 	// TODO: leader channel should be closed if not success,
@@ -1066,6 +1070,7 @@ func (self *NsqdCoordinator) SearchLogByMsgID(topic string, part int, msgID int6
 	return l, realOffset, curCount, nil
 }
 
+// search commitlog for message given by message disk data offset
 func (self *NsqdCoordinator) SearchLogByMsgOffset(topic string, part int, offset int64) (*CommitLogData, int64, int64, error) {
 	tcData, err := self.getTopicCoordData(topic, part)
 	if err != nil || tcData.logMgr == nil {
@@ -1284,7 +1289,7 @@ func (self *NsqdCoordinator) syncToNewLeader(topicCoord *coordData, joinSession 
 	coordLog.Infof("checking sync state with new leader: %v on node: %v", joinSession, self.myNode.GetID())
 	err := self.checkLocalTopicForISR(topicCoord)
 	if err == ErrLocalFallBehind || err == ErrLocalForwardThanLeader {
-		// TODO: only sync with leader when write is disabled,
+		// only sync with leader when write is disabled,
 		// otherwise, we may miss to get the un-commit logs during write.
 		if joinSession != "" {
 			coordLog.Infof("isr begin sync with new leader")
@@ -1316,6 +1321,11 @@ func (self *NsqdCoordinator) syncToNewLeader(topicCoord *coordData, joinSession 
 	return nil
 }
 
+// decide where we should pull the commit log from leader, this will read the commit log from end to the start
+// to check whether we are the same with leader.
+// Catchup will pull logs from the matched newest log offset.
+// If we cannot found a matched log, we should do the full sync with leader which we will pull all the logs
+// and the log start info from leader.
 func (self *NsqdCoordinator) decideCatchupCommitLogInfo(tc *TopicCoordinator,
 	topicInfo TopicPartitionMetaInfo, localTopic *nsqd.Topic, c *NsqdRpcClient,
 	fromDelayedQueue bool) (int64, int64, bool, *CoordErr) {
@@ -1560,6 +1570,7 @@ func (self *NsqdCoordinator) decideCatchupCommitLogInfo(tc *TopicCoordinator,
 	return logIndex, offset, needFullSync, nil
 }
 
+// pull the logs from leader from the given matched offset
 func (self *NsqdCoordinator) pullCatchupDataFromLeader(tc *TopicCoordinator,
 	topicInfo TopicPartitionMetaInfo, localTopic *nsqd.Topic, logMgr *TopicCommitLogMgr, fromDelayedQueue bool,
 	logIndex int64, offset int64) *CoordErr {
@@ -1626,6 +1637,7 @@ func (self *NsqdCoordinator) pullCatchupDataFromLeader(tc *TopicCoordinator,
 		localTopic.Lock()
 		hasErr := false
 		var lastCommitOffset nsqd.BackendQueueEnd
+		// redo logs on the replicas
 		for i, l := range logs {
 			d := dataList[i]
 			// while the topic is upgraded from old version, it may happen in one topic we got the old message
@@ -1671,6 +1683,7 @@ func (self *NsqdCoordinator) pullCatchupDataFromLeader(tc *TopicCoordinator,
 	return nil
 }
 
+// delayed queue need be restored if we need full sync from leader
 func (self *NsqdCoordinator) pullDelayedQueueFromLeader(tc *TopicCoordinator,
 	topicInfo TopicPartitionMetaInfo, localTopic *nsqd.Topic, c *NsqdRpcClient) *CoordErr {
 	delayedQueue := localTopic.GetDelayedQueue()
@@ -1762,6 +1775,7 @@ func (self *NsqdCoordinator) catchupFromLeader(topicInfo TopicPartitionMetaInfo,
 		return syncErr
 	}
 
+	//sync delayed queue, ordered topic has no delayed queue 
 	if !topicInfo.OrderedMulti {
 		var needFullSync bool
 		logIndex, offset, needFullSync, coordErr = self.decideCatchupCommitLogInfo(tc, topicInfo, localTopic, c, true)
@@ -1842,6 +1856,8 @@ func (self *NsqdCoordinator) catchupFromLeader(topicInfo TopicPartitionMetaInfo,
 			}()
 		}
 	} else if joinISRSession != "" {
+		// with join isr session, it means the leader write is disabled and waiting the catchup join isr.
+		// so we notify leader we are ready join isr safely.
 		localTopic.ForceFlush()
 		tc.GetData().flushCommitLogs()
 		tc.GetData().switchForMaster(false)
@@ -1907,6 +1923,8 @@ func (self *NsqdCoordinator) checkUpdateState(topicCoord *coordData, writeDisabl
 	return nil
 }
 
+// new topic about ISR and catchups and leader info will be notified by nsqlookupd, each replica in topic
+// should handle the topic info update based on the state of local node.
 func (self *NsqdCoordinator) updateTopicInfo(topicCoord *TopicCoordinator, shouldDisableWrite bool, newTopicInfo *TopicPartitionMetaInfo) *CoordErr {
 	if atomic.LoadInt32(&self.stopping) == 1 {
 		return ErrClusterChanged
@@ -1937,6 +1955,7 @@ func (self *NsqdCoordinator) updateTopicInfo(topicCoord *TopicCoordinator, shoul
 		return nil
 	}
 
+	// leader changed, old leader should release the leader lock to allow new leader acquire
 	coordLog.Infof("update the topic info: %v", topicCoord.topicInfo.GetTopicDesp())
 	if topicCoord.coordData.GetLeader() == self.GetMyID() && newTopicInfo.Leader != self.GetMyID() {
 		coordLog.Infof("my leader should release: %v", topicCoord.coordData)
@@ -2001,6 +2020,7 @@ func (self *NsqdCoordinator) notifyAcquireTopicLeader(coord *coordData) *CoordEr
 	return nil
 }
 
+// handle all the things while leader is changed or isr is changed.
 func (self *NsqdCoordinator) switchStateForMaster(topicCoord *TopicCoordinator,
 	localTopic *nsqd.Topic, syncCommitDisk bool) *CoordErr {
 	// flush topic data and channel comsume data if any cluster topic info changed
@@ -2072,9 +2092,10 @@ func (self *NsqdCoordinator) switchStateForMaster(topicCoord *TopicCoordinator,
 		delete(tcData.consumeMgr.channelConsumeOffset, chName)
 	}
 	tcData.consumeMgr.Unlock()
+	// since the channel offset is asynced, we need sync here while leader is changed to make
+	// sure all the channel state is synced finally.
+	// it may not synced for the new create channel while the leader changed.
 	for chName, offset := range offsetMap {
-		// it may not synced for  the new create channel and the leader changed.
-		// to avoid init channel with end we need check here.
 		ch, localErr := localTopic.GetExistingChannel(chName)
 		if localErr != nil {
 			offset.AllowBackward = true
@@ -2101,6 +2122,7 @@ func (self *NsqdCoordinator) switchStateForMaster(topicCoord *TopicCoordinator,
 	return nil
 }
 
+// the leader session will be updated if leader is lost or new leader is acquired success
 func (self *NsqdCoordinator) updateTopicLeaderSession(topicCoord *TopicCoordinator, newLS *TopicLeaderSession, joinSession string) *CoordErr {
 	if atomic.LoadInt32(&self.stopping) == 1 {
 		return ErrClusterChanged
@@ -2203,7 +2225,6 @@ func (self *NsqdCoordinator) getTopicCoordData(topic string, partition int) (*co
 	return c.GetData(), nil
 }
 
-// any modify operation on the topic should check for topic leader.
 func (self *NsqdCoordinator) getTopicCoord(topic string, partition int) (*TopicCoordinator, *CoordErr) {
 	self.coordMutex.RLock()
 	defer self.coordMutex.RUnlock()
@@ -2244,6 +2265,7 @@ func (self *NsqdCoordinator) removeTopicCoord(topic string, partition int, remov
 	return topicCoord, err
 }
 
+// sync topic channels state period.
 func (self *NsqdCoordinator) trySyncTopicChannels(tcData *coordData, syncDelayedQueue bool, syncChannelList bool) {
 	localTopic, _ := self.localNsqd.GetExistingTopic(tcData.topicInfo.Name, tcData.topicInfo.Partition)
 	if localTopic != nil {
@@ -2340,6 +2362,7 @@ func (self *NsqdCoordinator) trySyncTopicChannels(tcData *coordData, syncDelayed
 	}
 }
 
+// read topic raw data used for catchup
 func (self *NsqdCoordinator) readTopicRawData(topic string, partition int, offsetList []int64,
 	sizeList []int32, fromDelayedQueue bool) ([][]byte, *CoordErr) {
 	//read directly from local topic data used for pulling data by replicas

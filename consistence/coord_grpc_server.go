@@ -11,6 +11,8 @@ import (
 	"time"
 )
 
+// grpc is not used anymore
+
 func (self *NsqdCoordinator) checkWriteForGRpcCall(rpcData *pb.RpcTopicData) (*TopicCoordinator, *CoordErr) {
 	if rpcData == nil {
 		return nil, ErrPubArgError
