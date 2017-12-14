@@ -633,6 +633,7 @@ func (q *DelayQueue) PutMessageOnReplica(m *Message, offset BackendOffset, check
 func (q *DelayQueue) put(m *Message, rawData []byte, trace bool, checkSize int64) (MessageID, BackendOffset, int32, diskQueueEndInfo, error) {
 	var err error
 	var dend diskQueueEndInfo
+	// it may happened while the topic is upgraded to extend topic, so the message from leader will be raw.
 	if rawData != nil {
 		if len(rawData) < 4 {
 			return 0, 0, 0, dend, fmt.Errorf("invalid raw message data: %v", rawData)
@@ -649,6 +650,11 @@ func (q *DelayQueue) put(m *Message, rawData []byte, trace bool, checkSize int64
 	var offset BackendOffset
 	var writeBytes int32
 	if rawData != nil {
+		q.putBuffer.Reset()
+		_, err := m.WriteDelayedTo(&q.putBuffer, q.IsExt())
+		if err != nil {
+			return 0, 0, 0, dend, err
+		}
 		offset, writeBytes, dend, err = q.backend.PutRawV2(rawData, 1)
 		if checkSize > 0 && checkSize != int64(writeBytes) {
 			return 0, 0, 0, dend, err
@@ -956,6 +962,12 @@ func (q *DelayQueue) PeekRecentTimeoutWithFilter(results []Message, peekTs int64
 				continue
 			}
 
+			if v == nil {
+				// k is not nil, v is nil, sub bucket?
+				nsqLog.LogErrorf("topic %v iterater nil value: %v", 
+					q.fullName, k)
+				continue
+			}
 			buf := make([]byte, len(v))
 			copy(buf, v)
 			m, err := DecodeDelayedMessage(buf, q.IsExt())

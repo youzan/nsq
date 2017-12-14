@@ -1,6 +1,8 @@
 package nsqd
 
 import (
+	"encoding/binary"
+	"bytes"
 	//"github.com/youzan/nsq/internal/levellogger"
 	"encoding/json"
 	"fmt"
@@ -54,6 +56,98 @@ func TestDelayQueuePutChannelDelayed(t *testing.T) {
 	_, err = os.Stat(path.Join(dq.dataPath, getDelayQueueDBName(dq.tname, dq.partition)))
 	test.NotNil(t, err)
 }
+
+// put raw and message mixed, put ext and non-ext mixed.
+func TestDelayQueuePutRawChannelDelayed(t *testing.T) {
+	tmpDir, err := ioutil.TempDir("", fmt.Sprintf("nsq-test-delay-%d", time.Now().UnixNano()))
+	if err != nil {
+		panic(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	opts := NewOptions()
+	opts.Logger = newTestLogger(t)
+	opts.SyncEvery = 1
+
+	dqRaw, err := NewDelayQueue("test_raw", 0, tmpDir, opts, nil, false)
+	test.Nil(t, err)
+	defer dqRaw.Close()
+	cnt := 20
+	rawOffset := BackendOffset(0)
+	
+	tag := createJsonHeaderExtWithTag(t, "tagname")
+	extCnt := 0
+	// put raw data message and normal message
+	// and then switch to ext and do that again
+	for i := 0; i < cnt; i++ {
+		msg := NewMessage(0, []byte("body"))
+		msg.DelayedType = ChannelDelayed
+		msg.DelayedTs = time.Now().Add(time.Second).UnixNano()
+		msg.DelayedChannel = "test"
+		msg.DelayedOrigID = MessageID(i + 1)
+		msg.ExtVer = tag.ExtVersion()
+		msg.ExtBytes = tag.GetBytes()
+		if dqRaw.IsExt() {
+			extCnt++
+		}
+
+		wsize := int32(0)
+		if i % 2 == 0 {
+			_, _, wsize, _, err = dqRaw.PutDelayMessage(msg)
+			test.Nil(t, err)
+			test.Equal(t, true, dqRaw.IsChannelMessageDelayed(msg.DelayedOrigID, "test"))
+			rawOffset += BackendOffset(wsize)
+		} else {
+			buf := bytes.Buffer{}
+			_, err = msg.WriteDelayedTo(&buf, dqRaw.IsExt())
+			test.Nil(t, err)
+			rawData := make([]byte, 4+len(buf.Bytes()))
+			binary.BigEndian.PutUint32(rawData[:4], uint32(len(buf.Bytes())))
+			copy(rawData[4:], buf.Bytes())
+			if i > cnt/2 {
+				// notice we set ext after build raw message, so we write a non-ext message to extend topic
+				dqRaw.setExt()
+			}
+			wsize = int32(len(rawData))
+			_, err = dqRaw.PutRawDataOnReplica(rawData, rawOffset, int64(wsize), 1)
+			test.Nil(t, err)
+			test.Equal(t, true, dqRaw.IsChannelMessageDelayed(msg.DelayedOrigID, "test"))
+			rawOffset += BackendOffset(wsize)
+		}
+	}
+	synced, err := dqRaw.GetSyncedOffset()
+	test.Nil(t, err)
+	test.Equal(t, rawOffset, synced)
+	newCnt, _ := dqRaw.GetCurrentDelayedCnt(ChannelDelayed, "test")
+	test.Equal(t, cnt, int(newCnt))
+	_, err = os.Stat(dqRaw.dataPath)
+	test.Nil(t, err)
+	ret := make([]Message, cnt)
+	time.Sleep(time.Second)
+	test.Equal(t, cnt/2-2, extCnt)
+	for {
+		n, err := dqRaw.PeekRecentChannelTimeout(time.Now().UnixNano(), ret, "test")
+		test.Nil(t, err)
+		for _, m := range ret[:n] {
+			test.Equal(t, "test", m.DelayedChannel)
+			test.Equal(t, true, m.DelayedTs <= time.Now().UnixNano())
+			if m.ExtVer == tag.ExtVersion() {
+				extCnt--
+				test.Equal(t, m.ExtBytes, tag.GetBytes())
+			}
+		}
+		if n == 0 {
+			test.Assert(t, false, "should have recent timeout messages")
+			break
+		}
+		if n >= cnt {
+			break
+		}
+		time.Sleep(time.Millisecond * 100)
+	}
+	test.Equal(t, 0, extCnt)
+}
+
 
 func createJsonHeaderExtWithTag(t *testing.T, tag string) *ext.JsonHeaderExt {
 	jsonHeader := make(map[string]interface{})
