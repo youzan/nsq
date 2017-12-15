@@ -142,7 +142,16 @@ func (f *FileLogger) router(r *nsq.Consumer) {
 				f.updateFile()
 				sync = true
 			}
-			_, err := f.writer.Write(m.Body)
+			metaStr := fmt.Sprintf("%v, %v\n", m.Timestamp, m.ID)
+			_, err := f.writer.Write([]byte(metaStr))
+			if err != nil {
+				log.Fatalf("ERROR: writing newline to disk - %s", err)
+			}
+			_, err = f.writer.Write([]byte("\n"))
+			if err != nil {
+				log.Fatalf("ERROR: writing newline to disk - %s", err)
+			}
+			_, err = f.writer.Write(m.Body)
 			if err != nil {
 				log.Fatalf("ERROR: writing message to disk - %s", err)
 			}
