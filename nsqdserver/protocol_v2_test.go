@@ -4814,6 +4814,79 @@ func TestClientMsgTimeout(t *testing.T) {
 		fmt.Sprintf("E_FIN_FAILED FIN %v failed Message ID not in flight", msgOut.GetFullMsgID()))
 }
 
+// test connection no nop and any ack, stats should not block
+
+func TestTimeoutShouldNotBlockStats(t *testing.T) {
+	opts := nsqdNs.NewOptions()
+	opts.Logger = newTestLogger(t)
+	opts.LogLevel = 2
+	nsqdNs.SetLogger(opts.Logger)
+	opts.ClientTimeout = time.Second*10
+	opts.QueueScanRefreshInterval = 100 * time.Millisecond
+	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
+	defer os.RemoveAll(opts.DataPath)
+	defer nsqdServer.Exit()
+
+	topicName := "test_cmsg_timeout_requeue" + strconv.Itoa(int(time.Now().Unix()))
+	topic := nsqd.GetTopicIgnPart(topicName)
+	tmpCh := topic.GetChannel("ch")
+	tmpCh.EnableTrace = 1
+	msg := nsqdNs.NewMessage(0, make([]byte, 100))
+	topic.PutMessage(msg)
+	topic.PutMessage(nsqdNs.NewMessage(0, make([]byte, 10000)))
+	topic.PutMessage(nsqdNs.NewMessage(0, make([]byte, 10000)))
+	topic.PutMessage(nsqdNs.NewMessage(0, make([]byte, 100000)))
+
+	conn, err := mustConnectNSQD(tcpAddr)
+	test.Equal(t, err, nil)
+	defer conn.Close()
+
+	identify(t, conn, map[string]interface{}{
+		"msg_timeout": 5000,
+	}, frameTypeResponse)
+	sub(t, conn, topicName, "ch")
+
+	_, err = nsq.Ready(1).WriteTo(conn)
+	test.Equal(t, err, nil)
+
+	// ack one message, and wait process and do not response 
+	// wait heartbeat timeout and get stats should not block
+	resp, err := nsq.ReadResponse(conn)
+	test.Nil(t, err)
+	frameType, data, err := nsq.UnpackResponse(resp)
+	test.Nil(t, err)
+	if frameType == frameTypeError {
+		t.Errorf(string(resp))
+		return
+	}
+	test.Equal(t, frameTypeMessage, frameType)
+	msgOut, err := nsq.DecodeMessage(data)
+	test.Nil(t, err)
+	_, err = nsq.Finish(nsq.MessageID(msgOut.GetFullMsgID())).WriteTo(conn)
+	test.Nil(t, err)
+	time.Sleep(opts.ClientTimeout*2 - time.Second*4)
+	cnt := 0
+	for {
+		b := time.Now()
+		stats := nsqd.GetStats(false, false)
+		if time.Since(b) > time.Millisecond {
+			t.Errorf("should  not block: %v", time.Since(b))
+			break
+		}
+
+		if len(stats) == 0 {
+			t.Errorf("should  not emtpy: %v", time.Since(b))
+			break
+		}
+		t.Logf("block at %v : %v", time.Now(), time.Since(b))
+		time.Sleep(time.Millisecond*100)
+		cnt++
+		if cnt > 10 {
+			break
+		}
+	}
+}
+
 // fail to finish some messages and wait server requeue.
 func TestTimeoutFin(t *testing.T) {
 	opts := nsqdNs.NewOptions()
