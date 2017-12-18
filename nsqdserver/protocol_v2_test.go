@@ -3606,7 +3606,10 @@ func testDelayManyMessagesToQueueEnd(t *testing.T, changedLeader bool) {
 				received := false
 				var dup *nsq.Message
 				msgID := uint64(nsq.GetNewMessageID(msgOut.ID[:]))
-				if dup, received = dumpCheck[msgID]; received {
+				dup, received = dumpCheck[msgID]
+				dumpCheck[msgID] = msgOut
+				dumpLock.Unlock()
+				if received {
 					if changedLeader {
 						t.Logf("found duplicate message fin %v", dup)
 					} else {
@@ -3614,8 +3617,6 @@ func testDelayManyMessagesToQueueEnd(t *testing.T, changedLeader bool) {
 					}
 					atomic.AddInt32(&dumpCnt, 1)
 				}
-				dumpCheck[msgID] = msgOut
-				dumpLock.Unlock()
 				if msgOut.Attempts >= 3 {
 					if changedLeader {
 						t.Logf("found message attempts 3 more %v", msgOut)
@@ -5293,6 +5294,7 @@ func TestResetChannelToOld(t *testing.T) {
 		}
 	}()
 	for {
+		conn.SetReadDeadline(time.Now().Add(time.Second*5))
 		resp, err := nsq.ReadResponse(conn)
 		test.Nil(t, err)
 		frameType, data, err := nsq.UnpackResponse(resp)

@@ -24,7 +24,6 @@ const (
 	MAX_CATCHUP_RETRY                = 5
 	MAX_LOG_PULL                     = 10000
 	MAX_LOG_PULL_BYTES               = 1024 * 1024 * 32
-	MAX_TOPIC_RETENTION_SIZE_PER_DAY = 1024 * 1024 * 1024 * 16
 	MAX_CATCHUP_RUNNING              = 3
 	API_BACKUP_DELAYED_QUEUE_DB      = "/delayqueue/backupto"
 )
@@ -32,6 +31,7 @@ const (
 var (
 	MaxRetryWait       = time.Second * 3
 	ForceFixLeaderData = false
+	MaxTopicRetentionSizePerDay = int64(1024 * 1024 * 1024 * 16)
 )
 
 func GetTopicPartitionFileName(topic string, partition int, suffix string) string {
@@ -344,7 +344,7 @@ func (self *NsqdCoordinator) GreedyCleanTopicOldData(localTopic *nsqd.Topic) err
 	if retentionDay == 0 {
 		retentionDay = int32(nsqd.DEFAULT_RETENTION_DAYS)
 	}
-	retentionSize := (MAX_TOPIC_RETENTION_SIZE_PER_DAY / 16) * int64(retentionDay)
+	retentionSize := (MaxTopicRetentionSizePerDay / 16) * int64(retentionDay)
 	doLogQClean(tcData, localTopic, retentionSize, false)
 	doLogQClean(tcData, localTopic, retentionSize, true)
 	return nil
@@ -380,7 +380,7 @@ func (self *NsqdCoordinator) checkAndCleanOldData() {
 				if retentionDay == 0 {
 					retentionDay = int32(nsqd.DEFAULT_RETENTION_DAYS)
 				}
-				retentionSize := MAX_TOPIC_RETENTION_SIZE_PER_DAY * int64(retentionDay)
+				retentionSize := MaxTopicRetentionSizePerDay * int64(retentionDay)
 				// TODO: check if disk almost full (over 80%), then we do a more greed clean
 				if checkRetentionDay {
 					retentionSize = 0

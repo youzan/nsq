@@ -154,6 +154,7 @@ func nsqdFlagSet(opts *nsqd.Options) *flag.FlagSet {
 	flagSet.String("log-dir", opts.LogDir, "directory for logs")
 	flagSet.String("remote-tracer", opts.RemoteTracer, "server for message tracing")
 	flagSet.Int("retention-days", int(opts.RetentionDays), "the default retention days for topic data")
+	flagSet.Int64("retention-size-per-day", int64(opts.RetentionSizePerDay), "the default retention bytes in a day for topic data")
 	flagSet.Bool("start-as-fix-mode", opts.StartAsFixMode, "enable data fix at start")
 	flagSet.Bool("allow-ext-compatible", opts.AllowExtCompatible, "allow pub ext to non-ext topic(ignore ext) .")
 	flagSet.Bool("allow-sub-ext-compatible", opts.AllowSubExtCompatible, "allow sub ext-topic without ext in message.")

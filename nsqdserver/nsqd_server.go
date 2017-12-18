@@ -99,6 +99,9 @@ func NewNsqdServer(opts *nsqd.Options) (*nsqd.NSQD, *NsqdServer) {
 	if rpcport != "" {
 		ip = opts.BroadcastAddress
 		consistence.SetCoordLogger(opts.Logger, opts.LogLevel)
+		if opts.RetentionSizePerDay > 0 {
+			consistence.MaxTopicRetentionSizePerDay = opts.RetentionSizePerDay
+		}
 		coord := consistence.NewNsqdCoordinator(opts.ClusterID, ip, tcpPort, rpcport, httpPort,
 			strconv.FormatInt(opts.ID, 10), opts.DataPath, nsqdInstance)
 		l := consistence.NewNsqdEtcdMgr(opts.ClusterLeadershipAddresses)

@@ -93,6 +93,7 @@ type Options struct {
 	RemoteTracer string `flag:"remote-tracer"`
 
 	RetentionDays         int32 `flag:"retention-days" cfg:"retention_days"`
+	RetentionSizePerDay         int64 `flag:"retention-size-per-day" cfg:"retention_size_per_day"`
 	StartAsFixMode        bool  `flag:"start-as-fix-mode"`
 	AllowExtCompatible    bool  `flag:"allow-ext-compatible" cfg:"allow_ext_compatible"`
 	AllowSubExtCompatible bool  `flag:"allow-sub-ext-compatible" cfg:"allow_sub_ext_compatible"`
