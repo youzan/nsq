@@ -4820,8 +4820,10 @@ func TestClientMsgTimeout(t *testing.T) {
 func TestTimeoutShouldNotBlockStats(t *testing.T) {
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
-	opts.LogLevel = 2
-	nsqdNs.SetLogger(opts.Logger)
+	if testing.Verbose() {
+		opts.LogLevel = 2
+		nsqdNs.SetLogger(opts.Logger)
+	}
 	opts.ClientTimeout = time.Second*10
 	opts.QueueScanRefreshInterval = 100 * time.Millisecond
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
@@ -5296,12 +5298,15 @@ func TestResetChannelToOld(t *testing.T) {
 	for {
 		conn.SetReadDeadline(time.Now().Add(time.Second*5))
 		resp, err := nsq.ReadResponse(conn)
+		if recvCnt >= int(opts.MaxConfirmWin)*2+1 && channel.GetConfirmed().Offset() == realEnd.Offset() {
+			break
+		}
 		test.Nil(t, err)
 		frameType, data, err := nsq.UnpackResponse(resp)
 
 		test.Nil(t, err)
 		if frameType == frameTypeError {
-			if channel.GetConfirmed().Offset() == realEnd.Offset() {
+			if recvCnt >= int(opts.MaxConfirmWin)*2+1 && channel.GetConfirmed().Offset() == realEnd.Offset() {
 				break
 			}
 			if bytes.Contains(data, []byte("E_FIN_FAILED")) {
@@ -5309,7 +5314,7 @@ func TestResetChannelToOld(t *testing.T) {
 			}
 			t.Logf("got error response: %v", string(data))
 		}
-		if channel.GetConfirmed().Offset() == realEnd.Offset() {
+		if recvCnt >= int(opts.MaxConfirmWin)*2+1 && channel.GetConfirmed().Offset() == realEnd.Offset() {
 			break
 		}
 		test.NotEqual(t, frameTypeError, frameType)
@@ -5331,6 +5336,7 @@ func TestResetChannelToOld(t *testing.T) {
 			continue
 		}
 		if recvCnt == int(opts.MaxConfirmWin)*2+1 {
+			// reset channel to old and will be reset  to  new end by topic flush
 			end := channel.GetChannelEnd()
 			channel.UpdateQueueEnd(resetOldEnd, false)
 			test.Equal(t, end, realEnd)
@@ -5342,13 +5348,14 @@ func TestResetChannelToOld(t *testing.T) {
 		}
 		_, err = nsq.Finish(msgOut.ID).WriteTo(conn)
 
-		if channel.GetConfirmed().Offset() == realEnd.Offset() {
+		if recvCnt >= int(opts.MaxConfirmWin)*2+1 && channel.GetConfirmed().Offset() == realEnd.Offset() {
 			break
 		}
 		if err != nil {
 			t.Errorf("FIN msg %v error: %v", msgOut.ID, err.Error())
 		}
 		if recvCnt > int(opts.MaxConfirmWin)*2+1 {
+			// force flush will update the new end to channel
 			localTopic.ForceFlush()
 		}
 		if recvCnt > int(opts.MaxConfirmWin)*12 {

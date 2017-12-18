@@ -1,6 +1,7 @@
 package consistence
 
 import (
+	"bytes"
 	"errors"
 	"net"
 	"runtime"
@@ -663,6 +664,13 @@ type RpcGetFullSyncInfoRsp struct {
 	StartInfo    LogStartInfo
 }
 
+type RpcGetBackupedDQReq struct {
+	RpcTopicData
+}
+type RpcGetBackupedDQRsp struct {
+	Buffer []byte
+}
+
 type RpcTestReq struct {
 	Data string
 }
@@ -1174,6 +1182,29 @@ func (self *NsqdCoordRpcServer) PullDelayedQueueCommitLogsAndData(req *RpcPullCo
 
 func (self *NsqdCoordRpcServer) GetDelayedQueueFullSyncInfo(req *RpcGetFullSyncInfoReq) (*RpcGetFullSyncInfoRsp, error) {
 	return self.getFullSyncInfo(req, true)
+}
+
+func (self *NsqdCoordRpcServer) GetBackupedDelayedQueue(req *RpcGetBackupedDQReq) (*RpcGetBackupedDQRsp, error) {
+	topicName := req.TopicName
+	var ret RpcGetBackupedDQRsp
+
+	localTopic, err := self.nsqdCoord.localNsqd.GetExistingTopic(req.TopicName, req.TopicPartition)
+	if err != nil {
+		return &ret, err
+	}
+	dq := localTopic.GetDelayedQueue()
+	if dq == nil {
+		coordLog.Infof("topic %v missing local delayed queue", localTopic.GetFullName())
+		return &ret, ErrLocalDelayedQueueMissing.ToErrorType()
+	}
+	buf := bytes.Buffer{}
+	_, err = dq.BackupKVStoreTo(&buf)
+	if err != nil {
+		nsqd.NsqLogger().Logf("failed to backup delayed queue for topic %v: %v", topicName, err)
+		return &ret, err
+	}
+	ret.Buffer = buf.Bytes()
+	return &ret, nil
 }
 
 func (self *NsqdCoordRpcServer) TestRpcCoordErr(req *RpcTestReq) *CoordErr {

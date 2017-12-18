@@ -1702,13 +1702,29 @@ func (self *NsqdCoordinator) pullDelayedQueueFromLeader(tc *TopicCoordinator,
 		localTopic.GetTopicPart())
 	// get the boltdb full file
 	coordLog.Infof("begin pull topic %v delayed db file ", localTopic.GetFullName())
+
 	rsp, err := http.Get(ep)
+	var bodyReader io.Reader
 	if err != nil {
-		coordLog.Warningf("pull topic %v delayed db file failed: %v", localTopic.GetFullName(), err)
-		return &CoordErr{err.Error(), RpcNoErr, CoordLocalErr}
+		if ninfo.HttpPort == "" || ninfo.HttpPort == "0" {
+			coordLog.Warningf("pull topic %v delayed db file from rpc: %v", localTopic.GetFullName(), ninfo)
+			// test case use rpc instead
+			rsp, rpcerr := c.GetBackupedDelayedQueue(localTopic.GetTopicName(), localTopic.GetTopicPart())
+			bodyReader = rsp
+			if rpcerr != nil {
+				coordLog.Warningf("pull topic %v delayed db file from rpc failed: %v", localTopic.GetFullName(), rpcerr)
+				return &CoordErr{err.Error(), RpcNoErr, CoordLocalErr}
+			}
+			err = nil
+		} else {
+			coordLog.Warningf("pull topic %v delayed db file failed: %v", localTopic.GetFullName(), err)
+			return &CoordErr{err.Error(), RpcNoErr, CoordLocalErr}
+		}
+	} else {
+		defer rsp.Body.Close()
+		bodyReader = rsp.Body
 	}
-	defer rsp.Body.Close()
-	err = delayedQueue.RestoreKVStoreFrom(rsp.Body)
+	err = delayedQueue.RestoreKVStoreFrom(bodyReader)
 	if err != nil {
 		coordLog.Warningf("topic %v delayed db file restore failed: %v", localTopic.GetFullName(), err)
 		return &CoordErr{err.Error(), RpcNoErr, CoordLocalErr}

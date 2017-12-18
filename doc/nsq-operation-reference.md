@@ -2,6 +2,7 @@
 
 ## 源码编译步骤
 - 首先确保安装了依赖管理工具, wget https://raw.githubusercontent.com/pote/gpm/v1.4.0/bin/gpm && chmod +x gpm && sudo mv gpm /usr/local/bin
+- 获取源码, 使用 go get github.com/youzan/nsq , 使用git clone 务必确保代码在正确的GOPATH路径下面并且保持github.com/youzan/nsq的目录结构
 - 执行 ./pre-dist.sh, 准备编译环境并安装依赖
 - 执行 ./dist.sh, 编译并打包
 

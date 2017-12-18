@@ -693,7 +693,8 @@ func testNsqLookupNsqdNodesChange(t *testing.T, useFakeLeadership bool) {
 	nodeInfoList[lostNodeID].nsqdCoord.leadership.UnregisterNsqd(nodeInfoList[lostNodeID].nodeInfo)
 	waitClusterStable(lookupCoord1, time.Second*3)
 	t0, err = lookupLeadership.GetTopicInfo(topic, 0)
-	for len(t0.ISR) < t0.Replica {
+	start := time.Now()
+	for len(t0.ISR) < t0.Replica && time.Since(start) < time.Second*15 {
 		waitClusterStable(lookupCoord1, time.Second*3)
 		t0, err = lookupLeadership.GetTopicInfo(topic, 0)
 		test.Nil(t, err)
@@ -705,6 +706,9 @@ func testNsqLookupNsqdNodesChange(t *testing.T, useFakeLeadership bool) {
 	test.Equal(t, FindSlice(t0.ISR, lostNodeID) == -1, true)
 	test.Equal(t, len(t0.ISR), t0.Replica)
 	test.Equal(t, t0.Leader, t0.ISR[0])
+	if len(t0.ISR) < t0.Replica {
+		return
+	}
 
 	// clear topic info on failed node, test the reload for failed node
 	nodeInfoList[lostNodeID].nsqdCoord.topicCoords = make(map[string]map[int]*TopicCoordinator)
@@ -736,8 +740,11 @@ func testNsqLookupNsqdNodesChange(t *testing.T, useFakeLeadership bool) {
 	nodeInfoList[lostNodeID].nsqdCoord.leadership.UnregisterNsqd(nodeInfoList[lostNodeID].nodeInfo)
 	waitClusterStable(lookupCoord1, time.Second*3)
 	t0, _ = lookupLeadership.GetTopicInfo(topic, 0)
-	if len(t0.ISR) < t0.Replica {
+	start = time.Now()
+	for len(t0.ISR) < t0.Replica && time.Since(start) < time.Second*15 {
 		waitClusterStable(lookupCoord1, time.Second*3)
+		t0, _ = lookupLeadership.GetTopicInfo(topic, 0)
+		t.Log(t0)
 	}
 
 	t0, _ = lookupLeadership.GetTopicInfo(topic, 0)

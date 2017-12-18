@@ -1,6 +1,7 @@
 package consistence
 
 import (
+	"bytes"
 	"github.com/absolute8511/gorpc"
 	pb "github.com/youzan/nsq/consistence/coordgrpc"
 	"github.com/youzan/nsq/nsqd"
@@ -8,6 +9,7 @@ import (
 	"google.golang.org/grpc"
 	"sync"
 	"time"
+	"io"
 )
 
 const (
@@ -605,6 +607,21 @@ func (self *NsqdRpcClient) GetFullSyncInfo(topic string, partition int, fromDela
 	}
 	ret = retVar.(*RpcGetFullSyncInfoRsp)
 	return &ret.StartInfo, &ret.FirstLogData, nil
+}
+
+func (self *NsqdRpcClient) GetBackupedDelayedQueue(topic string, partition int) (io.Reader, error) {
+	var r RpcGetBackupedDQReq
+	r.TopicName = topic
+	r.TopicPartition = partition
+	var ret *RpcGetBackupedDQRsp
+	var retVar interface{}
+	var err error
+	retVar, err = self.CallWithRetry("GetBackupedDelayedQueue", &r)
+	if err != nil {
+		return nil, err
+	}
+	ret = retVar.(*RpcGetBackupedDQRsp)
+	return bytes.NewBuffer(ret.Buffer), nil
 }
 
 func (self *NsqdRpcClient) GetNodeInfo(nid string) (*NsqdNodeInfo, error) {
