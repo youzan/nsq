@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/youzan/nsq/internal/ext"
 	"github.com/absolute8511/glog"
 	"github.com/youzan/nsq/internal/levellogger"
 	"github.com/youzan/nsq/internal/test"
@@ -469,7 +470,7 @@ func TestNsqdCoordCatchup(t *testing.T) {
 		Replica:      3,
 		PartitionNum: 1,
 	}
-	testNsqdCoordCatchup(t, meta, false)
+	testNsqdCoordCatchup(t, meta, false, false)
 }
 
 func TestNsqdCoordCatchupExtTopic(t *testing.T) {
@@ -478,7 +479,7 @@ func TestNsqdCoordCatchupExtTopic(t *testing.T) {
 		PartitionNum: 1,
 		Ext:          true,
 	}
-	testNsqdCoordCatchup(t, meta, false)
+	testNsqdCoordCatchup(t, meta, false, false)
 }
 
 func TestNsqdCoordCatchupUpgradeToExt(t *testing.T) {
@@ -486,10 +487,35 @@ func TestNsqdCoordCatchupUpgradeToExt(t *testing.T) {
 		Replica:      3,
 		PartitionNum: 1,
 	}
-	testNsqdCoordCatchup(t, meta, true)
+	testNsqdCoordCatchup(t, meta, true, false)
 }
 
-func testNsqdCoordCatchup(t *testing.T, meta TopicMetaInfo, testUpgrade bool) {
+func TestNsqdCoordCatchupWithDelayed(t *testing.T) {
+	meta := TopicMetaInfo{
+		Replica:      3,
+		PartitionNum: 1,
+	}
+	testNsqdCoordCatchup(t, meta, false, true)
+}
+
+func TestNsqdCoordCatchupWithDelayedAndExt(t *testing.T) {
+	meta := TopicMetaInfo{
+		Replica:      3,
+		PartitionNum: 1,
+		Ext:          true,
+	}
+	testNsqdCoordCatchup(t, meta, false, true)
+}
+
+func TestNsqdCoordCatchupUpgradeWithDelayedAndExt(t *testing.T) {
+	meta := TopicMetaInfo{
+		Replica:      3,
+		PartitionNum: 1,
+	}
+	testNsqdCoordCatchup(t, meta, true, true)
+}
+
+func testNsqdCoordCatchup(t *testing.T, meta TopicMetaInfo, testUpgrade bool, testDelayed bool) {
 	topic := "coordTestTopic"
 	partition := 1
 	if testing.Verbose() {
@@ -558,16 +584,31 @@ func testNsqdCoordCatchup(t *testing.T, meta TopicMetaInfo, testUpgrade bool) {
 
 	// message header is 26 bytes
 	msgCnt := 0
+	msgDelayedCnt := 0
 	msgRawSize := int64(nsqdNs.MessageHeaderBytes() + 3 + 4)
 	if meta.Ext {
 		msgRawSize += 1
 	}
 	topicData1 := nsqd1.GetTopic(topic, partition)
 	for i := 0; i < 20; i++ {
-		_, _, _, _, err := nsqdCoord1.PutMessageBodyToCluster(topicData1, []byte("123"), 0)
+		mid, _, _, _, err := nsqdCoord1.PutMessageBodyToCluster(topicData1, []byte("123"), 0)
 		test.Nil(t, err)
 		msgCnt++
+		if testDelayed {
+			newMsg := nsqdNs.NewMessage(0, []byte("123"))
+			newMsg.DelayedType = nsqdNs.ChannelDelayed
+			timeoutDuration := nsqd1.GetOpts().MaxReqTimeout
+			newTimeout := time.Now().Add(timeoutDuration)
+			newMsg.DelayedTs = newTimeout.UnixNano()
+			newMsg.DelayedOrigID = mid
+			newMsg.DelayedChannel = "delay-test"
+
+			_, _, _, _, err := nsqdCoord1.PutDelayedMessageToCluster(topicData1, newMsg)
+			test.Nil(t, err)
+			msgDelayedCnt++
+		}
 	}
+
 	upgradedMsgCnt := 0
 	if testUpgrade && !meta.Ext {
 		meta.Ext = true
@@ -580,14 +621,33 @@ func testNsqdCoordCatchup(t *testing.T, meta TopicMetaInfo, testUpgrade bool) {
 		ensureTopicDisableWrite(nsqdCoord1, topic, partition, false)
 		ensureTopicDisableWrite(nsqdCoord2, topic, partition, false)
 		for i := 0; i < 20; i++ {
-			_, _, _, _, err := nsqdCoord1.PutMessageBodyToCluster(topicData1, []byte("123"), 0)
+			mid, _, _, _, err := nsqdCoord1.PutMessageBodyToCluster(topicData1, []byte("123"), 0)
 			test.Nil(t, err)
 			upgradedMsgCnt++
+			if testDelayed {
+				newMsg := nsqdNs.NewMessageWithExt(0, []byte("123"), ext.NO_EXT_VER, nil)
+				newMsg.DelayedType = nsqdNs.ChannelDelayed
+				timeoutDuration := nsqd1.GetOpts().MaxReqTimeout
+				newTimeout := time.Now().Add(timeoutDuration)
+				newMsg.DelayedTs = newTimeout.UnixNano()
+				newMsg.DelayedOrigID = mid
+				newMsg.DelayedChannel = "delay-test"
+
+				_, _, _, _, err := nsqdCoord1.PutDelayedMessageToCluster(topicData1, newMsg)
+				test.Nil(t, err)
+				msgDelayedCnt++
+			}
 		}
 	}
 	topicData2 := nsqd2.GetTopic(topic, partition)
 	topicData1.ForceFlush()
 	topicData2.ForceFlush()
+	dq1 := topicData1.GetDelayedQueue()
+	dq2 := topicData2.GetDelayedQueue()
+	if testDelayed {
+		test.NotNil(t, dq1)
+		test.NotNil(t, dq2)
+	}
 
 	test.Equal(t, topicData1.TotalDataSize(), msgRawSize*int64(msgCnt)+(msgRawSize+1)*int64(upgradedMsgCnt))
 	test.Equal(t, topicData1.TotalMessageCnt(), uint64(msgCnt+upgradedMsgCnt))
@@ -605,8 +665,21 @@ func testNsqdCoordCatchup(t *testing.T, meta TopicMetaInfo, testUpgrade bool) {
 	test.Equal(t, len(logs2), msgCnt+upgradedMsgCnt)
 	test.Equal(t, logs1, logs2)
 
+	delayedMsgs1 := make([]nsqdNs.Message, msgDelayedCnt+1)
+	delayedMsgs2 := make([]nsqdNs.Message, msgDelayedCnt+1)
+	delayedMsgs3 := make([]nsqdNs.Message, msgDelayedCnt+1)
+	if testDelayed {
+		peekCnt, err := dq1.PeekAll(delayedMsgs1)
+		test.Nil(t, err)
+		test.Equal(t, msgDelayedCnt, peekCnt)
+		peekCnt, err = dq2.PeekAll(delayedMsgs2)
+		test.Nil(t, err)
+		test.Equal(t, msgDelayedCnt, peekCnt)
+		test.Equal(t, delayedMsgs1, delayedMsgs2)
+	}
 	// start as catchup
 	// 3 kinds of catchup
+	// full catchup and increment catchup
 	// 1. fall behind, 2. exact same, 3. data more than leader(need rollback)
 	nsqdCoord3 := startNsqdCoordWithFakeData(t, strconv.Itoa(int(randPort3)), data3, "id3", nsqd3, fakeLeadership, fakeLookupProxy.(*fakeLookupRemoteProxy))
 	defer os.RemoveAll(data3)
@@ -614,7 +687,7 @@ func testNsqdCoordCatchup(t *testing.T, meta TopicMetaInfo, testUpgrade bool) {
 	defer nsqdCoord3.Stop()
 	ensureTopicOnNsqdCoord(nsqdCoord3, topicInitInfo)
 	ensureTopicLeaderSession(nsqdCoord3, topic, partition, fakeSession)
-	// wait catchup
+	// wait full catchup
 	time.Sleep(time.Second * 3)
 	topicData3 := nsqd3.GetTopic(topic, partition)
 	topicData3.ForceFlush()
@@ -626,6 +699,68 @@ func testNsqdCoordCatchup(t *testing.T, meta TopicMetaInfo, testUpgrade bool) {
 	test.Nil(t, err)
 	test.Equal(t, len(logs3), msgCnt+upgradedMsgCnt)
 	test.Equal(t, logs1, logs3)
+
+	dq3 := topicData3.GetDelayedQueue()
+	if testDelayed {
+		peekCnt, err := dq3.PeekAll(delayedMsgs3)
+		test.Nil(t, err)
+		test.Equal(t, msgDelayedCnt, peekCnt)
+		test.Equal(t, delayedMsgs1, delayedMsgs3)
+	}
+	for i := 0; i < 20; i++ {
+		mid, _, _, _, err := nsqdCoord1.PutMessageBodyToCluster(topicData1, []byte("123"), 0)
+		test.Nil(t, err)
+		if testUpgrade {
+			upgradedMsgCnt++
+		} else {
+			msgCnt++
+		}
+		if testDelayed {
+			newMsg := nsqdNs.NewMessage(0, []byte("123"))
+			newMsg.DelayedType = nsqdNs.ChannelDelayed
+			timeoutDuration := nsqd1.GetOpts().MaxReqTimeout
+			newTimeout := time.Now().Add(timeoutDuration)
+			newMsg.DelayedTs = newTimeout.UnixNano()
+			newMsg.DelayedOrigID = mid
+			newMsg.DelayedChannel = "delay-test"
+
+			_, _, _, _, err := nsqdCoord1.PutDelayedMessageToCluster(topicData1, newMsg)
+			test.Nil(t, err)
+			msgDelayedCnt++
+		}
+	}
+	topicData1.ForceFlush()
+	test.Equal(t, topicData1.TotalMessageCnt(), uint64(msgCnt+upgradedMsgCnt))
+	test.Equal(t, topicData1.TotalDataSize(), msgRawSize*int64(msgCnt)+(msgRawSize+1)*int64(upgradedMsgCnt))
+	// increment catchup
+	logs1, err = tc1.logMgr.GetCommitLogsV2(0, 0, msgCnt+upgradedMsgCnt)
+	test.Nil(t, err)
+	test.Equal(t, len(logs1), msgCnt+upgradedMsgCnt)
+
+	topicInitInfo.Epoch++
+	ensureTopicOnNsqdCoord(nsqdCoord3, topicInitInfo)
+	ensureTopicLeaderSession(nsqdCoord3, topic, partition, fakeSession)
+	time.Sleep(time.Second * 3)
+	topicData3.ForceFlush()
+	test.Equal(t, topicData3.TotalMessageCnt(), uint64(msgCnt+upgradedMsgCnt))
+	test.Equal(t, topicData3.TotalDataSize(), msgRawSize*int64(msgCnt)+(msgRawSize+1)*int64(upgradedMsgCnt))
+	logs3, err = tc3.logMgr.GetCommitLogsV2(0, 0, msgCnt+upgradedMsgCnt)
+	test.Nil(t, err)
+	test.Equal(t, len(logs3), msgCnt+upgradedMsgCnt)
+	test.Equal(t, logs1, logs3)
+
+	if testDelayed {
+		delayedMsgs1 = make([]nsqdNs.Message, msgDelayedCnt+1)
+		peekCnt, err := dq1.PeekAll(delayedMsgs1)
+		test.Nil(t, err)
+		test.Equal(t, msgDelayedCnt, peekCnt)
+		delayedMsgs3 = make([]nsqdNs.Message, msgDelayedCnt+1)
+		peekCnt, err = dq3.PeekAll(delayedMsgs3)
+		t.Log(delayedMsgs3)
+		test.Nil(t, err)
+		test.Equal(t, msgDelayedCnt, peekCnt)
+		test.Equal(t, delayedMsgs1, delayedMsgs3)
+	}
 	// catchup again with exact same logs
 	topicInitInfo.Epoch++
 	ensureTopicOnNsqdCoord(nsqdCoord3, topicInitInfo)
@@ -638,6 +773,19 @@ func testNsqdCoordCatchup(t *testing.T, meta TopicMetaInfo, testUpgrade bool) {
 	test.Nil(t, err)
 	test.Equal(t, len(logs3), msgCnt+upgradedMsgCnt)
 	test.Equal(t, logs1, logs3)
+
+	if testDelayed {
+		delayedMsgs1 = make([]nsqdNs.Message, msgDelayedCnt+1)
+		peekCnt, err := dq1.PeekAll(delayedMsgs1)
+		test.Nil(t, err)
+		test.Equal(t, msgDelayedCnt, peekCnt)
+		delayedMsgs3 = make([]nsqdNs.Message, msgDelayedCnt+1)
+		peekCnt, err = dq3.PeekAll(delayedMsgs3)
+		t.Log(delayedMsgs3)
+		test.Nil(t, err)
+		test.Equal(t, msgDelayedCnt, peekCnt)
+		test.Equal(t, delayedMsgs1, delayedMsgs3)
+	}
 	// change leader and make nsqd3 write more than old leader
 	changedInfo := topicInitInfo
 	changedInfo.Leader = nsqdCoord3.myNode.GetID()
@@ -653,8 +801,20 @@ func testNsqdCoordCatchup(t *testing.T, meta TopicMetaInfo, testUpgrade bool) {
 	ensureTopicOnNsqdCoord(nsqdCoord3, changedInfo)
 	ensureTopicLeaderSession(nsqdCoord3, topic, partition, fakeSession)
 	ensureTopicDisableWrite(nsqdCoord3, topic, partition, false)
-	_, _, _, _, err = nsqdCoord3.PutMessageBodyToCluster(topicData3, []byte("123"), 0)
+	origID, _, _, _, err := nsqdCoord3.PutMessageBodyToCluster(topicData3, []byte("123"), 0)
 	test.Nil(t, err)
+	if testDelayed {
+		newMsg := nsqdNs.NewMessage(0, []byte("123"))
+		newMsg.DelayedType = nsqdNs.ChannelDelayed
+		timeoutDuration := nsqd1.GetOpts().MaxReqTimeout
+		newTimeout := time.Now().Add(timeoutDuration)
+		newMsg.DelayedTs = newTimeout.UnixNano()
+		newMsg.DelayedOrigID = origID
+		newMsg.DelayedChannel = "delay-test"
+
+		_, _, _, _, err := nsqdCoord3.PutDelayedMessageToCluster(topicData3, newMsg)
+		test.Nil(t, err)
+	}
 	_, _, _, _, err = nsqdCoord3.PutMessageBodyToCluster(topicData3, []byte("123"), 0)
 	test.Nil(t, err)
 
@@ -675,7 +835,16 @@ func testNsqdCoordCatchup(t *testing.T, meta TopicMetaInfo, testUpgrade bool) {
 	test.Nil(t, err)
 	test.Equal(t, len(logs3), msgCnt+upgradedMsgCnt)
 	test.Equal(t, logs1, logs3)
-
+	if testDelayed {
+		delayedMsgs3 = make([]nsqdNs.Message, msgDelayedCnt+1)
+		peekCnt, err := dq3.PeekAll(delayedMsgs3)
+		t.Log(delayedMsgs3)
+		test.Nil(t, err)
+		// for delayed queue, it may keep the new write message on non-leader
+		// so we got one more
+		test.Assert(t, peekCnt >= msgDelayedCnt, "catchup delayed messages should not less")
+		test.Equal(t, delayedMsgs1[:msgDelayedCnt], delayedMsgs3[:msgDelayedCnt])
+	}
 	// move from catchup to isr
 	topicInitInfo.ISR = append(topicInitInfo.ISR, nodeInfo3.GetID())
 	topicInitInfo.CatchupList = make([]string, 0)
@@ -730,6 +899,13 @@ func testNsqdCoordCatchup(t *testing.T, meta TopicMetaInfo, testUpgrade bool) {
 	test.Nil(t, err)
 	test.Equal(t, len(logs3), msgCnt+upgradedMsgCnt)
 	test.Equal(t, logs1, logs3)
+	if testDelayed {
+		delayedMsgs3 = make([]nsqdNs.Message, msgDelayedCnt+1)
+		peekCnt, err := dq3.PeekAll(delayedMsgs3)
+		test.Nil(t, err)
+		test.Assert(t, peekCnt >= msgDelayedCnt, "catchup delayed messages should not less")
+		test.Equal(t, delayedMsgs1[:msgDelayedCnt], delayedMsgs3[:msgDelayedCnt])
+	}
 }
 
 // catchup from empty

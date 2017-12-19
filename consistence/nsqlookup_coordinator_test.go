@@ -1136,8 +1136,7 @@ func TestNsqLookupUpdateTopicMeta(t *testing.T) {
 	// test increase replicator and decrease the replicator
 	err = lookupCoord.ChangeTopicMetaParam(topic_p1_r1, -1, -1, 3, "")
 	lookupCoord.triggerCheckTopics("", 0, 0)
-	waitClusterStable(lookupCoord, time.Second*5)
-	time.Sleep(time.Second * 5)
+	waitClusterStable(lookupCoord, time.Second*15)
 	tmeta, _, _ := lookupLeadership.GetTopicMetaInfo(topic_p1_r1)
 	test.Equal(t, 3, tmeta.Replica)
 	for i := 0; i < tmeta.PartitionNum; i++ {
