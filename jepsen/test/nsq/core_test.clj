@@ -32,11 +32,11 @@
                                     (gen/delay 1/10)
                                     (gen/nemesis
                                       (gen/seq
-                                        (cycle [(gen/sleep 30)
+                                        (cycle [(gen/sleep 60)
                                                 {:type :info :f :start}
                                                 (gen/sleep 60)
                                                 {:type :info :f :stop}])))
-                                    (gen/time-limit 360))
+                                    (gen/time-limit 560))
                                (gen/nemesis
                                  (gen/once {:type :info, :f :stop}))
                                (gen/log "waiting for recovery")

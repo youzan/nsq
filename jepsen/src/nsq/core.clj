@@ -36,7 +36,7 @@
 (def nsqlookupd-logfile "/var/log/nsqlookupd.log")
 (def nsqlookupd-pidfile "/var/run/nsqlookupd.pid")
 (def etcd-cluster-url "http://etcd0.example.com:2379/v2/keys/NSQMetaData/test-jepsen-dev-1")
-(def nsq-package "nsq-0.3.7-HA.1.5.3.1.linux-amd64.go1.7.4")
+(def nsq-package "nsq-0.3.7-HA.1.6.4.linux-amd64.go1.8.5")
 
 (defn prepare-binary! 
   [test node]
@@ -66,6 +66,7 @@
 (defn start-nsqd!
   [test node]
   (info node "starting nsqd")
+  (c/exec :rm :-rf nsqd-pidfile nsqd-data)
   (c/exec :echo
           (-> "nsqd.conf"
             io/resource 
@@ -157,7 +158,6 @@
         (meh (c/exec :killall :nsqd))
         (Thread/sleep 3000)
         (meh (c/exec :killall :-9 :nsqd))
-        (c/exec :rm :-rf nsqd-pidfile nsqd-data))
       (info node "nsqd killed")
       (c/su
         (meh (c/exec :killall :nsqlookupd))
@@ -177,8 +177,9 @@
   [rc]
   (reify MessageHandler
     (process [this msg]
-      (let [value (codec/decode (.getMessageBody msg))]
-        (info "===== got message:" value)
+      (let [value (codec/decode (.getMessageBody msg))
+            msgid (.newHexString msg (.getMessageID msg))]
+        (info "===== got message:" msgid ", value:" value)
         (if (nil? value)
           (info "got nil message!!!"))
         (>!! rc value)
@@ -214,7 +215,7 @@
     (info "setup client for node" node)
     (.setLookupAddresses nsqconf (str (name node) ":4161"))
     (let [producer (new-producer nsqconf)
-          rc (chan (buffer 10))
+          rc (chan (buffer 1))
           cs (new-consumer nsqconf rc)]
       (Thread/sleep 30000)
       (assoc this :client producer :consumer cs :receive-ch rc)))
@@ -236,14 +237,14 @@
                      (warn e "pub failed")
                      (assoc op :type :fail))))
 
-      :dequeue (dequeue! 5000 receive-ch op)
+      :dequeue (dequeue! 10000 receive-ch op)
 
       :drain   (do
                  ; Note that this does more dequeues than strictly necessary
                  ; owing to lazy sequence chunking.
                  (->> (repeat op)                  ; Explode drain into
                    (map #(assoc % :f :dequeue)) ; infinite dequeues, then
-                   (map (partial dequeue! 40000 receive-ch))  ; dequeue something
+                   (map (partial dequeue! 60000 receive-ch))  ; dequeue something
                    (take-while op/ok?)  ; as long as stuff arrives,
                    (interleave (repeat op))     ; interleave with invokes
                    (drop 1)                     ; except the initial one
