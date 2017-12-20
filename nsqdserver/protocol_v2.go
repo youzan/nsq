@@ -566,6 +566,7 @@ func (p *protocolV2) messagePump(client *nsqd.ClientV2, startedChan chan bool,
 				goto exit
 			}
 
+			// ordered channel sample is not allowed
 			if sampleRate > 0 && rand.Int31n(100) > sampleRate && msg.DelayedType != nsqd.ChannelDelayed {
 				// FIN automatically, all message will not wait to confirm if not sending,
 				// and the reader keep moving forward.
@@ -579,8 +580,10 @@ func (p *protocolV2) messagePump(client *nsqd.ClientV2, startedChan chan bool,
 			if extFilter != nil && subChannel.IsExt() && !extFilter.Match(msg) {
 				subChannel.ConfirmBackendQueue(msg)
 				subChannel.CleanWaitingRequeueChan(msg)
+				subChannel.ContinueConsumeForOrder()
 				continue
 			}
+			// ordered channel will never delayed
 			if subChannel.ShouldWaitDelayed(msg) {
 				subChannel.ConfirmBackendQueue(msg)
 				subChannel.CleanWaitingRequeueChan(msg)

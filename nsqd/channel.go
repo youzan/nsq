@@ -782,6 +782,9 @@ func (c *Channel) ShouldWaitDelayed(msg *Message) bool {
 	if c.IsOrdered() {
 		return false
 	}
+	// while there are some waiting confirmed messages and some disk delayed messages, if we
+	// switched leader, we reset the read offset to the oldest confirmed. This will cause lots of
+	// messages read from normal disk queue but these messages should be delayed.
 	dq := c.GetDelayedQueue()
 	if msg.DelayedOrigID > 0 && msg.DelayedType == ChannelDelayed && dq != nil {
 		return false
@@ -1834,17 +1837,32 @@ func parseTagIfAny(msg *Message) (string, error) {
 func (c *Channel) GetChannelDebugStats() string {
 	c.inFlightMutex.Lock()
 	inFlightCount := len(c.inFlightMessages)
-	debugStr := fmt.Sprintf("topic %v channel %v \ninflight %v messages : ", c.GetTopicName(), c.GetName(), inFlightCount)
+	debugStr := fmt.Sprintf("topic %v channel %v \ninflight %v, req %v, %v, %v, ",
+		c.GetTopicName(), c.GetName(), inFlightCount, len(c.waitingRequeueMsgs),
+		len(c.requeuedMsgChan), len(c.waitingRequeueChanMsgs))
+
 	if nsqLog.Level() >= levellogger.LOG_DEBUG || c.IsTraced() {
 		for _, msg := range c.inFlightMessages {
 			debugStr += fmt.Sprintf("%v(%v, %v),", msg.ID, msg.Offset, msg.DelayedType)
 		}
 	}
+	debugStr += "\n"
+	if len(c.requeuedMsgChan) != len(c.waitingRequeueChanMsgs) {
+		debugStr += "requeue mismatch: "
+		for _, msg := range c.waitingRequeueChanMsgs {
+			debugStr += fmt.Sprintf("%v(%v),", msg.ID, msg.Offset)
+		}
+	}
 	c.inFlightMutex.Unlock()
 	debugStr += "\n"
+	d, ok := c.backend.(*diskQueueReader)
+	var curRead BackendQueueEnd
+	if ok {
+		curRead = d.GetQueueCurrentRead()
+	}
 	c.confirmMutex.Lock()
-	debugStr += fmt.Sprintf("channel end : %v, current confirm %v, confirmed %v messages: %s\n",
-		c.GetChannelEnd(),
+	debugStr += fmt.Sprintf("channel end : %v,current read:%v, current confirm %v, confirmed %v messages: %s\n",
+		c.GetChannelEnd(), curRead,
 		c.GetConfirmed(), c.confirmedMsgs.Len(), c.confirmedMsgs.ToString())
 	c.confirmMutex.Unlock()
 	debugStr += "\n"
@@ -2071,13 +2089,26 @@ exit:
 			}
 		}
 	}
-
-	if ((flightCnt == 0) && (reqLen == 0) &&
-		(requeuedCnt <= 0) && (!dirty) && clientNum > 0 &&
-		oldWaitingDeliveryState == 0 &&
-		atomic.LoadInt32(&c.waitingConfirm) >=
-			int32(c.option.MaxConfirmWin)) &&
-		atomic.LoadInt32(&c.waitingDeliveryState) == 0 {
+	isInflightEmpty := (flightCnt == 0) && (reqLen == 0) && (requeuedCnt <= 0)
+	noReadDataFromDisk := atomic.LoadInt32(&c.waitingConfirm) >= int32(c.option.MaxConfirmWin)
+	if isInflightEmpty && !noReadDataFromDisk && !c.IsPaused() {
+		// for tagged client, it may happen if no any un-tagged client.
+		// we may read to end, but the last message is normal message.
+		// in this way, we should block and wait un-tagged client.
+		c.tagMsgChansMutex.RLock()
+		tagChLen := len(c.tagMsgChans)
+		c.tagMsgChansMutex.RUnlock()
+		e := c.GetChannelEnd()
+		if c.GetConfirmed().Offset() < e.Offset() && tagChLen == 0 {
+			d, ok := c.backend.(*diskQueueReader)
+			if ok && d.GetQueueCurrentRead() == e {
+				noReadDataFromDisk = true
+			}
+		}
+	}
+	if isInflightEmpty && (!dirty) && clientNum > 0 &&
+		(oldWaitingDeliveryState == 0) && noReadDataFromDisk &&
+		(atomic.LoadInt32(&c.waitingDeliveryState) == 0) {
 		diff := time.Now().Unix() - atomic.LoadInt64(&c.processResetReaderTime)
 		if diff > resetReaderTimeoutSec && atomic.LoadInt64(&c.processResetReaderTime) > 0 {
 			nsqLog.LogWarningf("try reset reader since no inflight and requeued for too long (%v): %v, %v, %v",

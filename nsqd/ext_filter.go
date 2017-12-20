@@ -145,6 +145,9 @@ func (f *extMultiFilter) Match(msg *Message) bool {
 func NewExtFilter(filter ExtFilterData) (IExtFilter, error) {
 	var cf IExtFilter
 	var err error
+	if filter.FilterExtKey == "" {
+		return nil, ErrInvalidFilter
+	}
 	if filter.FilterData == "" {
 		if filter.Type != 4 {
 			return nil, ErrInvalidFilter
@@ -181,6 +184,9 @@ func NewExtFilter(filter ExtFilterData) (IExtFilter, error) {
 		mf.relation = filter.FilterExtKey
 		for _, f := range filters {
 			ef := &extExactlyFilter{}
+			if f.FilterExtKey == "" || f.FilterData == "" {
+				return nil, ErrInvalidFilter
+			}
 			ef.match = f.FilterData
 			ef.extKey = f.FilterExtKey
 			mf.chainFilters = append(mf.chainFilters, ef)

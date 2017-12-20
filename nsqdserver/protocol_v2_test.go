@@ -3848,6 +3848,68 @@ func TestSubOrdered(t *testing.T) {
 	}
 }
 
+func TestSubOrderedWithFilter(t *testing.T) {
+	topicName := "test_sub_ordered" + strconv.Itoa(int(time.Now().Unix()))
+
+	opts := nsqdNs.NewOptions()
+	opts.Logger = newTestLogger(t)
+	opts.LogLevel = 1
+	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
+	defer os.RemoveAll(opts.DataPath)
+	defer nsqdServer.Exit()
+
+	conn, err := mustConnectNSQD(tcpAddr)
+	test.Equal(t, err, nil)
+	topic := nsqd.GetTopicIgnPart(topicName)
+	topicDynConf := nsqdNs.TopicDynamicConf{
+		AutoCommit: 1,
+		SyncEvery:  1,
+		Ext:        true,
+	}
+	topic.SetDynamicInfo(topicDynConf, nil)
+	topic.GetChannel("ordered_ch")
+
+	clientParams := make(map[string]interface{})
+	clientParams["client_id"] = "client_b"
+	clientParams["hostname"] = "client_b"
+	clientParams["ext_filter"] = nsqdNs.ExtFilterData{1, "nomatch", "nomatch", nil}
+	clientParams["extend_support"] = true
+	identify(t, conn, clientParams, frameTypeResponse)
+
+	subOrdered(t, conn, topicName, "ordered_ch")
+	_, err = nsq.Ready(1).WriteTo(conn)
+	test.Equal(t, err, nil)
+
+	msg := nsqdNs.NewMessage(0, make([]byte, 100))
+	topic.PutMessage(msg)
+	for i := 0; i < 10; i++ {
+		topic.PutMessage(nsqdNs.NewMessage(0, []byte("first")))
+	}
+
+	// since no match, will recv no message
+	time.Sleep(time.Second)
+	conn.Close()
+	for i := 0; i < 10; i++ {
+		topic.PutMessage(nsqdNs.NewMessage(0, []byte("second")))
+	}
+	// reconnect and try consume without filter the message
+	// make sure we can receive new message after remove filter.
+	conn, err = mustConnectNSQD(tcpAddr)
+	test.Equal(t, err, nil)
+	delete(clientParams, "ext_filter")
+	identify(t, conn, clientParams, frameTypeResponse)
+
+	subOrdered(t, conn, topicName, "ordered_ch")
+	_, err = nsq.Ready(1).WriteTo(conn)
+	test.Equal(t, err, nil)
+	defer conn.Close()
+	for i := 0; i < 10; i++ {
+		msgOut := recvNextMsgAndCheckExt(t, conn, 0, msg.TraceID, true, true)
+		msgOut.Body = msgOut.Body[12:]
+		test.Equal(t, msgOut.Body, []byte("second"))
+	}
+}
+
 func TestMaxRdyCount(t *testing.T) {
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
@@ -4824,7 +4886,7 @@ func TestTimeoutShouldNotBlockStats(t *testing.T) {
 		opts.LogLevel = 2
 		nsqdNs.SetLogger(opts.Logger)
 	}
-	opts.ClientTimeout = time.Second*10
+	opts.ClientTimeout = time.Second * 10
 	opts.QueueScanRefreshInterval = 100 * time.Millisecond
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
@@ -4852,7 +4914,7 @@ func TestTimeoutShouldNotBlockStats(t *testing.T) {
 	_, err = nsq.Ready(1).WriteTo(conn)
 	test.Equal(t, err, nil)
 
-	// ack one message, and wait process and do not response 
+	// ack one message, and wait process and do not response
 	// wait heartbeat timeout and get stats should not block
 	resp, err := nsq.ReadResponse(conn)
 	test.Nil(t, err)
@@ -4882,7 +4944,7 @@ func TestTimeoutShouldNotBlockStats(t *testing.T) {
 			break
 		}
 		t.Logf("block at %v : %v", time.Now(), time.Since(b))
-		time.Sleep(time.Millisecond*100)
+		time.Sleep(time.Millisecond * 100)
 		cnt++
 		if cnt > 10 {
 			break
@@ -5296,7 +5358,7 @@ func TestResetChannelToOld(t *testing.T) {
 		}
 	}()
 	for {
-		conn.SetReadDeadline(time.Now().Add(time.Second*5))
+		conn.SetReadDeadline(time.Now().Add(time.Second * 5))
 		resp, err := nsq.ReadResponse(conn)
 		if recvCnt >= int(opts.MaxConfirmWin)*2+1 && channel.GetConfirmed().Offset() == realEnd.Offset() {
 			break
