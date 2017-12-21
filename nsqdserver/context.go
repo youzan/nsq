@@ -207,6 +207,9 @@ func (c *context) FinishMessage(ch *nsqd.Channel, clientID int64, clientAddr str
 func (c *context) DeleteExistingChannel(topic *nsqd.Topic, channelName string) error {
 	if c.nsqdCoord == nil {
 		err := topic.DeleteExistingChannel(channelName)
+		if err == nil {
+			err = topic.SaveChannelMeta()
+		}
 		return err
 	}
 	return c.nsqdCoord.DeleteChannel(topic, channelName)

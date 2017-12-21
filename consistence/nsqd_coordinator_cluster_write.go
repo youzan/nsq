@@ -1161,6 +1161,7 @@ func (self *NsqdCoordinator) updateChannelStateOnSlave(tc *coordData, channelNam
 		coordLog.Errorf("fail to skip/unskip %v, channel: %v, %v", skipped, topic.GetTopicName(), channelName)
 		return ErrLocalChannelSkipFailed
 	}
+	topic.SaveChannelMeta()
 	return nil
 }
 
@@ -1227,8 +1228,8 @@ func (self *NsqdCoordinator) updateChannelOffsetOnSlave(tc *coordData, channelNa
 			}
 		} else {
 			if coordLog.Level() >= levellogger.LOG_DEBUG {
-			coordLog.Debugf("topic %v update channel(%v) consume offset %v ignored on slave : %v",
-				tc.topicInfo.GetTopicDesp(), channelName, offset, currentEnd)
+				coordLog.Debugf("topic %v update channel(%v) consume offset %v ignored on slave : %v",
+					tc.topicInfo.GetTopicDesp(), channelName, offset, currentEnd)
 			}
 			return nil
 		}
@@ -1260,6 +1261,8 @@ func (self *NsqdCoordinator) DeleteChannel(topic *nsqd.Topic, channelName string
 		localErr := topic.DeleteExistingChannel(channelName)
 		if localErr != nil {
 			coordLog.Infof("deleteing local channel %v error: %v", channelName, localErr)
+		} else {
+			topic.SaveChannelMeta()
 		}
 		return nil
 	}
@@ -1314,6 +1317,8 @@ func (self *NsqdCoordinator) deleteChannelOnSlave(tc *coordData, channelName str
 	localErr = topic.DeleteExistingChannel(channelName)
 	if localErr != nil {
 		coordLog.Logf("delete channel %v on slave failed: %v ", channelName, localErr)
+	} else {
+		topic.SaveChannelMeta()
 	}
 	return nil
 }
