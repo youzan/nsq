@@ -44,6 +44,7 @@ Golang示例
 ```
 
 ### 消息消费
+注意第一次使用的时候, 先启动消费者, 再启动生产者, 可以保证消费到所有消息(或者手动在nsqadmin先初始化创建channel), 否则只消费第一次启动之后生产的消息.
 
 ```Go
 type consumeHandler struct {
@@ -85,6 +86,40 @@ func main() {
 ```
 
 ## 消息跟踪id使用
+消息跟踪id用于在排查问题时跟踪业务相关的信息, 比如传入订单id, 可以跟踪跟这个订单id相关的所有消息轨迹. 可以用于排查消息的生产, 以及什么时候被哪台机子消费的问题. 使用了跟踪id的消息会在服务端记录所有的轨迹log, 会对性能产生一定的影响, 注意使用开关来控制此功能的动态开启和关闭.
+
+消息跟踪id, 只需要生产方写入跟踪id即可, 消费方无需任何修改.
+示例:
+
+```Go
+func main() {
+	config := nsq.NewConfig()
+	// 打开会返回服务写入的位置信息, 也可以不开启, 只要pub写入了traceid, trace日志就会在服务端打印, 此开关不影响服务端日志
+	config.EnableTrace = true
+    topics := ["test_topic"]
+	pubMgr, err := nsq.NewTopicProducerMgr(topics, config)
+	if err != nil {
+		log.Printf("init error : %v", err)
+		return
+	}
+	pubMgr.SetLogger(log.New(os.Stderr, "", log.LstdFlags), nsq.LogLevelInfo)
+	err = pubMgr.ConnectToNSQLookupd("127.0.0.1:4161")
+	if err != nil {
+		log.Printf("lookup connect error : %v", err)
+		return
+	}
+	// 写入具体的traceid, 例如订单id, 如果要跟踪的不是整形的id, 可以先hash一个uint64再传入(可能有部分冲突, 但是不影响跟踪功能, 会跟踪到所有冲突的数据.) 
+	// 当traceid>0时, trace日志就会在服务端打印
+	orderID := uint64(12345)
+	id, offset, rawSize, err = pubMgr.PublishAndTrace(topics[0], orderID, []byte("message body"))
+	log.Printf("pub trace : %v, %v, %v", id, offset, rawSize)
+	if err != nil {
+		log.Printf("topic pub error : %v", err)
+		return
+	}
+
+```
+打开之后, 服务端会写入消息轨迹log, 默认是打到本地磁盘的, 可以配置把trace log打到远程collector, 然后由collector写入es, 这样就可以进行消息轨迹搜索了. 目前开源nsq并没有包含此搜索功能, 需要自行开发外部日志收集系统和日志搜索系统.
 
 ## 延时消息使用指南
 延时消息目前只支持消费延时, 只能在消费端控制延时的消息. 注意使用场景是少量需要重试的消息, 比如异常需要重试, 或者消费的下游业务系统超时, 或者需要一直重试直到成功的情况(比如信用卡还款这种). 消费业务方可以根据合适的延时策略做一些个性化的延时需求. NSQ的延时场景设计成非精确的, 因此只能保证尽量按照指定的延时投递, 可能会有误差, 特别是服务端较忙, 或者消费有积压的情况. 注意顺序消费的topic不允许使用延时消费功能.
@@ -146,11 +181,43 @@ func main() {
 ```
 
 ## 扩展消息的使用指南
-
+扩展消息可以在消息头部带上一些特定的业务扩展消息, 用于在不影响具体业务消费逻辑的情况下, 控制一些通用的行为, 比如做消息类型判断, 过滤消息等.
 ### 扩展topic创建
+首先需要创建一个支持扩展的消息, 在nsqadmin创建时务必选中`Is Topic Extend`选项.
+
 ### 扩展字段类型
+目前仅支持json简单kv类型的数据扩展, 以后可能会有其他扩展类型, 其中json扩展的前缀带上`##`的key是内部保留key, 业务自定义的kv不要使用`##`做前缀
+
 ### 扩展字段写入
+
+```Go
+func main() {
+	config := nsq.NewConfig()
+    topics := ["test_topic"]
+	pubMgr, err := nsq.NewTopicProducerMgr(topics, config)
+	if err != nil {
+		log.Printf("init error : %v", err)
+		return
+	}
+	pubMgr.SetLogger(log.New(os.Stderr, "", log.LstdFlags), nsq.LogLevelInfo)
+	err = pubMgr.ConnectToNSQLookupd("127.0.0.1:4161")
+	if err != nil {
+		log.Printf("lookup connect error : %v", err)
+		return
+	}
+	var jext nsq.MsgExt
+	jext.Custom = make(map[string]string)
+	jext.Custom["extk"] = "extvalue"
+	_, _, _, err = pubMgr.PublishWithJsonExt(topics[0], []byte("message body"), &jext)
+	if err != nil {
+		log.Printf("topic pub error : %v", err)
+		return
+	}
+```
+如果返回错误, 请确认topic创建时选中了扩展支持功能.
+
 ### 消费消息的扩展字段
+一般来说, 业务方本身不需要针对扩展数据进行处理, 而是由服务端或者框架层做处理, 避免不同业务做相同的处理逻辑. 消费方扩展数据存放在收到的message里面的`ExtVer`,  `ExtBytes`字段, 可以使用`GetJsonExt()`获取json扩展对象.
 
 ## 消费过滤示例
 
@@ -160,11 +227,16 @@ func main() {
 对于顺序的topic, 分区数取决于消费能力, 如果需要更高的并发度, 可以优化消费业务的消费能力, 如果消费能力已经无法优化, 则需要更多的分区数提高并发能力. 大部分情况下16个分区可以满足大部分需求, 如果吞吐量很大, 还需要实际计算消费业务的延迟来决定. 由于顺序消费topic在动态扩建topic时会导致无序消息, 因此需要规划一个较长时间的潜在能力.
 ## 一些消费配置的建议
 
-ready:
-max_inflight:
-max_attempt:
-msg_timeout:
-并发工作线程数:
+
+max_inflight: 允许当前消费处理的消息总数, 此值包括所有并发的待ack的消息数量, 如果超过, 则会暂时停止接收消息, 直到消息被逐渐消费完成. 建议设置成并发消费数*2, 此值在go sdk中用来自动调整ready值.
+
+ready: 消费能力值, 根据消费能力调整, 一般使用默认值. sdk会根据消费能力动态调整, 只需设置max_inflight即可. 对于其他语言sdk可以根据需要调整, 对于非批量消费的业务而言, 一般建议对于每个连接平均值小于10. 对于批量任务的消费, 可以适当调整到和批量任务消费相匹配的消费能力.
+
+max_attempt: 每条消息的最大重试消费次数, 注意重试可能包括网络异常, 主备切换, 业务异常等, 实际业务消费次数可能小于此重试次数. 因此设置时建议加上一个余量. 对于一般业务可以使用默认值, 重要的业务, 或者可能需要多次重试的业务, 建议配置一个较大的次数(>100以上).
+
+msg_timeout: 根据业务消费一条消息的时间来调整, 如果消息里面有批量的任务, 需要适当调大消费超时, 一般使用默认值, 如果特别耗时的业务, 最大可以调整到15分钟. 建议配合touch来使用.
+
+并发消费数: 可能根据不同的业务类型需要调整, 对于go这种轻量型的goroutine而言, 如果是计算类型的业务, 建议设置为机器的CPU数*4, 如果是io类型的业务建议设置CPU数*32以上. 如果是Java线程, 建议适当调小一些. 
 
 其他值可以保持默认值
 
