@@ -343,19 +343,23 @@ func (self *NsqdCoordRpcServer) UpdateTopicInfo(rpcTopicReq *RpcAdminTopicInfo) 
 		// a topic info not belong to me,
 		// check if we need to delete local
 		coordLog.Infof("Not a topic(%s) related to me. isr is : %v", rpcTopicReq.Name, rpcTopicReq.ISR)
+		var tc *TopicCoordinator
+		var ok2 bool
 		if ok {
-			tc, ok := coords[rpcTopicReq.Partition]
-			if ok {
-				if tc.GetData().topicInfo.Leader == myID {
-					self.nsqdCoord.releaseTopicLeader(&tc.GetData().topicInfo, &tc.topicLeaderSession)
-				}
-				self.nsqdCoord.localNsqd.CloseExistingTopic(rpcTopicReq.Name, rpcTopicReq.Partition)
-				coordLog.Infof("topic(%s) is removing from local node since not related", rpcTopicReq.Name)
-				tc.logMgr.Close()
-				delete(coords, rpcTopicReq.Partition)
-			}
+			tc, ok2 = coords[rpcTopicReq.Partition]
+			delete(coords, rpcTopicReq.Partition)
 		}
 		self.nsqdCoord.coordMutex.Unlock()
+		if ok && ok2 {
+			tcData := tc.GetData()
+			if tcData.topicInfo.Leader == myID {
+				self.nsqdCoord.releaseTopicLeader(&tcData.topicInfo, &tc.topicLeaderSession)
+			}
+			tcData.logMgr.Close()
+			// never hold any coordinator lock while close or delete local topic
+			self.nsqdCoord.localNsqd.CloseExistingTopic(rpcTopicReq.Name, rpcTopicReq.Partition)
+			coordLog.Infof("topic(%s) is removing from local node since not related", rpcTopicReq.Name)
+		}
 		return &ret
 	}
 	if !ok {

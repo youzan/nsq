@@ -20,17 +20,17 @@ import (
 )
 
 const (
-	MAX_WRITE_RETRY                  = 10
-	MAX_CATCHUP_RETRY                = 5
-	MAX_LOG_PULL                     = 10000
-	MAX_LOG_PULL_BYTES               = 1024 * 1024 * 32
-	MAX_CATCHUP_RUNNING              = 3
-	API_BACKUP_DELAYED_QUEUE_DB      = "/delayqueue/backupto"
+	MAX_WRITE_RETRY             = 10
+	MAX_CATCHUP_RETRY           = 5
+	MAX_LOG_PULL                = 10000
+	MAX_LOG_PULL_BYTES          = 1024 * 1024 * 32
+	MAX_CATCHUP_RUNNING         = 3
+	API_BACKUP_DELAYED_QUEUE_DB = "/delayqueue/backupto"
 )
 
 var (
-	MaxRetryWait       = time.Second * 3
-	ForceFixLeaderData = false
+	MaxRetryWait                = time.Second * 3
+	ForceFixLeaderData          = false
 	MaxTopicRetentionSizePerDay = int64(1024 * 1024 * 1024 * 16)
 )
 
@@ -535,6 +535,8 @@ func (self *NsqdCoordinator) watchNsqLookupd() {
 }
 
 // check the magic code to avoid we reuse some deleted topic after re-created it.
+// should not hold any coordinator lock outside, since we may wait local topic pub loop quit.
+// pub loop may be blocked by coordinator lock.
 func (self *NsqdCoordinator) checkLocalTopicMagicCode(topicInfo *TopicPartitionMetaInfo, tryFix bool) error {
 	removedPath, err := self.localNsqd.CheckMagicCode(topicInfo.Name, topicInfo.Partition, topicInfo.MagicCode, tryFix)
 	if err != nil {
@@ -554,10 +556,13 @@ func (self *NsqdCoordinator) checkLocalTopicMagicCode(topicInfo *TopicPartitionM
 	return nil
 }
 
+// do not hold any coordinator lock outside, since we need delete local topic which will wait pub loop quit.
+// pub loop may hold the coordinator lock.
 func (self *NsqdCoordinator) forceCleanTopicData(topicName string, partition int) *CoordErr {
 	// check if any data on local and try remove
 	basepath := GetTopicPartitionBasePath(self.dataRootPath, topicName, partition)
 	tmpLogMgr, err := InitTopicCommitLogMgr(topicName, partition, basepath, 1)
+	coordLog.Infof("topic %v is cleaning topic data: %v", topicName, basepath)
 	if err != nil {
 		coordLog.Warningf("topic %v failed to init tmp log manager: %v", topicName, err)
 	} else {
@@ -644,8 +649,8 @@ func (self *NsqdCoordinator) loadLocalTopicData() error {
 			}
 
 			// while load topic from cluster, we need check the current state of replica.
-			// If we are one of ISR, that means we still have the newest data for this topic, we just check 
-			// the data with leader. 
+			// If we are one of ISR, that means we still have the newest data for this topic, we just check
+			// the data with leader.
 			// Otherwise we need catchup from leader.
 			// In some case, we still keep leader (maybe only one replica), We need check local data and try to get the leader session again.
 			// If we are removed from both ISR and catchups, we can safely remove local topic data
@@ -696,6 +701,7 @@ func (self *NsqdCoordinator) loadLocalTopicData() error {
 				} else if len(topicInfo.ISR)+len(topicInfo.CatchupList) < topicInfo.Replica {
 					go self.requestJoinCatchup(topicName, partition)
 				} else {
+					// never hold any coordinator lock while close or delete local topic
 					self.localNsqd.CloseExistingTopic(topicName, partition)
 				}
 				continue
@@ -1344,7 +1350,6 @@ func (self *NsqdCoordinator) decideCatchupCommitLogInfo(tc *TopicCoordinator,
 	if logErr != nil && logErr != ErrCommitLogEOF {
 		coordLog.Warningf("catching failed since log offset read error: %v", logErr)
 		logMgr.Delete()
-		self.forceCleanTopicData(topicInfo.Name, topicInfo.Partition)
 		logMgr.Reopen()
 		tc.Exiting()
 		go self.removeTopicCoord(topicInfo.Name, topicInfo.Partition, true)
@@ -1791,7 +1796,7 @@ func (self *NsqdCoordinator) catchupFromLeader(topicInfo TopicPartitionMetaInfo,
 		return syncErr
 	}
 
-	//sync delayed queue, ordered topic has no delayed queue 
+	//sync delayed queue, ordered topic has no delayed queue
 	if !topicInfo.OrderedMulti {
 		var needFullSync bool
 		logIndex, offset, needFullSync, coordErr = self.decideCatchupCommitLogInfo(tc, topicInfo, localTopic, c, true)
@@ -2256,21 +2261,22 @@ func (self *NsqdCoordinator) getTopicCoord(topic string, partition int) (*TopicC
 func (self *NsqdCoordinator) removeTopicCoord(topic string, partition int, removeData bool) (*TopicCoordinator, *CoordErr) {
 	var topicCoord *TopicCoordinator
 	self.coordMutex.Lock()
-	defer self.coordMutex.Unlock()
 	if v, ok := self.topicCoords[topic]; ok {
 		if tc, ok := v[partition]; ok {
 			topicCoord = tc
 			delete(v, partition)
 		}
 	}
+	self.coordMutex.Unlock()
 	var err *CoordErr
 	if topicCoord == nil {
 		err = ErrMissingTopicCoord
 	} else {
 		coordLog.Infof("removing topic coodinator: %v-%v", topic, partition)
+		// should outside the coord mutex lock
 		topicCoord.writeHold.Lock()
-		defer topicCoord.writeHold.Unlock()
 		topicCoord.DeleteNoWriteLock(removeData)
+		topicCoord.writeHold.Unlock()
 		err = nil
 	}
 	if removeData {
@@ -2329,7 +2335,7 @@ func (self *NsqdCoordinator) trySyncTopicChannels(tcData *coordData, syncDelayed
 		var syncOffset ChannelConsumerOffset
 		syncOffset.Flush = true
 		for _, ch := range channels {
-			// skipped ordered channel will not sync offset, 
+			// skipped ordered channel will not sync offset,
 			// so we need sync here
 			if ch.IsOrdered() && !ch.IsSkipped() {
 				continue

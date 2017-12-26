@@ -1072,15 +1072,12 @@ func (t *Topic) Close() error {
 }
 
 func (t *Topic) exit(deleted bool) error {
-	t.Lock()
-	defer t.Unlock()
 	if !atomic.CompareAndSwapInt32(&t.exitFlag, 0, 1) {
 		return errors.New("exiting")
 	}
 
 	if deleted {
 		nsqLog.Logf("TOPIC(%s): deleting", t.GetFullName())
-
 		// since we are explicitly deleting a topic (not just at system exit time)
 		// de-register this from the lookupd
 		t.nsqdNotify.NotifyStateChanged(t, true)
@@ -1088,7 +1085,13 @@ func (t *Topic) exit(deleted bool) error {
 		nsqLog.Logf("TOPIC(%s): closing", t.GetFullName())
 	}
 	close(t.quitChan)
+	// this will wait pub loop,
+	// pub loop may be blocked by cluster write which may hold the write lock for coordinator,
+	// we need avoid wait close/delete topic in coordinator.
 	t.wg.Wait()
+
+	t.Lock()
+	defer t.Unlock()
 
 	if deleted {
 		t.channelLock.Lock()
