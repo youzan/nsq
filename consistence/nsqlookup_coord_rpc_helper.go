@@ -56,7 +56,10 @@ func (self *NsqLookupCoordinator) rpcFailRetryFunc(monitorChan chan struct{}) {
 				coordLog.Infof("retry failed rpc call for topic: %v", info)
 				topicInfo, err := self.leadership.GetTopicInfo(info.topic, info.partition)
 				if err != nil {
-					// TODO: ignore if the error is not exist key on etcd
+					if err == ErrKeyNotFound {
+						coordLog.Infof("retry cancelled for not exist topic: %v", info)
+						continue
+					}
 					self.addRetryFailedRpc(info.topic, info.partition, info.nodeID)
 					continue
 				}
