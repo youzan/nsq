@@ -15,7 +15,13 @@ func getBackendName(topicName string, part int) string {
 }
 
 func getDelayQueueBackendName(topicName string, part int) string {
-	// backend names, for uniqueness, automatically include the topic... <topic>:<channel>
+	// backend names, for uniqueness, automatically include the topic... <topic>
 	backendName := GetTopicFullName(topicName, part) + ";delayed.queue"
+	return backendName
+}
+
+func getDelayQueueDBName(topicName string, part int) string {
+	// backend names, for uniqueness, automatically include the topic... <topic>
+	backendName := GetTopicFullName(topicName, part) + "-[delayed.queue].db"
 	return backendName
 }
