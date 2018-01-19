@@ -646,7 +646,7 @@ func (self *NsqLookupCoordinator) checkAndUpdateTopicPartitions(currentNodes map
 		tmpTopicInfo.Partition = i
 		tmpTopicInfo.TopicMetaInfo = meta
 		tmpTopicInfo.TopicPartitionReplicaInfo = tmpTopicReplicaInfo
-		rpcErr := self.notifyTopicMetaInfo(&tmpTopicInfo)
+		rpcErr := self.notifyISRTopicMetaInfo(&tmpTopicInfo)
 		if rpcErr != nil {
 			coordLog.Warningf("failed notify topic info : %v", rpcErr)
 		} else {

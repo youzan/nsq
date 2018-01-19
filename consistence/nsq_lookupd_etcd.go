@@ -169,6 +169,7 @@ func (self *NsqLookupdEtcdMgr) GetClusterEpoch() (EpochType, error) {
 	return EpochType(rsp.Node.ModifiedIndex), nil
 }
 
+// TODO: cache this to improve performance
 func (self *NsqLookupdEtcdMgr) GetAllLookupdNodes() ([]NsqLookupdNodeInfo, error) {
 	rsp, err := self.client.Get(self.lookupdRootPath, false, false)
 	if err != nil {

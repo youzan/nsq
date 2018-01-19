@@ -131,19 +131,28 @@ func (self *NsqLookupCoordinator) doNotifyToSingleNsqdNode(nodeID string, notify
 	return err
 }
 
-func (self *NsqLookupCoordinator) doNotifyToTopicLeaderThenOthers(leader string, others []string, notifyRpcFunc func(string) *CoordErr) *CoordErr {
+// notify leader first, if failed, left nodes will stop if failStop is true,
+// if success then ISR and catchup nodes will be notified
+func (self *NsqLookupCoordinator) doNotifyToTopicLeaderThenOthers(failStop bool, leader string, others []string, notifyRpcFunc func(string) *CoordErr) *CoordErr {
 	err := self.doNotifyToSingleNsqdNode(leader, notifyRpcFunc)
 	if err != nil {
 		coordLog.Infof("notify to topic leader %v failed: %v", leader, err)
+		if failStop {
+			return err
+		}
+	}
+
+	err2 := self.doNotifyToNsqdNodes(others, notifyRpcFunc)
+	if err != nil {
 		return err
 	}
-	return self.doNotifyToNsqdNodes(others, notifyRpcFunc)
+	return err2
 }
 
 func (self *NsqLookupCoordinator) notifyTopicLeaderSession(topicInfo *TopicPartitionMetaInfo, leaderSession *TopicLeaderSession, joinSession string) *CoordErr {
 	others := getOthersExceptLeader(topicInfo)
 	coordLog.Infof("notify topic leader session changed: %v, %v, others: %v", topicInfo.GetTopicDesp(), leaderSession.Session, others)
-	err := self.doNotifyToTopicLeaderThenOthers(topicInfo.Leader, others, func(nid string) *CoordErr {
+	err := self.doNotifyToTopicLeaderThenOthers(false, topicInfo.Leader, others, func(nid string) *CoordErr {
 		return self.sendTopicLeaderSessionToNsqd(self.leaderNode.Epoch, nid, topicInfo, leaderSession, joinSession)
 	})
 	return err
@@ -195,7 +204,7 @@ func (self *NsqLookupCoordinator) notifyTopicMetaInfo(topicInfo *TopicPartitionM
 	if topicInfo.Name == "" {
 		coordLog.Infof("==== notify topic name is empty")
 	}
-	rpcErr := self.doNotifyToTopicLeaderThenOthers(topicInfo.Leader, others, func(nid string) *CoordErr {
+	rpcErr := self.doNotifyToTopicLeaderThenOthers(false, topicInfo.Leader, others, func(nid string) *CoordErr {
 		return self.sendTopicInfoToNsqd(self.leaderNode.Epoch, nid, topicInfo)
 	})
 	if rpcErr != nil {
