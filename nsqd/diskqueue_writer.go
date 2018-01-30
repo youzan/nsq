@@ -485,7 +485,7 @@ func (d *diskQueueWriter) RemoveTo(destPath string) error {
 	d.saveFileOffsetMeta()
 	for i := int64(0); i <= d.diskWriteEnd.EndOffset.FileNum; i++ {
 		fn := d.fileName(i)
-		destFile := fmt.Sprintf(path.Join(destPath, "%s.diskqueue.%06d.dat"), d.name, i)
+		destFile := GetQueueFileName(destPath, d.name, i)
 		innerErr := util.AtomicRename(fn, destFile)
 		nsqLog.Logf("DISKQUEUE(%s): renamed data file %v to %v", d.name, fn, destFile)
 		if innerErr != nil && !os.IsNotExist(innerErr) {
@@ -967,10 +967,7 @@ func (d *diskQueueWriter) metaDataFileName() string {
 }
 
 func (d *diskQueueWriter) fileName(fileNum int64) string {
-	if fileNum > int64(999990) {
-		return fmt.Sprintf(path.Join(d.dataPath, "%s.diskqueue.%09d.dat"), d.name, fileNum)
-	}
-	return fmt.Sprintf(path.Join(d.dataPath, "%s.diskqueue.%06d.dat"), d.name, fileNum)
+	return GetQueueFileName(d.dataPath, d.name, fileNum)
 }
 
 func (d *diskQueueWriter) extraMetaFileName() string {

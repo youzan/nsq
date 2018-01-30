@@ -1793,7 +1793,13 @@ func (self *NsqdCoordinator) catchupFromLeader(topicInfo TopicPartitionMetaInfo,
 	syncErr := self.pullCatchupDataFromLeader(tc, topicInfo, localTopic, tc.GetData().logMgr, false, logIndex, offset)
 	if syncErr != nil {
 		coordLog.Infof("pull topic %v catchup data failed:%v", topicInfo.GetTopicDesp(), syncErr)
-		return syncErr
+		if joinISRSession == "" && strings.Contains(syncErr.ErrMsg, nsqd.ErrMoveOffsetOverflowed.Error()) {
+			// while join session is empty, it may happen the leader is writing while catchup
+			// so we may get the unflushed commit log, which will return overflow error.
+			// we can ignore this and continue catchup the left data after we disabled write on leader
+		} else {
+			return syncErr
+		}
 	}
 
 	//sync delayed queue, ordered topic has no delayed queue
@@ -2295,6 +2301,9 @@ func (self *NsqdCoordinator) trySyncTopicChannels(tcData *coordData, syncDelayed
 		if syncChannelList {
 			chNameList := make([]string, 0, len(channels))
 			for _, ch := range channels {
+				if ch.IsEphemeral() {
+					continue
+				}
 				chNameList = append(chNameList, ch.GetName())
 			}
 			for _, nodeID := range tcData.topicInfo.ISR {
@@ -2338,6 +2347,9 @@ func (self *NsqdCoordinator) trySyncTopicChannels(tcData *coordData, syncDelayed
 			// skipped ordered channel will not sync offset,
 			// so we need sync here
 			if ch.IsOrdered() && !ch.IsSkipped() {
+				continue
+			}
+			if ch.IsEphemeral() {
 				continue
 			}
 			confirmed := ch.GetConfirmed()

@@ -6,8 +6,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"github.com/youzan/nsq/internal/levellogger"
-	"github.com/youzan/nsq/internal/util"
 	"io"
 	"math/rand"
 	"os"
@@ -15,6 +13,9 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/youzan/nsq/internal/levellogger"
+	"github.com/youzan/nsq/internal/util"
 )
 
 // diskQueue implements the BackendQueue interface
@@ -460,7 +461,7 @@ func (d *diskQueue) metaDataFileName() string {
 }
 
 func (d *diskQueue) fileName(fileNum int64) string {
-	return fmt.Sprintf(path.Join(d.dataPath, "%s.diskqueue.%06d.dat"), d.name, fileNum)
+	return GetQueueFileName(d.dataPath, d.name, fileNum)
 }
 
 func (d *diskQueue) checkTailCorruption(depth int64) {

@@ -50,6 +50,64 @@ func TestDiskQueueWriter(t *testing.T) {
 	dqReader.Close()
 }
 
+func TestDiskQueueWriterLargeFileNum(t *testing.T) {
+	oldSeq := FileNumV2Seq
+	FileNumV2Seq = 10
+	defer func() {
+		FileNumV2Seq = oldSeq
+	}()
+	dqName := "test_disk_queue" + strconv.Itoa(int(time.Now().Unix()))
+	tmpDir, err := ioutil.TempDir("", fmt.Sprintf("nsq-test-%d", time.Now().UnixNano()))
+	if err != nil {
+		panic(err)
+	}
+	defer os.RemoveAll(tmpDir)
+	queue, _ := NewDiskQueueWriter(dqName, tmpDir, 128, 4, 1<<10, 1)
+	dqWriter := queue.(*diskQueueWriter)
+	defer dqWriter.Close()
+	nequal(t, dqWriter, nil)
+	equal(t, dqWriter.diskWriteEnd.TotalMsgCnt(), int64(0))
+
+	msg := []byte("test")
+	msg2 := []byte("test2")
+	var totalCnt int64
+	var splitCnt int64
+	var fileNum int64
+	for {
+		if fileNum > int64(FileNumV2Seq) {
+			dqWriter.Put(msg2)
+			if splitCnt == 0 {
+				splitCnt = totalCnt
+			}
+		} else {
+			dqWriter.Put(msg)
+		}
+		dqWriter.Flush()
+		end := dqWriter.GetQueueWriteEnd()
+		equal(t, err, nil)
+		totalCnt = dqWriter.diskWriteEnd.TotalMsgCnt()
+		fileNum = end.(*diskQueueEndInfo).EndOffset.FileNum
+		if fileNum > int64(FileNumV2Seq)*2 {
+			break
+		}
+	}
+	end := dqWriter.GetQueueWriteEnd()
+	dqReader := newDiskQueueReader(dqName, dqName, tmpDir, 128, 4, 1<<10, 1, 2*time.Second, nil, true)
+	for {
+		dqReader.UpdateQueueEnd(end, false)
+		msgOut, _ := dqReader.TryReadOne()
+		if msgOut.CurCnt > splitCnt {
+			equal(t, msgOut.Data, msg2)
+			if msgOut.CurCnt >= totalCnt {
+				break
+			}
+		} else {
+			equal(t, msgOut.Data, msg)
+		}
+	}
+	t.Log(totalCnt)
+}
+
 func TestDiskQueueWriterCleanOffsetmeta(t *testing.T) {
 	//l := newTestLogger(t)
 	//nsqLog.Logger = l

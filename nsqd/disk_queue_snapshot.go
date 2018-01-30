@@ -175,7 +175,7 @@ func (d *DiskQueueSnapshot) seekTo(voffset BackendOffset, allowBackward bool) er
 	newPos := d.endPos.EndOffset
 	if voffset > d.endPos.virtualEnd {
 		nsqLog.LogErrorf("internal skip error : skipping overflow to : %v, %v", voffset, d.endPos)
-		return ErrMoveOffsetInvalid
+		return ErrMoveOffsetOverflowed
 	} else if voffset == d.endPos.virtualEnd {
 		newPos = d.endPos.EndOffset
 	} else {

@@ -5,8 +5,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"github.com/youzan/nsq/internal/levellogger"
-	"github.com/youzan/nsq/internal/util"
 	"io"
 	"math/rand"
 	"os"
@@ -14,6 +12,9 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/youzan/nsq/internal/levellogger"
+	"github.com/youzan/nsq/internal/util"
 )
 
 const (
@@ -26,6 +27,7 @@ var (
 	ErrConfirmSizeInvalid      = errors.New("Confirm data size invalid.")
 	ErrConfirmCntInvalid       = errors.New("Confirm message count invalid.")
 	ErrMoveOffsetInvalid       = errors.New("move offset invalid")
+	ErrMoveOffsetOverflowed    = errors.New("disk reader move offset overflowed the end")
 	ErrOffsetTypeMismatch      = errors.New("offset type mismatch")
 	ErrReadQueueCountMissing   = errors.New("read queue count info missing")
 	ErrReadEndOfQueue          = errors.New("read to the end of queue")
@@ -33,6 +35,8 @@ var (
 	ErrReadEndChangeToOld      = errors.New("queue read end change to old without reload")
 	ErrExiting                 = errors.New("exiting")
 )
+
+var FileNumV2Seq = 999990
 
 type diskQueueOffset struct {
 	FileNum int64
@@ -638,7 +642,7 @@ func (d *diskQueueReader) internalSkipTo(voffset BackendOffset, cnt int64, backT
 
 	if voffset > d.queueEndInfo.Offset() || cnt > d.queueEndInfo.TotalMsgCnt() {
 		nsqLog.Logf("internal skip great than end : %v, skipping to : %v:%v", d.queueEndInfo, voffset, cnt)
-		return ErrMoveOffsetInvalid
+		return ErrMoveOffsetOverflowed
 	} else if voffset == d.queueEndInfo.Offset() {
 		newPos = d.queueEndInfo.EndOffset
 		if cnt == 0 {
@@ -700,7 +704,7 @@ func (d *diskQueueReader) internalSkipTo(voffset BackendOffset, cnt int64, backT
 	}
 
 	if voffset < d.readQueueInfo.Offset() || nsqLog.Level() >= levellogger.LOG_DEBUG {
-		nsqLog.Logf("==== diskqueue(%s) read skip from %v to : %v, %v", 
+		nsqLog.Logf("==== diskqueue(%s) read skip from %v to : %v, %v",
 			d.readerMetaName, d.readQueueInfo, voffset, newPos)
 	}
 	d.readQueueInfo.EndOffset = newPos
@@ -1107,7 +1111,7 @@ func (d *diskQueueReader) metaDataFileName(newVer bool) string {
 }
 
 func GetQueueFileName(dataRoot string, base string, fileNum int64) string {
-	if fileNum > int64(999990) {
+	if fileNum > int64(FileNumV2Seq) {
 		return fmt.Sprintf(path.Join(dataRoot, "%s.diskqueue.%09d.dat"), base, fileNum)
 	}
 	return fmt.Sprintf(path.Join(dataRoot, "%s.diskqueue.%06d.dat"), base, fileNum)
