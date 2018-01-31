@@ -672,7 +672,7 @@ func (self *NsqLookupCoordinator) doCheckTopics(monitorChan chan struct{}, faile
 			continue
 		}
 
-		// check if any ISR waiting join the topic, if so 
+		// check if any ISR waiting join the topic, if so
 		// we check later.
 		self.joinStateMutex.Lock()
 		state, ok := self.joinISRState[t.Name]
@@ -1086,7 +1086,10 @@ func (self *NsqLookupCoordinator) waitOldLeaderRelease(topicInfo *TopicPartition
 			if _, ok := aliveNodes[topicInfo.Leader]; !ok {
 				coordLog.Warningf("the leader node %v is lost while wait release for topic: %v", topicInfo.Leader, topicInfo.GetTopicDesp())
 				if self.IsMineLeader() {
-					self.leadership.ReleaseTopicLeader(topicInfo.Name, topicInfo.Partition, s)
+					err = self.leadership.ReleaseTopicLeader(topicInfo.Name, topicInfo.Partition, s)
+					if err != nil {
+						coordLog.Errorf("release session failed [%s] : %v", topicInfo.GetTopicDesp(), err)
+					}
 				}
 			}
 			return ErrWaitingLeaderRelease

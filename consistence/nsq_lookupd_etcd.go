@@ -759,8 +759,10 @@ func (self *NsqLookupdEtcdMgr) ReleaseTopicLeader(topic string, partition int, s
 			} else {
 				var old TopicLeaderSession
 				json.Unmarshal([]byte(rsp.Node.Value), &old)
-				if old == *session {
+				if old.IsSame(session) {
 					_, err = self.client.CompareAndDelete(topicKey, rsp.Node.Value, 0)
+				} else {
+					coordLog.Errorf("leader session mismatch [%s],  %v, orig: %v", topicKey, session.LeaderNode, old.LeaderNode)
 				}
 			}
 		}

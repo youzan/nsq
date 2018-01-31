@@ -1,6 +1,7 @@
 package consistence
 
 import (
+	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
@@ -49,5 +50,19 @@ func TestETCDWatch(t *testing.T) {
 			continue
 		}
 		fmt.Println(rsp.Action, rsp.Node.Key, rsp.Node.Value)
+	}
+}
+
+func TestEqualSesssion(t *testing.T) {
+	var new TopicLeaderSession
+	new.LeaderNode = &NsqdNodeInfo{}
+	v, _ := json.Marshal(new)
+	var old TopicLeaderSession
+	json.Unmarshal(v, &old)
+	if *new.LeaderNode != *old.LeaderNode {
+		t.Errorf("should equal: %v, %v", new, old)
+	}
+	if !new.IsSame(&old) {
+		t.Errorf("should equal: %v, %v", new, old)
 	}
 }

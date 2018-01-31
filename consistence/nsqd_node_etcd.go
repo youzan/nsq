@@ -180,7 +180,7 @@ func (self *NsqdEtcdMgr) ReleaseTopicLeader(topic string, partition int, session
 			} else {
 				var old TopicLeaderSession
 				json.Unmarshal([]byte(rsp.Node.Value), &old)
-				if old == *session {
+				if old.IsSame(session) {
 					_, err = self.client.CompareAndDelete(topicKey, rsp.Node.Value, 0)
 					if err != nil {
 						coordLog.Warningf("release topic leader session [%s] error: %v, orig: %v",
