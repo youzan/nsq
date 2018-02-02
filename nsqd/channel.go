@@ -240,12 +240,16 @@ func (c *Channel) closeClientMsgChannels() {
 func (c *Channel) RemoveTagClientMsgChannel(tag string) {
 	c.tagMsgChansMutex.Lock()
 	defer c.tagMsgChansMutex.Unlock()
+	tagCh, ok := c.tagMsgChans[tag]
+	if !ok {
+		return
+	}
 
-	cnt := c.tagMsgChans[tag].ClientCnt
+	cnt := tagCh.ClientCnt
 	if cnt-1 > int64(0) {
-		c.tagMsgChans[tag].ClientCnt = cnt - 1
+		tagCh.ClientCnt = cnt - 1
 	} else {
-		c.tagMsgChans[tag].ClientCnt = 0
+		tagCh.ClientCnt = 0
 		delete(c.tagMsgChans, tag)
 		select {
 		case c.tagChanRemovedChan <- tag:
