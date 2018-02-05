@@ -964,7 +964,7 @@ func (q *DelayQueue) PeekRecentTimeoutWithFilter(results []Message, peekTs int64
 
 			if v == nil {
 				// k is not nil, v is nil, sub bucket?
-				nsqLog.LogErrorf("topic %v iterater nil value: %v", 
+				nsqLog.LogErrorf("topic %v iterater nil value: %v",
 					q.fullName, k)
 				continue
 			}
@@ -972,7 +972,7 @@ func (q *DelayQueue) PeekRecentTimeoutWithFilter(results []Message, peekTs int64
 			copy(buf, v)
 			m, err := DecodeDelayedMessage(buf, q.IsExt())
 			if err != nil {
-				nsqLog.LogErrorf("topic %v failed to decode delayed message: %v, %v, %v", 
+				nsqLog.LogErrorf("topic %v failed to decode delayed message: %v, %v, %v",
 					q.fullName, v, k, err)
 				continue
 			}
@@ -1287,7 +1287,7 @@ func (q *DelayQueue) compactStore(force bool) error {
 			return nil
 		}
 	}
-	tmpPath := src.Path() + "-tmp.compact"
+	tmpPath := fmt.Sprintf("%s-tmp.compact.%d", src.Path(), time.Now().UnixNano())
 	// Open destination database.
 	ro := &bolt.Options{
 		Timeout:  time.Second,
@@ -1361,7 +1361,7 @@ func compactBolt(dst, src *bolt.DB, maxCompactTime time.Duration) error {
 		// Create bucket on the root transaction if this is the first level.
 		nk := len(keys)
 		if nk == 0 {
-			bkt, err := tx.CreateBucket(k)
+			bkt, err := tx.CreateBucketIfNotExists(k)
 			if err != nil {
 				return err
 			}
@@ -1381,7 +1381,7 @@ func compactBolt(dst, src *bolt.DB, maxCompactTime time.Duration) error {
 
 		// If there is no value then this is a bucket call.
 		if v == nil {
-			bkt, err := b.CreateBucket(k)
+			bkt, err := b.CreateBucketIfNotExists(k)
 			if err != nil {
 				return err
 			}
