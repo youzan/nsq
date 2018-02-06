@@ -159,8 +159,8 @@ func NewChannel(topicName string, part int, channelName string, chEnd BackendQue
 		waitingRequeueMsgs:     make(map[MessageID]*Message, 100),
 		clientMsgChan:          make(chan *Message),
 		tagMsgChans:            make(map[string]*MsgChanData),
-		tagChanInitChan:        make(chan string, 10),
-		tagChanRemovedChan:     make(chan string, 10),
+		tagChanInitChan:        make(chan string, 2),
+		tagChanRemovedChan:     make(chan string, 2),
 		exitChan:               make(chan int),
 		exitSyncChan:           make(chan bool),
 		clients:                make(map[int64]Consumer),
@@ -256,7 +256,7 @@ func (c *Channel) RemoveTagClientMsgChannel(tag string) {
 		default:
 			select {
 			case c.tagChanRemovedChan <- tag:
-			case <-time.After(5 * time.Millisecond):
+			case <-time.After(time.Millisecond):
 				nsqLog.Infof("%v-%v timeout sending tag channel remove signal for %v", c.GetTopicName(), c.GetName(), tag)
 			}
 		}
@@ -279,8 +279,8 @@ func (c *Channel) GetOrCreateClientMsgChannel(tag string) chan *Message {
 		}
 		select {
 		case c.tagChanInitChan <- tag:
-		case <-time.After(5 * time.Millisecond):
-			nsqLog.Infof("timeout sending tag channel init signal for %v", tag)
+		case <-time.After(time.Millisecond):
+			nsqLog.Infof("%v-%v timeout sending tag channel init signal for %v", c.GetTopicName(), c.GetName(), tag)
 		}
 	}
 
@@ -1547,6 +1547,15 @@ LOOP:
 			goto exit
 		}
 
+		if c.IsExt() {
+			// clean notify to avoid block notify while get/remove tag channel
+			select {
+			case <-c.tagChanInitChan:
+			case <-c.tagChanRemovedChan:
+			default:
+			}
+		}
+
 		resetReaderFlag := atomic.LoadInt32(&c.needResetReader)
 		if resetReaderFlag > 0 {
 			nsqLog.Infof("reset the reader : %v", c.GetConfirmed())
@@ -1765,6 +1774,14 @@ LOOP:
 
 		var msgTag string
 		var extParsed bool
+		if c.IsExt() {
+			// clean notify to avoid block notify while get/remove tag channel
+			select {
+			case <-c.tagChanInitChan:
+			case <-c.tagChanRemovedChan:
+			default:
+			}
+		}
 
 	tagMsgLoop:
 		needParseExt := !extParsed && c.isNeedParseMsgExt()
