@@ -253,8 +253,12 @@ func (c *Channel) RemoveTagClientMsgChannel(tag string) {
 		delete(c.tagMsgChans, tag)
 		select {
 		case c.tagChanRemovedChan <- tag:
-		case <-time.After(50 * time.Millisecond):
-			nsqLog.Infof("timeout sending tag channel remove signal for %v", tag)
+		default:
+			select {
+			case c.tagChanRemovedChan <- tag:
+			case <-time.After(5 * time.Millisecond):
+				nsqLog.Infof("%v-%v timeout sending tag channel remove signal for %v", c.GetTopicName(), c.GetName(), tag)
+			}
 		}
 	}
 }
@@ -275,7 +279,7 @@ func (c *Channel) GetOrCreateClientMsgChannel(tag string) chan *Message {
 		}
 		select {
 		case c.tagChanInitChan <- tag:
-		case <-time.After(50 * time.Millisecond):
+		case <-time.After(5 * time.Millisecond):
 			nsqLog.Infof("timeout sending tag channel init signal for %v", tag)
 		}
 	}
@@ -373,7 +377,7 @@ func (c *Channel) SetConsumeOffset(offset BackendOffset, cnt int64, force bool) 
 			if offset > 0 && cnt > 0 {
 				select {
 				case c.readerChanged <- resetChannelData{offset, cnt, true}:
-				case <-time.After(time.Second):
+				case <-time.After(time.Millisecond * 10):
 					nsqLog.Logf("ignored the reader reset finally: %v:%v", offset, cnt)
 				}
 			}
