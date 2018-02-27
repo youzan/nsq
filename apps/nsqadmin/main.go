@@ -53,13 +53,22 @@ var (
 	channelCreateRetry           = flagSet.Int("channel-create-retry", 3, "max retry for creating channel in topic creation")
 	channelCreateBackoffInterval = flagSet.Int("channel-create-backoff-interval", 1000, "backoff interval when default channel fail to create in topic creation")
 
+	casUrl = flagSet.String("cas-url", "", "cas service url")
+	casAuthSecret = flagSet.String("cas-auth-secret", "", "cas auth secret")
+	casLogoutUrl = flagSet.String("cas-logout-url", "", "cas logout url")
+	casAuthUrl = flagSet.String("cas-auth-url", "", "cas auth url")
+	casAppName = flagSet.String("cas-app-name", "", "cas app name")
+	casRedirectUrl = flagSet.String("cas-redirect-url", "", "cas refirect url")
+
 	nsqlookupdHTTPAddresses = app.StringArray{}
 	nsqdHTTPAddresses       = app.StringArray{}
+	accessTokens = app.StringArray{}
 )
 
 func init() {
 	flagSet.Var(&nsqlookupdHTTPAddresses, "lookupd-http-address", "lookupd HTTP address (may be given multiple times)")
 	flagSet.Var(&nsqdHTTPAddresses, "nsqd-http-address", "nsqd HTTP address (may be given multiple times)")
+	flagSet.Var(&accessTokens, "access-tokens", "access token for api access")
 }
 
 func main() {
@@ -100,7 +109,6 @@ func main() {
 	glog.StartWorker(time.Second * 2)
 
 	nsqadmin := nsqadmin.New(opts)
-
 	nsqadmin.Main()
 	<-exitChan
 	nsqadmin.Exit()

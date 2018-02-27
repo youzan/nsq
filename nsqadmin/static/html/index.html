@@ -27,6 +27,11 @@
         var STATSD_PREFIX = '{{.StatsdPrefix}}';
         var NSQLOOKUPD = [{{range .NSQLookupd}}'{{.}}',{{end}}];
         var ALLNSQLOOKUPDS = [{{range .AllNSQLookupds}}'{{.}}',{{end}}];
+        var CAS_AUTH_URL = '{{.CASAuthUrl}}';
+        var CAS_LOGOUT_URL = '{{.CASLogoutUrl}}';
+        var LOGIN        = {{if .Login}}true{{else}}false{{end}};
+        var USER         = '{{.User}}';
+        var AUTH_ENABLED = {{if .AuthEnabled}}true{{else}}false{{end}};
     </script>
     <script src="/static/vendor.js"></script>
     <script src="/static/main.js"></script>

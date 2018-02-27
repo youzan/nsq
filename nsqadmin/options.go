@@ -38,8 +38,15 @@ type Options struct {
 	ChannelCreationRetry           int `flag:"channel-create-retry"`
 	ChannelCreationBackoffInterval int `flag:"channel-create-backoff-interval"`
 
+	CASUrl			string `flag:"cas-url" cfg:"cas_url"`
+	CASAuthSecret		string `flag:"cas-auth-secret" cfg:"cas_auth_secret"`
+	CASLogoutUrl		string `flag:"cas-logout-url" cfg:"cas_logout_url"`
+	CASAuthUrl		string `flag:"cas-auth-url" cfg:"cas_auth_url"`
+	CASAppName              string `flag:"cas-app-name" cfg:"cas_app_name"`
+	CASRedirectUrl          string `flag:"cas-redirect-url" cfg:"cas_redirect_url"`
 	LogDir string `flag:"log-dir" cfg:"log_dir"`
 	Logger levellogger.Logger
+	AccessTokens		[]string `flag:"access-tokens" cfg:"access_tokens"`
 }
 
 func NewOptions() *Options {

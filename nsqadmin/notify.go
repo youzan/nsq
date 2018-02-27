@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"time"
+	"encoding/json"
 )
 
 type AdminAction struct {
@@ -20,6 +21,14 @@ type AdminAction struct {
 	UserAgent string `json:"user_agent"`
 	URL       string `json:"url"` // The URL of the HTTP request that triggered this action
 	Via       string `json:"via"` // the Hostname of the nsqadmin performing this action
+}
+
+func (a *AdminAction) String() string {
+	bytes, err := json.Marshal(*a)
+	if err == nil {
+		return string(bytes)
+	}
+	return ""
 }
 
 func basicAuthUser(req *http.Request) string {
@@ -36,6 +45,44 @@ func basicAuthUser(req *http.Request) string {
 		return ""
 	}
 	return pair[0]
+}
+
+
+func (s *httpServer) notifyAdminActionWithUser(user, action, topic, channel, node string, req *http.Request) {
+	via, _ := os.Hostname()
+	u := url.URL{
+		Scheme:   "http",
+		Host:     req.Host,
+		Path:     req.URL.Path,
+		RawQuery: req.URL.RawQuery,
+	}
+	if req.TLS != nil || req.Header.Get("X-Scheme") == "https" {
+		u.Scheme = "https"
+	}
+	a := &AdminAction{
+		Action:    action,
+		Topic:     topic,
+		Channel:   channel,
+		Node:      node,
+		Timestamp: time.Now().Unix(),
+		RemoteIP:  req.RemoteAddr,
+		UserAgent: req.UserAgent(),
+		URL:       u.String(),
+		Via:       via,
+	}
+	if user != "" {
+		a.User = user
+	} else {
+		a.User = basicAuthUser(req)
+	}
+	// access log
+	s.ctx.nsqadmin.logf("ACCESS: %v", a.String())
+	if s.ctx.nsqadmin.opts.NotificationHTTPEndpoint == "" {
+		return
+	}
+
+	// Perform all work in a new goroutine so this never blocks
+	go func() { s.ctx.nsqadmin.notifications <- a }()
 }
 
 func (s *httpServer) notifyAdminAction(action, topic, channel, node string, req *http.Request) {
