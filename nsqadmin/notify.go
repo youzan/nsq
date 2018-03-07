@@ -48,7 +48,7 @@ func basicAuthUser(req *http.Request) string {
 }
 
 
-func (s *httpServer) notifyAdminActionWithUser(user, action, topic, channel, node string, req *http.Request) {
+func (s *httpServer) notifyAdminActionWithUser(action, topic, channel, node string, req *http.Request) {
 	via, _ := os.Hostname()
 	u := url.URL{
 		Scheme:   "http",
@@ -70,8 +70,9 @@ func (s *httpServer) notifyAdminActionWithUser(user, action, topic, channel, nod
 		URL:       u.String(),
 		Via:       via,
 	}
-	if user != "" {
-		a.User = user
+	user, _ := s.getExistingUserInfo(req)
+	if user != nil && user.IsLogin() {
+		a.User = user.GetUserName()
 	} else {
 		a.User = basicAuthUser(req)
 	}

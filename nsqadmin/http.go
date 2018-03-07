@@ -26,6 +26,7 @@ import (
 	"github.com/youzan/nsq/internal/version"
 	"github.com/gorilla/sessions"
 	"reflect"
+	"errors"
 )
 
 var store = sessions.NewCookieStore([]byte("cas-authen"))
@@ -126,24 +127,62 @@ func NewHTTPServer(ctx *Context) *httpServer {
 	return s
 }
 
-func (s *httpServer) getUserInfo(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (bool, *CasUserModel) {
-	if s.ctx.nsqadmin.IsAuthEnabled() {
-		session, err := store.Get(req, "session-userInfo")
-		if err != nil {
-			s.ctx.nsqadmin.logf("ERROR: error in fetching session")
-			return false, nil
-		}
-		val := session.Values["cas"]
-		if casUserModel, ok := val.(*CasUserModel); !ok && val != nil {
-			// Handle the case that it's not an expected type
-			s.ctx.nsqadmin.logf("ERROR: cas value type in session is not right, actual type %v", reflect.TypeOf(val))
-			return false, nil
-		} else if casUserModel != nil {
-			s.ctx.nsqadmin.logf("ACCESS: id:%v userName:%v, logout", casUserModel.Id, casUserModel.UserName)
-			return casUserModel != nil, casUserModel
-		}
+func (s *httpServer) getExistingUserInfo(req *http.Request) (IUserAuth, error) {
+	session, err := store.Get(req, "session-userInfo")
+	if err != nil {
+		return nil, err
 	}
-	return false, nil
+	val := session.Values["cas"]
+	s.ctx.nsqadmin.logf("session content: %v", val)
+	if val != nil {
+		if casUserModel, ok := val.(*CasUserModel); !ok {
+			return nil, errors.New(fmt.Sprint("cas value type in session is not right, actual type %v", reflect.TypeOf(val)))
+		} else {
+			if casUserModel != nil {
+				casUserModel.ctx = s.ctx
+			}
+			return casUserModel, nil
+		}
+	} else {
+		return nil, nil
+	}
+}
+
+func (s *httpServer) logoutUser(w http.ResponseWriter, req *http.Request) error {
+	session, err := store.Get(req, "session-userInfo")
+	if err != nil {
+		return err
+	}
+	val := session.Values["cas"]
+	if casUserModel, ok := val.(*CasUserModel); ok {
+		s.ctx.nsqadmin.logf("ACCESS: user: %v logout", casUserModel)
+	} else {
+		s.ctx.nsqadmin.logf("WARNING: user info not found")
+	}
+	session.Values["cas"] = nil
+	return session.Save(req, w)
+}
+
+func (s *httpServer) getUserInfo(w http.ResponseWriter, req *http.Request) (IUserAuth, error) {
+	u, err := s.getExistingUserInfo(req)
+	if err != nil {
+		s.ctx.nsqadmin.logf("error getting existing user, err: %v", err)
+		return nil, err
+	}
+	if u == nil {
+		s.ctx.nsqadmin.logf("get new user %v", u)
+		u, err = NewCasUserModel(s.ctx, w, req)
+	}
+	s.ctx.nsqadmin.logf("get user %v", u.String())
+	return u, err
+}
+
+func (s *httpServer) validAccessToken(req *http.Request) (valid bool) {
+	token, ok := parseAccessToken(req)
+	if ok && s.ctx.nsqadmin.accessTokens[token] {
+		return true
+	}
+	return
 }
 
 func parseAccessToken(r *http.Request) (token string, ok bool) {
@@ -162,17 +201,13 @@ func (s *httpServer) authCheck(f http_api.APIHandler) http_api.APIHandler {
 	return func(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {
 		//check cas user info
 		if s.ctx.nsqadmin.IsAuthEnabled() {
-			session, err := store.Get(req, "session-userInfo")
+			u, err := s.getUserInfo(w, req)
 			if err != nil {
+				s.ctx.nsqadmin.logf("error in fetching user model %v", err);
 				return nil, http_api.Err{http.StatusInternalServerError, "fail to find associated user info"}
 			}
-			if nil == session.Values["cas"] {
-				token, ok := parseAccessToken(req)
-				if ok &&  s.ctx.nsqadmin.accessTokens[token] {
-					//update session info
-				} else {
-					return nil, http_api.Err{http.StatusUnauthorized, "authentication needed"}
-				}
+			if !u.IsLogin() && !s.validAccessToken(req) {
+				return nil, http_api.Err{http.StatusUnauthorized, "authentication needed"}
 			}
 		}
 		return f(w, req, ps)
@@ -219,14 +254,7 @@ func (s *httpServer) indexHandler(w http.ResponseWriter, req *http.Request, ps h
 		}
 	}
 	s.ctx.nsqadmin.logf("total lookupd nodes : %v", lookupdAddresses)
-	isLogin, userModel := s.getUserInfo(w, req, ps)
-	if err != nil {
-		s.ctx.nsqadmin.logf("WARNING: failed to check login state : %v", err)
-	}
-	var username string
-	if nil != userModel {
-		username = userModel.UserName
-	}
+	u, _ := s.getUserInfo(w, req)
 	//add redirect query to ca auth url
 	casAuthUrl, err := url.Parse(s.ctx.nsqadmin.opts.CASAuthUrl)
 	if err != nil {
@@ -264,8 +292,8 @@ func (s *httpServer) indexHandler(w http.ResponseWriter, req *http.Request, ps h
 		AllNSQLookupds:      lookupdAddresses,
 		CASAuthUrl:          casAuthUrl.String(),
 		CASLogoutUrl:        s.ctx.nsqadmin.opts.CASLogoutUrl,
-		Login: 		     isLogin,
-		User:		     username,
+		Login: 		     u.IsLogin(),
+		User:		     u.GetUserName(),
 		AuthEnabled:         s.ctx.nsqadmin.IsAuthEnabled(),
 	})
 
@@ -632,12 +660,7 @@ func (s *httpServer) tombstoneNodeForTopicHandler(w http.ResponseWriter, req *ht
 		s.ctx.nsqadmin.logf("WARNING: %s", err)
 		messages = append(messages, pe.Error())
 	}
-	exist, casUser := s.getUserInfo(w, req, ps)
-	var user string
-	if exist {
-		user = casUser.UserName
-	}
-	s.notifyAdminActionWithUser(user, "tombstone_topic_producer", body.Topic, "", node, req)
+	s.notifyAdminActionWithUser("tombstone_topic_producer", body.Topic, "", node, req)
 
 	return struct {
 		Message string `json:"message"`
@@ -924,13 +947,7 @@ func (s *httpServer) createTopicChannelHandler(w http.ResponseWriter, req *http.
 		s.ctx.nsqadmin.logf("WARNING: %s", err)
 		messages = append(messages, pe.Error())
 	}
-
-	exist, casUser := s.getUserInfo(w, req, ps)
-	var user string
-	if exist {
-		user = casUser.UserName
-	}
-	s.notifyAdminActionWithUser(user, "create_topic", body.Topic, "", "", req)
+	s.notifyAdminActionWithUser("create_topic", body.Topic, "", "", req)
 
 	//create default channel
 	if body.Channel != "" {
@@ -940,12 +957,7 @@ func (s *httpServer) createTopicChannelHandler(w http.ResponseWriter, req *http.
 				err := s.ci.CreateTopicChannelAfterTopicCreation(body.Topic, body.Channel,
 					s.ctx.nsqadmin.opts.NSQLookupdHTTPAddresses, pnum)
 				if err == nil {
-					exist, casUser := s.getUserInfo(w, req, ps)
-					var user string
-					if exist {
-						user = casUser.UserName
-					}
-					s.notifyAdminActionWithUser(user, "create_channel", body.Topic, body.Channel, "", req)
+					s.notifyAdminActionWithUser("create_channel", body.Topic, body.Channel, "", req)
 					s.ctx.nsqadmin.logf("channel created.")
 					break
 				} else {
@@ -981,12 +993,7 @@ func (s *httpServer) deleteTopicHandler(w http.ResponseWriter, req *http.Request
 		messages = append(messages, pe.Error())
 	}
 
-	exist, casUser := s.getUserInfo(w, req, ps)
-	var user string
-	if exist {
-		user = casUser.UserName
-	}
-	s.notifyAdminActionWithUser(user, "delete_topic", topicName, "", "", req)
+	s.notifyAdminActionWithUser("delete_topic", topicName, "", "", req)
 
 	return struct {
 		Message string `json:"message"`
@@ -1012,12 +1019,7 @@ func (s *httpServer) deleteChannelHandler(w http.ResponseWriter, req *http.Reque
 		messages = append(messages, pe.Error())
 	}
 
-	exist, casUser := s.getUserInfo(w, req, ps)
-	var user string
-	if exist {
-		user = casUser.UserName
-	}
-	s.notifyAdminActionWithUser(user, "delete_channel", topicName, channelName, "", req)
+	s.notifyAdminActionWithUser("delete_channel", topicName, channelName, "", req)
 
 	return struct {
 		Message string `json:"message"`
@@ -1026,26 +1028,16 @@ func (s *httpServer) deleteChannelHandler(w http.ResponseWriter, req *http.Reque
 
 func (s *httpServer) topicActionHandler(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {
 	topicName := ps.ByName("topic")
-	exist, casUser := s.getUserInfo(w, req, ps)
-	var user string
-	if exist {
-		user = casUser.UserName
-	}
-	return s.topicChannelAction(user, req, topicName, "")
+	return s.topicChannelAction(req, topicName, "")
 }
 
 func (s *httpServer) channelActionHandler(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {
 	topicName := ps.ByName("topic")
 	channelName := ps.ByName("channel")
-	exist, casUser := s.getUserInfo(w, req, ps)
-	var user string
-	if exist {
-		user = casUser.UserName
-	}
-	return s.topicChannelAction(user, req, topicName, channelName)
+	return s.topicChannelAction(req, topicName, channelName)
 }
 
-func (s *httpServer) topicChannelAction(user string, req *http.Request, topicName string, channelName string) (interface{}, error) {
+func (s *httpServer) topicChannelAction(req *http.Request, topicName string, channelName string) (interface{}, error) {
 	var messages []string
 
 	var body struct {
@@ -1064,13 +1056,13 @@ func (s *httpServer) topicChannelAction(user string, req *http.Request, topicNam
 				s.ctx.nsqadmin.opts.NSQLookupdHTTPAddresses,
 				s.ctx.nsqadmin.opts.NSQDHTTPAddresses)
 
-			s.notifyAdminActionWithUser(user, "pause_channel", topicName, channelName, "", req)
+			s.notifyAdminActionWithUser("pause_channel", topicName, channelName, "", req)
 		} else {
 			err = s.ci.PauseTopic(topicName,
 				s.ctx.nsqadmin.opts.NSQLookupdHTTPAddresses,
 				s.ctx.nsqadmin.opts.NSQDHTTPAddresses)
 
-			s.notifyAdminActionWithUser(user, "pause_topic", topicName, "", "", req)
+			s.notifyAdminActionWithUser("pause_topic", topicName, "", "", req)
 		}
 	case "unpause":
 		if channelName != "" {
@@ -1078,13 +1070,13 @@ func (s *httpServer) topicChannelAction(user string, req *http.Request, topicNam
 				s.ctx.nsqadmin.opts.NSQLookupdHTTPAddresses,
 				s.ctx.nsqadmin.opts.NSQDHTTPAddresses)
 
-			s.notifyAdminActionWithUser(user, "unpause_channel", topicName, channelName, "", req)
+			s.notifyAdminActionWithUser("unpause_channel", topicName, channelName, "", req)
 		} else {
 			err = s.ci.UnPauseTopic(topicName,
 				s.ctx.nsqadmin.opts.NSQLookupdHTTPAddresses,
 				s.ctx.nsqadmin.opts.NSQDHTTPAddresses)
 
-			s.notifyAdminActionWithUser(user, "unpause_topic", topicName, "", "", req)
+			s.notifyAdminActionWithUser("unpause_topic", topicName, "", "", req)
 		}
 	case "skip":
 		if channelName != "" {
@@ -1096,7 +1088,7 @@ func (s *httpServer) topicChannelAction(user string, req *http.Request, topicNam
 					s.ctx.nsqadmin.opts.NSQLookupdHTTPAddresses,
 					s.ctx.nsqadmin.opts.NSQDHTTPAddresses)
 			}
-			s.notifyAdminActionWithUser(user, "skip_channel", topicName, channelName, "", req)
+			s.notifyAdminActionWithUser("skip_channel", topicName, channelName, "", req)
 		}
 	case "unskip":
 		if channelName != "" {
@@ -1104,7 +1096,7 @@ func (s *httpServer) topicChannelAction(user string, req *http.Request, topicNam
 				s.ctx.nsqadmin.opts.NSQLookupdHTTPAddresses,
 				s.ctx.nsqadmin.opts.NSQDHTTPAddresses)
 
-			s.notifyAdminActionWithUser(user, "unskip_channel", topicName, channelName, "", req)
+			s.notifyAdminActionWithUser("unskip_channel", topicName, channelName, "", req)
 		}
 	case "empty":
 		if channelName != "" {
@@ -1112,20 +1104,20 @@ func (s *httpServer) topicChannelAction(user string, req *http.Request, topicNam
 				s.ctx.nsqadmin.opts.NSQLookupdHTTPAddresses,
 				s.ctx.nsqadmin.opts.NSQDHTTPAddresses)
 
-			s.notifyAdminActionWithUser(user, "empty_channel", topicName, channelName, "", req)
+			s.notifyAdminActionWithUser("empty_channel", topicName, channelName, "", req)
 		} else {
 			err = s.ci.EmptyTopic(topicName,
 				s.ctx.nsqadmin.opts.NSQLookupdHTTPAddresses,
 				s.ctx.nsqadmin.opts.NSQDHTTPAddresses)
 
-			s.notifyAdminActionWithUser(user, "empty_topic", topicName, "", "", req)
+			s.notifyAdminActionWithUser("empty_topic", topicName, "", "", req)
 		}
 	case "create":
 		if channelName != "" {
 			err = s.ci.CreateTopicChannel(topicName, channelName,
 				s.ctx.nsqadmin.opts.NSQLookupdHTTPAddresses)
 
-			s.notifyAdminActionWithUser(user, "create_channel", topicName, channelName, "", req)
+			s.notifyAdminActionWithUser("create_channel", topicName, channelName, "", req)
 		}
 	case "reset":
 		if channelName != "" {
@@ -1133,7 +1125,7 @@ func (s *httpServer) topicChannelAction(user string, req *http.Request, topicNam
 			tsStr := fmt.Sprintf("timestamp:%v", body.Timestamp)
 			err = s.ci.ResetChannel(topicName, channelName,
 				s.ctx.nsqadmin.opts.NSQLookupdHTTPAddresses, tsStr)
-			s.notifyAdminActionWithUser(user, "reset_channel", topicName, channelName, "", req)
+			s.notifyAdminActionWithUser("reset_channel", topicName, channelName, "", req)
 
 		}
 	default:
@@ -1232,6 +1224,7 @@ type CasResponse struct {
 type  CasResponseValue struct {
 	Value *CasUserModel
 }
+
 type CasUserModel struct {
 	Id       int64
 	UserName string
@@ -1240,25 +1233,164 @@ type CasUserModel struct {
 	Aliasna  string
 	Mobile   string
 	Email    string
+	Login    bool
+	Admin  bool
+	ctx *Context
+}
+
+func (u *CasUserModel) String() string {
+	return fmt.Sprintf("Id: %v, Username: %v, Realname: %v, Email: %v, Login: %v", u.Id, u.UserName, u.RealName, u.Email, u.Login)
+}
+
+func (u *CasUserModel) copy(newU *CasUserModel) {
+	u.Id = newU.Id
+	u.UserName = newU.UserName
+	u.Gender = newU.Gender
+	u.RealName = newU.RealName
+	u.Aliasna =  newU.Aliasna
+	u.Mobile = newU.Mobile
+	u.Email = newU.Email
+}
+
+func (u *CasUserModel) getId() int64 {
+	return u.Id
+}
+
+func (u *CasUserModel) GetUserName() string {
+	return u.UserName
+}
+
+func (u *CasUserModel) getGender() bool {
+	return u.Gender
+}
+
+func (u *CasUserModel) getRealName() string {
+	return u.RealName
+}
+
+func (u *CasUserModel) getAliasna() string {
+	return u.Aliasna
+}
+
+func (u *CasUserModel) getMobile() string {
+	return u.Mobile
+}
+
+func (u *CasUserModel) getEmail() string {
+	return u.Email
+}
+
+func NewCasUserModel(ctx *Context, w http.ResponseWriter, req *http.Request) (*CasUserModel, error) {
+	casUser := &CasUserModel{
+		Login:  false,
+		Admin: false,
+		ctx: ctx,
+	}
+	session, err := store.Get(req, "session-userInfo")
+	if err != nil {
+		ctx.nsqadmin.logf("ERROR: error in fetching session")
+		return nil, err
+	}
+	session.Options = &sessions.Options{
+		Path: "/",
+		//keep it in 12 hours
+		MaxAge:   43200,
+	}
+	session.Values["cas"] = casUser
+	session.Save(req, w)
+	return casUser, nil
+}
+
+func (u *CasUserModel) IsLogin() bool {
+	return u.Login
+}
+
+func (u *CasUserModel) GetUserRole() string {
+	return "user"
+}
+
+func (u *CasUserModel) IsAdmin() bool {
+	return u.Admin
+}
+
+//save(persist) current case user model
+func (u *CasUserModel) save(w http.ResponseWriter, req *http.Request) error {
+	session, err := store.Get(req, "session-userInfo")
+	if err != nil {
+		//u.ctx.nsqadmin.logf("ERROR: error in fetching session")
+		return err
+	}
+	session.Save(req, w)
+	return nil
+}
+
+func (u *CasUserModel) DoAuth(w http.ResponseWriter, req *http.Request) error {
+	v, err := url.ParseQuery(req.URL.RawQuery)
+	if err != nil {
+		u.ctx.nsqadmin.logf("ERROR: fail to parse cas URL queries %v", req.URL.String())
+		return err
+	}
+	code:= v.Get("code")
+	if code == "" {
+		return errors.New("illeggal code form cas")
+	}
+
+	casUrl := u.ctx.nsqadmin.opts.CASUrl
+	userInfoUrl, err := url.Parse(casUrl)
+	if err != nil {
+		u.ctx.nsqadmin.logf("ERROR: fail to parse cas URL %v", casUrl)
+		return err
+	}
+	userInfoUrl.Path = "/oauth/users/self"
+	v, err = url.ParseQuery(userInfoUrl.RawQuery)
+	if err != nil {
+		u.ctx.nsqadmin.logf("ERROR: fail to parse cas URL queries %v", casUrl)
+		return err
+	}
+	v.Add("code", code)
+	userInfoUrl.RawQuery = v.Encode()
+
+	casSecret := u.ctx.nsqadmin.opts.CASAuthSecret
+	client := http.DefaultClient
+	userInfoReq, _ := http.NewRequest("GET", userInfoUrl.String(), nil)
+	userInfoReq.Header.Set("Authorization", "oauth " + casSecret)
+	resp, err := client.Do(userInfoReq)
+	if err != nil {
+		u.ctx.nsqadmin.logf("WARN: fail to fetch user info from cas remote, url %v, err: %v", userInfoUrl.String(), err)
+		return err
+	}
+	body, err := ioutil.ReadAll(resp.Body)
+	authResp := &CasResponse{}
+	err = json.Unmarshal(body, authResp)
+	if err != nil {
+		u.ctx.nsqadmin.logf("WARN: fail to parse user info from cas remote, url %v, err: %v", userInfoUrl.String(), err)
+		//redirect
+		return err
+	}
+	if authResp.Code != 0 {
+		u.ctx.nsqadmin.logf("WARN: wrong resp code in user info resp, url %v, code: %v", userInfoUrl.String(), authResp.Code)
+		return errors.New(fmt.Sprintf("wrong resp code %v in user info resp", authResp.Code))
+	}
+	u.copy(authResp.Data.Value)
+	u.Login = true
+	u.save(w, req)
+	return nil
+}
+
+
+
+type IUserAuth interface {
+	IsLogin() bool
+	GetUserRole() string
+	GetUserName() string
+	IsAdmin() bool
+	DoAuth(w http.ResponseWriter, req *http.Request) error
+	String() string
 }
 
 func (s *httpServer) casAuthCallbackLogoutHandler(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {
-
-	session, err := store.Get(req, "session-userInfo")
-	if err != nil {
-		s.ctx.nsqadmin.logf("ERROR: error in fetching session")
-		return nil, err
-	}
-	val := session.Values["cas"]
-	if casUserModel, ok := val.(*CasUserModel); !ok {
-		// Handle the case that it's not an expected type
-		s.ctx.nsqadmin.logf("ERROR: cas value type in session is not right, actual type %v", reflect.TypeOf(val))
-	} else {
-		s.ctx.nsqadmin.logf("ACCESS: id:%v userName:%v, logout", casUserModel.Id, casUserModel.UserName)
-	}
-	session.Values["cas"] = nil
-	session.Save(req, w)
-	return nil, nil
+	err := s.logoutUser(w, req)
+	return nil, err
 }
 
 func (s *httpServer) casAuthCallbackHandler(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {
@@ -1267,62 +1399,15 @@ func (s *httpServer) casAuthCallbackHandler(w http.ResponseWriter, req *http.Req
 		s.ctx.nsqadmin.logf("ERROR: fail to parse cas URL queries %v", req.URL.String())
 		return nil, err
 	}
-	code:= v.Get("code")
 	redirectPath := v.Get("qs")
-	casUrl := s.ctx.nsqadmin.opts.CASUrl
-	userInfoUrl, err := url.Parse(casUrl)
-	if err != nil {
-		s.ctx.nsqadmin.logf("ERROR: fail to parse cas URL %v", casUrl)
-		return nil, err
-	}
-	userInfoUrl.Path = "/oauth/users/self"
-	v, err = url.ParseQuery(userInfoUrl.RawQuery)
-	if err != nil {
-		s.ctx.nsqadmin.logf("ERROR: fail to parse cas URL queries %v", casUrl)
-		return nil, err
-	}
-	v.Add("code", code)
-	userInfoUrl.RawQuery = v.Encode()
 
-	casSecret := s.ctx.nsqadmin.opts.CASAuthSecret
-	client := http.DefaultClient
-	userInfoReq, _ := http.NewRequest("GET", userInfoUrl.String(), nil)
-	userInfoReq.Header.Set("Authorization", "oauth " + casSecret)
-	resp, err := client.Do(userInfoReq)
+	u, err := s.getUserInfo(w, req)
 	if err != nil {
-		s.ctx.nsqadmin.logf("WARN: fail to fetch user info from cas remote, url %v, err: %v", userInfoUrl.String(), err)
-		//redirect
-		http.Redirect(w, req, s.ctx.nsqadmin.opts.CASAuthUrl, http.StatusMovedPermanently)
-		return nil, nil
-	}
-	body, err := ioutil.ReadAll(resp.Body)
-	authResp := &CasResponse{}
-	err = json.Unmarshal(body, authResp)
-	if err != nil {
-		s.ctx.nsqadmin.logf("WARN: fail to parse user info from cas remote, url %v, err: %v", userInfoUrl.String(), err)
-		//redirect
-		http.Redirect(w, req, s.ctx.nsqadmin.opts.CASAuthUrl, http.StatusMovedPermanently)
-		return nil, nil
-	}
-	if authResp.Code != 0 {
-		s.ctx.nsqadmin.logf("WARN: wrong resp code in user info resp, url %v, code: %v", userInfoUrl.String(), authResp.Code)
-		//redirect
-		http.Redirect(w, req, s.ctx.nsqadmin.opts.CASAuthUrl, http.StatusMovedPermanently)
-		return nil, nil
-	}
-	session, err := store.Get(req, "session-userInfo")
-	if err != nil {
-		s.ctx.nsqadmin.logf("ERROR: error in fetching session")
+		s.ctx.nsqadmin.logf("ERROR: fail to get user info, %v", err)
 		return nil, err
 	}
-	session.Options = &sessions.Options{
-		Path: "/",
-		//keep it in 12 hours
-		MaxAge:   43200,
-	}
-	session.Values["cas"] = authResp.Data.Value
-	session.Save(req, w)
-	s.ctx.nsqadmin.logf("ACCESS: id:%v userName:%v, login", authResp.Data.Value.Id, authResp.Data.Value.UserName)
+	u.DoAuth(w, req)
+	s.ctx.nsqadmin.logf("ACCESS: %v, login", u)
 	if redirectPath != "" {
 		s.ctx.nsqadmin.logf("ACCESS: redirect to :%v ", req.Host + redirectPath)
 		http.Redirect(w, req, req.Host + redirectPath, http.StatusMovedPermanently)
