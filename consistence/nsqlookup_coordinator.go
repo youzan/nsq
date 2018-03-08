@@ -500,6 +500,7 @@ func (self *NsqLookupCoordinator) handleRemovingNodes(monitorChan chan struct{})
 				// only check the topic with one replica left
 				// because the doCheckTopics will check the others
 				// we add a new replica for the removing node
+				moved := 0
 				for _, topicInfo := range allTopics {
 					if FindSlice(topicInfo.ISR, nid) == -1 {
 						if FindSlice(topicInfo.CatchupList, nid) != -1 {
@@ -532,6 +533,20 @@ func (self *NsqLookupCoordinator) handleRemovingNodes(monitorChan chan struct{})
 						self.handleMoveTopic(true, topicInfo.Name, topicInfo.Partition, nid)
 					} else {
 						self.handleMoveTopic(false, topicInfo.Name, topicInfo.Partition, nid)
+					}
+					moved++
+					if moved%16 == 0 {
+						// recompute the load factor after moved some topics
+						nodeTopicStats = nodeTopicStats[:0]
+						for nodeID, nodeInfo := range currentNodes {
+							topicStat, err := self.getNsqdTopicStat(nodeInfo)
+							if err != nil {
+								coordLog.Infof("failed to get node topic status : %v", nodeID)
+								continue
+							}
+							nodeTopicStats = append(nodeTopicStats, *topicStat)
+						}
+						By(leaderSort).Sort(nodeTopicStats)
 					}
 				}
 				if !anyPending {

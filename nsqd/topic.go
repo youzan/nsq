@@ -24,6 +24,7 @@ import (
 const (
 	MAX_TOPIC_PARTITION    = 1023
 	HISTORY_STAT_FILE_NAME = ".stat.history.dat"
+	pubQueue               = 500
 )
 
 var (
@@ -161,7 +162,7 @@ func NewTopicWithExt(topicName string, part int, ext bool, opt *Options,
 		putBuffer:      bytes.Buffer{},
 		nsqdNotify:     notify,
 		writeDisabled:  writeDisabled,
-		pubWaitingChan: make(PubInfoChan, 200),
+		pubWaitingChan: make(PubInfoChan, pubQueue),
 		quitChan:       make(chan struct{}),
 		pubLoopFunc:    loopFunc,
 	}

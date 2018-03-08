@@ -385,10 +385,15 @@ func (c *context) internalPubLoop(topic *nsqd.Topic) {
 			}
 			var retErr error
 			if c.checkForMasterWrite(topicName, partition) {
+				s := time.Now()
 				_, _, _, err := c.PutMessages(topic, messages)
 				if err != nil {
 					nsqd.NsqLogger().LogErrorf("topic %v put messages %v failed: %v", topic.GetFullName(), len(messages), err)
 					retErr = err
+				}
+				cost := time.Since(s)
+				if cost > time.Second {
+					nsqd.NsqLogger().Logf("topic %v put messages %v to cluster slow: %v", topic.GetFullName(), len(messages), cost)
 				}
 			} else {
 				topic.DisableForSlave()
