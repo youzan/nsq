@@ -123,7 +123,7 @@ func NewHTTPServer(ctx *Context) *httpServer {
 	router.Handle("GET", "/api/statistics/:sortBy", http_api.Decorate(s.statisticsHandler, log, http_api.V1))
 	router.Handle("GET", "/api/cluster/stats", http_api.Decorate(s.clusterStatsHandler, log, http_api.V1))
 	router.Handle("GET", "/api/oauth/cas/callback", http_api.Decorate(s.casAuthCallbackHandler, log, http_api.V1))
-	router.Handle("GET", "/api/oauth/cas/callback/logout", http_api.Decorate(s.casAuthCallbackLogoutHandler, log, http_api.V1))
+	router.Handle("GET", "/api/oauth/cas/callback/logout:", http_api.Decorate(s.casAuthCallbackLogoutHandler, log, http_api.V1))
 	return s
 }
 
@@ -199,7 +199,7 @@ func parseAccessToken(r *http.Request) (token string, ok bool) {
 
 func (s *httpServer) authCheck(f http_api.APIHandler) http_api.APIHandler {
 	return func(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {
-		//check cas user info
+		//check user info
 		if s.ctx.nsqadmin.IsAuthEnabled() {
 			u, err := s.getUserInfo(w, req)
 			if err != nil {
@@ -256,9 +256,9 @@ func (s *httpServer) indexHandler(w http.ResponseWriter, req *http.Request, ps h
 	s.ctx.nsqadmin.logf("total lookupd nodes : %v", lookupdAddresses)
 	u, _ := s.getUserInfo(w, req)
 	//add redirect query to ca auth url
-	casAuthUrl, err := url.Parse(s.ctx.nsqadmin.opts.CASAuthUrl)
+	authUrl, err := url.Parse(s.ctx.nsqadmin.opts.AuthUrl)
 	if err != nil {
-		s.ctx.nsqadmin.logf("ERROR: failed to parse cas auth url %v : %v", s.ctx.nsqadmin.opts.CASAuthUrl, err)
+		s.ctx.nsqadmin.logf("ERROR: failed to parse authentication url %v : %v", s.ctx.nsqadmin.opts.AuthUrl, err)
 		return nil, http_api.Err{http.StatusInternalServerError, "INTERNAL ERROR"}
 	}
 	t.Execute(w, struct {
@@ -273,8 +273,8 @@ func (s *httpServer) indexHandler(w http.ResponseWriter, req *http.Request, ps h
 		StatsdPrefix        string
 		NSQLookupd          []string
 		AllNSQLookupds      []string
-		CASAuthUrl	     string
-		CASLogoutUrl	     string
+		AuthUrl	     string
+		LogoutUrl	     string
 		Login               bool
 		User                string
 		AuthEnabled         bool
@@ -290,8 +290,8 @@ func (s *httpServer) indexHandler(w http.ResponseWriter, req *http.Request, ps h
 		StatsdPrefix:        s.ctx.nsqadmin.opts.StatsdPrefix,
 		NSQLookupd:          s.ctx.nsqadmin.opts.NSQLookupdHTTPAddresses,
 		AllNSQLookupds:      lookupdAddresses,
-		CASAuthUrl:          casAuthUrl.String(),
-		CASLogoutUrl:        s.ctx.nsqadmin.opts.CASLogoutUrl,
+		AuthUrl:          authUrl.String(),
+		LogoutUrl:        s.ctx.nsqadmin.opts.LogoutUrl,
 		Login: 		     u.IsLogin(),
 		User:		     u.GetUserName(),
 		AuthEnabled:         s.ctx.nsqadmin.IsAuthEnabled(),
@@ -1215,181 +1215,11 @@ func (c TopicsByHourlyPubsize) Less(i, j int) bool {
 	return l > r
 }
 
-type CasResponse struct {
-	Code int
-	Msg  string
-	Data *CasResponseValue
-}
-
-type  CasResponseValue struct {
-	Value *CasUserModel
-}
-
-type CasUserModel struct {
-	Id       int64
-	UserName string
-	Gender   bool
-	RealName string
-	Aliasna  string
-	Mobile   string
-	Email    string
-	Login    bool
-	Admin  bool
-	ctx *Context
-}
-
-func (u *CasUserModel) String() string {
-	return fmt.Sprintf("Id: %v, Username: %v, Realname: %v, Email: %v, Login: %v", u.Id, u.UserName, u.RealName, u.Email, u.Login)
-}
-
-func (u *CasUserModel) copy(newU *CasUserModel) {
-	u.Id = newU.Id
-	u.UserName = newU.UserName
-	u.Gender = newU.Gender
-	u.RealName = newU.RealName
-	u.Aliasna =  newU.Aliasna
-	u.Mobile = newU.Mobile
-	u.Email = newU.Email
-}
-
-func (u *CasUserModel) getId() int64 {
-	return u.Id
-}
-
-func (u *CasUserModel) GetUserName() string {
-	return u.UserName
-}
-
-func (u *CasUserModel) getGender() bool {
-	return u.Gender
-}
-
-func (u *CasUserModel) getRealName() string {
-	return u.RealName
-}
-
-func (u *CasUserModel) getAliasna() string {
-	return u.Aliasna
-}
-
-func (u *CasUserModel) getMobile() string {
-	return u.Mobile
-}
-
-func (u *CasUserModel) getEmail() string {
-	return u.Email
-}
-
-func NewCasUserModel(ctx *Context, w http.ResponseWriter, req *http.Request) (*CasUserModel, error) {
-	casUser := &CasUserModel{
-		Login:  false,
-		Admin: false,
-		ctx: ctx,
-	}
-	session, err := store.Get(req, "session-userInfo")
-	if err != nil {
-		ctx.nsqadmin.logf("ERROR: error in fetching session")
-		return nil, err
-	}
-	session.Options = &sessions.Options{
-		Path: "/",
-		//keep it in 12 hours
-		MaxAge:   43200,
-	}
-	session.Values["cas"] = casUser
-	session.Save(req, w)
-	return casUser, nil
-}
-
-func (u *CasUserModel) IsLogin() bool {
-	return u.Login
-}
-
-func (u *CasUserModel) GetUserRole() string {
-	return "user"
-}
-
-func (u *CasUserModel) IsAdmin() bool {
-	return u.Admin
-}
-
-//save(persist) current case user model
-func (u *CasUserModel) save(w http.ResponseWriter, req *http.Request) error {
-	session, err := store.Get(req, "session-userInfo")
-	if err != nil {
-		//u.ctx.nsqadmin.logf("ERROR: error in fetching session")
-		return err
-	}
-	session.Save(req, w)
-	return nil
-}
-
-func (u *CasUserModel) DoAuth(w http.ResponseWriter, req *http.Request) error {
-	v, err := url.ParseQuery(req.URL.RawQuery)
-	if err != nil {
-		u.ctx.nsqadmin.logf("ERROR: fail to parse cas URL queries %v", req.URL.String())
-		return err
-	}
-	code:= v.Get("code")
-	if code == "" {
-		return errors.New("illeggal code form cas")
-	}
-
-	casUrl := u.ctx.nsqadmin.opts.CASUrl
-	userInfoUrl, err := url.Parse(casUrl)
-	if err != nil {
-		u.ctx.nsqadmin.logf("ERROR: fail to parse cas URL %v", casUrl)
-		return err
-	}
-	userInfoUrl.Path = "/oauth/users/self"
-	v, err = url.ParseQuery(userInfoUrl.RawQuery)
-	if err != nil {
-		u.ctx.nsqadmin.logf("ERROR: fail to parse cas URL queries %v", casUrl)
-		return err
-	}
-	v.Add("code", code)
-	userInfoUrl.RawQuery = v.Encode()
-
-	casSecret := u.ctx.nsqadmin.opts.CASAuthSecret
-	client := http.DefaultClient
-	userInfoReq, _ := http.NewRequest("GET", userInfoUrl.String(), nil)
-	userInfoReq.Header.Set("Authorization", "oauth " + casSecret)
-	resp, err := client.Do(userInfoReq)
-	if err != nil {
-		u.ctx.nsqadmin.logf("WARN: fail to fetch user info from cas remote, url %v, err: %v", userInfoUrl.String(), err)
-		return err
-	}
-	body, err := ioutil.ReadAll(resp.Body)
-	authResp := &CasResponse{}
-	err = json.Unmarshal(body, authResp)
-	if err != nil {
-		u.ctx.nsqadmin.logf("WARN: fail to parse user info from cas remote, url %v, err: %v", userInfoUrl.String(), err)
-		//redirect
-		return err
-	}
-	if authResp.Code != 0 {
-		u.ctx.nsqadmin.logf("WARN: wrong resp code in user info resp, url %v, code: %v", userInfoUrl.String(), authResp.Code)
-		return errors.New(fmt.Sprintf("wrong resp code %v in user info resp", authResp.Code))
-	}
-	u.copy(authResp.Data.Value)
-	u.Login = true
-	u.save(w, req)
-	return nil
-}
-
-
-
-type IUserAuth interface {
-	IsLogin() bool
-	GetUserRole() string
-	GetUserName() string
-	IsAdmin() bool
-	DoAuth(w http.ResponseWriter, req *http.Request) error
-	String() string
-}
-
 func (s *httpServer) casAuthCallbackLogoutHandler(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {
 	err := s.logoutUser(w, req)
+	if err == nil {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	}
 	return nil, err
 }
 
@@ -1413,7 +1243,7 @@ func (s *httpServer) casAuthCallbackHandler(w http.ResponseWriter, req *http.Req
 		http.Redirect(w, req, req.Host + redirectPath, http.StatusMovedPermanently)
 	} else {
 		//redirect to default cas redirect page in config
-		http.Redirect(w, req, s.ctx.nsqadmin.opts.CASRedirectUrl, http.StatusMovedPermanently)
+		http.Redirect(w, req, s.ctx.nsqadmin.opts.RedirectUrl, http.StatusMovedPermanently)
 	}
 	return nil, nil
 }

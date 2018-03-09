@@ -42,9 +42,9 @@
                 {{#if auth_enabled}}
                     {{#if login}}
                         <li class="hidden-xs"><a type="button" class="sign-in" href="#">欢迎 {{user}}</a></li>
-                        <li class="hidden-xs"><a type="button" class="sign-in" href="{{cas_logout_url}}">Log out</a></li>
+                        <li class="hidden-xs"><a type="button" class="sign-in" href="{{logout_url}}">Log out</a></li>
                     {{else}}
-                        <li class="hidden-xs"><a type="button" class="sign-in" href="{{cas_auth_url}}">Sign in</a></li>
+                        <li class="hidden-xs"><a type="button" class="sign-in" href="{{auth_url}}">Sign in</a></li>
                     {{/if}}
                 {{/if}}
                 <li class="hidden-xs"><p class="navbar-text"><span class="label label-success">v{{version}}</span></p></li>

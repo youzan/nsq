@@ -37,44 +37,43 @@ func New(opts *Options) *NSQAdmin {
 		notifications: make(chan *AdminAction),
 	}
 
-	if opts.CASUrl != "" {
-		if opts.CASAuthSecret == "" {
-			n.logf("FATAL: CAS secret could not be empty")
+	if opts.AuthSecret == "" {
+		n.logf("FATAL: authentication secret could not be empty")
+		os.Exit(1)
+	}
+	if opts.AuthUrl == "" {
+		n.logf("FATAL: authentication url could not be empty")
+		os.Exit(1)
+	} else {
+		authUrl, err := url.Parse(opts.AuthUrl)
+		v, err := url.ParseQuery(authUrl.RawQuery)
+		if err != nil {
+			n.logf("FATAL: failed to resolve cas queries (%s) - %s", authUrl.RawQuery, err)
 			os.Exit(1)
 		}
-		if opts.CASAuthUrl == "" {
-			casUrl, err := url.Parse(opts.CASUrl)
-			if err != nil {
-				n.logf("FATAL: failed to resolve cas address (%s) - %s", opts.CASUrl, err)
-				os.Exit(1)
-			}
-			casUrl.Path = "/public/oauth/authorize"
-			v, err := url.ParseQuery(casUrl.RawQuery)
-			if err != nil {
-				n.logf("FATAL: failed to resolve cas queries (%s) - %s", casUrl.RawQuery, err)
-				os.Exit(1)
-			}
-			v.Add("name", opts.CASAppName)
-			casUrl.RawQuery = v.Encode()
-			opts.CASAuthUrl = casUrl.String()
-		}
-		if opts.CASLogoutUrl == "" {
-			casUrl, err := url.Parse(opts.CASUrl)
-			if err != nil {
-				n.logf("FATAL: failed to resolve cas address (%s) - %s", opts.CASUrl, err)
-				os.Exit(1)
-			}
-			casUrl.Path = "/public/users/logout"
-			v, err := url.ParseQuery(casUrl.RawQuery)
-			if err != nil {
-				n.logf("FATAL: failed to resolve cas queries (%s) - %s", casUrl.RawQuery, err)
-				os.Exit(1)
-			}
-			v.Add("redirect", opts.CASRedirectUrl)
-			casUrl.RawQuery = v.Encode()
-			opts.CASLogoutUrl = casUrl.String()
-		}
+		v.Add("name", opts.AppName)
+		authUrl.RawQuery = v.Encode()
+		opts.AuthUrl = authUrl.String()
 	}
+	if opts.LogoutUrl == "" {
+		n.logf("FATAL: failed to resolve cas address (%s)", opts.LogoutUrl)
+		os.Exit(1)
+	} else {
+		logoutUrl, err := url.Parse(opts.LogoutUrl)
+		if err != nil {
+			n.logf("FATAL: failed to resolve cas address (%s) - %s", opts.LogoutUrl, err)
+			os.Exit(1)
+		}
+		v, err := url.ParseQuery(logoutUrl.RawQuery)
+		if err != nil {
+			n.logf("FATAL: failed to resolve cas queries (%s) - %s", logoutUrl.RawQuery, err)
+			os.Exit(1)
+		}
+		v.Add("redirect", opts.RedirectUrl)
+		logoutUrl.RawQuery = v.Encode()
+		opts.LogoutUrl = logoutUrl.String()
+	}
+
 
 	if len(opts.AccessTokens) > 0 {
 		n.accessTokens = make(map[string]bool)
@@ -194,7 +193,7 @@ func (n *NSQAdmin) handleAdminActions() {
 }
 
 func (n *NSQAdmin) IsAuthEnabled() bool {
-	return n.opts.CASUrl != ""
+	return n.opts.AuthUrl != ""
 }
 
 func (n *NSQAdmin) Main() {

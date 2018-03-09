@@ -52,8 +52,8 @@ var BaseView = Backbone.View.extend({
             'nsqlookupd': AppState.get('NSQLOOKUPD'),
             'allnsqlookupds': AppState.get('ALLNSQLOOKUPDS'),
             'version': AppState.get('VERSION'),
-            'cas_auth_url': AppState.get('CAS_AUTH_URL'),
-            'cas_logout_url': AppState.get('CAS_LOGOUT_URL'),
+            'auth_url': AppState.get('AUTH_URL'),
+            'logout_url': AppState.get('LOGOUT_URL'),
             'auth_enabled': AppState.get('AUTH_ENABLED'),
             'login'     : AppState.get('LOGIN'),
             'user'      : AppState.get('USER')

@@ -53,12 +53,12 @@ var (
 	channelCreateRetry           = flagSet.Int("channel-create-retry", 3, "max retry for creating channel in topic creation")
 	channelCreateBackoffInterval = flagSet.Int("channel-create-backoff-interval", 1000, "backoff interval when default channel fail to create in topic creation")
 
-	casUrl = flagSet.String("cas-url", "", "cas service url")
-	casAuthSecret = flagSet.String("cas-auth-secret", "", "cas auth secret")
-	casLogoutUrl = flagSet.String("cas-logout-url", "", "cas logout url")
-	casAuthUrl = flagSet.String("cas-auth-url", "", "cas auth url")
-	casAppName = flagSet.String("cas-app-name", "", "cas app name")
-	casRedirectUrl = flagSet.String("cas-redirect-url", "", "cas refirect url")
+	AuthUrl = flagSet.String("auth-url", "", "authentication service url")
+	AuthSecret = flagSet.String("auth-secret", "", "authentication secret")
+	LogoutUrl = flagSet.String("logout-url", "", "logout url")
+
+	AppName = flagSet.String("app-name", "", "current application name in authentication service")
+	RedirectUrl = flagSet.String("redirect-url", "", "refirect url")
 
 	nsqlookupdHTTPAddresses = app.StringArray{}
 	nsqdHTTPAddresses       = app.StringArray{}
