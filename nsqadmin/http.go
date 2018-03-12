@@ -1,7 +1,6 @@
 package nsqadmin
 
 import (
-	"encoding/gob"
 	"encoding/json"
 	"fmt"
 	"html/template"
@@ -24,16 +23,7 @@ import (
 	"github.com/youzan/nsq/internal/http_api"
 	"github.com/youzan/nsq/internal/protocol"
 	"github.com/youzan/nsq/internal/version"
-	"github.com/gorilla/sessions"
-	"reflect"
-	"errors"
 )
-
-var store = sessions.NewCookieStore([]byte("cas-authen"))
-
-func init() {
-	gob.Register(&CasUserModel{})
-}
 
 func maybeWarnMsg(msgs []string) string {
 	if len(msgs) > 0 {
@@ -123,44 +113,16 @@ func NewHTTPServer(ctx *Context) *httpServer {
 	router.Handle("GET", "/api/statistics/:sortBy", http_api.Decorate(s.statisticsHandler, log, http_api.V1))
 	router.Handle("GET", "/api/cluster/stats", http_api.Decorate(s.clusterStatsHandler, log, http_api.V1))
 	router.Handle("GET", "/api/oauth/cas/callback", http_api.Decorate(s.casAuthCallbackHandler, log, http_api.V1))
-	router.Handle("GET", "/api/oauth/cas/callback/logout:", http_api.Decorate(s.casAuthCallbackLogoutHandler, log, http_api.V1))
+	router.Handle("GET", "/api/oauth/cas/callback/logout", http_api.Decorate(s.casAuthCallbackLogoutHandler, log, http_api.V1))
 	return s
 }
 
 func (s *httpServer) getExistingUserInfo(req *http.Request) (IUserAuth, error) {
-	session, err := store.Get(req, "session-userInfo")
-	if err != nil {
-		return nil, err
-	}
-	val := session.Values["cas"]
-	s.ctx.nsqadmin.logf("session content: %v", val)
-	if val != nil {
-		if casUserModel, ok := val.(*CasUserModel); !ok {
-			return nil, errors.New(fmt.Sprint("cas value type in session is not right, actual type %v", reflect.TypeOf(val)))
-		} else {
-			if casUserModel != nil {
-				casUserModel.ctx = s.ctx
-			}
-			return casUserModel, nil
-		}
-	} else {
-		return nil, nil
-	}
+	return GetUserModel(s.ctx, req)
 }
 
 func (s *httpServer) logoutUser(w http.ResponseWriter, req *http.Request) error {
-	session, err := store.Get(req, "session-userInfo")
-	if err != nil {
-		return err
-	}
-	val := session.Values["cas"]
-	if casUserModel, ok := val.(*CasUserModel); ok {
-		s.ctx.nsqadmin.logf("ACCESS: user: %v logout", casUserModel)
-	} else {
-		s.ctx.nsqadmin.logf("WARNING: user info not found")
-	}
-	session.Values["cas"] = nil
-	return session.Save(req, w)
+	return LogoutUser(s.ctx, w, req)
 }
 
 func (s *httpServer) getUserInfo(w http.ResponseWriter, req *http.Request) (IUserAuth, error) {
@@ -170,10 +132,8 @@ func (s *httpServer) getUserInfo(w http.ResponseWriter, req *http.Request) (IUse
 		return nil, err
 	}
 	if u == nil {
-		s.ctx.nsqadmin.logf("get new user %v", u)
 		u, err = NewCasUserModel(s.ctx, w, req)
 	}
-	s.ctx.nsqadmin.logf("get user %v", u.String())
 	return u, err
 }
 
@@ -1242,7 +1202,7 @@ func (s *httpServer) casAuthCallbackHandler(w http.ResponseWriter, req *http.Req
 		s.ctx.nsqadmin.logf("ACCESS: redirect to :%v ", req.Host + redirectPath)
 		http.Redirect(w, req, req.Host + redirectPath, http.StatusMovedPermanently)
 	} else {
-		//redirect to default cas redirect page in config
+		//redirect to default redirect page in config
 		http.Redirect(w, req, s.ctx.nsqadmin.opts.RedirectUrl, http.StatusMovedPermanently)
 	}
 	return nil, nil

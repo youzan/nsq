@@ -8,7 +8,15 @@ import (
 	"github.com/gorilla/sessions"
 	"errors"
 	"io/ioutil"
+	"reflect"
+	"encoding/gob"
 )
+
+var store = sessions.NewCookieStore([]byte("user-authentication"))
+
+func init() {
+	gob.Register(&CasUserModel{})
+}
 
 type CasResponse struct {
 	Code int
@@ -81,9 +89,9 @@ func NewCasUserModel(ctx *Context, w http.ResponseWriter, req *http.Request) (*C
 		Admin: false,
 		ctx: ctx,
 	}
-	session, err := store.Get(req, "session-userInfo")
+	session, err := store.Get(req, "session-user")
 	if err != nil {
-		ctx.nsqadmin.logf("ERROR: error in fetching session")
+		ctx.nsqadmin.logf("ERROR: error in fetching session, err", err)
 		return nil, err
 	}
 	session.Options = &sessions.Options{
@@ -91,9 +99,14 @@ func NewCasUserModel(ctx *Context, w http.ResponseWriter, req *http.Request) (*C
 		//keep it in 12 hours
 		MaxAge:   43200,
 	}
-	session.Values["cas"] = casUser
+	session.Values["userModel"] = casUser
 	session.Save(req, w)
 	return casUser, nil
+}
+
+func (u *CasUserModel) SetContext(ctx *Context) error {
+	u.ctx = ctx
+	return nil
 }
 
 func (u *CasUserModel) IsLogin() bool {
@@ -110,9 +123,9 @@ func (u *CasUserModel) IsAdmin() bool {
 
 //save(persist) current case user model
 func (u *CasUserModel) save(w http.ResponseWriter, req *http.Request) error {
-	session, err := store.Get(req, "session-userInfo")
+	session, err := store.Get(req, "session-user")
 	if err != nil {
-		//u.ctx.nsqadmin.logf("ERROR: error in fetching session")
+		u.ctx.nsqadmin.logf("ERROR: error in fetching session, err %v", err)
 		return err
 	}
 	session.Save(req, w)
@@ -172,7 +185,40 @@ func (u *CasUserModel) DoAuth(w http.ResponseWriter, req *http.Request) error {
 	return nil
 }
 
+func GetUserModel(ctx *Context, req *http.Request) (IUserAuth, error) {
+	session, err := store.Get(req, "session-user")
+	if err != nil {
+		return nil, err
+	}
+	val := session.Values["userModel"]
+	if val != nil {
+		if userModel, ok := val.(IUserAuth); !ok {
+			return nil, errors.New(fmt.Sprint("cas value type in session is not right, actual type %v", reflect.TypeOf(val)))
+		} else {
+			if userModel != nil {
+				userModel.SetContext(ctx)
+			}
+			return userModel, nil
+		}
+	} else {
+		return nil, nil
+	}
+}
 
+func LogoutUser(ctx *Context, w http.ResponseWriter, req *http.Request) error {
+	session, err := store.Get(req, "session-user")
+	if err != nil {
+		return err
+	}
+	val := session.Values["userModel"]
+	if casUserModel, ok := val.(IUserAuth); ok {
+		ctx.nsqadmin.logf("ACCESS: user: %v logout", casUserModel)
+	} else {
+		ctx.nsqadmin.logf("WARNING: user info not found")
+	}
+	session.Values["userModel"] = nil
+	return session.Save(req, w)
+}
 
 type IUserAuth interface {
 	IsLogin() bool
@@ -180,5 +226,6 @@ type IUserAuth interface {
 	GetUserName() string
 	IsAdmin() bool
 	DoAuth(w http.ResponseWriter, req *http.Request) error
+	SetContext(ctx *Context) error
 	String() string
 }
