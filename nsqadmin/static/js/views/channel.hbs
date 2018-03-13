@@ -28,23 +28,23 @@
 {{else}}
 <div class="row channel-actions">
     <div class="col-md-2">
-        <button class="btn btn-medium btn-warning" data-action="empty">Empty Queue</button>
+        <button class="btn btn-medium btn-warning" data-action="empty" {{#if login}}{{else}}disabled{{/if}}>Empty Queue</button>
     </div>
     <div class="col-md-2">
-        <button class="btn btn-medium btn-danger" data-action="delete">Delete Channel</button>
+        <button class="btn btn-medium btn-danger" data-action="delete" {{#if login}}{{else}}disabled{{/if}}>Delete Channel</button>
     </div>
     <div class="col-md-2">
         {{#if paused}}
-        <button class="btn btn-medium btn-success" data-action="unpause">UnPause Channel</button>
+        <button class="btn btn-medium btn-success" data-action="unpause" {{#if login}}{{else}}disabled{{/if}}>UnPause Channel</button>
         {{else}}
-        <button class="btn btn-medium btn-primary" data-action="pause">Pause Channel</button>
+        <button class="btn btn-medium btn-primary" data-action="pause" {{#if login}}{{else}}disabled{{/if}}>Pause Channel</button>
         {{/if}}
     </div>
     <div class="col-md-2">
         {{#if skipped}}
-            <button class="btn btn-medium btn-success" data-action="unskip">UnSkip Channel</button>
+            <button class="btn btn-medium btn-success" data-action="unskip" {{#if login}}{{else}}disabled{{/if}}>UnSkip Channel</button>
         {{else}}
-            <button class="btn btn-medium btn-primary" data-action="skip">Skip Channel</button>
+            <button class="btn btn-medium btn-primary" data-action="skip" {{#if login}}{{else}}disabled{{/if}}>Skip Channel</button>
         {{/if}}
     </div>
     <div class="col-md-2" title="reset consume offset to specified data time, if specified timestamp is earlier(later) than timestamp of first(last) available message in queue, offset will be set to the beginning(tail) of message queue.">

@@ -27,6 +27,7 @@ type NSQAdmin struct {
 	notifications       chan *AdminAction
 	graphiteURL         *url.URL
 	httpClientTLSConfig *tls.Config
+	accessTokens map[string]bool
 }
 
 func New(opts *Options) *NSQAdmin {
@@ -34,6 +35,51 @@ func New(opts *Options) *NSQAdmin {
 	n := &NSQAdmin{
 		opts:          opts,
 		notifications: make(chan *AdminAction),
+	}
+
+	if opts.AuthSecret == "" {
+		n.logf("FATAL: authentication secret could not be empty")
+		os.Exit(1)
+	}
+	if opts.AuthUrl == "" {
+		n.logf("FATAL: authentication url could not be empty")
+		os.Exit(1)
+	} else {
+		authUrl, err := url.Parse(opts.AuthUrl)
+		v, err := url.ParseQuery(authUrl.RawQuery)
+		if err != nil {
+			n.logf("FATAL: failed to resolve cas queries (%s) - %s", authUrl.RawQuery, err)
+			os.Exit(1)
+		}
+		v.Add("name", opts.AppName)
+		authUrl.RawQuery = v.Encode()
+		opts.AuthUrl = authUrl.String()
+	}
+	if opts.LogoutUrl == "" {
+		n.logf("FATAL: failed to resolve cas address (%s)", opts.LogoutUrl)
+		os.Exit(1)
+	} else {
+		logoutUrl, err := url.Parse(opts.LogoutUrl)
+		if err != nil {
+			n.logf("FATAL: failed to resolve cas address (%s) - %s", opts.LogoutUrl, err)
+			os.Exit(1)
+		}
+		v, err := url.ParseQuery(logoutUrl.RawQuery)
+		if err != nil {
+			n.logf("FATAL: failed to resolve cas queries (%s) - %s", logoutUrl.RawQuery, err)
+			os.Exit(1)
+		}
+		v.Add("redirect", opts.RedirectUrl)
+		logoutUrl.RawQuery = v.Encode()
+		opts.LogoutUrl = logoutUrl.String()
+	}
+
+
+	if len(opts.AccessTokens) > 0 {
+		n.accessTokens = make(map[string]bool)
+		for _, k := range opts.AccessTokens {
+			n.accessTokens[k] = true
+		}
 	}
 
 	if len(opts.NSQDHTTPAddresses) == 0 && len(opts.NSQLookupdHTTPAddresses) == 0 {
@@ -144,6 +190,10 @@ func (n *NSQAdmin) handleAdminActions() {
 		}
 		resp.Body.Close()
 	}
+}
+
+func (n *NSQAdmin) IsAuthEnabled() bool {
+	return n.opts.AuthUrl != ""
 }
 
 func (n *NSQAdmin) Main() {

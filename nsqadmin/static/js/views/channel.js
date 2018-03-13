@@ -72,6 +72,7 @@ var ChannelView = BaseView.extend({
             txt = txt + ' to <strong>' + ts + '</strong> in second';
         }
         txt = txt + '?';
+        var topic = this.model.get('topic')
         bootbox.confirm(txt, function(result) {
             if (result !== true) {
                 return;
@@ -79,7 +80,7 @@ var ChannelView = BaseView.extend({
             if (action === 'delete') {
                 $.ajax(this.model.url(), {'method': 'DELETE'})
                     .done(function() {
-                        window.location = '/topics/' + encodeURIComponent(this.model.get('topic'));
+                        window.location = '/topics/' + encodeURIComponent(topic);
                     })
                     .fail(this.handleAJAXError.bind(this));
             } else if (action === 'reset') {

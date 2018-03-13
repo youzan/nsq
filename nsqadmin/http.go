@@ -62,7 +62,7 @@ func NewHTTPServer(ctx *Context) *httpServer {
 
 	router := httprouter.New()
 	router.HandleMethodNotAllowed = true
-	router.PanicHandler = http_api.LogPanicHandler(adminLog)
+	//router.PanicHandler = http_api.LogPanicHandler(adminLog)
 	router.NotFound = http_api.LogNotFoundHandler(adminLog)
 	router.MethodNotAllowed = http_api.LogMethodNotAllowedHandler(adminLog)
 	s := &httpServer{
@@ -100,20 +100,78 @@ func NewHTTPServer(ctx *Context) *httpServer {
 	router.Handle("GET", "/api/topics/:topic/:channel", http_api.Decorate(s.channelHandler, log, http_api.V1))
 	router.Handle("GET", "/api/nodes", http_api.Decorate(s.nodesHandler, log, http_api.V1))
 	router.Handle("GET", "/api/nodes/:node", http_api.Decorate(s.nodeHandler, log, http_api.V1))
-	router.Handle("POST", "/api/search/messages", http_api.Decorate(s.searchMessageTrace, log, http_api.V1))
-	router.Handle("POST", "/api/topics", http_api.Decorate(s.createTopicChannelHandler, log, http_api.V1))
-	router.Handle("POST", "/api/topics/:topic", http_api.Decorate(s.topicActionHandler, log, http_api.V1))
-	router.Handle("POST", "/api/topics/:topic/:channel", http_api.Decorate(s.channelActionHandler, log, http_api.V1))
-	router.Handle("DELETE", "/api/nodes/:node", http_api.Decorate(s.tombstoneNodeForTopicHandler, log, http_api.V1))
-	router.Handle("DELETE", "/api/topics/:topic", http_api.Decorate(s.deleteTopicHandler, log, http_api.V1))
-	router.Handle("DELETE", "/api/topics/:topic/:channel", http_api.Decorate(s.deleteChannelHandler, log, http_api.V1))
+	router.Handle("POST", "/api/search/messages", http_api.Decorate(s.searchMessageTrace, s.authCheck, log, http_api.V1))
+	router.Handle("POST", "/api/topics", http_api.Decorate(s.createTopicChannelHandler, s.authCheck, log, http_api.V1))
+	router.Handle("POST", "/api/topics/:topic", http_api.Decorate(s.topicActionHandler, s.authCheck, log, http_api.V1))
+	router.Handle("POST", "/api/topics/:topic/:channel", http_api.Decorate(s.channelActionHandler, s.authCheck, log, http_api.V1))
+	router.Handle("DELETE", "/api/nodes/:node", http_api.Decorate(s.tombstoneNodeForTopicHandler, s.authCheck, log, http_api.V1))
+	router.Handle("DELETE", "/api/topics/:topic", http_api.Decorate(s.deleteTopicHandler, s.authCheck, log, http_api.V1))
+	router.Handle("DELETE", "/api/topics/:topic/:channel", http_api.Decorate(s.deleteChannelHandler, s.authCheck, log, http_api.V1))
 	router.Handle("GET", "/api/counter", http_api.Decorate(s.counterHandler, log, http_api.V1))
 	router.Handle("GET", "/api/graphite", http_api.Decorate(s.graphiteHandler, log, http_api.V1))
 	router.Handle("GET", "/api/statistics", http_api.Decorate(s.statisticsHandler, log, http_api.V1))
 	router.Handle("GET", "/api/statistics/:sortBy", http_api.Decorate(s.statisticsHandler, log, http_api.V1))
 	router.Handle("GET", "/api/cluster/stats", http_api.Decorate(s.clusterStatsHandler, log, http_api.V1))
-
+	router.Handle("GET", "/api/oauth/cas/callback", http_api.Decorate(s.casAuthCallbackHandler, log, http_api.V1))
+	router.Handle("GET", "/api/oauth/cas/callback/logout", http_api.Decorate(s.casAuthCallbackLogoutHandler, log, http_api.V1))
 	return s
+}
+
+func (s *httpServer) getExistingUserInfo(req *http.Request) (IUserAuth, error) {
+	return GetUserModel(s.ctx, req)
+}
+
+func (s *httpServer) logoutUser(w http.ResponseWriter, req *http.Request) error {
+	return LogoutUser(s.ctx, w, req)
+}
+
+func (s *httpServer) getUserInfo(w http.ResponseWriter, req *http.Request) (IUserAuth, error) {
+	u, err := s.getExistingUserInfo(req)
+	if err != nil {
+		s.ctx.nsqadmin.logf("error getting existing user, err: %v", err)
+		return nil, err
+	}
+	if u == nil {
+		u, err = NewCasUserModel(s.ctx, w, req)
+	}
+	return u, err
+}
+
+func (s *httpServer) validAccessToken(req *http.Request) (valid bool) {
+	token, ok := parseAccessToken(req)
+	if ok && s.ctx.nsqadmin.accessTokens[token] {
+		return true
+	}
+	return
+}
+
+func parseAccessToken(r *http.Request) (token string, ok bool) {
+	auth := r.Header.Get("Authorization")
+	if auth == "" {
+		return
+	}
+	const prefix = "Basic "
+	if !strings.HasPrefix(auth, prefix) {
+		return
+	}
+	return auth[len(prefix):], true
+}
+
+func (s *httpServer) authCheck(f http_api.APIHandler) http_api.APIHandler {
+	return func(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {
+		//check user info
+		if s.ctx.nsqadmin.IsAuthEnabled() {
+			u, err := s.getUserInfo(w, req)
+			if err != nil {
+				s.ctx.nsqadmin.logf("error in fetching user model %v", err);
+				return nil, http_api.Err{http.StatusInternalServerError, "fail to find associated user info"}
+			}
+			if !u.IsLogin() && !s.validAccessToken(req) {
+				return nil, http_api.Err{http.StatusUnauthorized, "authentication needed"}
+			}
+		}
+		return f(w, req, ps)
+	}
 }
 
 func (s *httpServer) ServeHTTP(w http.ResponseWriter, req *http.Request) {
@@ -156,6 +214,13 @@ func (s *httpServer) indexHandler(w http.ResponseWriter, req *http.Request, ps h
 		}
 	}
 	s.ctx.nsqadmin.logf("total lookupd nodes : %v", lookupdAddresses)
+	u, _ := s.getUserInfo(w, req)
+	//add redirect query to ca auth url
+	authUrl, err := url.Parse(s.ctx.nsqadmin.opts.AuthUrl)
+	if err != nil {
+		s.ctx.nsqadmin.logf("ERROR: failed to parse authentication url %v : %v", s.ctx.nsqadmin.opts.AuthUrl, err)
+		return nil, http_api.Err{http.StatusInternalServerError, "INTERNAL ERROR"}
+	}
 	t.Execute(w, struct {
 		Version             string
 		ProxyGraphite       bool
@@ -168,6 +233,11 @@ func (s *httpServer) indexHandler(w http.ResponseWriter, req *http.Request, ps h
 		StatsdPrefix        string
 		NSQLookupd          []string
 		AllNSQLookupds      []string
+		AuthUrl	     string
+		LogoutUrl	     string
+		Login               bool
+		User                string
+		AuthEnabled         bool
 	}{
 		Version:             version.Binary,
 		ProxyGraphite:       s.ctx.nsqadmin.opts.ProxyGraphite,
@@ -180,9 +250,18 @@ func (s *httpServer) indexHandler(w http.ResponseWriter, req *http.Request, ps h
 		StatsdPrefix:        s.ctx.nsqadmin.opts.StatsdPrefix,
 		NSQLookupd:          s.ctx.nsqadmin.opts.NSQLookupdHTTPAddresses,
 		AllNSQLookupds:      lookupdAddresses,
+		AuthUrl:          authUrl.String(),
+		LogoutUrl:        s.ctx.nsqadmin.opts.LogoutUrl,
+		Login: 		     u.IsLogin(),
+		User:		     u.GetUserName(),
+		AuthEnabled:         s.ctx.nsqadmin.IsAuthEnabled(),
 	})
 
 	return nil, nil
+}
+
+func getRequestUrl(r *http.Request) string {
+	return r.Host + r.URL.RawPath
 }
 
 func (s *httpServer) staticAssetHandler(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {
@@ -541,8 +620,7 @@ func (s *httpServer) tombstoneNodeForTopicHandler(w http.ResponseWriter, req *ht
 		s.ctx.nsqadmin.logf("WARNING: %s", err)
 		messages = append(messages, pe.Error())
 	}
-
-	s.notifyAdminAction("tombstone_topic_producer", body.Topic, "", node, req)
+	s.notifyAdminActionWithUser("tombstone_topic_producer", body.Topic, "", node, req)
 
 	return struct {
 		Message string `json:"message"`
@@ -829,8 +907,7 @@ func (s *httpServer) createTopicChannelHandler(w http.ResponseWriter, req *http.
 		s.ctx.nsqadmin.logf("WARNING: %s", err)
 		messages = append(messages, pe.Error())
 	}
-
-	s.notifyAdminAction("create_topic", body.Topic, "", "", req)
+	s.notifyAdminActionWithUser("create_topic", body.Topic, "", "", req)
 
 	//create default channel
 	if body.Channel != "" {
@@ -840,7 +917,7 @@ func (s *httpServer) createTopicChannelHandler(w http.ResponseWriter, req *http.
 				err := s.ci.CreateTopicChannelAfterTopicCreation(body.Topic, body.Channel,
 					s.ctx.nsqadmin.opts.NSQLookupdHTTPAddresses, pnum)
 				if err == nil {
-					s.notifyAdminAction("create_channel", body.Topic, body.Channel, "", req)
+					s.notifyAdminActionWithUser("create_channel", body.Topic, body.Channel, "", req)
 					s.ctx.nsqadmin.logf("channel created.")
 					break
 				} else {
@@ -876,7 +953,7 @@ func (s *httpServer) deleteTopicHandler(w http.ResponseWriter, req *http.Request
 		messages = append(messages, pe.Error())
 	}
 
-	s.notifyAdminAction("delete_topic", topicName, "", "", req)
+	s.notifyAdminActionWithUser("delete_topic", topicName, "", "", req)
 
 	return struct {
 		Message string `json:"message"`
@@ -902,7 +979,7 @@ func (s *httpServer) deleteChannelHandler(w http.ResponseWriter, req *http.Reque
 		messages = append(messages, pe.Error())
 	}
 
-	s.notifyAdminAction("delete_channel", topicName, channelName, "", req)
+	s.notifyAdminActionWithUser("delete_channel", topicName, channelName, "", req)
 
 	return struct {
 		Message string `json:"message"`
@@ -939,13 +1016,13 @@ func (s *httpServer) topicChannelAction(req *http.Request, topicName string, cha
 				s.ctx.nsqadmin.opts.NSQLookupdHTTPAddresses,
 				s.ctx.nsqadmin.opts.NSQDHTTPAddresses)
 
-			s.notifyAdminAction("pause_channel", topicName, channelName, "", req)
+			s.notifyAdminActionWithUser("pause_channel", topicName, channelName, "", req)
 		} else {
 			err = s.ci.PauseTopic(topicName,
 				s.ctx.nsqadmin.opts.NSQLookupdHTTPAddresses,
 				s.ctx.nsqadmin.opts.NSQDHTTPAddresses)
 
-			s.notifyAdminAction("pause_topic", topicName, "", "", req)
+			s.notifyAdminActionWithUser("pause_topic", topicName, "", "", req)
 		}
 	case "unpause":
 		if channelName != "" {
@@ -953,13 +1030,13 @@ func (s *httpServer) topicChannelAction(req *http.Request, topicName string, cha
 				s.ctx.nsqadmin.opts.NSQLookupdHTTPAddresses,
 				s.ctx.nsqadmin.opts.NSQDHTTPAddresses)
 
-			s.notifyAdminAction("unpause_channel", topicName, channelName, "", req)
+			s.notifyAdminActionWithUser("unpause_channel", topicName, channelName, "", req)
 		} else {
 			err = s.ci.UnPauseTopic(topicName,
 				s.ctx.nsqadmin.opts.NSQLookupdHTTPAddresses,
 				s.ctx.nsqadmin.opts.NSQDHTTPAddresses)
 
-			s.notifyAdminAction("unpause_topic", topicName, "", "", req)
+			s.notifyAdminActionWithUser("unpause_topic", topicName, "", "", req)
 		}
 	case "skip":
 		if channelName != "" {
@@ -971,7 +1048,7 @@ func (s *httpServer) topicChannelAction(req *http.Request, topicName string, cha
 					s.ctx.nsqadmin.opts.NSQLookupdHTTPAddresses,
 					s.ctx.nsqadmin.opts.NSQDHTTPAddresses)
 			}
-			s.notifyAdminAction("skip_channel", topicName, channelName, "", req)
+			s.notifyAdminActionWithUser("skip_channel", topicName, channelName, "", req)
 		}
 	case "unskip":
 		if channelName != "" {
@@ -979,7 +1056,7 @@ func (s *httpServer) topicChannelAction(req *http.Request, topicName string, cha
 				s.ctx.nsqadmin.opts.NSQLookupdHTTPAddresses,
 				s.ctx.nsqadmin.opts.NSQDHTTPAddresses)
 
-			s.notifyAdminAction("unskip_channel", topicName, channelName, "", req)
+			s.notifyAdminActionWithUser("unskip_channel", topicName, channelName, "", req)
 		}
 	case "empty":
 		if channelName != "" {
@@ -987,20 +1064,20 @@ func (s *httpServer) topicChannelAction(req *http.Request, topicName string, cha
 				s.ctx.nsqadmin.opts.NSQLookupdHTTPAddresses,
 				s.ctx.nsqadmin.opts.NSQDHTTPAddresses)
 
-			s.notifyAdminAction("empty_channel", topicName, channelName, "", req)
+			s.notifyAdminActionWithUser("empty_channel", topicName, channelName, "", req)
 		} else {
 			err = s.ci.EmptyTopic(topicName,
 				s.ctx.nsqadmin.opts.NSQLookupdHTTPAddresses,
 				s.ctx.nsqadmin.opts.NSQDHTTPAddresses)
 
-			s.notifyAdminAction("empty_topic", topicName, "", "", req)
+			s.notifyAdminActionWithUser("empty_topic", topicName, "", "", req)
 		}
 	case "create":
 		if channelName != "" {
 			err = s.ci.CreateTopicChannel(topicName, channelName,
 				s.ctx.nsqadmin.opts.NSQLookupdHTTPAddresses)
 
-			s.notifyAdminAction("create_channel", topicName, channelName, "", req)
+			s.notifyAdminActionWithUser("create_channel", topicName, channelName, "", req)
 		}
 	case "reset":
 		if channelName != "" {
@@ -1008,7 +1085,7 @@ func (s *httpServer) topicChannelAction(req *http.Request, topicName string, cha
 			tsStr := fmt.Sprintf("timestamp:%v", body.Timestamp)
 			err = s.ci.ResetChannel(topicName, channelName,
 				s.ctx.nsqadmin.opts.NSQLookupdHTTPAddresses, tsStr)
-			s.notifyAdminAction("reset_channel", topicName, channelName, "", req)
+			s.notifyAdminActionWithUser("reset_channel", topicName, channelName, "", req)
 
 		}
 	default:
@@ -1096,6 +1173,39 @@ func (c TopicsByHourlyPubsize) Less(i, j int) bool {
 	l := c.RankList[i].HourlyPubSize
 	r := c.RankList[j].HourlyPubSize
 	return l > r
+}
+
+func (s *httpServer) casAuthCallbackLogoutHandler(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {
+	err := s.logoutUser(w, req)
+	if err == nil {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	}
+	return nil, err
+}
+
+func (s *httpServer) casAuthCallbackHandler(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {
+	v, err := url.ParseQuery(req.URL.RawQuery)
+	if err != nil {
+		s.ctx.nsqadmin.logf("ERROR: fail to parse cas URL queries %v", req.URL.String())
+		return nil, err
+	}
+	redirectPath := v.Get("qs")
+
+	u, err := s.getUserInfo(w, req)
+	if err != nil {
+		s.ctx.nsqadmin.logf("ERROR: fail to get user info, %v", err)
+		return nil, err
+	}
+	u.DoAuth(w, req)
+	s.ctx.nsqadmin.logf("ACCESS: %v, login", u)
+	if redirectPath != "" {
+		s.ctx.nsqadmin.logf("ACCESS: redirect to :%v ", req.Host + redirectPath)
+		http.Redirect(w, req, req.Host + redirectPath, http.StatusMovedPermanently)
+	} else {
+		//redirect to default redirect page in config
+		http.Redirect(w, req, s.ctx.nsqadmin.opts.RedirectUrl, http.StatusMovedPermanently)
+	}
+	return nil, nil
 }
 
 func (s *httpServer) clusterStatsHandler(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {

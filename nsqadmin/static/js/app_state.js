@@ -14,7 +14,12 @@ var AppState = Backbone.Model.extend({
             'STATSD_PREFIX': STATSD_PREFIX,
             'NSQLOOKUPD': NSQLOOKUPD,
             'ALLNSQLOOKUPDS': ALLNSQLOOKUPDS,
-            'graph_interval': '2h'
+            'graph_interval': '2h',
+            'AUTH_URL' : AUTH_URL,
+            'LOGOUT_URL' : LOGOUT_URL,
+            'LOGIN'         : LOGIN,
+            'USER'          : USER,
+            'AUTH_ENABLED'  : AUTH_ENABLED
         };
     },
 

@@ -53,13 +53,22 @@ var (
 	channelCreateRetry           = flagSet.Int("channel-create-retry", 3, "max retry for creating channel in topic creation")
 	channelCreateBackoffInterval = flagSet.Int("channel-create-backoff-interval", 1000, "backoff interval when default channel fail to create in topic creation")
 
+	AuthUrl = flagSet.String("auth-url", "", "authentication service url")
+	AuthSecret = flagSet.String("auth-secret", "", "authentication secret")
+	LogoutUrl = flagSet.String("logout-url", "", "logout url")
+
+	AppName = flagSet.String("app-name", "", "current application name in authentication service")
+	RedirectUrl = flagSet.String("redirect-url", "", "refirect url")
+
 	nsqlookupdHTTPAddresses = app.StringArray{}
 	nsqdHTTPAddresses       = app.StringArray{}
+	accessTokens = app.StringArray{}
 )
 
 func init() {
 	flagSet.Var(&nsqlookupdHTTPAddresses, "lookupd-http-address", "lookupd HTTP address (may be given multiple times)")
 	flagSet.Var(&nsqdHTTPAddresses, "nsqd-http-address", "nsqd HTTP address (may be given multiple times)")
+	flagSet.Var(&accessTokens, "access-tokens", "access token for api access")
 }
 
 func main() {
@@ -100,7 +109,6 @@ func main() {
 	glog.StartWorker(time.Second * 2)
 
 	nsqadmin := nsqadmin.New(opts)
-
 	nsqadmin.Main()
 	<-exitChan
 	nsqadmin.Exit()

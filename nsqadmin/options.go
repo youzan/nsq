@@ -38,8 +38,14 @@ type Options struct {
 	ChannelCreationRetry           int `flag:"channel-create-retry"`
 	ChannelCreationBackoffInterval int `flag:"channel-create-backoff-interval"`
 
+	AuthUrl			string `flag:"auth-url" cfg:"auth_url"`
+	AuthSecret		string `flag:"auth-secret" cfg:"auth_secret"`
+	LogoutUrl		string `flag:"logout-url" cfg:"logout_url"`
+	AppName              string `flag:"app-name" cfg:"app_name"`
+	RedirectUrl          string `flag:"redirect-url" cfg:"redirect_url"`
 	LogDir string `flag:"log-dir" cfg:"log_dir"`
 	Logger levellogger.Logger
+	AccessTokens		[]string `flag:"access-tokens" cfg:"access_tokens"`
 }
 
 func NewOptions() *Options {

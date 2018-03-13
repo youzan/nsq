@@ -33,7 +33,7 @@
 {{else}}
 <div class="row topic-actions">
     <div class="col-md-2">
-        <button class="btn btn-medium btn-danger" data-action="delete">Delete Topic</button>
+        <button class="btn btn-medium btn-danger" data-action="delete" {{#if login}}{{else}}disabled{{/if}}>Delete Topic</button>
     </div>
 </div>
 
