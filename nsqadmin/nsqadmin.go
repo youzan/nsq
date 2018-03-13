@@ -37,48 +37,46 @@ func New(opts *Options) *NSQAdmin {
 		notifications: make(chan *AdminAction),
 	}
 
-	if opts.AuthSecret == "" {
-		n.logf("FATAL: authentication secret could not be empty")
-		os.Exit(1)
-	}
-	if opts.AuthUrl == "" {
-		n.logf("FATAL: authentication url could not be empty")
-		os.Exit(1)
-	} else {
+	if opts.AuthUrl != "" {
 		authUrl, err := url.Parse(opts.AuthUrl)
 		v, err := url.ParseQuery(authUrl.RawQuery)
 		if err != nil {
-			n.logf("FATAL: failed to resolve cas queries (%s) - %s", authUrl.RawQuery, err)
+			n.logf("FATAL: failed to resolve authentication url queries (%s) - %s", authUrl.RawQuery, err)
 			os.Exit(1)
 		}
 		v.Add("name", opts.AppName)
 		authUrl.RawQuery = v.Encode()
 		opts.AuthUrl = authUrl.String()
-	}
-	if opts.LogoutUrl == "" {
-		n.logf("FATAL: failed to resolve cas address (%s)", opts.LogoutUrl)
-		os.Exit(1)
-	} else {
-		logoutUrl, err := url.Parse(opts.LogoutUrl)
-		if err != nil {
-			n.logf("FATAL: failed to resolve cas address (%s) - %s", opts.LogoutUrl, err)
+
+		if opts.AuthSecret == "" {
+			n.logf("FATAL: authentication secret could not be empty")
 			os.Exit(1)
 		}
-		v, err := url.ParseQuery(logoutUrl.RawQuery)
-		if err != nil {
-			n.logf("FATAL: failed to resolve cas queries (%s) - %s", logoutUrl.RawQuery, err)
+
+		if opts.LogoutUrl == "" {
+			n.logf("FATAL: failed to resolve logout address (%s)", opts.LogoutUrl)
 			os.Exit(1)
+		} else {
+			logoutUrl, err := url.Parse(opts.LogoutUrl)
+			if err != nil {
+				n.logf("FATAL: failed to resolve logout address (%s) - %s", opts.LogoutUrl, err)
+				os.Exit(1)
+			}
+			v, err := url.ParseQuery(logoutUrl.RawQuery)
+			if err != nil {
+				n.logf("FATAL: failed to resolve logout address queries (%s) - %s", logoutUrl.RawQuery, err)
+				os.Exit(1)
+			}
+			v.Add("redirect", opts.RedirectUrl)
+			logoutUrl.RawQuery = v.Encode()
+			opts.LogoutUrl = logoutUrl.String()
 		}
-		v.Add("redirect", opts.RedirectUrl)
-		logoutUrl.RawQuery = v.Encode()
-		opts.LogoutUrl = logoutUrl.String()
-	}
 
-
-	if len(opts.AccessTokens) > 0 {
-		n.accessTokens = make(map[string]bool)
-		for _, k := range opts.AccessTokens {
-			n.accessTokens[k] = true
+		if len(opts.AccessTokens) > 0 {
+			n.accessTokens = make(map[string]bool)
+			for _, k := range opts.AccessTokens {
+				n.accessTokens[k] = true
+			}
 		}
 	}
 

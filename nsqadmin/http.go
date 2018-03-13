@@ -62,7 +62,7 @@ func NewHTTPServer(ctx *Context) *httpServer {
 
 	router := httprouter.New()
 	router.HandleMethodNotAllowed = true
-	//router.PanicHandler = http_api.LogPanicHandler(adminLog)
+	router.PanicHandler = http_api.LogPanicHandler(adminLog)
 	router.NotFound = http_api.LogNotFoundHandler(adminLog)
 	router.MethodNotAllowed = http_api.LogMethodNotAllowedHandler(adminLog)
 	s := &httpServer{
@@ -252,16 +252,12 @@ func (s *httpServer) indexHandler(w http.ResponseWriter, req *http.Request, ps h
 		AllNSQLookupds:      lookupdAddresses,
 		AuthUrl:          authUrl.String(),
 		LogoutUrl:        s.ctx.nsqadmin.opts.LogoutUrl,
-		Login: 		     u.IsLogin(),
+		Login: 		     (s.ctx.nsqadmin.IsAuthEnabled() && u.IsLogin()) || (!s.ctx.nsqadmin.IsAuthEnabled()),
 		User:		     u.GetUserName(),
 		AuthEnabled:         s.ctx.nsqadmin.IsAuthEnabled(),
 	})
 
 	return nil, nil
-}
-
-func getRequestUrl(r *http.Request) string {
-	return r.Host + r.URL.RawPath
 }
 
 func (s *httpServer) staticAssetHandler(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {
