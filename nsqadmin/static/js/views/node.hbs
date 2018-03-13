@@ -58,7 +58,7 @@
         </tr>
         <tr class="info">
             <td colspan="3">
-                <button {{#if login}}{{else}}disabled{{/if}} class="btn-link red tombstone-link" data-node="{{../name}}" data-topic="{{topic_name}}" style="padding: 0 6px; border: 0;">✘</button> {{topic_name}}
+                <button class="btn-link red tombstone-link" data-node="{{../name}}" data-topic="{{topic_name}}" style="padding: 0 6px; border: 0;">✘</button> {{topic_name}}
             </td>
             <td>
                 {{commafy topic_partition}}, {{#if is_leader}}Leader{{else}}Follower{{/if}}

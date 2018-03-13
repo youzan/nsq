@@ -252,7 +252,7 @@ func (s *httpServer) indexHandler(w http.ResponseWriter, req *http.Request, ps h
 		AllNSQLookupds:      lookupdAddresses,
 		AuthUrl:          authUrl.String(),
 		LogoutUrl:        s.ctx.nsqadmin.opts.LogoutUrl,
-		Login: 		     u.IsLogin(),
+		Login: 		     (s.ctx.nsqadmin.IsAuthEnabled() && u.IsLogin()) || (!s.ctx.nsqadmin.IsAuthEnabled()),
 		User:		     u.GetUserName(),
 		AuthEnabled:         s.ctx.nsqadmin.IsAuthEnabled(),
 	})
