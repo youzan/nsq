@@ -147,6 +147,31 @@ func (n *NsqdServer) statsdLoop() {
 					stat = fmt.Sprintf("topic.%s.channel.%s.consume_above1s_count", statdName, channel.ChannelName)
 					client.Incr(stat, int64(diff))
 
+					old500ms = int64(0)
+					for i := 6; i < len(lastChannel.MsgDeliveryLatencyStats); i++ {
+						old500ms += lastChannel.MsgDeliveryLatencyStats[i]
+					}
+					old1s = int64(0)
+					if len(lastChannel.MsgDeliveryLatencyStats) > 6 {
+						old1s = old500ms - lastChannel.MsgDeliveryLatencyStats[6]
+					}
+					new500ms = int64(0)
+					for i := 6; i < len(channel.MsgDeliveryLatencyStats); i++ {
+						new500ms += channel.MsgDeliveryLatencyStats[i]
+					}
+					new1s = int64(0)
+					if len(channel.MsgDeliveryLatencyStats) > 6 {
+						new1s = new500ms - channel.MsgDeliveryLatencyStats[6]
+					}
+
+					diff = uint64(new500ms - old500ms)
+					stat = fmt.Sprintf("topic.%s.channel.%s.delivery2ack_above500ms_count", statdName, channel.ChannelName)
+					client.Incr(stat, int64(diff))
+
+					diff = uint64(new1s - old1s)
+					stat = fmt.Sprintf("topic.%s.channel.%s.delivery2ack_above1s_count", statdName, channel.ChannelName)
+					client.Incr(stat, int64(diff))
+
 					stat = fmt.Sprintf("topic.%s.channel.%s.clients", statdName, channel.ChannelName)
 					client.Gauge(stat, int64(channel.ClientNum))
 

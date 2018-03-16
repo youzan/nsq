@@ -342,8 +342,8 @@ func (self *ChannelStatsInfo) UpdateChannelLatencyStats(latencyInMillSec int64) 
 	atomic.AddInt64(&self.MsgConsumeLatencyStats[bucket], 1)
 }
 
-func (self *ChannelStatsInfo) UpdateDeliveryStats(latencyInMillSec int64) {
-	self.UpdateDeliveryLatencyStats(latencyInMillSec)
+func (self *ChannelStatsInfo) UpdateDelivery2ACKStats(latencyInMillSec int64) {
+	self.UpdateDelivery2ACKLatencyStats(latencyInMillSec)
 }
 
 func (self *ChannelStatsInfo) GetDeliveryLatencyStats() []int64 {
@@ -355,7 +355,7 @@ func (self *ChannelStatsInfo) GetDeliveryLatencyStats() []int64 {
 }
 
 //update message consume latency distribution in millisecond
-func (self *ChannelStatsInfo) UpdateDeliveryLatencyStats(latencyInMillSec int64) {
+func (self *ChannelStatsInfo) UpdateDelivery2ACKLatencyStats(latencyInMillSec int64) {
 	bucket := 0
 	if latencyInMillSec < 16 {
 	} else {

@@ -861,6 +861,7 @@ func (c *Channel) internalFinishMessage(clientID int64, clientAddr string,
 			clientID)
 		return 0, 0, false, nil, err
 	}
+	now := time.Now()
 	isOldDeferred := msg.IsDeferred()
 	if msg.TraceID != 0 || c.IsTraced() || nsqLog.Level() >= levellogger.LOG_DETAIL {
 		// if fin by no client address, means fin by internal delayed queue or by http api
@@ -873,7 +874,15 @@ func (c *Channel) internalFinishMessage(clientID int64, clientAddr string,
 	if c.e2eProcessingLatencyStream != nil {
 		c.e2eProcessingLatencyStream.Insert(msg.Timestamp)
 	}
-	c.channelStatsInfo.UpdateChannelStats((time.Now().UnixNano() - msg.Timestamp) / int64(time.Millisecond))
+	ackCost := now.UnixNano() - msg.deliveryTS.UnixNano()
+	expectTimeout := msg.pri - msg.deliveryTS.UnixNano()
+	if ackCost >= time.Second.Nanoseconds() && ackCost >= expectTimeout/10 {
+		if clientAddr != "" {
+			nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "SLOW_ACK", msg.TraceID, msg, clientAddr)
+		}
+	}
+	c.channelStatsInfo.UpdateDelivery2ACKStats(ackCost / int64(time.Millisecond))
+	c.channelStatsInfo.UpdateChannelStats((now.UnixNano() - msg.Timestamp) / int64(time.Millisecond))
 	var offset BackendOffset
 	var cnt int64
 	var changed bool
@@ -1205,7 +1214,6 @@ func (c *Channel) StartInFlightTimeout(msg *Message, client Consumer, clientAddr
 		return shouldSend, err
 	}
 
-	c.channelStatsInfo.UpdateDeliveryStats((now.UnixNano() - msg.Timestamp) / int64(time.Millisecond))
 	if msg.TraceID != 0 || c.IsTraced() || nsqLog.Level() >= levellogger.LOG_DETAIL {
 		nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "START", msg.TraceID, msg, clientAddr)
 	}
