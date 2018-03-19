@@ -381,6 +381,18 @@ func (self *TopicMsgStatsInfo) UpdateMsgSizeStats(msgSize int64) {
 	atomic.AddInt64(&self.MsgSizeStats[bucket], 1)
 }
 
+func (self *TopicMsgStatsInfo) BatchUpdateMsgLatencyStats(latency int64, num int64) {
+	bucket := 0
+	if latency < 1024 {
+	} else {
+		bucket = int(math.Log2(float64(latency/1024))) + 1
+	}
+	if bucket >= len(self.MsgWriteLatencyStats) {
+		bucket = len(self.MsgWriteLatencyStats) - 1
+	}
+	atomic.AddInt64(&self.MsgWriteLatencyStats[bucket], num)
+}
+
 func (self *TopicMsgStatsInfo) UpdateMsgLatencyStats(latency int64) {
 	bucket := 0
 	if latency < 1024 {
@@ -416,6 +428,10 @@ func (self *DetailStatsInfo) ResetHistoryInitPub(msgSize int64) {
 	now := int32(time.Now().Hour())
 	atomic.StoreInt32(&self.historyStatsInfo.lastHour, now)
 	atomic.StoreInt64(&self.historyStatsInfo.lastPubSize, msgSize)
+}
+
+func (self *DetailStatsInfo) BatchUpdateTopicLatencyStats(latency int64, num int64) {
+	self.msgStats.BatchUpdateMsgLatencyStats(latency, num)
 }
 
 func (self *DetailStatsInfo) UpdateTopicMsgStats(msgSize int64, latency int64) {

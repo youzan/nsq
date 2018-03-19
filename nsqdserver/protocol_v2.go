@@ -1592,7 +1592,7 @@ func (p *protocolV2) internalMPUBAndTrace(client *nsqd.ClientV2, params [][]byte
 		}
 		topic.GetDetailStats().UpdatePubClientStats(client.String(), client.UserAgent, "tcp", int64(len(messages)), false)
 		cost := time.Now().UnixNano() - startPub
-		topic.GetDetailStats().UpdateTopicMsgStats(0, cost/1000/int64(len(messages)))
+		topic.GetDetailStats().BatchUpdateTopicLatencyStats(cost/int64(time.Microsecond), int64(len(messages)))
 		if !traceEnable {
 			return okBytes, nil
 		}
