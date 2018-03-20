@@ -719,10 +719,9 @@ func (t *Topic) getOrCreateChannel(channelName string) (*Channel, bool) {
 			ext = 0
 		}
 		channel = NewChannel(t.GetTopicName(), t.GetTopicPart(), channelName, readEnd,
-			t.option, deleteCallback, atomic.LoadInt32(&t.writeDisabled),
+			t.option, deleteCallback, t.forceFlushForChannel, atomic.LoadInt32(&t.writeDisabled),
 			t.nsqdNotify, ext)
 
-		channel.moreDataCallback = t.forceFlushForChannel
 		channel.UpdateQueueEnd(readEnd, false)
 		channel.SetDelayedQueue(t.GetDelayedQueue())
 		if t.IsWriteDisabled() {
