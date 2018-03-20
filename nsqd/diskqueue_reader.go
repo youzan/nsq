@@ -389,8 +389,20 @@ func (d *diskQueueReader) SkipReadToEnd() (BackendQueueEnd, error) {
 	return &e, skiperr
 }
 
+// waiting more data if all data has been confirmed to consumed
 func (d *diskQueueReader) IsWaitingMoreData() bool {
 	return atomic.LoadInt32(&d.waitingMoreData) == 1
+}
+
+// read to end means no more data on disk, but maybe still waiting ack in memory
+func (d *diskQueueReader) isReadToEnd() bool {
+	if d.IsWaitingMoreData() {
+		return true
+	}
+	d.Lock()
+	hasDiskData := d.queueEndInfo.EndOffset.GreatThan(&d.readQueueInfo.EndOffset)
+	d.Unlock()
+	return !hasDiskData
 }
 
 func (d *diskQueueReader) SkipToNext() (BackendQueueEnd, error) {

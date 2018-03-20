@@ -446,6 +446,24 @@ func (c *Channel) Close() error {
 	return c.exit(false)
 }
 
+// waiting more data may include :
+// waiting more disk read
+// waiting in memory inflight
+// waiting in delayed inflight
+// waiting requeued
+func (c *Channel) IsWaitingMoreDiskData() bool {
+	if c.IsPaused() || c.IsConsumeDisabled() || c.IsSkipped() {
+		return false
+	}
+	d, ok := c.backend.(*diskQueueReader)
+	if ok {
+		return d.isReadToEnd()
+	}
+	return false
+}
+
+// waiting more data is indicated all msgs are consumed
+// if some delayed message in channel, waiting more data is not true
 func (c *Channel) IsWaitingMoreData() bool {
 	if c.IsPaused() || c.IsConsumeDisabled() || c.IsSkipped() {
 		return false
@@ -920,7 +938,10 @@ func (c *Channel) internalFinishMessage(clientID int64, clientAddr string,
 			}
 		}
 	}
-
+	newDeferCnt := atomic.LoadInt64(&c.deferredCount)
+	if (int64(len(c.inFlightMessages))-newDeferCnt <= 0) && len(c.requeuedMsgChan) == 0 && c.IsWaitingMoreDiskData() {
+		c.moreDataCallback(c)
+	}
 	return offset, cnt, changed, msg, nil
 }
 
@@ -1647,7 +1668,7 @@ LOOP:
 					}
 					readChan = nil
 					waitEndUpdated = c.endUpdatedChan
-					if c.moreDataCallback != nil && !c.IsSkipped() && !c.IsPaused() {
+					if c.moreDataCallback != nil {
 						c.moreDataCallback(c)
 					}
 				}

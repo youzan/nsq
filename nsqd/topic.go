@@ -719,7 +719,7 @@ func (t *Topic) getOrCreateChannel(channelName string) (*Channel, bool) {
 			ext = 0
 		}
 		channel = NewChannel(t.GetTopicName(), t.GetTopicPart(), channelName, readEnd,
-			t.option, deleteCallback, t.forceFlushForChannel, atomic.LoadInt32(&t.writeDisabled),
+			t.option, deleteCallback, t.flushForChannelMoreData, atomic.LoadInt32(&t.writeDisabled),
 			t.nsqdNotify, ext)
 
 		channel.UpdateQueueEnd(readEnd, false)
@@ -837,7 +837,10 @@ func (t *Topic) PutMessageNoLock(m *Message) (MessageID, BackendOffset, int32, B
 	return id, offset, writeBytes, &dend, err
 }
 
-func (t *Topic) forceFlushForChannel(c *Channel) {
+func (t *Topic) flushForChannelMoreData(c *Channel) {
+	if c.IsSkipped() || c.IsPaused() {
+		return
+	}
 	hasData := t.backend.FlushBuffer()
 	if hasData {
 		e := t.backend.GetQueueReadEnd()
