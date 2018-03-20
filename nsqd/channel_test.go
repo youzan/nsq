@@ -295,13 +295,16 @@ func TestChannelResetReadEnd(t *testing.T) {
 	//skip forward to message 10
 	t.Logf("backendOffsetMid: %d", backendOffsetMid)
 	channel.SetConsumeOffset(backendOffsetMid, 10, true)
+	time.Sleep(time.Millisecond)
 	for i := 0; i < 10; i++ {
 		outputMsg := <-channel.clientMsgChan
+		t.Logf("Msg: %s", outputMsg.Body)
 		equal(t, string(outputMsg.Body[:]), strconv.Itoa(i+10))
 	}
 	equal(t, channel.Depth(), int64(10))
 
 	channel.SetConsumeOffset(0, 0, true)
+	time.Sleep(time.Millisecond)
 	//equal(t, channel.Depth(), int64(20))
 	for i := 0; i < 20; i++ {
 		outputMsg := <-channel.clientMsgChan

@@ -447,7 +447,7 @@ func (c *Channel) Close() error {
 }
 
 func (c *Channel) IsWaitingMoreData() bool {
-	if c.IsPaused() || c.IsConsumeDisabled() {
+	if c.IsPaused() || c.IsConsumeDisabled() || c.IsSkipped() {
 		return false
 	}
 	d, ok := c.backend.(*diskQueueReader)
@@ -1647,7 +1647,7 @@ LOOP:
 					}
 					readChan = nil
 					waitEndUpdated = c.endUpdatedChan
-					if c.moreDataCallback != nil {
+					if c.moreDataCallback != nil && !c.IsSkipped() && !c.IsPaused() {
 						c.moreDataCallback(c)
 					}
 				}
