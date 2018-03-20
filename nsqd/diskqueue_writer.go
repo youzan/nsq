@@ -759,17 +759,20 @@ func (d *diskQueueWriter) Flush() error {
 	return nil
 }
 
-func (d *diskQueueWriter) FlushBuffer() {
+func (d *diskQueueWriter) FlushBuffer() bool {
+	hasData := false
 	d.Lock()
-	if d.bufferWriter != nil {
+	if d.bufferWriter != nil && d.bufferWriter.Buffered() > 0 {
+		hasData = true
 		d.bufferWriter.Flush()
+		if d.diskReadEnd.EndOffset.GreatThan(&d.diskWriteEnd.EndOffset) {
+			nsqLog.LogWarningf("DISKQUEUE(%s): old read is greater: %v, %v", d.name,
+				d.diskReadEnd, d.diskWriteEnd)
+		}
+		d.diskReadEnd = d.diskWriteEnd
 	}
-	if d.diskReadEnd.EndOffset.GreatThan(&d.diskWriteEnd.EndOffset) {
-		nsqLog.LogWarningf("DISKQUEUE(%s): old read is greater: %v, %v", d.name,
-			d.diskReadEnd, d.diskWriteEnd)
-	}
-	d.diskReadEnd = d.diskWriteEnd
 	d.Unlock()
+	return hasData
 }
 
 // sync fsyncs the current writeFile and persists metadata

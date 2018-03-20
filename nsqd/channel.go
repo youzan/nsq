@@ -103,12 +103,13 @@ type Channel struct {
 	exitMutex    sync.RWMutex
 
 	// state tracking
-	clients        map[int64]Consumer
-	paused         int32
-	skipped        int32
-	ephemeral      bool
-	deleteCallback func(*Channel)
-	deleter        sync.Once
+	clients          map[int64]Consumer
+	paused           int32
+	skipped          int32
+	ephemeral        bool
+	deleteCallback   func(*Channel)
+	deleter          sync.Once
+	moreDataCallback func(*Channel)
 
 	// Stats tracking
 	e2eProcessingLatencyStream *quantile.Quantile
@@ -445,7 +446,7 @@ func (c *Channel) Close() error {
 }
 
 func (c *Channel) IsWaitingMoreData() bool {
-	if c.IsPaused() {
+	if c.IsPaused() || c.IsConsumeDisabled() {
 		return false
 	}
 	d, ok := c.backend.(*diskQueueReader)
@@ -1645,6 +1646,9 @@ LOOP:
 					}
 					readChan = nil
 					waitEndUpdated = c.endUpdatedChan
+					if c.moreDataCallback != nil {
+						c.moreDataCallback(c)
+					}
 				}
 			} else {
 				readChan = origReadChan

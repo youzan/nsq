@@ -722,6 +722,7 @@ func (t *Topic) getOrCreateChannel(channelName string) (*Channel, bool) {
 			t.option, deleteCallback, atomic.LoadInt32(&t.writeDisabled),
 			t.nsqdNotify, ext)
 
+		channel.moreDataCallback = t.forceFlushForChannel
 		channel.UpdateQueueEnd(readEnd, false)
 		channel.SetDelayedQueue(t.GetDelayedQueue())
 		if t.IsWriteDisabled() {
@@ -837,11 +838,33 @@ func (t *Topic) PutMessageNoLock(m *Message) (MessageID, BackendOffset, int32, B
 	return id, offset, writeBytes, &dend, err
 }
 
+func (t *Topic) forceFlushForChannel(c *Channel) {
+	hasData := t.backend.FlushBuffer()
+	if hasData {
+		e := t.backend.GetQueueReadEnd()
+		curCommit := t.GetCommitted()
+		// if not committed, we need wait to notify channel.
+		if curCommit != nil && e.Offset() > curCommit.Offset() {
+			e = curCommit
+		}
+		err := c.UpdateQueueEnd(e, false)
+		if err != nil {
+			if err != ErrExiting {
+				nsqLog.Logf(
+					"failed to update topic end to channel(%s) - %s",
+					c.name, err)
+			}
+		}
+	}
+}
+
 func (t *Topic) ForceFlushForChannels() {
 	// flush buffer only to allow the channel read recent write
 	// no need sync to disk, since sync is heavy IO.
-	t.backend.FlushBuffer()
-	t.updateChannelsEnd(false)
+	hasData := t.backend.FlushBuffer()
+	if hasData {
+		t.updateChannelsEnd(false)
+	}
 }
 
 func (t *Topic) flushForChannels() {
@@ -860,8 +883,7 @@ func (t *Topic) flushForChannels() {
 	if needFlush {
 		// flush buffer only to allow the channel read recent write
 		// no need sync to disk, since sync is heavy IO.
-		t.backend.FlushBuffer()
-		t.updateChannelsEnd(false)
+		t.ForceFlushForChannels()
 	}
 }
 
