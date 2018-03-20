@@ -608,6 +608,7 @@ func TestSkipping(t *testing.T) {
 
 	msg = nsqdNs.NewMessage(0, []byte("test body2"))
 	topic.PutMessage(msg)
+	topic.ForceFlush()
 
 	// allow the client to possibly get a message, the test would hang indefinitely
 	// if pausing was not working on the internal clientMsgChan read
