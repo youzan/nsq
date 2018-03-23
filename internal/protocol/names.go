@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"regexp"
+	"strings"
 )
 
 var validTopicChannelNameRegex = regexp.MustCompile(`^[\.a-zA-Z0-9_-]+(#ephemeral)?$`)
@@ -21,4 +22,11 @@ func isValidName(name string) bool {
 		return false
 	}
 	return validTopicChannelNameRegex.MatchString(name)
+}
+
+func IsEphemeral(name string) bool {
+	if strings.HasSuffix(name, "#ephemeral") {
+		return true
+	}
+	return false
 }

@@ -16,6 +16,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/youzan/nsq/internal/protocol"
 	"github.com/youzan/nsq/nsqd"
 )
 
@@ -1856,6 +1857,9 @@ func (self *NsqdCoordinator) catchupFromLeader(topicInfo TopicPartitionMetaInfo,
 
 				oldChList := localTopic.GetChannelMapCopy()
 				for _, chName := range chList {
+					if protocol.IsEphemeral(chName) {
+						continue
+					}
 					ch := localTopic.GetChannel(chName)
 					if meta, ok := metaMaps[chName]; ok {
 						if meta.Paused {

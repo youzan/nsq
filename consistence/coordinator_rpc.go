@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/youzan/nsq/internal/protocol"
+
 	"github.com/absolute8511/gorpc"
 	"github.com/youzan/nsq/internal/levellogger"
 	"github.com/youzan/nsq/nsqd"
@@ -570,14 +572,17 @@ func (self *NsqdCoordRpcServer) GetTopicStats(topic string) *NodeTopicStats {
 		}
 		if ts.IsLeader || coordData.GetLeader() == self.nsqdCoord.myNode.GetID() {
 			stat.TopicLeaderDataSize[ts.TopicFullName] += (ts.BackendDepth-ts.BackendStart)/1024/1024 + 1
-			stat.ChannelNum[ts.TopicFullName] = len(ts.Channels)
 			chList := stat.ChannelList[ts.TopicFullName]
 			for _, chStat := range ts.Channels {
+				if protocol.IsEphemeral(chStat.ChannelName) {
+					continue
+				}
 				stat.ChannelDepthData[ts.TopicFullName] += chStat.DepthSize/1024/1024 + 1
 				chList = append(chList, chStat.ChannelName)
 			}
 			stat.ChannelList[ts.TopicFullName] = chList
 			stat.ChannelMetas[ts.TopicFullName] = localTopic.GetChannelMeta()
+			stat.ChannelNum[ts.TopicFullName] = len(chList)
 		}
 	}
 	// the status of specific topic

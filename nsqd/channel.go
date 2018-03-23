@@ -6,10 +6,11 @@ import (
 	"math"
 	"path"
 	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/youzan/nsq/internal/protocol"
 
 	simpleJson "github.com/bitly/go-simplejson"
 	"github.com/youzan/nsq/internal/ext"
@@ -195,7 +196,7 @@ func NewChannel(topicName string, part int, channelName string, chEnd BackendQue
 
 	c.initPQ()
 
-	if strings.HasSuffix(channelName, "#ephemeral") {
+	if protocol.IsEphemeral(channelName) {
 		c.ephemeral = true
 	}
 	// backend names, for uniqueness, automatically include the topic...
@@ -1383,6 +1384,9 @@ func (c *Channel) DisableConsume(disable bool) {
 			needClearConfirm = true
 		}
 		c.drainChannelWaiting(needClearConfirm, nil, nil)
+		if c.ephemeral {
+			go c.deleter.Do(func() { c.deleteCallback(c) })
+		}
 	} else {
 		nsqLog.Logf("channel %v enabled for consume", c.name)
 		if !atomic.CompareAndSwapInt32(&c.consumeDisabled, 1, 0) {
