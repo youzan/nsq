@@ -533,6 +533,9 @@ func (c *Channel) skipChannelToEnd() (BackendQueueEnd, error) {
 }
 
 func (c *Channel) flush() error {
+	if c.ephemeral {
+		return nil
+	}
 	d, ok := c.backend.(*diskQueueReader)
 	if ok {
 		d.Flush()
