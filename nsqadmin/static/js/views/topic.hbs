@@ -459,8 +459,8 @@
         </div>
         <div class="form-group">
             <input type="hidden" name="topic" value={{name}}>
-            <input type="text" name="channel" placeholder="Channel Name">
+            <input type="text" name="channel" placeholder="Channel Name" {{#if login}}{{else}}disabled{{/if}}>
         </div>
-        <button class="btn btn-default" type="submit">Create</button>
+        <button class="btn btn-default" type="submit" {{#if login}}{{else}}disabled{{/if}}>Create</button>
     </form>
 </div>
