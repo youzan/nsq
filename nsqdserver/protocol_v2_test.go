@@ -2526,6 +2526,14 @@ func testTcpPubExtToNonExtTopic(t *testing.T, allow bool) {
 }
 
 func TestConsumeWithFilter(t *testing.T) {
+	testConsumeWithFilter(t, false)
+}
+
+func TestConsumeWithInverseFilter(t *testing.T) {
+	testConsumeWithFilter(t, true)
+}
+
+func testConsumeWithFilter(t *testing.T, inverse bool) {
 	topicName := "test_channel_filter" + strconv.Itoa(int(time.Now().Unix()))
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
@@ -2553,6 +2561,7 @@ func TestConsumeWithFilter(t *testing.T) {
 	var jext nsq.MsgExt
 	jext.Custom = make(map[string]string)
 	filterExtKey := "my_filter_key"
+	pubTotal := 6 * 10
 	for i := 0; i < 10; i++ {
 		jext.Custom[filterExtKey] = "filterA"
 		msgBody := fmt.Sprintf("this is message A %v", i)
@@ -2628,7 +2637,7 @@ func TestConsumeWithFilter(t *testing.T) {
 	clientParams["client_id"] = "client_a"
 	clientParams["hostname"] = "client_a"
 
-	clientParams["ext_filter"] = nsqdNs.ExtFilterData{1, filterExtKey, "filterA", nil}
+	clientParams["ext_filter"] = nsqdNs.ExtFilterData{1, inverse, filterExtKey, "filterA", nil}
 	clientParams["extend_support"] = true
 	identify(t, conn, clientParams, frameTypeResponse)
 	sub(t, conn, topicName, "chA")
@@ -2641,7 +2650,7 @@ func TestConsumeWithFilter(t *testing.T) {
 	client1Params := make(map[string]interface{})
 	client1Params["client_id"] = "client_b"
 	client1Params["hostname"] = "client_b"
-	client1Params["ext_filter"] = nsqdNs.ExtFilterData{1, filterExtKey, "filterB", nil}
+	client1Params["ext_filter"] = nsqdNs.ExtFilterData{1, inverse, filterExtKey, "filterB", nil}
 	client1Params["extend_support"] = true
 	identify(t, conn1, client1Params, frameTypeResponse)
 	sub(t, conn1, topicName, "chB")
@@ -2666,7 +2675,7 @@ func TestConsumeWithFilter(t *testing.T) {
 	client3Params := make(map[string]interface{})
 	client3Params["client_id"] = "client_c"
 	client3Params["hostname"] = "client_c"
-	client3Params["ext_filter"] = nsqdNs.ExtFilterData{3, filterExtKey, "filterA*", nil}
+	client3Params["ext_filter"] = nsqdNs.ExtFilterData{3, inverse, filterExtKey, "filterA*", nil}
 	client3Params["extend_support"] = true
 	identify(t, conn3, client3Params, frameTypeResponse)
 	sub(t, conn3, topicName, "chGlob")
@@ -2679,7 +2688,7 @@ func TestConsumeWithFilter(t *testing.T) {
 	client4Params := make(map[string]interface{})
 	client4Params["client_id"] = "client_c"
 	client4Params["hostname"] = "client_c"
-	client4Params["ext_filter"] = nsqdNs.ExtFilterData{2, filterExtKey, "^filterA$|^filterB$", nil}
+	client4Params["ext_filter"] = nsqdNs.ExtFilterData{2, inverse, filterExtKey, "^filterA$|^filterB$", nil}
 	client4Params["extend_support"] = true
 	identify(t, conn4, client4Params, frameTypeResponse)
 	sub(t, conn4, topicName, "chRegexp")
@@ -2700,13 +2709,22 @@ func TestConsumeWithFilter(t *testing.T) {
 			msgOut := recvNextMsgAndCheckExt(t, conn, 0, 0, true, true)
 			test.NotNil(t, msgOut)
 			test.Assert(t, len(msgOut.Body) >= len(msgPrefix), "body should have enough length")
-			test.Equal(t, msgPrefix, string(msgOut.Body)[:len(msgPrefix)])
+
 			jsonHeader := make(map[string]interface{})
 			err := json.Unmarshal(msgOut.ExtBytes, &jsonHeader)
 			test.Nil(t, err)
-			test.Equal(t, "filterA", jsonHeader[filterExtKey])
-			if atomic.AddInt32(&cntA, 1) >= 20 {
-				break
+			if inverse {
+				// maybe AB
+				test.NotEqual(t, "filterA", jsonHeader[filterExtKey])
+				if atomic.AddInt32(&cntA, 1) >= int32(pubTotal-20) {
+					break
+				}
+			} else {
+				test.Equal(t, msgPrefix, string(msgOut.Body)[:len(msgPrefix)])
+				test.Equal(t, "filterA", jsonHeader[filterExtKey])
+				if atomic.AddInt32(&cntA, 1) >= 20 {
+					break
+				}
 			}
 		}
 	}()
@@ -2719,13 +2737,22 @@ func TestConsumeWithFilter(t *testing.T) {
 			msgOut := recvNextMsgAndCheckExt(t, conn1, 0, 0, true, true)
 			test.NotNil(t, msgOut)
 			test.Assert(t, len(msgOut.Body) >= len(msgPrefix), "body should have enough length")
-			test.Equal(t, msgPrefix, string(msgOut.Body)[:len(msgPrefix)])
+
 			jsonHeader := make(map[string]interface{})
 			err := json.Unmarshal(msgOut.ExtBytes, &jsonHeader)
 			test.Nil(t, err)
-			test.Equal(t, "filterB", jsonHeader[filterExtKey])
-			if atomic.AddInt32(&cntB, 1) >= 10 {
-				break
+			if inverse {
+				// maybe BA
+				test.NotEqual(t, "filterB", jsonHeader[filterExtKey])
+				if atomic.AddInt32(&cntB, 1) >= int32(pubTotal-10) {
+					break
+				}
+			} else {
+				test.Equal(t, msgPrefix, string(msgOut.Body)[:len(msgPrefix)])
+				test.Equal(t, "filterB", jsonHeader[filterExtKey])
+				if atomic.AddInt32(&cntB, 1) >= 10 {
+					break
+				}
 			}
 		}
 	}()
@@ -2738,17 +2765,26 @@ func TestConsumeWithFilter(t *testing.T) {
 			msgOut := recvNextMsgAndCheckExt(t, conn3, 0, 0, true, true)
 			test.NotNil(t, msgOut)
 			test.Assert(t, len(msgOut.Body) >= len(msgPrefix), "body should have enough length")
-			test.Equal(t, msgPrefix, string(msgOut.Body)[:len(msgPrefix)])
 			jsonHeader := make(map[string]interface{})
 			err := json.Unmarshal(msgOut.ExtBytes, &jsonHeader)
 			test.Nil(t, err)
-			if len(jsonHeader[filterExtKey].(string)) == 7 {
-				test.Equal(t, "filterA", jsonHeader[filterExtKey])
+			if inverse {
+				test.NotEqual(t, msgPrefix, string(msgOut.Body)[:len(msgPrefix)])
+				test.NotEqual(t, "filterA", jsonHeader[filterExtKey])
+				test.NotEqual(t, "filterAB", jsonHeader[filterExtKey])
+				if atomic.AddInt32(&cntAPrefix, 1) >= int32(pubTotal-30) {
+					break
+				}
 			} else {
-				test.Equal(t, "filterAB", jsonHeader[filterExtKey])
-			}
-			if atomic.AddInt32(&cntAPrefix, 1) >= 30 {
-				break
+				test.Equal(t, msgPrefix, string(msgOut.Body)[:len(msgPrefix)])
+				if len(jsonHeader[filterExtKey].(string)) == 7 {
+					test.Equal(t, "filterA", jsonHeader[filterExtKey])
+				} else {
+					test.Equal(t, "filterAB", jsonHeader[filterExtKey])
+				}
+				if atomic.AddInt32(&cntAPrefix, 1) >= 30 {
+					break
+				}
 			}
 		}
 	}()
@@ -2766,32 +2802,55 @@ func TestConsumeWithFilter(t *testing.T) {
 			err := json.Unmarshal(msgOut.ExtBytes, &jsonHeader)
 			test.Nil(t, err)
 			filterData := jsonHeader[filterExtKey]
-			if filterData != "filterA" && filterData != "filterB" {
-				test.Assert(t, false, "filter should match: "+filterData.(string))
-			}
-			if atomic.AddInt32(&cntAOrB, 1) >= 30 {
-				break
+			if inverse {
+				test.NotEqual(t, "filterA", filterData)
+				test.NotEqual(t, "filterB", filterData)
+				if atomic.AddInt32(&cntAOrB, 1) >= int32(pubTotal-30) {
+					break
+				}
+			} else {
+				if filterData != "filterA" && filterData != "filterB" {
+					test.Assert(t, false, "filter should match: "+filterData.(string))
+				}
+				if atomic.AddInt32(&cntAOrB, 1) >= 30 {
+					break
+				}
 			}
 		}
 	}()
 	wg.Wait()
-	test.Equal(t, 20, int(cntA))
-	test.Equal(t, 10, int(cntB))
-	test.Equal(t, 30, int(cntAPrefix))
-	test.Equal(t, 30, int(cntAOrB))
+	if inverse {
+		test.Equal(t, pubTotal-20, int(cntA))
+		test.Equal(t, pubTotal-10, int(cntB))
+		test.Equal(t, pubTotal-30, int(cntAPrefix))
+		test.Equal(t, pubTotal-30, int(cntAOrB))
+	} else {
+		test.Equal(t, 20, int(cntA))
+		test.Equal(t, 10, int(cntB))
+		test.Equal(t, 30, int(cntAPrefix))
+		test.Equal(t, 30, int(cntAOrB))
+	}
 	totalCnt := 0
 	for {
 		msgOut := recvNextMsgAndCheckExt(t, conn2, 0, 0, true, true)
 		test.NotNil(t, msgOut)
 		totalCnt++
-		if totalCnt >= 60 {
+		if totalCnt >= pubTotal {
 			break
 		}
 	}
-	test.Equal(t, 60, totalCnt)
+	test.Equal(t, pubTotal, totalCnt)
 }
 
 func TestConsumeWithFilterComplex(t *testing.T) {
+	testConsumeWithFilterComplex(t, false)
+}
+
+func TestConsumeWithInverseFilterComplex(t *testing.T) {
+	testConsumeWithFilterComplex(t, true)
+}
+
+func testConsumeWithFilterComplex(t *testing.T, inverse bool) {
 	topicName := "test_channel_filter" + strconv.Itoa(int(time.Now().Unix()))
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
@@ -2821,6 +2880,7 @@ func TestConsumeWithFilterComplex(t *testing.T) {
 	jext := make(map[string]interface{})
 	filterExtKey := "my_filter_key"
 	filterExtKey1 := "my_filter_key2"
+	totalCnt := 10 * 6
 	for i := 0; i < 10; i++ {
 		jext[filterExtKey] = true
 		msgBody := fmt.Sprintf("this is message true %v", i)
@@ -2907,7 +2967,7 @@ func TestConsumeWithFilterComplex(t *testing.T) {
 	clientParams["client_id"] = "client_a"
 	clientParams["hostname"] = "client_a"
 
-	clientParams["ext_filter"] = nsqdNs.ExtFilterData{1, filterExtKey, "true", nil}
+	clientParams["ext_filter"] = nsqdNs.ExtFilterData{1, inverse, filterExtKey, "true", nil}
 	clientParams["extend_support"] = true
 	identify(t, conn, clientParams, frameTypeResponse)
 	sub(t, conn, topicName, "ch")
@@ -2920,7 +2980,11 @@ func TestConsumeWithFilterComplex(t *testing.T) {
 	for {
 		msgOut := recvNextMsgAndCheckExt(t, conn, 0, 0, true, true)
 		if msgOut != nil {
-			test.Assert(t, false, "should not match any string extend")
+			if !inverse {
+				test.Assert(t, false, "should not match any string extend")
+			} else {
+				break
+			}
 		} else {
 			break
 		}
@@ -2931,7 +2995,7 @@ func TestConsumeWithFilterComplex(t *testing.T) {
 	client1Params := make(map[string]interface{})
 	client1Params["client_id"] = "client_b"
 	client1Params["hostname"] = "client_b"
-	client1Params["ext_filter"] = nsqdNs.ExtFilterData{4, "any", "",
+	client1Params["ext_filter"] = nsqdNs.ExtFilterData{4, inverse, "any", "",
 		[]nsqdNs.MultiFilterData{
 			nsqdNs.MultiFilterData{filterExtKey, "filterA"},
 			nsqdNs.MultiFilterData{filterExtKey, "filterB"},
@@ -2954,24 +3018,31 @@ func TestConsumeWithFilterComplex(t *testing.T) {
 		err = json.Unmarshal(msgOut.ExtBytes, &jsonHeader)
 		test.Nil(t, err)
 		filterData := jsonHeader[filterExtKey]
-		if filterData != "filterA" && filterData != "filterB" {
-			t.Logf("got messgae: %v", string(msgOut.ExtBytes))
-			test.Assert(t, false, "filter should match: "+filterData.(string))
-		}
+		if inverse {
+			test.NotEqual(t, "filterA", filterData)
+			test.NotEqual(t, "filterB", filterData)
+			if atomic.AddInt32(&cnt, 1) >= int32(totalCnt-30) {
+				break
+			}
+		} else {
+			if filterData != "filterA" && filterData != "filterB" {
+				t.Logf("got messgae: %v", string(msgOut.ExtBytes))
+				test.Assert(t, false, "filter should match: "+filterData.(string))
+			}
 
-		if atomic.AddInt32(&cnt, 1) >= 20 {
-			break
+			if atomic.AddInt32(&cnt, 1) >= 30 {
+				break
+			}
 		}
 	}
 	conn1.Close()
-	test.Equal(t, 20, int(cnt))
 
 	conn1, err = mustConnectNSQD(tcpAddr)
 	test.Equal(t, err, nil)
 	client1Params = make(map[string]interface{})
 	client1Params["client_id"] = "client_b"
 	client1Params["hostname"] = "client_b"
-	client1Params["ext_filter"] = nsqdNs.ExtFilterData{4, "all", "",
+	client1Params["ext_filter"] = nsqdNs.ExtFilterData{4, inverse, "all", "",
 		[]nsqdNs.MultiFilterData{
 			nsqdNs.MultiFilterData{filterExtKey, "filterA"},
 			nsqdNs.MultiFilterData{filterExtKey1, "filter1A"},
@@ -2987,20 +3058,33 @@ func TestConsumeWithFilterComplex(t *testing.T) {
 	for {
 		msgOut := recvNextMsgAndCheckExt(t, conn1, 0, 0, true, true)
 		test.NotNil(t, msgOut)
-		test.Assert(t, len(msgOut.Body) >= len(msgPrefix), "body should have enough length")
-		test.Equal(t, msgPrefix, string(msgOut.Body)[:len(msgPrefix)])
+		if inverse {
+		} else {
+			test.Assert(t, len(msgOut.Body) >= len(msgPrefix), "body should have enough length")
+			test.Equal(t, msgPrefix, string(msgOut.Body)[:len(msgPrefix)])
+		}
 		var jsonHeader map[string]interface{}
 		err = json.Unmarshal(msgOut.ExtBytes, &jsonHeader)
 		test.Nil(t, err)
-		test.Equal(t, "filterA", jsonHeader[filterExtKey])
-		test.Equal(t, "filter1A", jsonHeader[filterExtKey1])
-		if atomic.AddInt32(&cnt, 1) >= 10 {
-			break
+		if inverse {
+			if jsonHeader[filterExtKey] == "filterA" && jsonHeader[filterExtKey1] == "filter1A" {
+				t.Log(jsonHeader)
+				test.Assert(t, false, "filter should not match")
+			}
+			if atomic.AddInt32(&cnt, 1) >= int32(totalCnt-10) {
+				break
+			}
+		} else {
+			test.Equal(t, "filterA", jsonHeader[filterExtKey])
+			test.Equal(t, "filter1A", jsonHeader[filterExtKey1])
+			if atomic.AddInt32(&cnt, 1) >= 10 {
+				break
+			}
 		}
 	}
 	conn1.Close()
-	test.Equal(t, 10, int(cnt))
 }
+
 func TestConsumeWithFilterOnNonExtendTopic(t *testing.T) {
 	topicName := "test_channel_filter" + strconv.Itoa(int(time.Now().Unix()))
 	opts := nsqdNs.NewOptions()
@@ -3044,7 +3128,7 @@ func TestConsumeWithFilterOnNonExtendTopic(t *testing.T) {
 	clientParams := make(map[string]interface{})
 	clientParams["client_id"] = "client_a"
 	clientParams["hostname"] = "client_a"
-	clientParams["ext_filter"] = nsqdNs.ExtFilterData{1, "test_ext", "true", nil}
+	clientParams["ext_filter"] = nsqdNs.ExtFilterData{1, false, "test_ext", "true", nil}
 	identify(t, conn, clientParams, frameTypeResponse)
 	sub(t, conn, topicName, "ch")
 	_, err = nsq.Ready(1).WriteTo(conn)
@@ -3873,7 +3957,7 @@ func TestSubOrderedWithFilter(t *testing.T) {
 	clientParams := make(map[string]interface{})
 	clientParams["client_id"] = "client_b"
 	clientParams["hostname"] = "client_b"
-	clientParams["ext_filter"] = nsqdNs.ExtFilterData{1, "nomatch", "nomatch", nil}
+	clientParams["ext_filter"] = nsqdNs.ExtFilterData{1, false, "nomatch", "nomatch", nil}
 	clientParams["extend_support"] = true
 	identify(t, conn, clientParams, frameTypeResponse)
 
