@@ -1685,9 +1685,6 @@ LOOP:
 					readChan = origReadChan
 					waitEndUpdated = nil
 				} else {
-					if nsqLog.Level() >= levellogger.LOG_DEBUG {
-						nsqLog.LogDebugf("no data to be read: %v", c.name)
-					}
 					readChan = nil
 					waitEndUpdated = c.endUpdatedChan
 					if c.moreDataCallback != nil {
@@ -1774,7 +1771,7 @@ LOOP:
 					c.GetName(), lastMsg.ID, lastMsg.Offset, msg.ID, msg.Offset)
 			}
 			if resumedFirst {
-				if nsqLog.Level() >= levellogger.LOG_DEBUG || c.IsTraced() {
+				if nsqLog.Level() > levellogger.LOG_DEBUG || c.IsTraced() {
 					nsqLog.LogDebugf("channel %v resumed first messsage %v at Offset: %v", c.GetName(), msg.ID, msg.Offset)
 				}
 				resumedFirst = false

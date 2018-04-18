@@ -613,7 +613,7 @@ func (d *diskQueueReader) internalConfirm(offset BackendOffset, cnt int64) error
 	d.confirmedQueueInfo.virtualEnd = offset
 	atomic.StoreInt64(&d.confirmedQueueInfo.totalMsgCnt, cnt)
 	d.updateDepth()
-	nsqLog.LogDebugf("confirmed to offset: %v:%v", offset, cnt)
+	//nsqLog.LogDebugf("confirmed to offset: %v:%v", offset, cnt)
 	return nil
 }
 
@@ -715,7 +715,7 @@ func (d *diskQueueReader) internalSkipTo(voffset BackendOffset, cnt int64, backT
 		}
 	}
 
-	if voffset < d.readQueueInfo.Offset() || nsqLog.Level() >= levellogger.LOG_DEBUG {
+	if voffset < d.readQueueInfo.Offset() || nsqLog.Level() > levellogger.LOG_DEBUG {
 		nsqLog.Logf("==== diskqueue(%s) read skip from %v to : %v, %v",
 			d.readerMetaName, d.readQueueInfo, voffset, newPos)
 	}
