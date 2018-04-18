@@ -799,6 +799,7 @@ func (s *httpServer) enableMessageTrace(w http.ResponseWriter, req *http.Request
 	}
 	topicName := reqParams.Get("topic")
 	channelName := reqParams.Get("channel")
+	slow := reqParams.Get("slow")
 
 	parts := s.ctx.getPartitions(topicName)
 	for _, t := range parts {
@@ -807,7 +808,11 @@ func (s *httpServer) enableMessageTrace(w http.ResponseWriter, req *http.Request
 			if err != nil {
 				continue
 			}
-			ch.SetTrace(true)
+			if slow == "true" {
+				ch.SetSlowTrace(true)
+			} else {
+				ch.SetTrace(true)
+			}
 			nsqd.NsqLogger().Logf("channel %v trace enabled", ch.GetName())
 		} else {
 			t.SetTrace(true)
@@ -825,6 +830,7 @@ func (s *httpServer) disableMessageTrace(w http.ResponseWriter, req *http.Reques
 	}
 	topicName := reqParams.Get("topic")
 	channelName := reqParams.Get("channel")
+	slow := reqParams.Get("slow")
 	parts := s.ctx.getPartitions(topicName)
 	for _, t := range parts {
 		if channelName != "" {
@@ -832,7 +838,11 @@ func (s *httpServer) disableMessageTrace(w http.ResponseWriter, req *http.Reques
 			if err != nil {
 				continue
 			}
-			ch.SetTrace(false)
+			if slow == "true" {
+				ch.SetSlowTrace(false)
+			} else {
+				ch.SetTrace(false)
+			}
 			nsqd.NsqLogger().Logf("channel %v trace disabled", ch.GetName())
 		} else {
 			t.SetTrace(false)
