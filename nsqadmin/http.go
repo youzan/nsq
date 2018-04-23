@@ -104,6 +104,7 @@ func NewHTTPServer(ctx *Context) *httpServer {
 	router.Handle("POST", "/api/topics", http_api.Decorate(s.createTopicChannelHandler, s.authCheck, log, http_api.V1))
 	router.Handle("POST", "/api/topics/:topic", http_api.Decorate(s.topicActionHandler, s.authCheck, log, http_api.V1))
 	router.Handle("POST", "/api/topics/:topic/:channel", http_api.Decorate(s.channelActionHandler, s.authCheck, log, http_api.V1))
+	router.Handle("POST", "/api/topics/:topic/:channel/client", http_api.Decorate(s.channelClientActionHandler, s.authCheck, log, http_api.V1))
 	router.Handle("DELETE", "/api/nodes/:node", http_api.Decorate(s.tombstoneNodeForTopicHandler, s.authCheck, log, http_api.V1))
 	router.Handle("DELETE", "/api/topics/:topic", http_api.Decorate(s.deleteTopicHandler, s.authCheck, log, http_api.V1))
 	router.Handle("DELETE", "/api/topics/:topic/:channel", http_api.Decorate(s.deleteChannelHandler, s.authCheck, log, http_api.V1))
@@ -238,6 +239,7 @@ func (s *httpServer) indexHandler(w http.ResponseWriter, req *http.Request, ps h
 		Login               bool
 		User                string
 		AuthEnabled         bool
+		HasNotificationEndpoint		bool
 	}{
 		Version:             version.Binary,
 		ProxyGraphite:       s.ctx.nsqadmin.opts.ProxyGraphite,
@@ -255,6 +257,7 @@ func (s *httpServer) indexHandler(w http.ResponseWriter, req *http.Request, ps h
 		Login:               (s.ctx.nsqadmin.IsAuthEnabled() && u.IsLogin()) || (!s.ctx.nsqadmin.IsAuthEnabled()),
 		User:                u.GetUserName(),
 		AuthEnabled:         s.ctx.nsqadmin.IsAuthEnabled(),
+		HasNotificationEndpoint:         s.ctx.nsqadmin.opts.NotificationHTTPEndpoint != "",
 	})
 
 	return nil, nil
@@ -985,6 +988,53 @@ func (s *httpServer) deleteChannelHandler(w http.ResponseWriter, req *http.Reque
 func (s *httpServer) topicActionHandler(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {
 	topicName := ps.ByName("topic")
 	return s.topicChannelAction(req, topicName, "")
+}
+
+func (s *httpServer) channelClientActionHandler(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {
+	topicName := ps.ByName("topic")
+	channelName := ps.ByName("channel")
+	return s.topicChannelClientAction(req, topicName, channelName)
+}
+
+func (s *httpServer) topicChannelClientAction(req *http.Request, topicName string, channelName string) (interface{}, error) {
+	var messages []string
+
+	var body struct {
+		Action    string `json:"action"`
+		Timestamp string `json:"timestamp"`
+	}
+	err := json.NewDecoder(req.Body).Decode(&body)
+	if err != nil {
+		return nil, http_api.Err{400, err.Error()}
+	}
+
+	switch body.Action {
+	case "sink":
+		if channelName != "" {
+			s.notifyAdminActionWithUser("sink", topicName, channelName, "", req)
+		}
+	case "sink_removal":
+		if channelName != "" {
+			s.notifyAdminActionWithUser("sink_removal", topicName, channelName, "", req)
+
+		}
+	default:
+		return nil, http_api.Err{400, "INVALID_ACTION"}
+	}
+
+	if err != nil {
+		pe, ok := err.(clusterinfo.PartialErr)
+		if !ok {
+			s.ctx.nsqadmin.logf("ERROR: failed to %s topic/channel - %s", body.Action, err)
+			return nil, http_api.Err{502, fmt.Sprintf("UPSTREAM_ERROR: %s", err)}
+		}
+		s.ctx.nsqadmin.logf("WARNING: %s", err)
+		messages = append(messages, pe.Error())
+	}
+
+	return struct {
+		Message string `json:"message"`
+	}{maybeWarnMsg(messages)}, nil
 }
 
 func (s *httpServer) channelActionHandler(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {

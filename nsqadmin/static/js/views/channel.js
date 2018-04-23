@@ -16,6 +16,7 @@ var ChannelView = BaseView.extend({
     template: require('./spinner.hbs'),
 
     events: {
+        'click .consumer-actions button': 'consumerAction',
         'click .channel-actions button': 'channelAction',
         'blur .channel-actions input#resetChannelDatetime': 'resettsValidate',
         'click .toggle h4': 'onToggle',
@@ -94,7 +95,27 @@ var ChannelView = BaseView.extend({
                     .fail(this.handleAJAXError.bind(this));
             }
         }.bind(this));
-    }
+    },
+
+    consumerAction: function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            var action = $(e.currentTarget).data('action');
+            var txt = 'Are you sure you want to <strong>' +
+                action + '</strong> <em>' + this.model.get('topic') +
+                '/' + this.model.get('name') + '</em>';
+            txt = txt + '?';
+            var topic = this.model.get('topic')
+            bootbox.confirm(txt, function(result) {
+                if (result !== true) {
+                    return;
+                }
+
+                $.post(this.model.url() + "/client", JSON.stringify({'action': action}))
+                    .done(function() { window.location.reload(true); })
+                    .fail(this.handleAJAXError.bind(this));
+            }.bind(this));
+        }
 });
 
 module.exports = ChannelView;
