@@ -56,7 +56,8 @@ var BaseView = Backbone.View.extend({
             'logout_url': AppState.get('LOGOUT_URL'),
             'auth_enabled': AppState.get('AUTH_ENABLED'),
             'login'     : AppState.get('LOGIN'),
-            'user'      : AppState.get('USER')
+            'user'      : AppState.get('USER'),
+            'hasEndpoint' : AppState.get('HAS_ENDPOINT')
         };
         if (this.model) {
             ctx = _.extend(ctx, this.model.toJSON());
