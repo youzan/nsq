@@ -864,7 +864,6 @@ func (self *NsqdCoordRpcServer) PutMessage(info *RpcPutMessage) *CoordErr {
 			if e.Sub(s) > time.Second*time.Duration(RPC_TIMEOUT/2) {
 				coordLog.Infof("PutMessage rpc call used: %v, start: %v, end: %v", e.Sub(s), s, e)
 			}
-			coordLog.Warningf("PutMessage rpc call used: %v, start: %v, end: %v", e.Sub(s), s, e)
 		}()
 	}
 

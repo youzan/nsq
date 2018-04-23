@@ -163,7 +163,7 @@ func (s *httpServer) authCheck(f http_api.APIHandler) http_api.APIHandler {
 		if s.ctx.nsqadmin.IsAuthEnabled() {
 			u, err := s.getUserInfo(w, req)
 			if err != nil {
-				s.ctx.nsqadmin.logf("error in fetching user model %v", err);
+				s.ctx.nsqadmin.logf("error in fetching user model %v", err)
 				return nil, http_api.Err{http.StatusInternalServerError, "fail to find associated user info"}
 			}
 			if !u.IsLogin() && !s.validAccessToken(req) {
@@ -233,8 +233,8 @@ func (s *httpServer) indexHandler(w http.ResponseWriter, req *http.Request, ps h
 		StatsdPrefix        string
 		NSQLookupd          []string
 		AllNSQLookupds      []string
-		AuthUrl	     string
-		LogoutUrl	     string
+		AuthUrl             string
+		LogoutUrl           string
 		Login               bool
 		User                string
 		AuthEnabled         bool
@@ -250,10 +250,10 @@ func (s *httpServer) indexHandler(w http.ResponseWriter, req *http.Request, ps h
 		StatsdPrefix:        s.ctx.nsqadmin.opts.StatsdPrefix,
 		NSQLookupd:          s.ctx.nsqadmin.opts.NSQLookupdHTTPAddresses,
 		AllNSQLookupds:      lookupdAddresses,
-		AuthUrl:          authUrl.String(),
-		LogoutUrl:        s.ctx.nsqadmin.opts.LogoutUrl,
-		Login: 		     (s.ctx.nsqadmin.IsAuthEnabled() && u.IsLogin()) || (!s.ctx.nsqadmin.IsAuthEnabled()),
-		User:		     u.GetUserName(),
+		AuthUrl:             authUrl.String(),
+		LogoutUrl:           s.ctx.nsqadmin.opts.LogoutUrl,
+		Login:               (s.ctx.nsqadmin.IsAuthEnabled() && u.IsLogin()) || (!s.ctx.nsqadmin.IsAuthEnabled()),
+		User:                u.GetUserName(),
 		AuthEnabled:         s.ctx.nsqadmin.IsAuthEnabled(),
 	})
 
@@ -799,7 +799,7 @@ func (s *httpServer) searchMessageTrace(w http.ResponseWriter, req *http.Request
 		}
 		resultList.LogDataDtos[index].RawMsgData = msgBody
 	}
-	s.ctx.nsqadmin.logf("get msg trace data : %v", resultList.LogDataDtos)
+	//s.ctx.nsqadmin.logf("get msg trace data : %v", resultList.LogDataDtos)
 	logDataFilterEmpty := make(TLListT, 0, len(resultList.LogDataDtos))
 	for _, v := range resultList.LogDataDtos {
 		if v.MsgID == 0 {
@@ -816,7 +816,7 @@ func (s *httpServer) searchMessageTrace(w http.ResponseWriter, req *http.Request
 		jsv.RawMsgData = v.RawMsgData
 		logDataForJs = append(logDataForJs, jsv)
 	}
-	s.ctx.nsqadmin.logf("sorted msg trace data : %v", logDataFilterEmpty)
+	//s.ctx.nsqadmin.logf("sorted msg trace data : %v", logDataFilterEmpty)
 	var requestMsg string
 	if needGetRequestMsg && requestMsgID > 0 {
 		pid := GetPartitionFromMsgID(int64(requestMsgID))
@@ -1195,8 +1195,8 @@ func (s *httpServer) casAuthCallbackHandler(w http.ResponseWriter, req *http.Req
 	u.DoAuth(w, req)
 	s.ctx.nsqadmin.logf("ACCESS: %v, login", u)
 	if redirectPath != "" {
-		s.ctx.nsqadmin.logf("ACCESS: redirect to :%v ", req.Host + redirectPath)
-		http.Redirect(w, req, req.Host + redirectPath, http.StatusMovedPermanently)
+		s.ctx.nsqadmin.logf("ACCESS: redirect to :%v ", req.Host+redirectPath)
+		http.Redirect(w, req, req.Host+redirectPath, http.StatusMovedPermanently)
 	} else {
 		//redirect to default redirect page in config
 		http.Redirect(w, req, s.ctx.nsqadmin.opts.RedirectUrl, http.StatusMovedPermanently)

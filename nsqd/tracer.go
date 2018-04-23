@@ -17,7 +17,7 @@ type IMsgTracer interface {
 	TracePub(topic string, part int, pubMethod string, traceID uint64, msg *Message, diskOffset BackendOffset, currentCnt int64)
 	TracePubClient(topic string, part int, traceID uint64, msgID MessageID, diskOffset BackendOffset, clientID string)
 	// state will be READ_QUEUE, Start, Req, Fin, Timeout
-	TraceSub(topic string, channel string, state string, traceID uint64, msg *Message, clientID string)
+	TraceSub(topic string, channel string, state string, traceID uint64, msg *Message, clientID string, cost int64)
 }
 
 func GetMsgTracer() IMsgTracer {
@@ -59,10 +59,10 @@ func (self *LogMsgTracer) TracePubClient(topic string, part int, traceID uint64,
 		topic, part, traceID, msgID, clientID, diskOffset, time.Now().UnixNano())
 }
 
-func (self *LogMsgTracer) TraceSub(topic string, channel string, state string, traceID uint64, msg *Message, clientID string) {
-	nsqLog.Logf("[TRACE] topic %v channel %v trace id %v: message %v (offset: %v, pri:%v) consume state %v from client %v(%v) at time: %v, attempt: %v",
+func (self *LogMsgTracer) TraceSub(topic string, channel string, state string, traceID uint64, msg *Message, clientID string, cost int64) {
+	nsqLog.Logf("[TRACE] topic %v channel %v trace id %v: message %v (offset: %v, pri:%v) consume state %v from client %v(%v) at time: %v cost: %v, attempt: %v",
 		topic, channel, msg.TraceID,
-		msg.ID, msg.Offset, msg.pri, state, clientID, msg.GetClientID(), time.Now().UnixNano(), msg.Attempts)
+		msg.ID, msg.Offset, msg.pri, state, clientID, msg.GetClientID(), time.Now().UnixNano(), cost, msg.Attempts)
 }
 
 // this tracer will send the trace info to remote server for each seconds
@@ -131,7 +131,7 @@ func (self *RemoteMsgTracer) TracePubClient(topic string, part int, traceID uint
 	}
 }
 
-func (self *RemoteMsgTracer) TraceSub(topic string, channel string, state string, traceID uint64, msg *Message, clientID string) {
+func (self *RemoteMsgTracer) TraceSub(topic string, channel string, state string, traceID uint64, msg *Message, clientID string, cost int64) {
 	now := time.Now().UnixNano()
 	var traceItem [1]TraceLogItemInfo
 	traceItem[0].MsgID = uint64(msg.ID)
@@ -143,14 +143,14 @@ func (self *RemoteMsgTracer) TraceSub(topic string, channel string, state string
 	detail := flume_log.NewDetailInfo(traceModule)
 	detail.SetExtraInfo(traceItem[:])
 
-	l := fmt.Sprintf("[TRACE] topic %v channel %v trace id %v: message %v (offset: %v, pri:%v) consume state %v from client %v(%v) at time: %v, attempt: %v",
-		topic, channel, msg.TraceID, msg.ID, msg.Offset, msg.pri, state, clientID, msg.GetClientID(), time.Now().UnixNano(), msg.Attempts)
+	l := fmt.Sprintf("[TRACE] topic %v channel %v trace id %v: message %v (offset: %v, pri:%v) consume state %v from client %v(%v) at time: %v cost: %v, attempt: %v",
+		topic, channel, msg.TraceID, msg.ID, msg.Offset, msg.pri, state, clientID, msg.GetClientID(), time.Now().UnixNano(), cost, msg.Attempts)
 	err := self.remoteLogger.Info(l, detail)
 	if err != nil || nsqLog.Level() >= levellogger.LOG_DEBUG {
 		if err != nil {
 			nsqLog.Warningf("send log to remote error: %v", err)
 		}
-		self.localTracer.TraceSub(topic, channel, state, traceID, msg, clientID)
+		self.localTracer.TraceSub(topic, channel, state, traceID, msg, clientID, cost)
 	}
 }
 

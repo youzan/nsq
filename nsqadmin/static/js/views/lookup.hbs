@@ -55,16 +55,16 @@
                 before services are deployed to production.
             </div>
             <div class="form-group">
-                Topic Name: <input type="text" name="topic" placeholder="Topic Name" required><br>
-                Partition Number: <input type="number" min=1 max=255 name="partition_num" style="width:100px;" placeholder="Partition Num" required><br>
-                Replica Number: <input type="number" min=1 max=5 name="replicator" style="width:100px;" placeholder="Replicator" required><br>
-                Sync Disk: <input type="number" min=0 max=50000 step=100 name="syncdisk" style="width:150px;" placeholder="SyncDisk(2000)"><br>
-                Retention Days: <input type="number" min=0 max=300 step=1 name="retention_days" style="width:150px;" placeholder="Retention(0)"><br>
-                Default Channel: <input type="text" name="channel" placeholder="Channel Name" required><br>
-                Is Topic Ordered: <input type="checkbox" name="orderedmulti" value="Is Ordered"><br>
-                Is Topic Extend: <input type="checkbox" name="extend" value="Is Topic extend"><br>
+                Topic Name: <input type="text" name="topic" placeholder="Topic Name" required {{#if login}}{{else}}disabled{{/if}}><br>
+                Partition Number: <input type="number" min=1 max=255 name="partition_num" style="width:100px;" placeholder="Partition Num" required {{#if login}}{{else}}disabled{{/if}}><br>
+                Replica Number: <input type="number" min=1 max=5 name="replicator" style="width:100px;" placeholder="Replicator" required {{#if login}}{{else}}disabled{{/if}}><br>
+                Sync Disk: <input type="number" min=0 max=50000 step=100 name="syncdisk" style="width:150px;" placeholder="SyncDisk(2000)" {{#if login}}{{else}}disabled{{/if}}><br>
+                Retention Days: <input type="number" min=0 max=300 step=1 name="retention_days" style="width:150px;" placeholder="Retention(0)" {{#if login}}{{else}}disabled{{/if}}><br>
+                Default Channel: <input type="text" name="channel" placeholder="Channel Name" required {{#if login}}{{else}}disabled{{/if}}><br>
+                Is Topic Ordered: <input type="checkbox" name="orderedmulti" value="Is Ordered" {{#if login}}{{else}}disabled{{/if}}><br>
+                Is Topic Extend: <input type="checkbox" name="extend" value="Is Topic extend" {{#if login}}{{else}}disabled{{/if}}><br>
             </div>
-            <button class="btn btn-default" type="submit">Create</button>
+            <button class="btn btn-default" type="submit" {{#if login}}{{else}}disabled{{/if}}>Create</button>
         </form>
     </div>
 </div>

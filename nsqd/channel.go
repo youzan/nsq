@@ -128,8 +128,9 @@ type Channel struct {
 	needNotifyRead  int32
 	consumeDisabled int32
 	// stat counters
-	EnableTrace int32
-	Ext         int32
+	EnableTrace     int32
+	EnableSlowTrace int32
+	Ext             int32
 
 	requireOrder int32
 	// 1 - reset
@@ -319,6 +320,10 @@ func (c *Channel) isNeedParseMsgExt() bool {
 	return false
 }
 
+func (c *Channel) IsSlowTraced() bool {
+	return atomic.LoadInt32(&c.EnableSlowTrace) == 1
+}
+
 func (c *Channel) IsTraced() bool {
 	return atomic.LoadInt32(&c.EnableTrace) == 1
 }
@@ -350,6 +355,14 @@ func (c *Channel) SetExt(isExt bool) {
 
 func (c *Channel) IsExt() bool {
 	return atomic.LoadInt32(&c.Ext) == 1
+}
+
+func (c *Channel) SetSlowTrace(enable bool) {
+	if enable {
+		atomic.StoreInt32(&c.EnableSlowTrace, 1)
+	} else {
+		atomic.StoreInt32(&c.EnableSlowTrace, 0)
+	}
 }
 
 func (c *Channel) SetTrace(enable bool) {
@@ -827,7 +840,7 @@ func (c *Channel) ShouldWaitDelayed(msg *Message) bool {
 		if dq.IsChannelMessageDelayed(msg.ID, c.GetName()) {
 			if msg.TraceID != 0 || c.IsTraced() || nsqLog.Level() >= levellogger.LOG_DEBUG {
 				nsqLog.LogDebugf("non-delayed msg %v should be delayed since in delayed queue", msg)
-				nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "IGNORE_DELAY_CONFIRMED", msg.TraceID, msg, "")
+				nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "IGNORE_DELAY_CONFIRMED", msg.TraceID, msg, "", 0)
 			}
 			return true
 		}
@@ -849,7 +862,7 @@ func (c *Channel) IsConfirmed(msg *Message) bool {
 	if ok {
 		if msg.TraceID != 0 || c.IsTraced() || nsqLog.Level() >= levellogger.LOG_DEBUG {
 			nsqLog.LogDebugf("msg %v is already confirmed", msg)
-			nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "IGNORE_CONFIRMED", msg.TraceID, msg, "")
+			nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "IGNORE_CONFIRMED", msg.TraceID, msg, "", 0)
 		}
 	}
 	return ok
@@ -886,23 +899,25 @@ func (c *Channel) internalFinishMessage(clientID int64, clientAddr string,
 		return 0, 0, false, nil, err
 	}
 	now := time.Now()
+	ackCost := now.UnixNano() - msg.deliveryTS.UnixNano()
 	isOldDeferred := msg.IsDeferred()
 	if msg.TraceID != 0 || c.IsTraced() || nsqLog.Level() >= levellogger.LOG_DETAIL {
 		// if fin by no client address, means fin by internal delayed queue or by http api
 		if clientAddr != "" {
-			nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "FIN", msg.TraceID, msg, clientAddr)
+			nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "FIN", msg.TraceID, msg, clientAddr, ackCost)
 		} else {
-			nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "FIN_INTERNAL", msg.TraceID, msg, clientAddr)
+			nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "FIN_INTERNAL", msg.TraceID, msg, clientAddr, ackCost)
 		}
 	}
 	if c.e2eProcessingLatencyStream != nil {
 		c.e2eProcessingLatencyStream.Insert(msg.Timestamp)
 	}
-	ackCost := now.UnixNano() - msg.deliveryTS.UnixNano()
 	expectTimeout := msg.pri - msg.deliveryTS.UnixNano()
-	if ackCost >= time.Second.Nanoseconds() && ackCost >= expectTimeout/10 {
+	if ackCost >= time.Second.Nanoseconds() &&
+		(c.IsTraced() || msg.TraceID != 0 || c.IsSlowTraced() ||
+			ackCost >= expectTimeout/10 || nsqLog.Level() >= levellogger.LOG_DEBUG) {
 		if clientAddr != "" {
-			nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "SLOW_ACK", msg.TraceID, msg, clientAddr)
+			nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "SLOW_ACK", msg.TraceID, msg, clientAddr, ackCost)
 		}
 	}
 	c.channelStatsInfo.UpdateDelivery2ACKStats(ackCost / int64(time.Millisecond))
@@ -1126,7 +1141,7 @@ func (c *Channel) RequeueMessage(clientID int64, clientAddr string, id MessageID
 	atomic.AddInt32(&msg.deferredCnt, 1)
 
 	if msg.TraceID != 0 || c.IsTraced() || nsqLog.Level() >= levellogger.LOG_DEBUG {
-		nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "REQ_DEFER", msg.TraceID, msg, clientAddr)
+		nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "REQ_DEFER", msg.TraceID, msg, clientAddr, 0)
 	}
 
 	// defered message do not belong to any client
@@ -1242,7 +1257,7 @@ func (c *Channel) StartInFlightTimeout(msg *Message, client Consumer, clientAddr
 	}
 
 	if msg.TraceID != 0 || c.IsTraced() || nsqLog.Level() >= levellogger.LOG_DETAIL {
-		nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "START", msg.TraceID, msg, clientAddr)
+		nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "START", msg.TraceID, msg, clientAddr, now.UnixNano()-msg.Timestamp)
 	}
 
 	return shouldSend, nil
@@ -1310,7 +1325,7 @@ func (c *Channel) doRequeue(m *Message, clientAddr string) error {
 	}
 	atomic.AddUint64(&c.requeueCount, 1)
 	if m.TraceID != 0 || c.IsTraced() || nsqLog.Level() >= levellogger.LOG_DEBUG {
-		nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "REQ", m.TraceID, m, clientAddr)
+		nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "REQ", m.TraceID, m, clientAddr, 0)
 	}
 	select {
 	case <-c.exitChan:
@@ -1670,9 +1685,6 @@ LOOP:
 					readChan = origReadChan
 					waitEndUpdated = nil
 				} else {
-					if nsqLog.Level() >= levellogger.LOG_DEBUG {
-						nsqLog.LogDebugf("no data to be read: %v", c.name)
-					}
 					readChan = nil
 					waitEndUpdated = c.endUpdatedChan
 					if c.moreDataCallback != nil {
@@ -1694,7 +1706,7 @@ LOOP:
 		case msg = <-c.requeuedMsgChan:
 			if msg.TraceID != 0 || c.IsTraced() || nsqLog.Level() >= levellogger.LOG_DETAIL {
 				nsqLog.LogDebugf("read message %v from requeue", msg.ID)
-				nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "READ_REQ", msg.TraceID, msg, "0")
+				nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "READ_REQ", msg.TraceID, msg, "0", 0)
 			}
 		case data = <-readChan:
 			lastDataNeedRead = false
@@ -1734,7 +1746,7 @@ LOOP:
 			msg.RawMoveSize = data.MovedSize
 			msg.queueCntIndex = data.CurCnt
 			if msg.TraceID != 0 || c.IsTraced() || nsqLog.Level() >= levellogger.LOG_DETAIL {
-				nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "READ_QUEUE", msg.TraceID, msg, "0")
+				nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "READ_QUEUE", msg.TraceID, msg, "0", 0)
 			}
 
 			if lastMsg.ID > 0 && msg.ID < lastMsg.ID {
@@ -1759,7 +1771,7 @@ LOOP:
 					c.GetName(), lastMsg.ID, lastMsg.Offset, msg.ID, msg.Offset)
 			}
 			if resumedFirst {
-				if nsqLog.Level() >= levellogger.LOG_DEBUG || c.IsTraced() {
+				if nsqLog.Level() > levellogger.LOG_DEBUG || c.IsTraced() {
 					nsqLog.LogDebugf("channel %v resumed first messsage %v at Offset: %v", c.GetName(), msg.ID, msg.Offset)
 				}
 				resumedFirst = false
@@ -2030,12 +2042,13 @@ func (c *Channel) processInFlightQueue(tnow int64) (bool, bool) {
 			if client != nil {
 				clientAddr = client.String()
 			}
+			cost := tnow - msgCopy.deliveryTS.UnixNano()
 			if msgCopy.IsDeferred() {
 				nsqLog.LogDebugf("msg %v defer timeout, expect at %v ",
 					msgCopy.ID, msgCopy.pri)
-				nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "DELAY_TIMEOUT", msgCopy.TraceID, &msgCopy, clientAddr)
+				nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "DELAY_TIMEOUT", msgCopy.TraceID, &msgCopy, clientAddr, cost)
 			} else {
-				nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "TIMEOUT", msgCopy.TraceID, &msgCopy, clientAddr)
+				nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "TIMEOUT", msgCopy.TraceID, &msgCopy, clientAddr, cost)
 			}
 		}
 	}
@@ -2117,7 +2130,7 @@ exit:
 								c.GetName(), tnow, m, peekStart)
 						}
 						if m.TraceID != 0 || c.IsTraced() || nsqLog.Level() >= levellogger.LOG_DEBUG {
-							nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "DELAY_QUEUE_TIMEOUT", m.TraceID, &m, "")
+							nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "DELAY_QUEUE_TIMEOUT", m.TraceID, &m, "", 0)
 						}
 
 						newAdded++

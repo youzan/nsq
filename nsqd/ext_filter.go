@@ -35,6 +35,7 @@ var (
 
 type ExtFilterData struct {
 	Type           int               `json:"type,omitempty"`
+	Inverse        bool              `json:"inverse,omitempty"`
 	FilterExtKey   string            `json:"filter_ext_key,omitempty"`
 	FilterData     string            `json:"filter_data,omitempty"`
 	FilterDataList []MultiFilterData `json:"filter_data_list,omitempty"`

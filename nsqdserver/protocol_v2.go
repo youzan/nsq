@@ -430,6 +430,7 @@ func (p *protocolV2) messagePump(client *nsqd.ClientV2, startedChan chan bool,
 	msgTimeout := client.GetMsgTimeout()
 	lastActiveTime := time.Now()
 	var extFilter nsqd.IExtFilter
+	inverseFilter := false
 	// v2 opportunistically buffers data to clients to reduce write system calls
 	// we force flush in two cases:
 	//    1. when the client is not ready to receive messages
@@ -525,6 +526,7 @@ func (p *protocolV2) messagePump(client *nsqd.ClientV2, startedChan chan bool,
 					nsqd.NsqLogger().Infof("channel filter %v init failed: %v", identifyData.ExtFilter, err)
 				} else {
 					nsqd.NsqLogger().Infof("channel filter %v init for client: %v ", identifyData.ExtFilter, client.String())
+					inverseFilter = identifyData.ExtFilter.Inverse
 				}
 			}
 
@@ -577,11 +579,17 @@ func (p *protocolV2) messagePump(client *nsqd.ClientV2, startedChan chan bool,
 				}
 				continue
 			}
-			if extFilter != nil && subChannel.IsExt() && !extFilter.Match(msg) {
-				subChannel.ConfirmBackendQueue(msg)
-				subChannel.CleanWaitingRequeueChan(msg)
-				subChannel.ContinueConsumeForOrder()
-				continue
+			if extFilter != nil && subChannel.IsExt() {
+				matched := extFilter.Match(msg)
+				if inverseFilter {
+					matched = !matched
+				}
+				if !matched {
+					subChannel.ConfirmBackendQueue(msg)
+					subChannel.CleanWaitingRequeueChan(msg)
+					subChannel.ContinueConsumeForOrder()
+					continue
+				}
 			}
 			// ordered channel will never delayed
 			if subChannel.ShouldWaitDelayed(msg) {
