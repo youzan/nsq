@@ -275,6 +275,17 @@
 
 <h4>Client Connections</h4>
 
+{{#if hasEndpoint}}
+<div class="row consumer-actions">
+    <div class="col-md-2" title="invoke a consumer to current channel, which does nothing but FINISH messages. Duplicate invoke to current channel makes no effect.">
+        <button class="btn btn-medium btn-warning" data-action="sink" {{#if login}}{{else}}disabled{{/if}}>Invoke Consume Sink</button>
+    </div>
+    <div class="col-md-2" title="remove a consumer to current channel, if there is any.">
+        <button class="btn btn-medium btn-warning" data-action="sink_removal" {{#if login}}{{else}}disabled{{/if}}>Remove Consume Sink</button>
+    </div>
+</div>
+{{/if}}
+
 <div class="row">
     <div class="col-md-12">
         {{#unless clients.length}}

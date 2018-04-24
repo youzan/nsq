@@ -19,7 +19,8 @@ var AppState = Backbone.Model.extend({
             'LOGOUT_URL' : LOGOUT_URL,
             'LOGIN'         : LOGIN,
             'USER'          : USER,
-            'AUTH_ENABLED'  : AUTH_ENABLED
+            'AUTH_ENABLED'  : AUTH_ENABLED,
+            'HAS_ENDPOINT'  : HAS_ENDPOINT
         };
     },
 
