@@ -16,6 +16,14 @@
     </div>
 </div>
 
+{{#if only_channel}}
+<div class="row">
+    <div class="col-md-12">
+        <div class="alert alert-warning"><h4>Notice</h4>Could NOT DELETE current channel as it is the LAST channel under topic: {{topic}}</div>
+    </div>
+</div>
+{{/if}}
+
 {{#unless nodes.length}}
 <div class="row">
     <div class="col-md-6">
@@ -30,9 +38,11 @@
     <div class="col-md-2">
         <button class="btn btn-medium btn-warning" data-action="empty" {{#if login}}{{else}}disabled{{/if}}>Empty Queue</button>
     </div>
+    {{#unless only_channel}}
     <div class="col-md-2">
         <button class="btn btn-medium btn-danger" data-action="delete" {{#if login}}{{else}}disabled{{/if}}>Delete Channel</button>
     </div>
+    {{/unless}}
     <div class="col-md-2">
         {{#if paused}}
         <button class="btn btn-medium btn-success" data-action="unpause" {{#if login}}{{else}}disabled{{/if}}>UnPause Channel</button>
