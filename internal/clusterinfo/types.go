@@ -224,6 +224,8 @@ type ChannelStats struct {
 	MsgConsumeLatencyStats  []int64                                 `json:"msg_consume_latency_stats"`
 	MsgDeliveryLatencyStats []int64                                 `json:"msg_delivery_latency_stats"`
 	E2eProcessingLatency    *quantile.E2eProcessingLatencyAggregate `json:"e2e_processing_latency"`
+	//indicate whether current channel is ths only channel under topic
+	OnlyChannel		bool					`json:"only_channel"`
 }
 
 func (c *ChannelStats) Add(a *ChannelStats) {

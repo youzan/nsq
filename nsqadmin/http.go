@@ -513,6 +513,13 @@ func (s *httpServer) channelHandler(w http.ResponseWriter, req *http.Request, ps
 		s.ctx.nsqadmin.logf("WARNING: %s", err)
 		messages = append(messages, pe.Error())
 	}
+	//if there is only one channel, disable channel deletion button
+	if len(allChannelStats) <= 1 {
+		cs, ok := allChannelStats[channelName]
+		if ok {
+			cs.OnlyChannel = true
+		}
+	}
 
 	return struct {
 		*clusterinfo.ChannelStats
