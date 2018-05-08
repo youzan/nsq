@@ -1,19 +1,20 @@
 package nsqlookupd_migrate
 
 import (
-	"fmt"
-	"net/http"
-	"github.com/julienschmidt/httprouter"
-	"net/url"
 	"encoding/json"
-	"strings"
-	"github.com/viki-org/dnscache"
-	"sync"
-	"github.com/twinj/uuid"
-	"strconv"
-	"time"
+	"fmt"
 	"net"
+	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
 	"github.com/absolute8511/glog"
+	"github.com/julienschmidt/httprouter"
+	"github.com/twinj/uuid"
+	"github.com/viki-org/dnscache"
 )
 
 type Decorator func(APIHandler) APIHandler
@@ -26,7 +27,7 @@ type Err struct {
 }
 
 type ProxyResponse struct {
-	Code int
+	Code    int
 	Content string
 }
 
@@ -35,11 +36,11 @@ func (resp ProxyResponse) String() string {
 }
 
 type QueryHost struct {
-	QueryId	string
-	RemoteAddr string
-	QueryURI	string
-	TimeArrives	time.Time
-	Resp		ProxyResponse
+	QueryId     string
+	RemoteAddr  string
+	QueryURI    string
+	TimeArrives time.Time
+	Resp        ProxyResponse
 }
 
 func (qh *QueryHost) String() string {
@@ -52,13 +53,11 @@ func (e *Err) Error() string {
 
 type httpServer struct {
 	lookupAddrOri, lookupAddrTar string
-	Router http.Handler
-	context *Context
-	mg ITopicMigrateGuard
-	client *http.Client
+	Router                       http.Handler
+	context                      *Context
+	mg                           ITopicMigrateGuard
+	client                       *http.Client
 }
-
-
 
 var mLog *MigrateLogger
 var listlookup_not_found_msg = "{\"message\":\"NOT_FOUND\"}"
@@ -83,19 +82,19 @@ func NewHTTPServer(context *Context) (*httpServer, error) {
 
 	resolver := dnscache.New(5 * time.Minute)
 	tr := &http.Transport{
-		MaxIdleConnsPerHost:       64,
-		DisableCompression: true,
-		Dial:   func(network string, address string) (net.Conn, error) {
+		MaxIdleConnsPerHost: 64,
+		DisableCompression:  true,
+		Dial: func(network string, address string) (net.Conn, error) {
 			separator := strings.LastIndex(address, ":")
 			ip, _ := resolver.FetchOneString(address[:separator])
-			return net.Dial("tcp", ip + address[separator:])
+			return net.Dial("tcp", ip+address[separator:])
 		},
 	}
 	client := &http.Client{Transport: tr}
 
 	var wg sync.WaitGroup
 	wg.Add(1)
-	go func(){
+	go func() {
 		defer wg.Done()
 		mg.Init()
 	}()
@@ -103,10 +102,10 @@ func NewHTTPServer(context *Context) (*httpServer, error) {
 	s := &httpServer{
 		lookupAddrOri: context.LookupAddrOri,
 		lookupAddrTar: context.LookupAddrTar,
-		Router: router,
-		context: context,
-		mg: mg,
-		client:client,
+		Router:        router,
+		context:       context,
+		mg:            mg,
+		client:        client,
 	}
 	wg.Wait()
 	router.Handle("GET", "/lookup", Decorate(s.lookupMigrateHandler, TagMigrate))
@@ -148,7 +147,7 @@ func (s *httpServer) migrateLookup(qh *QueryHost, topic string, access string, m
 		}()
 	}
 
-	lookup_tar := <- ch_target
+	lookup_tar := <-ch_target
 	lookup_ori := <-ch_ori
 	//error handle
 	if !migrateFin && (lookup_tar.err != nil || lookup_ori.err != nil) {
@@ -172,7 +171,7 @@ func (s *httpServer) migrateLookup(qh *QueryHost, topic string, access string, m
 		}
 
 		mLog.AccessTrace("%v: target producers/partitions info merged into source producers.", qh.QueryId)
-		return	origin, lookup_ori.h, nil
+		return origin, lookup_ori.h, nil
 	} else {
 		origin, _ := lookup_ori.lookupinfo.(Lookupinfo_old)
 		target, _ := lookup_tar.lookupinfo.(Lookupinfo_old)
@@ -188,18 +187,20 @@ func (s *httpServer) migrateLookup(qh *QueryHost, topic string, access string, m
 	}
 }
 
-func (s *httpServer)lookup(qh *QueryHost, lookupAdrr string, topic string, access string, compatibleHeadAdded bool, metainfo bool) (interface{}, http.Header, error) {
-	client:=  s.client
+func (s *httpServer) lookup(qh *QueryHost, lookupAdrr string, topic string, access string, compatibleHeadAdded bool, metainfo bool) (interface{}, http.Header, error) {
+	client := s.client
 	var url string
 	switch access {
-		case "w": {
+	case "w":
+		{
 			if metainfo {
 				url = fmt.Sprintf("%s/lookup?topic=%s&access=w&metainfo=true", lookupAdrr, topic)
 			} else {
 				url = fmt.Sprintf("%s/lookup?topic=%s&access=w", lookupAdrr, topic)
 			}
 		}
-		default: {
+	default:
+		{
 			if metainfo {
 				url = fmt.Sprintf("%s/lookup?topic=%s&access=r&metainfo=true", lookupAdrr, topic)
 			} else {
@@ -211,7 +212,7 @@ func (s *httpServer)lookup(qh *QueryHost, lookupAdrr string, topic string, acces
 
 	mLog.AccessTrace("%v: GET access to %v", qh.QueryId, url)
 	req, err := http.NewRequest("GET", url, nil)
-	if(err != nil) {
+	if err != nil {
 		msg := fmt.Sprintf("%v: fail to create request GET %v, Err: %v", qh.QueryId, url, err)
 		mLog.Error(msg)
 		return nil, nil, &Err{500, msg}
@@ -221,7 +222,7 @@ func (s *httpServer)lookup(qh *QueryHost, lookupAdrr string, topic string, acces
 	}
 	resp, err := client.Do(req)
 	mLog.AccessTrace("%v: response status %v", qh.QueryId, resp.Status)
-	if(err != nil) {
+	if err != nil {
 		msg := fmt.Sprintf("%v: error on request. Err: %v", qh.QueryId, err)
 		mLog.Error(msg)
 		return nil, nil, &Err{500, msg}
@@ -229,7 +230,7 @@ func (s *httpServer)lookup(qh *QueryHost, lookupAdrr string, topic string, acces
 
 	defer resp.Body.Close()
 
-	if(compatibleHeadAdded) {
+	if compatibleHeadAdded {
 		var lookupinfo Lookupinfo
 		if err := json.NewDecoder(resp.Body).Decode(&lookupinfo); err != nil {
 			msg := fmt.Sprintf("%v: fail to parse lookup info from %v, Err: %v", qh.QueryId, url, err)
@@ -262,12 +263,12 @@ func (s *httpServer)lookup(qh *QueryHost, lookupAdrr string, topic string, acces
 	}
 }
 
-func (s *httpServer)switchesHandler(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, *QueryHost, error) {
+func (s *httpServer) switchesHandler(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, *QueryHost, error) {
 	qh := &QueryHost{
-		QueryId: uuid.NewV4().String(),
-		RemoteAddr:req.RemoteAddr,
-		QueryURI:req.RequestURI,
-		TimeArrives:time.Now(),
+		QueryId:     uuid.NewV4().String(),
+		RemoteAddr:  req.RemoteAddr,
+		QueryURI:    req.RequestURI,
+		TimeArrives: time.Now(),
 	}
 	mLog.AccessTrace("%v: query %v arrives.", qh.QueryId, qh)
 	defer mLog.AccessTrace("%v: switchesHandler returns in %v", qh.QueryId, time.Since(qh.TimeArrives))
@@ -287,12 +288,12 @@ func (s *httpServer)switchesHandler(w http.ResponseWriter, req *http.Request, ps
 	return cnt, qh, err
 }
 
-func (s *httpServer)topicsHandler(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, *QueryHost, error) {
+func (s *httpServer) topicsHandler(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, *QueryHost, error) {
 	qh := &QueryHost{
-		QueryId: uuid.NewV4().String(),
-		RemoteAddr:req.RemoteAddr,
-		QueryURI:req.RequestURI,
-		TimeArrives:time.Now(),
+		QueryId:     uuid.NewV4().String(),
+		RemoteAddr:  req.RemoteAddr,
+		QueryURI:    req.RequestURI,
+		TimeArrives: time.Now(),
 	}
 	mLog.AccessTrace("%v: query %v arrives.", qh.QueryId, qh)
 	defer mLog.AccessTrace("%v: topicsHandler returns in %v", qh.QueryId, time.Since(qh.TimeArrives))
@@ -317,7 +318,7 @@ func (s *httpServer)topicsHandler(w http.ResponseWriter, req *http.Request, ps h
 	return jsonBytes, qh, err
 }
 
-func (s *httpServer)getTopics(qh *QueryHost, lookupAdrr string, compatibleHeadAdded bool) (interface{}, http.Header, error) {
+func (s *httpServer) getTopics(qh *QueryHost, lookupAdrr string, compatibleHeadAdded bool) (interface{}, http.Header, error) {
 	client := s.client
 	var url string
 	url = fmt.Sprintf("%s/topics", lookupAdrr)
@@ -325,7 +326,7 @@ func (s *httpServer)getTopics(qh *QueryHost, lookupAdrr string, compatibleHeadAd
 	mLog.AccessTrace("%v: GET access to %v, compatibleHeader:%v", qh.QueryId, url, compatibleHeadAdded)
 	defer mLog.AccessTrace("%v: topics query returns", qh.QueryId)
 	req, err := http.NewRequest("GET", url, nil)
-	if(err != nil) {
+	if err != nil {
 		msg := fmt.Sprintf("%v: fail to create request GET %v, Err: %v", qh.QueryId, url, err)
 		mLog.Error(msg)
 		return nil, nil, &Err{500, msg}
@@ -335,7 +336,7 @@ func (s *httpServer)getTopics(qh *QueryHost, lookupAdrr string, compatibleHeadAd
 	}
 	resp, err := client.Do(req)
 	mLog.AccessTrace("%v: response status %v", qh.QueryId, resp.Status)
-	if(err != nil) {
+	if err != nil {
 		msg := fmt.Sprintf("%v: error on request. Err: %v", qh.QueryId, err)
 		mLog.AccessTrace(msg)
 		mLog.Error(msg)
@@ -363,18 +364,18 @@ func (s *httpServer)getTopics(qh *QueryHost, lookupAdrr string, compatibleHeadAd
 		return nil, nil, &Err{500, msg}
 	}
 	if resp.StatusCode != 200 {
-		return response,  resp.Header, &Err{resp.StatusCode, "error from upstream"}
+		return response, resp.Header, &Err{resp.StatusCode, "error from upstream"}
 	}
 	return response, resp.Header, nil
 
 }
 
-func (s *httpServer)listListLookupHandler(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, *QueryHost, error) {
+func (s *httpServer) listListLookupHandler(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, *QueryHost, error) {
 	qh := &QueryHost{
-		QueryId: uuid.NewV4().String(),
-		RemoteAddr:req.RemoteAddr,
-		QueryURI:req.RequestURI,
-		TimeArrives:time.Now(),
+		QueryId:     uuid.NewV4().String(),
+		RemoteAddr:  req.RemoteAddr,
+		QueryURI:    req.RequestURI,
+		TimeArrives: time.Now(),
 	}
 
 	mLog.AccessTrace("%v: query %v arrives.", qh.QueryId, qh)
@@ -394,12 +395,12 @@ func escape(param string) string {
 }
 
 // return all lookup nodes that registered on etcd, and mark the master/slave info
-func (s *httpServer)lookupMigrateHandler(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, *QueryHost, error) {
+func (s *httpServer) lookupMigrateHandler(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, *QueryHost, error) {
 	qh := &QueryHost{
-		QueryId: uuid.NewV4().String(),
-		RemoteAddr:req.RemoteAddr,
-		QueryURI:req.RequestURI,
-		TimeArrives:time.Now(),
+		QueryId:     uuid.NewV4().String(),
+		RemoteAddr:  req.RemoteAddr,
+		QueryURI:    req.RequestURI,
+		TimeArrives: time.Now(),
 	}
 
 	mLog.AccessTrace("%v: query %v arrives.", qh.QueryId, qh)
@@ -456,7 +457,6 @@ func (s *httpServer)lookupMigrateHandler(w http.ResponseWriter, req *http.Reques
 		migrate = false
 	}
 
-
 	var nsqlookupd_err error
 	if migrate {
 		lookupinfo, h, nsqlookupd_err = s.migrateLookup(qh, topic, access, meta, hasHeader, migrateFin)
@@ -489,12 +489,12 @@ func LogPanicHandler() func(w http.ResponseWriter, req *http.Request, p interfac
 	}
 }
 
-func LogNotFoundHandler() http.Handler {
+func LogNotFoundHandler() http.HandlerFunc {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 	})
 }
 
-func LogMethodNotAllowedHandler() http.Handler {
+func LogMethodNotAllowedHandler() http.HandlerFunc {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 	})
 }
@@ -524,13 +524,16 @@ func TagMigrate(f APIHandler) APIHandler {
 		}
 		qh.Resp.Code = statusCode
 		switch data.(type) {
-			case string: {
+		case string:
+			{
 				qh.Resp.Content, _ = data.(string)
 			}
-			case []byte: {
+		case []byte:
+			{
 				qh.Resp.Content = string(data.([]byte))
 			}
-			default: {
+		default:
+			{
 				qh.Resp.Content = "<bytes>"
 			}
 		}
@@ -553,6 +556,3 @@ func Response(w http.ResponseWriter, code int, data interface{}) {
 	w.WriteHeader(code)
 	w.Write(response)
 }
-
-
-

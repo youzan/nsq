@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"errors"
+
 	"github.com/julienschmidt/httprouter"
 	"github.com/youzan/nsq/internal/levellogger"
 )
@@ -226,7 +227,7 @@ func LogPanicHandler(l *levellogger.LevelLogger) func(w http.ResponseWriter, req
 	}
 }
 
-func LogNotFoundHandler(l *levellogger.LevelLogger) http.Handler {
+func LogNotFoundHandler(l *levellogger.LevelLogger) http.HandlerFunc {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		Decorate(func(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {
 			return nil, Err{404, "NOT_FOUND"}
@@ -234,7 +235,7 @@ func LogNotFoundHandler(l *levellogger.LevelLogger) http.Handler {
 	})
 }
 
-func LogMethodNotAllowedHandler(l *levellogger.LevelLogger) http.Handler {
+func LogMethodNotAllowedHandler(l *levellogger.LevelLogger) http.HandlerFunc {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		Decorate(func(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {
 			return nil, Err{405, "METHOD_NOT_ALLOWED"}
