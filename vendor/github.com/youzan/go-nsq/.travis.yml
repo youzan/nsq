@@ -1,0 +1,18 @@
+language: go
+go:
+  - 1.6.x
+  - 1.7.x
+env:
+  - NSQ_DOWNLOAD=nsq-0.3.7-HA.1.5.8.linux-amd64.go1.8.3 NSQ_RELEASE=v0.3.7-HA.1.5.8 GOARCH=amd64
+install:
+  - go get github.com/golang/snappy 
+script:
+  - wget https://github.com/youzan/nsq/releases/download/$NSQ_RELEASE/$NSQ_DOWNLOAD.tar.gz
+  - tar zxvf $NSQ_DOWNLOAD.tar.gz
+  - export PATH=$NSQ_DOWNLOAD/bin:$PATH
+  - pushd $TRAVIS_BUILD_DIR
+  - ./test.sh
+  - popd
+notifications:
+  email: false
+sudo: false
