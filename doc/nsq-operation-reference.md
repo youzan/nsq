@@ -9,18 +9,23 @@
 ## 简易部署配置指南
 大部分参数和原版本一致, 除了几个新的集群相关的配置之外. 简单的配置步骤如下:
 
-对nsqlookup和nsqd 使用模板配置文件并在配置文件中修改几个必要配置项
+对nsqlookup和nsqd使用模板配置文件并在配置文件中修改几个必要配置项
 <pre>
 broadcast_interface = // 监听的网卡名称
 cluster_id = // 集群id, 用于区分不同集群
-cluster_leadership_addresses = // etcd集群地址
+cluster_leadership_addresses = // nsqlookupd内部etcd集群地址, 仅nsqd有此设置
 log_dir=
 data_path=
 </pre>
-然后分别使用 `nsqlookupd -config=/path/to/config` 启动nsqlookup, `nsqd -config=/path/to/config` 启动nsqd. (先启动nsqlookupd).
-nsqdadmin使用默认配置和nsqlookupd同机部署即可.
+然后分别使用 `nsqlookupd -config=/path/to/config --etcd.name ...` 启动nsqlookupd, `nsqd -config=/path/to/config` 启动nsqd. (先启动nsqlookupd).
+nsqdadmin使用默认配置和nsqlookupd同机部署即可. 
 
-注意etcd集群需要使用支持v2 api的版本, 目前仅支持v2 api.
+contrib/debug.sh给出了单机部署nsq集群的脚本.
+访问nsqadmin UI(单机http://127.0.0.1:4171/lookup), 创建名为test的topic。
+以下命令发布一个消息给该topic:
+<pre>
+curl -d 'hello world 1' 'http://127.0.0.1:4151/pub?topic=test'
+</pre>
 
 ## 此fork和原版的几点运维上的不同
 ### 关于topic的创建和删除

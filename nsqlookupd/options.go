@@ -1,6 +1,7 @@
 package nsqlookupd
 
 import (
+        "github.com/coreos/etcd/embed"
 	"github.com/youzan/nsq/internal/levellogger"
 	"log"
 	"os"
@@ -29,6 +30,8 @@ type Options struct {
 	LogLevel int32  `flag:"log-level" cfg:"log_level"`
 	LogDir   string `flag:"log-dir" cfg:"log_dir"`
 	Logger   levellogger.Logger
+
+	EtcdConf    *embed.Config
 }
 
 func NewOptions() *Options {

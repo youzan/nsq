@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/coreos/etcd/embed"
 	"github.com/youzan/nsq/internal/http_api"
 	"github.com/youzan/nsq/internal/protocol"
 	"github.com/youzan/nsq/internal/util"
@@ -22,6 +23,8 @@ type NSQLookupd struct {
 	waitGroup    util.WaitGroupWrapper
 	DB           *RegistrationDB
 	coordinator  *consistence.NsqLookupCoordinator
+
+	etcd         *embed.Etcd
 }
 
 func New(opts *Options) *NSQLookupd {
@@ -53,6 +56,22 @@ func getIPv4ForInterfaceName(ifname string) string {
 }
 
 func (l *NSQLookupd) Main() {
+	// start embed etcd according to github.com/coreos/etcd/embed/doc.go
+    	var err error
+        l.etcd, err = embed.StartEtcd(l.opts.EtcdConf)
+        if err != nil {
+	        nsqlookupLog.LogErrorf("bootstrap: start embed etcd server failure, errors:\n %+v", err)
+		os.Exit(1)
+        }
+        select {
+        case <-l.etcd.Server.ReadyNotify():
+	        nsqlookupLog.Logf("bootstrap: embed etcd server is ready")
+        case <-time.After(time.Minute):
+	        l.etcd.Server.Stop()  // trigger a shutdown
+        	nsqlookupLog.LogErrorf("bootstrap: embed etcd timeout in a minute")
+		os.Exit(1)
+        }
+
 	ctx := &Context{l}
 
 	nsqlookupLog.Logf(version.String("nsqlookupd"))
