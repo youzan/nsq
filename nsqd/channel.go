@@ -20,8 +20,9 @@ import (
 
 const (
 	resetReaderTimeoutSec = 10
-	MAX_MEM_REQ_TIMES     = 10
+	MaxMemReqTimes        = 10
 	MaxWaitingDelayed     = 100
+	MaxDepthReqToEnd      = 1000000
 )
 
 var (
@@ -1014,12 +1015,21 @@ func (c *Channel) ShouldRequeueToEnd(clientID int64, clientAddr string, id Messa
 			c.DepthTimestamp(), msg.Attempts, atomic.LoadInt32(&c.waitingConfirm))
 	}
 
+	if (msg.Attempts >= maxAttempts-1) && (c.Depth() > c.option.MaxConfirmWin) {
+		return msg.GetCopy(), true
+	}
+
 	newTimeout := time.Now().Add(timeout)
 	if newTimeout.Sub(msg.deliveryTS) >=
 		c.option.MaxReqTimeout {
 		return msg.GetCopy(), true
 	}
+
 	if timeout > threshold {
+		return msg.GetCopy(), true
+	}
+
+	if (msg.Attempts > MaxMemReqTimes*10) && (c.Depth() > MaxDepthReqToEnd) {
 		return msg.GetCopy(), true
 	}
 
@@ -1051,7 +1061,7 @@ func (c *Channel) ShouldRequeueToEnd(clientID int64, clientAddr string, id Messa
 			return nil, false
 		}
 
-		if msg.Attempts > MAX_MEM_REQ_TIMES && ts > threshold.Nanoseconds() {
+		if msg.Attempts > MaxMemReqTimes && ts > threshold.Nanoseconds() {
 			return msg.GetCopy(), true
 		}
 		if ts > 20*threshold.Nanoseconds() {
@@ -1063,7 +1073,7 @@ func (c *Channel) ShouldRequeueToEnd(clientID int64, clientAddr string, id Messa
 			return nil, false
 		}
 
-		if msg.Attempts < MAX_MEM_REQ_TIMES {
+		if msg.Attempts < MaxMemReqTimes {
 			return nil, false
 		}
 		if ts < 20*threshold.Nanoseconds() {
