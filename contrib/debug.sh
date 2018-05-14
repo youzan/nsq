@@ -59,7 +59,7 @@ do_stop () {
 
 # Refers to https://github.com/coreos/etcd/blob/master/Documentation/op-guide/clustering.md
 # All etcd related options are prefixed with "etcd.".
-# Etcd stdout and stderr is redirected to <log-dir>/<etcd.name>-etcd.log.
+# Etcd stdout and stderr is redirected to <etcd.data-dir>/<etcd.name>-etcd.log.
 do_start_nsqlookupd () {
     echo "staring nsqlookupd"
     start-stop-daemon --start --oknodo --background --no-close --make-pidfile --pidfile /tmp/nsqlookupd.pid --startas $BLDDIR/nsqlookupd -- -config=$MAINDIR/contrib/nsqlookupd.cfg \

@@ -176,7 +176,7 @@ func (p *program) Start() error {
 
 	// redirect etcd stdout and stderr to an file
 	var etcdLogFile string
-	etcdLogFile = filepath.Join(opts.LogDir, fmt.Sprintf("%s-etcd.log", ec.Name))
+	etcdLogFile = filepath.Join(ec.Dir, fmt.Sprintf("%s-etcd.log", ec.Name))
 	f, err := os.OpenFile(etcdLogFile, os.O_CREATE|os.O_APPEND|os.O_RDWR, 0666)
 	if err != nil {
 		log.Fatal(err)
