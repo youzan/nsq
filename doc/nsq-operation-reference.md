@@ -13,15 +13,19 @@
 <pre>
 broadcast_interface = // 监听的网卡名称
 cluster_id = // 集群id, 用于区分不同集群
-cluster_leadership_addresses = // nsqlookupd内部etcd集群地址, 仅nsqd有此设置
+cluster_leadership_addresses = // remote etcd集群地址
 log_dir=
 data_path=
 </pre>
-然后分别使用 `nsqlookupd -config=/path/to/config --etcd.name ...` 启动nsqlookupd, `nsqd -config=/path/to/config` 启动nsqd. (先启动nsqlookupd).
+
+nsqlookupd可以使用remote etcd集群，或者embed etcd集群。如果给nsqlookupd传入etcd.name等etcd相关参数，则使用embed etcd集群，否则使用配置文件中指定的remote etcd集群地址.
+
+然后分别使用 `nsqlookupd -config=/path/to/config` 启动nsqlookupd, `nsqd -config=/path/to/config` 启动nsqd. (先启动nsqlookupd).
 nsqdadmin使用默认配置和nsqlookupd同机部署即可. 
 
-contrib/debug.sh给出了单机部署nsq集群的脚本.
-访问nsqadmin UI(单机http://127.0.0.1:4171/lookup), 创建名为test的topic。
+contrib/debug.sh给出了单机部署nsq集群(nsqlookupd使用embed etcd)的脚本.
+
+启动集群后, 访问nsqadmin UI(单机http://127.0.0.1:4171/lookup), 创建名为test的topic。
 以下命令发布一个消息给该topic:
 <pre>
 curl -d 'hello world 1' 'http://127.0.0.1:4151/pub?topic=test'

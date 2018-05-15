@@ -56,20 +56,23 @@ func getIPv4ForInterfaceName(ifname string) string {
 }
 
 func (l *NSQLookupd) Main() {
-	// start embed etcd according to github.com/coreos/etcd/embed/doc.go
-    	var err error
-        l.etcd, err = embed.StartEtcd(l.opts.EtcdConf)
-        if err != nil {
-	        nsqlookupLog.LogErrorf("bootstrap: start embed etcd server failure, errors:\n %+v", err)
-		os.Exit(1)
-        }
-        select {
-        case <-l.etcd.Server.ReadyNotify():
-	        nsqlookupLog.Logf("bootstrap: embed etcd server is ready")
-        case <-time.After(time.Minute):
-	        l.etcd.Server.Stop()  // trigger a shutdown
-        	nsqlookupLog.LogErrorf("bootstrap: embed etcd timeout in a minute")
-		os.Exit(1)
+        nsqlookupLog.Logf("etcd cluster address: %s", l.opts.ClusterLeadershipAddresses)
+        if l.opts.EtcdConf.Name != "" {
+	    // start embed etcd according to github.com/coreos/etcd/embed/doc.go
+	    var err error
+	    l.etcd, err = embed.StartEtcd(l.opts.EtcdConf)
+	    if err != nil {
+		    nsqlookupLog.LogErrorf("bootstrap: start embed etcd server failure, errors:\n %+v", err)
+		    os.Exit(1)
+	    }
+	    select {
+	    case <-l.etcd.Server.ReadyNotify():
+		    nsqlookupLog.Logf("bootstrap: embed etcd server is ready")
+	    case <-time.After(time.Minute):
+		    l.etcd.Server.Stop()  // trigger a shutdown
+		    nsqlookupLog.LogErrorf("bootstrap: embed etcd timeout in a minute")
+		    os.Exit(1)
+	    }
         }
 
 	ctx := &Context{l}

@@ -163,28 +163,31 @@ func (p *program) Start() error {
 	nsqlookupd.SetLogger(opts.Logger, opts.LogLevel)
 	glog.StartWorker(time.Second * 2)
 
-	// special cases of etcd flags handling:
-	ec.LPUrls = flags.URLsFromFlag(flagSet, "etcd.listen-peer-urls")
-	ec.APUrls = flags.URLsFromFlag(flagSet, "etcd.initial-advertise-peer-urls")
-	ec.LCUrls = flags.URLsFromFlag(flagSet, "etcd.listen-client-urls")
-	ec.ACUrls = flags.URLsFromFlag(flagSet, "etcd.advertise-client-urls")
+	if ec.Name != "" {
+	    // use embed etcd cluster
+	    // special cases of etcd flags handling:
+	    ec.LPUrls = flags.URLsFromFlag(flagSet, "etcd.listen-peer-urls")
+	    ec.APUrls = flags.URLsFromFlag(flagSet, "etcd.initial-advertise-peer-urls")
+	    ec.LCUrls = flags.URLsFromFlag(flagSet, "etcd.listen-client-urls")
+	    ec.ACUrls = flags.URLsFromFlag(flagSet, "etcd.advertise-client-urls")
 
-	// disable default initial-cluster if discovery is set
-	if (ec.Durl != "" || ec.DNSCluster != "") && !flags.IsSet(flagSet, "initial-cluster") {
-		ec.InitialCluster = ""
+	    // disable default initial-cluster if discovery is set
+	    if (ec.Durl != "" || ec.DNSCluster != "") && !flags.IsSet(flagSet, "initial-cluster") {
+		    ec.InitialCluster = ""
+	    }
+
+	    // redirect etcd stdout and stderr to an file
+	    var etcdLogFile string
+	    etcdLogFile = filepath.Join(ec.Dir, fmt.Sprintf("%s-etcd.log", ec.Name))
+	    f, err := os.OpenFile(etcdLogFile, os.O_CREATE|os.O_APPEND|os.O_RDWR, 0666)
+	    if err != nil {
+		    log.Fatal(err)
+	    }
+	    defer f.Close()
+	    capnslog.SetFormatter(capnslog.NewPrettyFormatter(f, ec.Debug))
+
+	    opts.ClusterLeadershipAddresses = flagSet.Lookup("etcd.listen-client-urls").Value.(*flags.URLsValue).String()
 	}
-
-	// redirect etcd stdout and stderr to an file
-	var etcdLogFile string
-	etcdLogFile = filepath.Join(ec.Dir, fmt.Sprintf("%s-etcd.log", ec.Name))
-	f, err := os.OpenFile(etcdLogFile, os.O_CREATE|os.O_APPEND|os.O_RDWR, 0666)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer f.Close()
-	capnslog.SetFormatter(capnslog.NewPrettyFormatter(f, ec.Debug))
-
-	opts.ClusterLeadershipAddresses = flagSet.Lookup("etcd.listen-client-urls").Value.(*flags.URLsValue).String()
 	opts.EtcdConf = ec
 
 	daemon := nsqlookupd.New(opts)
