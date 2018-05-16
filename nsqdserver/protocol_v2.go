@@ -556,7 +556,7 @@ func (p *protocolV2) messagePump(client *nsqd.ClientV2, startedChan chan bool,
 			nsqd.NsqLogger().LogDebugf("PROTOCOL(V2): [%s] send heartbeat", client)
 			if err != nil {
 				heartbeatFailedCnt++
-				nsqd.NsqLogger().LogWarningf("PROTOCOL(V2): [%s] send heartbeat failed %v times, %v", client, heartbeatFailedCnt, err)
+				nsqd.NsqLogger().Logf("PROTOCOL(V2): [%s] send heartbeat failed %v times, %v", client, heartbeatFailedCnt, err)
 				if heartbeatFailedCnt > 2 {
 					goto exit
 				}
@@ -1199,7 +1199,7 @@ func (p *protocolV2) REQ(client *nsqd.ClientV2, params [][]byte) ([]byte, error)
 	if err != nil {
 		client.IncrSubError(int64(1))
 
-		nsqd.NsqLogger().LogWarningf("client %v req failed %v for topic: %v, %v, %v, %v",
+		nsqd.NsqLogger().Logf("client %v req failed %v for topic: %v, %v, %v, %v",
 			client, err.Error(), client.Channel.GetTopicName(), client.Channel.GetName(), msgID, timeoutDuration)
 		return nil, protocol.NewClientErr(err, "E_REQ_FAILED",
 			fmt.Sprintf("REQ %v failed %s", *id, err.Error()))
@@ -1211,7 +1211,7 @@ func (p *protocolV2) REQ(client *nsqd.ClientV2, params [][]byte) ([]byte, error)
 func (p *protocolV2) CLS(client *nsqd.ClientV2, params [][]byte) ([]byte, error) {
 	state := atomic.LoadInt32(&client.State)
 	if state != stateSubscribed {
-		nsqd.NsqLogger().LogWarningf("[%s] command in wrong state: %v", client, state)
+		nsqd.NsqLogger().Logf("[%s] command in wrong state: %v", client, state)
 		return nil, protocol.NewFatalClientErr(nil, E_INVALID, "cannot CLS in current state")
 	}
 
