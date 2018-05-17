@@ -1029,11 +1029,13 @@ func (c *Channel) ShouldRequeueToEnd(clientID int64, clientAddr string, id Messa
 		return msg.GetCopy(), true
 	}
 
-	if (msg.Attempts > MaxMemReqTimes*10) && (c.Depth() > MaxDepthReqToEnd) {
+	deCnt := atomic.LoadInt64(&c.deferredCount)
+	if (msg.Attempts > MaxMemReqTimes*10) && (c.Depth() > MaxDepthReqToEnd) && !c.isTooMuchDeferredInMem(deCnt) {
+		// too much deferred means most messages are requeued, to avoid too much in disk delay queue,
+		// we just ignore requeue.
 		return msg.GetCopy(), true
 	}
 
-	deCnt := atomic.LoadInt64(&c.deferredCount)
 	if (deCnt >= c.option.MaxConfirmWin) &&
 		(timeout > threshold/2) {
 		// if requeued by deferred is more than half of the all messages handled,
