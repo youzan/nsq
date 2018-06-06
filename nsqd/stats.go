@@ -17,6 +17,10 @@ import (
 	"github.com/youzan/nsq/internal/util"
 )
 
+const (
+	maxPubClientStats = 10000
+)
+
 type TopicStats struct {
 	TopicName            string           `json:"topic_name"`
 	TopicFullName        string           `json:"topic_full_name"`
@@ -451,22 +455,8 @@ func (self *DetailStatsInfo) UpdatePubClientStats(remote string, agent string, p
 	if !ok {
 		// too much clients pub to this topic
 		// we just ignore stats
-		if len(self.clientPubStats) > 1000 {
-			scanStart := time.Now()
-			scanCnt := 0
-			cleanCnt := 0
-			for _, s := range self.clientPubStats {
-				scanCnt++
-				if time.Since(scanStart) > time.Millisecond*200 {
-					break
-				}
-				if time.Now().Unix()-s.LastPubTs > 60*60 {
-					delete(self.clientPubStats, s.RemoteAddress)
-					cleanCnt++
-				}
-			}
-			nsqLog.Logf("clean pub stats cost %v, scan: %v, clean:%v, left: %v", time.Since(scanStart),
-				scanCnt, cleanCnt, len(self.clientPubStats))
+		if len(self.clientPubStats) > maxPubClientStats {
+			nsqLog.Debugf("too much pub client : %v", len(self.clientPubStats))
 			return
 		}
 		s = &ClientPubStats{
