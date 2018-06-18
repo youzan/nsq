@@ -1030,9 +1030,14 @@ func (c *Channel) ShouldRequeueToEnd(clientID int64, clientAddr string, id Messa
 	}
 
 	deCnt := atomic.LoadInt64(&c.deferredCount)
-	if (msg.Attempts > MaxMemReqTimes*10) && (c.Depth() > MaxDepthReqToEnd) && !c.isTooMuchDeferredInMem(deCnt) {
+	if (msg.Attempts > MaxMemReqTimes*10) &&
+		(c.Depth() > MaxDepthReqToEnd) &&
+		(c.DepthTimestamp() > msg.Timestamp+time.Hour.Nanoseconds()) &&
+		!c.isTooMuchDeferredInMem(deCnt) {
 		// too much deferred means most messages are requeued, to avoid too much in disk delay queue,
 		// we just ignore requeue.
+		nsqLog.Logf("msg %v req to end, attemptted %v and created at %v, current processing %v",
+			id, msg.Attempts, msg.Timestamp, c.DepthTimestamp())
 		return msg.GetCopy(), true
 	}
 
