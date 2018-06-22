@@ -464,6 +464,9 @@ func (self *DetailStatsInfo) UpdatePubClientStats(remote string, agent string, p
 			UserAgent:     agent,
 			Protocol:      protocol,
 		}
+		// only update ts for new client connection, to avoid too much time.Now() call
+		//
+		s.LastPubTs = time.Now().Unix()
 		self.clientPubStats[remote] = s
 	}
 
@@ -471,7 +474,6 @@ func (self *DetailStatsInfo) UpdatePubClientStats(remote string, agent string, p
 		s.ErrCount++
 	} else {
 		s.PubCount += count
-		s.LastPubTs = time.Now().Unix()
 	}
 }
 
