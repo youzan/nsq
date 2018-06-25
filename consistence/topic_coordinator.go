@@ -1,11 +1,12 @@
 package consistence
 
 import (
-	"github.com/youzan/nsq/nsqd"
 	"os"
 	"path"
 	"sync"
 	"sync/atomic"
+
+	"github.com/youzan/nsq/nsqd"
 )
 
 type ChannelConsumerOffset struct {
@@ -79,8 +80,18 @@ type TopicCoordinator struct {
 	basePath       string
 }
 
+func NewTopicCoordinatorWithFixMode(name string, partition int, basepath string,
+	syncEvery int, ordered bool, forceFix bool) (*TopicCoordinator, error) {
+	return newTopicCoordinator(name, partition, basepath, syncEvery, ordered, forceFix)
+}
+
 func NewTopicCoordinator(name string, partition int, basepath string,
 	syncEvery int, ordered bool) (*TopicCoordinator, error) {
+	return newTopicCoordinator(name, partition, basepath, syncEvery, ordered, false)
+}
+
+func newTopicCoordinator(name string, partition int, basepath string,
+	syncEvery int, ordered bool, fixMode bool) (*TopicCoordinator, error) {
 	tc := &TopicCoordinator{}
 	tc.coordData = &coordData{}
 	tc.coordData.consumeMgr = newChannelComsumeMgr()
@@ -103,7 +114,7 @@ func NewTopicCoordinator(name string, partition int, basepath string,
 			buf = DEFAULT_COMMIT_BUF_SIZE
 		}
 	}
-	tc.logMgr, err = InitTopicCommitLogMgr(name, partition, basepath, buf)
+	tc.logMgr, err = InitTopicCommitLogMgrWithFixMode(name, partition, basepath, buf, fixMode)
 	if err != nil {
 		coordLog.Errorf("topic(%v) failed to init log: %v ", name, err)
 		return nil, err
@@ -112,8 +123,8 @@ func NewTopicCoordinator(name string, partition int, basepath string,
 	if !ordered {
 		dqPath := path.Join(tc.basePath, "delayed_queue")
 		os.MkdirAll(dqPath, 0755)
-		tc.delayedLogMgr, err = InitTopicCommitLogMgr(name, partition,
-			dqPath, buf)
+		tc.delayedLogMgr, err = InitTopicCommitLogMgrWithFixMode(name, partition,
+			dqPath, buf, fixMode)
 		if err != nil {
 			coordLog.Errorf("topic(%v) failed to init delayed queue log: %v ", name, err)
 			return nil, err

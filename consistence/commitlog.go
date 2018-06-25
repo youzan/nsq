@@ -279,7 +279,7 @@ func GetTopicPartitionLogPath(basepath, t string, p int) string {
 	return fullpath
 }
 
-func InitTopicCommitLogMgr(t string, p int, basepath string, commitBufSize int) (*TopicCommitLogMgr, error) {
+func InitTopicCommitLogMgrWithFixMode(t string, p int, basepath string, commitBufSize int, fixMode bool) (*TopicCommitLogMgr, error) {
 	if uint64(p) >= uint64(1)<<(63-MAX_INCR_ID_BIT) {
 		return nil, ErrCommitLogPartitionExceed
 	}
@@ -316,7 +316,7 @@ func InitTopicCommitLogMgr(t string, p int, basepath string, commitBufSize int) 
 		return nil, err
 	}
 	//load meta
-	err = mgr.loadCommitLogMeta()
+	err = mgr.loadCommitLogMeta(fixMode)
 	if err != nil {
 		coordLog.Infof("load commit log meta error: %v", err)
 		return nil, err
@@ -326,7 +326,11 @@ func InitTopicCommitLogMgr(t string, p int, basepath string, commitBufSize int) 
 	return mgr, nil
 }
 
-func (tcl *TopicCommitLogMgr) loadCommitLogMeta() error {
+func InitTopicCommitLogMgr(t string, p int, basepath string, commitBufSize int) (*TopicCommitLogMgr, error) {
+	return InitTopicCommitLogMgrWithFixMode(t, p, basepath, commitBufSize, false)
+}
+
+func (tcl *TopicCommitLogMgr) loadCommitLogMeta(fixMode bool) error {
 	f, err := tcl.appender.Stat()
 	if err != nil {
 		coordLog.Infof("stat file error: %v", err)
@@ -344,16 +348,33 @@ func (tcl *TopicCommitLogMgr) loadCommitLogMeta() error {
 		}
 		if l.LastMsgLogID < l.LogID {
 			coordLog.Errorf("%v invalid last log data: %v, file: %v, %v, %v", tcl.path, l, fsize, num, roundOffset)
+			fixed := false
 			for i := 0; i < int(num)-1; i++ {
 				roundOffset := int64(i) * int64(GetLogDataSize())
 				firstLog, err := tcl.GetCommitLogFromOffsetV2(tcl.currentStart, roundOffset)
 				if err != nil || firstLog.LastMsgLogID < firstLog.LogID {
 					coordLog.Errorf("%v first invalid log data %v: %v, %v, offset:%v",
 						tcl.path, i, firstLog, err, roundOffset)
+					if fixMode {
+						_, err = tcl.TruncateToOffsetV2(tcl.currentStart, roundOffset-int64(GetLogDataSize()))
+						if err != nil {
+							return err
+						}
+						fixed = true
+						coordLog.Warningf("%v fixed commit log data to offset:%v",
+							tcl.path, roundOffset-int64(GetLogDataSize()))
+					}
 					break
 				}
 			}
-			return errors.New("invalid log data")
+			if !fixed {
+				return errors.New("invalid log data")
+			}
+		}
+
+		if fsize%int64(GetLogDataSize()) != 0 {
+			coordLog.Warningf("%v invalid log file size: %v, %v", tcl.path, fsize, int64(GetLogDataSize()))
+			return errors.New("invalid commit log file size")
 		}
 		tcl.pLogID = l.LogID
 		tcl.nLogID = l.LastMsgLogID + 1
@@ -381,11 +402,12 @@ func (tcl *TopicCommitLogMgr) loadCommitLogMeta() error {
 				if err != nil {
 					coordLog.Infof("get last commit data from file %v error: %v", tcl.currentStart-1, err)
 				} else {
-					if l.LastMsgLogID < l.LogID {
-						coordLog.Errorf("%v invalid last log data: %v, %v", tcl.path, tcl.currentStart, l)
-					}
 					tcl.pLogID = l.LogID
 					tcl.nLogID = l.LastMsgLogID + 1
+					if l.LastMsgLogID < l.LogID {
+						coordLog.Errorf("%v invalid last log data: %v, %v", tcl.path, tcl.currentStart, l)
+						tcl.pLogID = 0
+					}
 				}
 			}
 		} else {
@@ -608,7 +630,7 @@ func (self *TopicCommitLogMgr) Reopen() error {
 		coordLog.Infof("open topic commit log error: %v", err)
 	}
 	//load meta
-	return self.loadCommitLogMeta()
+	return self.loadCommitLogMeta(false)
 
 }
 

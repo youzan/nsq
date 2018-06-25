@@ -656,10 +656,17 @@ func (self *NsqdCoordinator) loadLocalTopicData() error {
 			// In some case, we still keep leader (maybe only one replica), We need check local data and try to get the leader session again.
 			// If we are removed from both ISR and catchups, we can safely remove local topic data
 			shouldLoad := FindSlice(topicInfo.ISR, self.myNode.GetID()) != -1 || FindSlice(topicInfo.CatchupList, self.myNode.GetID()) != -1
+			// here we will check the last commit log data logid is equal with the disk queue message
+			// this can avoid data corrupt, if not equal we need rollback and find backward for the right data.
+			// and check the first log commit log is valid on the disk queue, so that we can fix the wrong start of the commit log
+			forceFixLeader := false
+			if ForceFixLeaderData && self.GetMyID() == topicInfo.Leader && len(topicInfo.ISR) <= 1 {
+				forceFixLeader = true
+			}
 			if shouldLoad {
 				basepath := GetTopicPartitionBasePath(self.dataRootPath, topicInfo.Name, topicInfo.Partition)
-				tc, err := NewTopicCoordinator(topicInfo.Name, topicInfo.Partition, basepath,
-					topicInfo.SyncEvery, topicInfo.OrderedMulti)
+				tc, err := NewTopicCoordinatorWithFixMode(topicInfo.Name, topicInfo.Partition, basepath,
+					topicInfo.SyncEvery, topicInfo.OrderedMulti, forceFixLeader)
 				if err != nil {
 					coordLog.Infof("failed to get topic coordinator:%v-%v, err:%v", topicName, partition, err)
 					continue
@@ -722,13 +729,7 @@ func (self *NsqdCoordinator) loadLocalTopicData() error {
 			tc.GetData().updateBufferSize(int(dyConf.SyncEvery - 1))
 			maybeInitDelayedQ(tc.GetData(), topic)
 			topic.SetDynamicInfo(*dyConf, tc.GetData().logMgr)
-			// here we will check the last commit log data logid is equal with the disk queue message
-			// this can avoid data corrupt, if not equal we need rollback and find backward for the right data.
-			// and check the first log commit log is valid on the disk queue, so that we can fix the wrong start of the commit log
-			forceFixLeader := false
-			if ForceFixLeaderData && self.GetMyID() == tc.GetLeader() && len(tc.topicInfo.ISR) <= 1 {
-				forceFixLeader = true
-			}
+
 			localErr := checkAndFixLocalLogQueueData(tc.GetData(), topic, tc.GetData().logMgr, forceFixLeader)
 			if localErr != nil {
 				coordLog.Errorf("check local topic %v data need to be fixed:%v", topicInfo.GetTopicDesp(), localErr)
