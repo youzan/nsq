@@ -346,9 +346,9 @@ func (tcl *TopicCommitLogMgr) loadCommitLogMeta(fixMode bool) error {
 			coordLog.Infof("load file error: %v", err)
 			return err
 		}
+		fixed := false
 		if l.LastMsgLogID < l.LogID {
 			coordLog.Errorf("%v invalid last log data: %v, file: %v, %v, %v", tcl.path, l, fsize, num, roundOffset)
-			fixed := false
 			for i := 0; i < int(num)-1; i++ {
 				roundOffset := int64(i) * int64(GetLogDataSize())
 				firstLog, err := tcl.GetCommitLogFromOffsetV2(tcl.currentStart, roundOffset)
@@ -374,6 +374,16 @@ func (tcl *TopicCommitLogMgr) loadCommitLogMeta(fixMode bool) error {
 
 		if fsize%int64(GetLogDataSize()) != 0 {
 			coordLog.Warningf("%v invalid log file size: %v, %v", tcl.path, fsize, int64(GetLogDataSize()))
+			if !fixed && fixMode {
+				roundOffset := (num - 1) * int64(GetLogDataSize())
+				_, err = tcl.TruncateToOffsetV2(tcl.currentStart, roundOffset)
+				if err != nil {
+					return err
+				}
+				fixed = true
+				coordLog.Warningf("%v fixed commit log data to offset:%v",
+					tcl.path, roundOffset)
+			}
 			return errors.New("invalid commit log file size")
 		}
 		tcl.pLogID = l.LogID
