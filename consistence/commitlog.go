@@ -350,6 +350,10 @@ func (tcl *TopicCommitLogMgr) loadCommitLogMeta(fixMode bool) error {
 			coordLog.Errorf("%v invalid last log data: %v, file: %v, %v, %v", tcl.path, l, fsize, num, roundOffset)
 			for i := 0; i < int(num)-1; i++ {
 				roundOffset := int64(i) * int64(GetLogDataSize())
+				if tcl.currentStart == tcl.logStartInfo.SegmentStartIndex &&
+					roundOffset < tcl.logStartInfo.SegmentStartOffset {
+					continue
+				}
 				firstLog, err := tcl.GetCommitLogFromOffsetV2(tcl.currentStart, roundOffset)
 				if err != nil || firstLog.LastMsgLogID < firstLog.LogID {
 					coordLog.Errorf("%v first invalid log data %v: %v, %v, offset:%v",
@@ -388,6 +392,10 @@ func (tcl *TopicCommitLogMgr) loadCommitLogMeta(fixMode bool) error {
 			var lastLog *CommitLogData
 			for i := 0; i < int(num)-1; i++ {
 				roundOffset := int64(i) * int64(GetLogDataSize())
+				if tcl.currentStart == tcl.logStartInfo.SegmentStartIndex &&
+					roundOffset < tcl.logStartInfo.SegmentStartOffset {
+					continue
+				}
 				firstLog, err := tcl.GetCommitLogFromOffsetV2(tcl.currentStart, roundOffset)
 				if err != nil {
 					coordLog.Errorf("%v first invalid log data %v: %v, at offset:%v",
