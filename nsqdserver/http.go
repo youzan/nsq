@@ -594,7 +594,7 @@ func (s *httpServer) doEmptyChannel(w http.ResponseWriter, req *http.Request, ps
 		return nil, http_api.Err{404, "CHANNEL_NOT_FOUND"}
 	}
 
-	if s.ctx.checkForMasterWrite(topic.GetTopicName(), topic.GetTopicPart()) {
+	if s.ctx.checkConsumeForMasterWrite(topic.GetTopicName(), topic.GetTopicPart()) {
 		var startFrom ConsumeOffset
 		startFrom.OffsetType = offsetSpecialType
 		startFrom.OffsetValue = -1
@@ -627,7 +627,7 @@ func (s *httpServer) doEmptyChannelDelayed(w http.ResponseWriter, req *http.Requ
 		return nil, http_api.Err{404, "CHANNEL_NOT_FOUND"}
 	}
 
-	if s.ctx.checkForMasterWrite(topic.GetTopicName(), topic.GetTopicPart()) {
+	if s.ctx.checkConsumeForMasterWrite(topic.GetTopicName(), topic.GetTopicPart()) {
 		err = s.ctx.EmptyChannelDelayedQueue(channel)
 		if err != nil {
 			nsqd.NsqLogger().Logf("failed to empty the channel %v delayed data: %v, by client:%v",
@@ -697,7 +697,7 @@ func (s *httpServer) doSetChannelOffset(w http.ResponseWriter, req *http.Request
 		return nil, http_api.Err{400, err.Error()}
 	}
 
-	if s.ctx.checkForMasterWrite(topic.GetTopicName(), topic.GetTopicPart()) {
+	if s.ctx.checkConsumeForMasterWrite(topic.GetTopicName(), topic.GetTopicPart()) {
 		queueOffset, cnt, err := s.ctx.SetChannelOffset(channel, startFrom, true)
 		if err != nil {
 			return nil, http_api.Err{500, err.Error()}
@@ -718,7 +718,7 @@ func (s *httpServer) doDeleteChannel(w http.ResponseWriter, req *http.Request, p
 		return nil, err
 	}
 
-	if s.ctx.checkForMasterWrite(topic.GetTopicName(), topic.GetTopicPart()) {
+	if s.ctx.checkConsumeForMasterWrite(topic.GetTopicName(), topic.GetTopicPart()) {
 		clusterErr := s.ctx.DeleteExistingChannel(topic, channelName)
 		if clusterErr != nil {
 			return nil, http_api.Err{500, clusterErr.Error()}
@@ -1043,7 +1043,7 @@ func (s *httpServer) doMessageFinish(w http.ResponseWriter, req *http.Request, p
 		return nil, http_api.Err{400, "INVALID_REQUEST"}
 	}
 
-	if !s.ctx.checkForMasterWrite(topicName, topicPart) {
+	if !s.ctx.checkConsumeForMasterWrite(topicName, topicPart) {
 		nsqd.NsqLogger().Logf("topic %v fin message failed for not leader", topicName)
 		return nil, http_api.Err{400, FailedOnNotLeader}
 	}
@@ -1069,7 +1069,7 @@ func (s *httpServer) doFinishMemDelayed(w http.ResponseWriter, req *http.Request
 		return nil, http_api.Err{404, "CHANNEL_NOT_FOUND"}
 	}
 
-	if !s.ctx.checkForMasterWrite(t.GetTopicName(), t.GetTopicPart()) {
+	if !s.ctx.checkConsumeForMasterWrite(t.GetTopicName(), t.GetTopicPart()) {
 		nsqd.NsqLogger().Logf("topic %v fin message failed for not leader", t.GetTopicName())
 		return nil, http_api.Err{400, FailedOnNotLeader}
 	}
