@@ -88,6 +88,7 @@ func newHTTPServer(ctx *context, tlsEnabled bool, tlsRequired bool) *httpServer 
 
 	router.Handle("POST", "/topic/greedyclean", http_api.Decorate(s.doGreedyCleanTopic, log, http_api.V1))
 	//router.Handle("POST", "/topic/delete", http_api.Decorate(s.doDeleteTopic, http_api.DeprecatedAPI, log, http_api.V1))
+	router.Handle("POST", "/disable/write", http_api.Decorate(s.doDisableClusterWrite, log, http_api.V1))
 
 	// debug
 	router.HandlerFunc("GET", "/debug/pprof/", pprof.Index)
@@ -246,6 +247,23 @@ func (s *httpServer) doGreedyCleanTopic(w http.ResponseWriter, req *http.Request
 	err = s.ctx.GreedyCleanTopicOldData(localTopic)
 	if err != nil {
 		return nil, http_api.Err{500, err.Error()}
+	}
+	return nil, nil
+}
+
+func (s *httpServer) doDisableClusterWrite(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {
+	reqParams, err := url.ParseQuery(req.URL.RawQuery)
+	if err != nil {
+		nsqd.NsqLogger().LogErrorf("failed to parse request params - %s", err)
+		return nil, http_api.Err{400, "INVALID_REQUEST"}
+	}
+	disableType := reqParams.Get("type")
+	if disableType == "all" {
+		consistence.DisableClusterWrite(consistence.ClusterWriteDisabledForAll)
+	} else if disableType == "ordered" {
+		consistence.DisableClusterWrite(consistence.ClusterWriteDisabledForOrdered)
+	} else {
+		consistence.DisableClusterWrite(consistence.NoClusterWriteDisable)
 	}
 	return nil, nil
 }

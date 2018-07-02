@@ -3,6 +3,7 @@ package consistence
 import (
 	"errors"
 	"strconv"
+	"sync/atomic"
 )
 
 var (
@@ -11,6 +12,28 @@ var (
 	ErrKeyAlreadyExist           = errors.New("Key already exist")
 	ErrKeyNotFound               = errors.New("Key not found")
 )
+
+const (
+	NoClusterWriteDisable          = 0
+	ClusterWriteDisabledForOrdered = 1
+	ClusterWriteDisabledForAll     = 2
+)
+
+var isClusterWriteDisabled int32
+
+// 0 - no disable, 1 - disable ordered write, 2 - disable all write
+
+func DisableClusterWrite(disableType int) {
+	atomic.StoreInt32(&isClusterWriteDisabled, int32(disableType))
+}
+
+func IsAllClusterWriteDisabled() bool {
+	return atomic.LoadInt32(&isClusterWriteDisabled) == int32(ClusterWriteDisabledForAll)
+}
+
+func IsClusterWriteDisabledForOrdered() bool {
+	return atomic.LoadInt32(&isClusterWriteDisabled) == int32(ClusterWriteDisabledForOrdered)
+}
 
 type EpochType int64
 
