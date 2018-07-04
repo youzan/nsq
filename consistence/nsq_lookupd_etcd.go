@@ -16,7 +16,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	etcdlock "github.com/absolute8511/xlock2"
 	"github.com/coreos/etcd/client"
 	"golang.org/x/net/context"
 )
@@ -39,7 +38,7 @@ type NsqLookupdEtcdMgr struct {
 	tmiMutex  sync.Mutex
 	wtliMutex sync.Mutex
 
-	client            *etcdlock.EtcdClient
+	client            *EtcdClient
 	clusterID         string
 	topicRoot         string
 	clusterPath       string
@@ -62,8 +61,11 @@ type NsqLookupdEtcdMgr struct {
 	watchNsqdNodesStopCh   chan bool
 }
 
-func NewNsqLookupdEtcdMgr(host string) *NsqLookupdEtcdMgr {
-	client := etcdlock.NewEClient(host)
+func NewNsqLookupdEtcdMgr(host string) (*NsqLookupdEtcdMgr, error) {
+	client, err := NewEClient(host)
+	if err != nil {
+		return nil, err
+	}
 	return &NsqLookupdEtcdMgr{
 		client:                    client,
 		ifTopicChanged:            1,
@@ -74,7 +76,7 @@ func NewNsqLookupdEtcdMgr(host string) *NsqLookupdEtcdMgr {
 		watchTopicLeaderChanMap:   make(map[string]*WatchTopicLeaderInfo),
 		watchTopicLeaderEventChan: make(chan *WatchTopicLeaderInfo, 1),
 		refreshStopCh:             make(chan bool, 1),
-	}
+	}, nil
 }
 
 func (self *NsqLookupdEtcdMgr) InitClusterID(id string) {
@@ -190,7 +192,7 @@ func (self *NsqLookupdEtcdMgr) GetAllLookupdNodes() ([]NsqLookupdNodeInfo, error
 }
 
 func (self *NsqLookupdEtcdMgr) AcquireAndWatchLeader(leader chan *NsqLookupdNodeInfo, stop chan struct{}) {
-	master := etcdlock.NewMaster(self.client, self.leaderSessionPath, self.leaderStr, ETCD_TTL)
+	master := NewMaster(self.client, self.leaderSessionPath, self.leaderStr, ETCD_TTL)
 	go self.processMasterEvents(master, leader, stop)
 	master.Start()
 }
@@ -228,11 +230,11 @@ func (self *NsqLookupdEtcdMgr) GetTopicsMetaInfoMap(topics []string) (map[string
 	return topicMetaInfoCache, nil
 }
 
-func (self *NsqLookupdEtcdMgr) processMasterEvents(master etcdlock.Master, leader chan *NsqLookupdNodeInfo, stop chan struct{}) {
+func (self *NsqLookupdEtcdMgr) processMasterEvents(master Master, leader chan *NsqLookupdNodeInfo, stop chan struct{}) {
 	for {
 		select {
 		case e := <-master.GetEventsChan():
-			if e.Type == etcdlock.MASTER_ADD || e.Type == etcdlock.MASTER_MODIFY {
+			if e.Type == MASTER_ADD || e.Type == MASTER_MODIFY {
 				// Acquired the lock || lock change.
 				var lookupdNode NsqLookupdNodeInfo
 				if err := json.Unmarshal([]byte(e.Master), &lookupdNode); err != nil {
@@ -241,7 +243,7 @@ func (self *NsqLookupdEtcdMgr) processMasterEvents(master etcdlock.Master, leade
 				}
 				coordLog.Infof("master event type[%d] lookupdNode[%v].", e.Type, lookupdNode)
 				leader <- &lookupdNode
-			} else if e.Type == etcdlock.MASTER_DELETE {
+			} else if e.Type == MASTER_DELETE {
 				coordLog.Infof("master event delete.")
 				// Lost the lock.
 				var lookupdNode NsqLookupdNodeInfo
@@ -309,7 +311,7 @@ func (self *NsqLookupdEtcdMgr) WatchNsqdNodes(nsqds chan []NsqdNodeInfo, stop ch
 			} else {
 				coordLog.Errorf("watcher key[%s] error: %s", key, err.Error())
 				//rewatch
-				if etcdlock.IsEtcdWatchExpired(err) {
+				if IsEtcdWatchExpired(err) {
 					rsp, err = self.client.Get(key, false, true)
 					if err != nil {
 						coordLog.Errorf("rewatch and get key[%s] error: %s", key, err.Error())
@@ -391,7 +393,7 @@ func (self *NsqLookupdEtcdMgr) watchTopics() {
 			} else {
 				coordLog.Errorf("watcher key[%s] error: %s", self.topicRoot, err.Error())
 				//rewatch
-				if etcdlock.IsEtcdWatchExpired(err) {
+				if IsEtcdWatchExpired(err) {
 					rsp, err := self.client.Get(self.topicRoot, false, true)
 					if err != nil {
 						coordLog.Errorf("rewatch and get key[%s] error: %s", self.topicRoot, err.Error())
@@ -835,7 +837,7 @@ func (self *NsqLookupdEtcdMgr) watchTopicLeaderSession(watchTopicLeaderInfo *Wat
 			} else {
 				coordLog.Errorf("watcher key[%s] error: %s", topicLeaderSessionPath, err.Error())
 				//rewatch
-				if etcdlock.IsEtcdWatchExpired(err) {
+				if IsEtcdWatchExpired(err) {
 					rsp, err = self.client.Get(topicLeaderSessionPath, false, true)
 					if err != nil {
 						coordLog.Errorf("rewatch and get key[%s] error: %s", topicLeaderSessionPath, err.Error())

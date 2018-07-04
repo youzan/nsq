@@ -1,12 +1,13 @@
 package nsqlookupd
 
 import (
-	"github.com/youzan/nsq/consistence"
 	"net"
 	"os"
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/youzan/nsq/consistence"
 
 	"github.com/youzan/nsq/internal/http_api"
 	"github.com/youzan/nsq/internal/protocol"
@@ -116,7 +117,11 @@ func (l *NSQLookupd) Main() {
 		l.coordinator = consistence.NewNsqLookupCoordinator(l.opts.ClusterID, &node, coordOpts)
 		l.Unlock()
 		// set etcd leader manager here
-		leadership := consistence.NewNsqLookupdEtcdMgr(l.opts.ClusterLeadershipAddresses)
+		leadership, err := consistence.NewNsqLookupdEtcdMgr(l.opts.ClusterLeadershipAddresses)
+		if err != nil {
+			nsqlookupLog.LogErrorf("FATAL: start coordinator failed - %s", err)
+			os.Exit(1)
+		}
 		l.coordinator.SetLeadershipMgr(leadership)
 		err = l.coordinator.Start()
 		if err != nil {

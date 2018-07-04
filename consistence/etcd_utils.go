@@ -1,33 +1,21 @@
-//        file: consistence/utils.go
-// description: utils function of nsq etcd mgr
-
-//      author: reezhou
-//       email: reechou@gmail.com
-//   copyright: youzan
-
 package consistence
 
 import (
 	"net/url"
 	"os"
-	"strings"
 
-	etcdlock "github.com/absolute8511/xlock2"
 	"github.com/coreos/etcd/client"
+)
+
+const (
+	ErrCodeEtcdNotReachable    = 501
+	ErrCodeUnhandledHTTPStatus = 502
 )
 
 var (
 	hostname string
+	ip       string
 )
-
-func NewEtcdClient(etcdHost string) *etcdlock.EtcdClient {
-	machines := strings.Split(etcdHost, ",")
-	initEtcdPeers(machines)
-	if len(machines) == 1 && machines[0] == "" {
-		machines[0] = "http://127.0.0.1:4001"
-	}
-	return etcdlock.NewEClient(etcdHost)
-}
 
 func initEtcdPeers(machines []string) error {
 	for i, ep := range machines {
@@ -41,6 +29,17 @@ func initEtcdPeers(machines []string) error {
 		machines[i] = u.String()
 	}
 	return nil
+}
+
+func IsEtcdNotReachable(err error) bool {
+	if cErr, ok := err.(client.Error); ok {
+		return cErr.Code == ErrCodeEtcdNotReachable
+	}
+	return false
+}
+
+func IsEtcdWatchExpired(err error) bool {
+	return isEtcdErrorNum(err, client.ErrorCodeEventIndexCleared)
 }
 
 func CheckKeyIfExist(err error) bool {
