@@ -690,92 +690,77 @@ func (self *TopicCommitLogMgr) GetCurrentEnd() (int64, int64) {
 	return self.currentStart, int64(self.currentCount) * int64(GetLogDataSize())
 }
 
-func (self *TopicCommitLogMgr) CleanOldData(fileIndex int64, fileOffset int64) error {
+func (self *TopicCommitLogMgr) prepareCleanOldData(fileIndex int64, fileOffset int64) (LogStartInfo, int64, error) {
 	self.Lock()
 	defer self.Unlock()
+	oldStartInfo := self.logStartInfo
+	oldCurrentStart := self.currentStart
 	if fileIndex > self.currentStart {
-		return ErrCommitLogCleanKeepMin
+		return oldStartInfo, oldCurrentStart, ErrCommitLogCleanKeepMin
 	}
 	// keep some log items
 	if fileIndex == self.currentStart {
 		if fileOffset/int64(GetLogDataSize())+int64(MIN_KEEP_LOG_ITEM) >= int64(self.currentCount) {
-			return ErrCommitLogCleanKeepMin
+			return oldStartInfo, oldCurrentStart, ErrCommitLogCleanKeepMin
 		}
 	} else if fileIndex == self.currentStart-1 {
 		fName := getSegmentFilename(self.path, fileIndex)
 		stat, err := os.Stat(fName)
 		if err != nil {
-			return err
+			return oldStartInfo, oldCurrentStart, err
 		}
 
 		leftSize := stat.Size() - fileOffset
 		if leftSize < 0 {
-			return ErrCommitLogOffsetInvalid
+			return oldStartInfo, oldCurrentStart, ErrCommitLogOffsetInvalid
 		}
 		if leftSize/int64(GetLogDataSize())+int64(self.currentCount) <= int64(MIN_KEEP_LOG_ITEM) {
-			return ErrCommitLogCleanKeepMin
+			return oldStartInfo, oldCurrentStart, ErrCommitLogCleanKeepMin
 		}
 	}
-	oldStartInfo := self.logStartInfo
-	cleanStart := self.logStartInfo.SegmentStartIndex
-	cleanStartOffset := self.logStartInfo.SegmentStartOffset
-	for i := int64(0); i < cleanStart; i++ {
-		if i < fileIndex-1 {
-			fName := getSegmentFilename(self.path, int64(i))
-			err := os.Remove(fName)
-			if err != nil {
-				if !os.IsNotExist(err) {
-					coordLog.Warningf("clean commit segment %v failed: %v", fName, err)
-				}
-			} else {
-				coordLog.Infof("clean commit segment %v ", fName)
-			}
-		}
-	}
+	return oldStartInfo, oldCurrentStart, nil
+}
+
+func (self *TopicCommitLogMgr) CleanOldData(fileIndex int64, fileOffset int64) error {
 	// clean the commit segment before the specific file index
+	oldStartInfo, oldCurrentStart, err := self.prepareCleanOldData(fileIndex, fileOffset)
+	if err != nil {
+		return err
+	}
+	cleanStart := oldStartInfo.SegmentStartIndex
+	cleanStartOffset := oldStartInfo.SegmentStartOffset
+	newStartInfo := oldStartInfo
 	for i := cleanStart; i < fileIndex; i++ {
 		fName := getSegmentFilename(self.path, int64(i))
 		stat, err := os.Stat(fName)
 		if err != nil {
 			coordLog.Warningf("commit segment %v stat failed: %v", fName, stat)
-			self.saveLogSegStartInfo()
 			return err
 		}
 		if cleanStartOffset > stat.Size() {
 			coordLog.Warningf("commit clean offset %v more than segment size : %v", cleanStartOffset, stat)
-			self.saveLogSegStartInfo()
 			return ErrCommitLogOffsetInvalid
 		}
 		if (stat.Size()-cleanStartOffset)%int64(GetLogDataSize()) != 0 {
 			coordLog.Warningf("commit segment size invalid: %v", stat)
-			self.saveLogSegStartInfo()
 			return ErrCommitLogOffsetInvalid
 		}
 
-		atomic.AddInt64(&self.logStartInfo.SegmentStartCount, (stat.Size()-cleanStartOffset)/int64(GetLogDataSize()))
+		atomic.AddInt64(&newStartInfo.SegmentStartCount, (stat.Size()-cleanStartOffset)/int64(GetLogDataSize()))
 		cleanStartOffset = 0
-		atomic.AddInt64(&self.logStartInfo.SegmentStartIndex, 1)
-		atomic.StoreInt64(&self.logStartInfo.SegmentStartOffset, cleanStartOffset)
-		// keep the previous file to read the last commit log
-		if int64(i) < fileIndex-1 {
-			err = os.Remove(fName)
-			if err != nil {
-				coordLog.Warningf("clean commit segment %v failed: %v", fName, err)
-			} else {
-				coordLog.Infof("clean commit segment %v ", fName)
-			}
-		}
+		atomic.AddInt64(&newStartInfo.SegmentStartIndex, 1)
+		atomic.StoreInt64(&newStartInfo.SegmentStartOffset, cleanStartOffset)
 	}
 	if fileOffset < cleanStartOffset {
 		coordLog.Warningf("commit clean offset %v less than segment start: %v", fileOffset, cleanStartOffset)
 		return ErrCommitLogOffsetInvalid
 	}
 	diffCnt := (fileOffset - cleanStartOffset) / int64(GetLogDataSize())
-	self.logStartInfo.SegmentStartCount += diffCnt
-	atomic.StoreInt64(&self.logStartInfo.SegmentStartOffset, fileOffset)
+	atomic.AddInt64(&newStartInfo.SegmentStartCount, diffCnt)
+	atomic.StoreInt64(&newStartInfo.SegmentStartOffset, fileOffset)
 
-	if self.logStartInfo.SegmentStartIndex < self.currentStart {
-		fName := getSegmentFilename(self.path, self.logStartInfo.SegmentStartIndex)
+	if newStartInfo.SegmentStartIndex < oldCurrentStart {
+		fName := getSegmentFilename(self.path, newStartInfo.SegmentStartIndex)
 		stat, err := os.Stat(fName)
 		if err != nil {
 			return err
@@ -785,16 +770,43 @@ func (self *TopicCommitLogMgr) CleanOldData(fileIndex int64, fileOffset int64) e
 			return ErrCommitLogOffsetInvalid
 		}
 		if fileOffset == stat.Size() {
-			atomic.AddInt64(&self.logStartInfo.SegmentStartIndex, 1)
-			atomic.StoreInt64(&self.logStartInfo.SegmentStartOffset, 0)
+			atomic.AddInt64(&newStartInfo.SegmentStartIndex, 1)
+			atomic.StoreInt64(&newStartInfo.SegmentStartOffset, 0)
 			// keep the previous file to read the last commit log
 			// os.Remove(fName)
 		}
 	}
 
+	self.Lock()
+	if oldStartInfo != self.logStartInfo || oldCurrentStart != self.currentStart {
+		coordLog.Warningf("commit %v log start info changed: %v, %v, %v, %v",
+			self.path, oldStartInfo, self.logStartInfo, oldCurrentStart, self.currentStart)
+		self.Unlock()
+		// maybe changed by other clean
+		return errors.New("log start info changed by others")
+	}
+	self.logStartInfo = newStartInfo
 	self.saveLogSegStartInfo()
-	coordLog.Infof("commit segment start clean from %v to : %v (%v:%v)",
-		oldStartInfo, self.logStartInfo, fileIndex, fileOffset)
+	self.Unlock()
+	coordLog.Infof("commit %v segment start clean from %v to : %v (%v:%v)", self.path,
+		oldStartInfo, newStartInfo, fileIndex, fileOffset)
+
+	// since the previous file was kept to read the last commit log while clean
+	// we need clean it if no need anymore
+	for i := cleanStart - 2; i < fileIndex; i++ {
+		// keep the previous file to read the last commit log
+		if int64(i) < fileIndex-1 {
+			fName := getSegmentFilename(self.path, int64(i))
+			err = os.Remove(fName)
+			if err != nil {
+				if !os.IsNotExist(err) {
+					coordLog.Warningf("clean commit segment %v failed: %v", fName, err)
+				}
+			} else {
+				coordLog.Infof("clean commit segment %v ", fName)
+			}
+		}
+	}
 	return nil
 }
 
