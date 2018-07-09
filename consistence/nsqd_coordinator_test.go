@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/youzan/nsq/internal/ext"
 	"github.com/absolute8511/glog"
+	"github.com/youzan/nsq/internal/ext"
 	"github.com/youzan/nsq/internal/levellogger"
 	"github.com/youzan/nsq/internal/test"
 	nsqdNs "github.com/youzan/nsq/nsqd"
@@ -1368,7 +1368,6 @@ func testNsqdCoordCatchupCleanOldData(t *testing.T, meta TopicMetaInfo) {
 	test.Equal(t, logs1, logs3)
 
 	t.Log(logs3)
-
 }
 
 func TestNsqdCoordPutMessageAndSyncChannelOffset(t *testing.T) {

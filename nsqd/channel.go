@@ -2130,7 +2130,8 @@ exit:
 					_, ok3 := c.waitingRequeueChanMsgs[m.DelayedOrigID]
 					_, ok4 := c.waitingRequeueMsgs[m.DelayedOrigID]
 					if ok2 {
-						if oldMsg2.ID != m.ID || oldMsg2.DelayedTs != m.DelayedTs {
+						// the delayed orig message id in delayed message is the actual id in the topic queue
+						if oldMsg2.ID != m.DelayedOrigID || oldMsg2.DelayedTs != m.DelayedTs {
 							nsqLog.Logf("old msg %v in flight mismatch peek from delayed queue, new %v ",
 								oldMsg2, m)
 						}
