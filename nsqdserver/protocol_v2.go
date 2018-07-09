@@ -969,7 +969,7 @@ func (p *protocolV2) internalSUB(client *nsqd.ClientV2, params [][]byte, enableT
 			return nil, protocol.NewFatalClientErr(nil, "E_SUB_EXTEND_FORBIDDON", "this topic is not extended and should not identify as extend support.")
 		}
 	}
-	if !p.ctx.checkForMasterWrite(topicName, partition) {
+	if !p.ctx.checkConsumeForMasterWrite(topicName, partition) {
 		nsqd.NsqLogger().Logf("sub failed on not leader: %v-%v, remote is : %v", topicName, partition, client.String())
 		// we need disable topic here to trigger a notify, maybe we failed to notify lookup last time.
 		topic.DisableForSlave()
@@ -1090,7 +1090,7 @@ func (p *protocolV2) FIN(client *nsqd.ClientV2, params [][]byte) ([]byte, error)
 		return nil, protocol.NewFatalClientErr(nil, E_INVALID, "No channel")
 	}
 
-	if !p.ctx.checkForMasterWrite(client.Channel.GetTopicName(), client.Channel.GetTopicPart()) {
+	if !p.ctx.checkConsumeForMasterWrite(client.Channel.GetTopicName(), client.Channel.GetTopicPart()) {
 		nsqd.NsqLogger().Logf("topic %v fin message failed for not leader", client.Channel.GetTopicName())
 		return nil, protocol.NewFatalClientErr(nil, FailedOnNotLeader, "")
 	}

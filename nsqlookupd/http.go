@@ -17,6 +17,7 @@ import (
 	"github.com/youzan/nsq/internal/http_api"
 	"github.com/youzan/nsq/internal/protocol"
 	"github.com/youzan/nsq/internal/version"
+	"github.com/youzan/nsq/nsqd"
 )
 
 const (
@@ -118,6 +119,7 @@ func newHTTPServer(ctx *Context) *httpServer {
 	//router.Handle("POST", "/channel/create", http_api.Decorate(s.doCreateChannel, log, http_api.V1))
 	//router.Handle("POST", "/channel/delete", http_api.Decorate(s.doDeleteChannel, log, http_api.V1))
 	router.Handle("POST", "/topic/tombstone", http_api.Decorate(s.doTombstoneTopicProducer, log, http_api.V1))
+	router.Handle("POST", "/disable/write", http_api.Decorate(s.doDisableClusterWrite, log, http_api.V1))
 
 	router.Handle("GET", "/info", http_api.Decorate(s.doInfo, log, http_api.NegotiateVersion))
 	// debug
@@ -279,6 +281,23 @@ func (s *httpServer) doChannels(w http.ResponseWriter, req *http.Request, ps htt
 	}, nil
 }
 
+func (s *httpServer) doDisableClusterWrite(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {
+	reqParams, err := url.ParseQuery(req.URL.RawQuery)
+	if err != nil {
+		nsqd.NsqLogger().LogErrorf("failed to parse request params - %s", err)
+		return nil, http_api.Err{400, "INVALID_REQUEST"}
+	}
+	disableType := reqParams.Get("type")
+	if disableType == "all" {
+		consistence.DisableClusterWrite(consistence.ClusterWriteDisabledForAll)
+	} else if disableType == "ordered" {
+		consistence.DisableClusterWrite(consistence.ClusterWriteDisabledForOrdered)
+	} else {
+		consistence.DisableClusterWrite(consistence.NoClusterWriteDisable)
+	}
+	return nil, nil
+}
+
 func (s *httpServer) doLookup(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {
 	reqParams, err := url.ParseQuery(req.URL.RawQuery)
 	if err != nil {
@@ -407,6 +426,14 @@ func (s *httpServer) doLookup(w http.ResponseWriter, req *http.Request, ps httpr
 	// maybe channels should be under topic partitions?
 	channels := s.ctx.nsqlookupd.DB.FindChannelRegs(topicName, topicPartition).Channels()
 	needMeta := reqParams.Get("metainfo")
+	if accessMode == "w" {
+		if consistence.IsAllClusterWriteDisabled() {
+			peers = nil
+			partitionProducers = nil
+		} else if consistence.IsClusterWriteDisabledForOrdered() {
+			needMeta = "true"
+		}
+	}
 	if needMeta != "" && s.ctx.nsqlookupd.coordinator != nil {
 		meta, err := s.ctx.nsqlookupd.coordinator.GetTopicMetaInfo(topicName)
 		if err != nil {
@@ -414,6 +441,10 @@ func (s *httpServer) doLookup(w http.ResponseWriter, req *http.Request, ps httpr
 			if err != consistence.ErrKeyNotFound {
 				return nil, http_api.Err{500, err.Error()}
 			}
+		}
+		if accessMode == "w" && meta.OrderedMulti && consistence.IsClusterWriteDisabledForOrdered() {
+			peers = nil
+			partitionProducers = nil
 		}
 		return map[string]interface{}{
 			"channels": channels,

@@ -1054,9 +1054,23 @@ func (self *NsqdCoordinator) acquireTopicLeader(topicInfo *TopicPartitionMetaInf
 	return nil
 }
 
+func (self *NsqdCoordinator) IsMineConsumeLeaderForTopic(topic string, part int) bool {
+	tcData, err := self.getTopicCoordData(topic, part)
+	if err != nil {
+		return false
+	}
+	return tcData.GetLeader() == self.myNode.GetID() && tcData.GetLeaderSessionID() == self.myNode.GetID()
+}
+
 func (self *NsqdCoordinator) IsMineLeaderForTopic(topic string, part int) bool {
 	tcData, err := self.getTopicCoordData(topic, part)
 	if err != nil {
+		return false
+	}
+	if IsAllClusterWriteDisabled() {
+		return false
+	}
+	if tcData.topicInfo.OrderedMulti && IsClusterWriteDisabledForOrdered() {
 		return false
 	}
 	return tcData.GetLeader() == self.myNode.GetID() && tcData.GetLeaderSessionID() == self.myNode.GetID()

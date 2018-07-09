@@ -1,10 +1,3 @@
-//        file: consistence/nsqd_node_etcd.go
-// description: opr of nsqd node to etcd
-
-//      author: reezhou
-//       email: reechou@gmail.com
-//   copyright: youzan
-
 package consistence
 
 import (
@@ -14,7 +7,6 @@ import (
 	"sync"
 	"time"
 
-	etcdlock "github.com/absolute8511/xlock2"
 	"github.com/coreos/etcd/client"
 	"golang.org/x/net/context"
 )
@@ -31,28 +23,24 @@ type MasterChanInfo struct {
 type NsqdEtcdMgr struct {
 	sync.Mutex
 
-	client      *etcdlock.EtcdClient
+	client      *EtcdClient
 	clusterID   string
 	topicRoot   string
 	lookupdRoot string
-
-	////topicLockMap map[string]*etcdlock.SeizeLock
 
 	nodeKey       string
 	nodeValue     string
 	refreshStopCh chan bool
 }
 
-func SetEtcdLogger(log etcdlock.Logger, level int32) {
-	etcdlock.SetLogger(log, int(level))
-}
-
-func NewNsqdEtcdMgr(host string) *NsqdEtcdMgr {
-	client := etcdlock.NewEClient(host)
+func NewNsqdEtcdMgr(host string) (*NsqdEtcdMgr, error) {
+	client, err := NewEClient(host)
+	if err != nil {
+		return nil, err
+	}
 	return &NsqdEtcdMgr{
 		client: client,
-		//topicLockMap: make(map[string]*etcdlock.SeizeLock),
-	}
+	}, nil
 }
 
 func (self *NsqdEtcdMgr) InitClusterID(id string) {
@@ -257,7 +245,7 @@ func (self *NsqdEtcdMgr) WatchLookupdLeader(leader chan *NsqLookupdNodeInfo, sto
 			} else {
 				coordLog.Errorf("watcher key[%s] error: %s", key, err.Error())
 				//rewatch
-				if etcdlock.IsEtcdWatchExpired(err) {
+				if IsEtcdWatchExpired(err) {
 					isMissing = true
 					rsp, err = self.client.Get(key, false, true)
 					if err != nil {

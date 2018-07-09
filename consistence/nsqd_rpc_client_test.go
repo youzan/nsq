@@ -3,9 +3,6 @@ package consistence
 import (
 	"errors"
 	"fmt"
-	"github.com/absolute8511/gorpc"
-	"github.com/youzan/nsq/internal/test"
-	"github.com/youzan/nsq/nsqd"
 	"io/ioutil"
 	"net"
 	"os"
@@ -13,6 +10,10 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/absolute8511/gorpc"
+	"github.com/youzan/nsq/internal/test"
+	"github.com/youzan/nsq/nsqd"
 )
 
 type fakeNsqdLeadership struct {
@@ -191,7 +192,8 @@ func startNsqdCoord(t *testing.T, rpcport string, dataPath string, extraID strin
 			return p, err
 		}
 	} else {
-		nsqdCoord.SetLeadershipMgr(NewNsqdEtcdMgr(testEtcdServers))
+		ld, _ := NewNsqdEtcdMgr(testEtcdServers)
+		nsqdCoord.SetLeadershipMgr(ld)
 		nsqdCoord.leadership.UnregisterNsqd(&nsqdCoord.myNode)
 	}
 	nsqdCoord.lookupLeader = NsqLookupdNodeInfo{}

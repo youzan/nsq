@@ -6,14 +6,13 @@ import (
 	"testing"
 	"time"
 
-	etcdlock "github.com/absolute8511/xlock2"
 	"github.com/youzan/nsq/internal/test"
 	"golang.org/x/net/context"
 )
 
 func TestNodeRe(t *testing.T) {
 	ClusterID := "test-nsq-cluster-unit-test-etcd-leadership"
-	nodeMgr := NewNsqdEtcdMgr(testEtcdServers)
+	nodeMgr, _ := NewNsqdEtcdMgr(testEtcdServers)
 	nodeMgr.InitClusterID(ClusterID)
 	ID := "unit-test-etcd-node1"
 	nodeInfo := &NsqdNodeInfo{
@@ -30,7 +29,7 @@ func TestNodeRe(t *testing.T) {
 }
 
 func TestETCDWatch(t *testing.T) {
-	client := etcdlock.NewEClient(testEtcdServers)
+	client, _ := NewEClient(testEtcdServers)
 	watcher := client.Watch("q11", 0, true)
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {

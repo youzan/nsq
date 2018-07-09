@@ -125,9 +125,19 @@ func (c *context) GetDistributedID() string {
 	return c.nsqdCoord.GetMyID()
 }
 
+func (c *context) checkConsumeForMasterWrite(topic string, part int) bool {
+	if c.nsqdCoord == nil {
+		return true
+	}
+	return c.nsqdCoord.IsMineConsumeLeaderForTopic(topic, part)
+}
+
 func (c *context) checkForMasterWrite(topic string, part int) bool {
 	if c.nsqdCoord == nil {
 		return true
+	}
+	if consistence.IsAllClusterWriteDisabled() {
+		return false
 	}
 	return c.nsqdCoord.IsMineLeaderForTopic(topic, part)
 }
@@ -425,7 +435,7 @@ func (c *context) internalRequeueToEnd(ch *nsqd.Channel,
 		return nsqd.ErrExiting
 	}
 
-	if !c.checkForMasterWrite(topic.GetTopicName(), topic.GetTopicPart()) {
+	if !c.checkConsumeForMasterWrite(topic.GetTopicName(), topic.GetTopicPart()) {
 		return consistence.ErrNotTopicLeader.ToErrorType()
 	}
 

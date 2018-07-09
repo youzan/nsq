@@ -264,7 +264,10 @@ func (self *NsqLookupCoordinator) notifyLeaderChanged(monitorChan chan struct{})
 	if self.leadership != nil {
 		newTopics, err := self.leadership.ScanTopics()
 		if err != nil {
-			coordLog.Errorf("load topic info failed: %v", err)
+			// may not init any topic yet.
+			if err != ErrKeyNotFound {
+				coordLog.Infof("load topic info failed: %v", err)
+			}
 		} else {
 			coordLog.Infof("topic loaded : %v", len(newTopics))
 			self.notifyTopicsToAllNsqdForReload(newTopics)
@@ -636,7 +639,9 @@ func (self *NsqLookupCoordinator) doCheckTopics(monitorChan chan struct{}, faile
 		var commonErr error
 		topics, commonErr = self.leadership.ScanTopics()
 		if commonErr != nil {
-			coordLog.Infof("scan topics failed. %v", commonErr)
+			if commonErr != ErrKeyNotFound {
+				coordLog.Infof("scan topics failed. %v", commonErr)
+			}
 			return
 		}
 		coordLog.Debugf("scan found topics: %v", topics)

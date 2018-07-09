@@ -2,9 +2,10 @@ package consistence
 
 import (
 	"fmt"
-	"github.com/youzan/nsq/internal/test"
 	"testing"
 	"time"
+
+	"github.com/youzan/nsq/internal/test"
 )
 
 func TestLookupd(t *testing.T) {
@@ -15,7 +16,7 @@ func TestLookupd(t *testing.T) {
 
 	stop := make(chan struct{})
 
-	nodeMgr := NewNsqdEtcdMgr(testEtcdServers)
+	nodeMgr, _ := NewNsqdEtcdMgr(testEtcdServers)
 	nodeMgr.InitClusterID(ClusterID)
 	nodeInfo := &NsqdNodeInfo{
 		ID:      NsqdID,
@@ -27,7 +28,7 @@ func TestLookupd(t *testing.T) {
 	test.Nil(t, err)
 	fmt.Printf("Nsqd Node[%s] register success.\n", nodeInfo.ID)
 
-	lookupdMgr := NewNsqLookupdEtcdMgr(testEtcdServers)
+	lookupdMgr, _ := NewNsqLookupdEtcdMgr(testEtcdServers)
 	lookupdMgr.InitClusterID(ClusterID)
 	lookupdInfo := &NsqLookupdNodeInfo{
 		ID:       LookupId1,
@@ -57,7 +58,7 @@ func TestLookupd(t *testing.T) {
 		}
 	}()
 
-	lookupdMgr2 := NewNsqLookupdEtcdMgr(testEtcdServers)
+	lookupdMgr2, _ := NewNsqLookupdEtcdMgr(testEtcdServers)
 	lookupdMgr2.InitClusterID(ClusterID)
 	lookupdInfo2 := &NsqLookupdNodeInfo{
 		ID:       LookupId2,
