@@ -152,7 +152,7 @@ type Channel struct {
 // NewChannel creates a new instance of the Channel type and returns a pointer
 func NewChannel(topicName string, part int, channelName string, chEnd BackendQueueEnd, opt *Options,
 	deleteCallback func(*Channel), moreDataCallback func(*Channel), consumeDisabled int32,
-	notify INsqdNotify, ext int32) *Channel {
+	notify INsqdNotify, ext int32, queueStart BackendQueueEnd) *Channel {
 
 	c := &Channel{
 		topicName:              topicName,
@@ -214,6 +214,11 @@ func NewChannel(topicName string, part int, channelName string, chEnd BackendQue
 		chEnd,
 		false)
 
+	if queueStart != nil {
+		// The old closed channel (on slave) may have the invalid read start if the
+		// topic disk data is cleaned already. So we check here for new opened channel
+		c.checkAndFixStart(queueStart)
+	}
 	go c.messagePump()
 
 	c.nsqdNotify.NotifyStateChanged(c, true)
@@ -231,6 +236,27 @@ func (c *Channel) GetTopicName() string {
 
 func (c *Channel) GetTopicPart() int {
 	return c.topicPart
+}
+
+func (c *Channel) checkAndFixStart(start BackendQueueEnd) {
+	if c.GetConfirmed().Offset() >= start.Offset() {
+		return
+	}
+	nsqLog.Infof("%v-%v confirm start need be fixed %v, %v", c.GetTopicName(), c.GetName(),
+		start, c.GetConfirmed())
+	newStart, err := c.backend.SkipReadToOffset(start.Offset(), start.TotalMsgCnt())
+	if err != nil {
+		nsqLog.Warningf("%v-%v skip to new start failed: %v", c.GetTopicName(), c.GetName(),
+			err)
+		newStart, err = c.backend.SkipReadToEnd()
+		if err != nil {
+			nsqLog.Warningf("%v-%v skip to new start failed: %v", c.GetTopicName(), c.GetName(),
+				err)
+		} else {
+			nsqLog.Infof("%v-%v skip to end : %v", c.GetTopicName(), c.GetName(),
+				newStart)
+		}
+	}
 }
 
 func (c *Channel) closeClientMsgChannels() {

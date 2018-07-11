@@ -449,7 +449,7 @@ func (self *NsqdCoordinator) periodFlushCommitLogs() {
 				}
 				if !tpc.IsExiting() && tcData.GetLeader() == self.myNode.GetID() {
 					syncChList := !tpc.IsWriteDisabled() && flushAll
-					if ((pid + 1) % FLUSH_DISTANCE) == matchCnt {
+					if ((pid+1)%FLUSH_DISTANCE) == matchCnt || syncChList {
 						self.trySyncTopicChannels(tcData, false, syncChList)
 					}
 				}
@@ -1886,9 +1886,11 @@ func (self *NsqdCoordinator) catchupFromLeader(topicInfo TopicPartitionMetaInfo,
 					}
 					delete(oldChList, chName)
 				}
-				coordLog.Infof("topic %v local channel not on leader: %v", topicInfo.GetTopicDesp(), oldChList)
-				for chName := range oldChList {
-					localTopic.CloseExistingChannel(chName, false)
+				if len(oldChList) > 0 {
+					coordLog.Infof("topic %v local channel not on leader: %v", topicInfo.GetTopicDesp(), oldChList)
+					for chName := range oldChList {
+						localTopic.CloseExistingChannel(chName, false)
+					}
 				}
 				localTopic.SaveChannelMeta()
 			}

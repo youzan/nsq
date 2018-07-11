@@ -139,6 +139,9 @@ func newDiskQueueReader(readFrom string, metaname string, dataPath string, maxBy
 		d.readQueueInfo = d.confirmedQueueInfo
 		d.queueEndInfo = *diskEnd
 		d.updateDepth()
+	} else {
+		nsqLog.Logf("diskqueue(%s) read end not valid %v",
+			d.readFrom, readEnd)
 	}
 	// no need to lock here, nothing else could possibly be touching this instance
 	err := d.retrieveMetaData()
@@ -146,6 +149,8 @@ func newDiskQueueReader(readFrom string, metaname string, dataPath string, maxBy
 		nsqLog.LogErrorf("diskqueue(%s) failed to retrieveMetaData %v - %s",
 			d.readFrom, d.readerMetaName, err)
 	}
+	// need update queue end with new readEnd, since it may read old from meta file
+	d.UpdateQueueEnd(readEnd, false)
 
 	return &d
 }

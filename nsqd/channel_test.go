@@ -252,6 +252,91 @@ func TestChannelSkip(t *testing.T) {
 	}
 }
 
+func TestChannelInitWithOldStart(t *testing.T) {
+	opts := NewOptions()
+	opts.SyncEvery = 1
+	opts.MaxBytesPerFile = 1024
+	opts.LogLevel = 4
+	opts.Logger = newTestLogger(t)
+	if testing.Verbose() {
+		opts.LogLevel = 4
+		SetLogger(opts.Logger)
+	}
+	_, _, nsqd := mustStartNSQD(opts)
+	defer os.RemoveAll(opts.DataPath)
+	defer nsqd.Exit()
+
+	topicName := "test_channel_init_oldstart" + strconv.Itoa(int(time.Now().Unix()))
+	topic := nsqd.GetTopicIgnPart(topicName)
+	channel := topic.GetChannel("channel")
+	channel2 := topic.GetChannel("channel2")
+	channel3 := topic.GetChannel("channel3")
+
+	msgs := make([]*Message, 0, 10)
+	for i := 0; i < 10; i++ {
+		var msgId MessageID
+		msgBytes := []byte(strconv.Itoa(i))
+		msg := NewMessage(msgId, msgBytes)
+		msgs = append(msgs, msg)
+	}
+	topic.PutMessages(msgs)
+	topic.flush(true)
+
+	var msgId MessageID
+	msgBytes := []byte(strconv.Itoa(10))
+	msg := NewMessage(msgId, msgBytes)
+	_, backendOffsetMid, _, _, _ := topic.PutMessage(msg)
+	topic.flush(true)
+	equal(t, channel.Depth(), int64(11))
+	channel.SetConsumeOffset(backendOffsetMid, 10, true)
+	time.Sleep(time.Second)
+	outputMsg := <-channel.clientMsgChan
+	equal(t, string(outputMsg.Body[:]), strconv.Itoa(10))
+	topic.CloseExistingChannel("channel", false)
+	time.Sleep(time.Second)
+
+	msgs = make([]*Message, 0, 1000-10)
+	for i := 10; i < 1000; i++ {
+		var msgId MessageID
+		msgBytes := []byte(strconv.Itoa(i))
+		msg := NewMessage(msgId, msgBytes)
+		msgs = append(msgs, msg)
+	}
+	_, putOffset, _, _, putEnd, _ := topic.PutMessages(msgs)
+	topic.flush(true)
+	t.Log(putEnd)
+	t.Log(putOffset)
+
+	var msgId2 MessageID
+	msgBytes = []byte(strconv.Itoa(1001))
+	msg = NewMessage(msgId2, msgBytes)
+	topic.PutMessage(msg)
+	topic.flush(true)
+
+	channel2.skipChannelToEnd()
+	channel3.SetConsumeOffset(putEnd.Offset(), putEnd.TotalMsgCnt(), true)
+	topic.CloseExistingChannel(channel3.GetName(), false)
+	topic.TryCleanOldData(1024*2, false, topic.backend.GetQueueReadEnd().Offset())
+	t.Log(topic.GetQueueReadStart())
+	t.Log(topic.backend.GetQueueReadEnd())
+
+	// closed channel reopen should check if old confirmed is not less than cleaned disk segment start
+	// and the reopened channel read end can update to the newest topic end
+	channel = topic.GetChannel("channel")
+	t.Log(channel.GetConfirmed())
+	t.Log(channel.GetChannelEnd())
+
+	equal(t, channel.GetConfirmed(), topic.backend.GetQueueReadStart())
+	equal(t, channel.GetChannelEnd(), topic.backend.GetQueueReadEnd())
+	channel3 = topic.GetChannel(channel3.GetName())
+
+	t.Log(channel3.GetConfirmed())
+	t.Log(channel3.GetChannelEnd())
+
+	equal(t, channel3.GetConfirmed(), putEnd)
+	equal(t, channel3.GetChannelEnd(), topic.backend.GetQueueReadEnd())
+}
+
 func TestChannelResetReadEnd(t *testing.T) {
 	opts := NewOptions()
 	opts.SyncEvery = 1
