@@ -27,22 +27,23 @@ import (
 var (
 	flagSet = flag.NewFlagSet("bench", flag.ExitOnError)
 
-	runfor        = flagSet.Duration("runfor", 10*time.Second, "duration of time to run")
-	sleepfor      = flagSet.Duration("sleepfor", 1*time.Second, " time to sleep between pub")
-	lookupAddress = flagSet.String("lookupd-http-address", "127.0.0.1:4161", "<addr>:<port> to connect to nsqlookupd")
-	topics        = app.StringArray{}
-	size          = flagSet.Int("size", 100, "size of messages")
-	batchSize     = flagSet.Int("batch-size", 10, "batch size of messages")
-	deadline      = flagSet.String("deadline", "", "deadline to start the benchmark run")
-	concurrency   = flagSet.Int("c", 100, "concurrency of goroutine")
-	benchCase     = flagSet.String("bench-case", "simple", "which bench should run (simple/benchpub/benchsub/benchdelaysub/checkdata/benchlookup/benchreg/consumeoffset/checkdata2)")
-	channelNum    = flagSet.Int("ch_num", 1, "the channel number under each topic")
-	trace         = flagSet.Bool("trace", false, "enable the trace of pub and sub")
-	ordered       = flagSet.Bool("ordered", false, "enable ordered sub")
-	checkMsgSize  = flagSet.Bool("check-size", false, "enable check the body size of sub")
-	topicListFile = flagSet.String("topic-list-file", "", "the file that contains one topic each line")
-	maxDelaySecs  = flagSet.Int("max-delaysec", 30, "the max delayed message in second")
-	delayPercent  = flagSet.Int("delay-percent", 371, "the percent of delayed")
+	runfor          = flagSet.Duration("runfor", 10*time.Second, "duration of time to run")
+	sleepfor        = flagSet.Duration("sleepfor", 1*time.Second, " time to sleep between pub")
+	lookupAddress   = flagSet.String("lookupd-http-address", "127.0.0.1:4161", "<addr>:<port> to connect to nsqlookupd")
+	topics          = app.StringArray{}
+	size            = flagSet.Int("size", 100, "size of messages")
+	batchSize       = flagSet.Int("batch-size", 10, "batch size of messages")
+	deadline        = flagSet.String("deadline", "", "deadline to start the benchmark run")
+	concurrency     = flagSet.Int("c", 100, "concurrency of goroutine")
+	benchCase       = flagSet.String("bench-case", "simple", "which bench should run (simple/benchpub/benchsub/benchdelaysub/checkdata/benchlookup/benchreg/consumeoffset/checkdata2)")
+	channelNum      = flagSet.Int("ch_num", 1, "the channel number under each topic")
+	trace           = flagSet.Bool("trace", false, "enable the trace of pub and sub")
+	ordered         = flagSet.Bool("ordered", false, "enable ordered sub")
+	retryBackground = flagSet.Bool("retry-background", false, "retry pub in background")
+	checkMsgSize    = flagSet.Bool("check-size", false, "enable check the body size of sub")
+	topicListFile   = flagSet.String("topic-list-file", "", "the file that contains one topic each line")
+	maxDelaySecs    = flagSet.Int("max-delaysec", 30, "the max delayed message in second")
+	delayPercent    = flagSet.Int("delay-percent", 371, "the percent of delayed")
 )
 
 func getPartitionID(msgID nsq.NewMessageID) string {
@@ -137,7 +138,11 @@ func startBenchPub(msg []byte, batch [][]byte) {
 			}
 			log.Printf("topic %v pub trace : %v, %v, %v", t, id, offset, rawSize)
 		} else {
-			err = pubMgr.Publish(t, msg)
+			if *retryBackground {
+				err = pubMgr.PublishAndRetryBackground(t, msg)
+			} else {
+				err = pubMgr.Publish(t, msg)
+			}
 		}
 		if err != nil {
 			log.Printf("topic pub error : %v", err)
@@ -353,7 +358,11 @@ func startCheckData2() {
 			}
 			log.Printf("topic %v pub trace : %v, %v, %v", t, id, offset, rawSize)
 		} else {
-			err = pubMgr.Publish(t, data)
+			if *retryBackground {
+				err = pubMgr.PublishAndRetryBackground(t, data)
+			} else {
+				err = pubMgr.Publish(t, data)
+			}
 		}
 		if err != nil {
 			log.Printf("topic pub error : %v", err)
@@ -488,7 +497,11 @@ func startCheckData(msg []byte, batch [][]byte, testDelay bool) {
 			}
 			log.Printf("topic %v pub trace : %v, %v, %v", t, id, offset, rawSize)
 		} else {
-			err = pubMgr.Publish(t, msg)
+			if *retryBackground {
+				err = pubMgr.PublishAndRetryBackground(t, msg)
+			} else {
+				err = pubMgr.Publish(t, msg)
+			}
 		}
 		if err != nil {
 			log.Printf("topic pub error : %v", err)
@@ -1057,7 +1070,11 @@ func pubWorker(td time.Duration, globalPubMgr *nsq.TopicProducerMgr, topicName s
 		} else {
 			var err error
 			if batchSize == 1 {
-				err = pubMgr.Publish(topicName, singleMsg)
+				if *retryBackground {
+					err = pubMgr.PublishAndRetryBackground(topicName, singleMsg)
+				} else {
+					err = pubMgr.Publish(topicName, singleMsg)
+				}
 			} else {
 				err = pubMgr.MultiPublish(topicName, batch)
 			}
@@ -1322,7 +1339,11 @@ func pubWorker2(td time.Duration, globalPubMgr *nsq.TopicProducerMgr, topicName 
 			}
 		} else {
 			var err error
-			err = pubMgr.Publish(topicName, data)
+			if *retryBackground {
+				err = pubMgr.PublishAndRetryBackground(topicName, data)
+			} else {
+				err = pubMgr.Publish(topicName, data)
+			}
 			if err != nil {
 				log.Printf("pub id : %v error :%v\n", traceID, err)
 				failedLocker.Lock()
