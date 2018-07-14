@@ -35,6 +35,7 @@ var (
 	batchSize       = flagSet.Int("batch-size", 10, "batch size of messages")
 	deadline        = flagSet.String("deadline", "", "deadline to start the benchmark run")
 	concurrency     = flagSet.Int("c", 100, "concurrency of goroutine")
+	pubPoolSize     = flagSet.Int("pub-pool", 1, "producer pool size")
 	benchCase       = flagSet.String("bench-case", "simple", "which bench should run (simple/benchpub/benchsub/benchdelaysub/checkdata/benchlookup/benchreg/consumeoffset/checkdata2)")
 	channelNum      = flagSet.Int("ch_num", 1, "the channel number under each topic")
 	trace           = flagSet.Bool("trace", false, "enable the trace of pub and sub")
@@ -114,6 +115,7 @@ func startBenchPub(msg []byte, batch [][]byte) {
 	config.EnableTrace = *trace
 	config.WriteTimeout = 0
 	config.ReadTimeout = 0
+	config.ProducerPoolSize = *pubPoolSize
 	pubMgr, err := nsq.NewTopicProducerMgr(topics, config)
 	if err != nil {
 		log.Printf("init error : %v", err)
@@ -211,6 +213,7 @@ func startBenchSub() {
 	log.SetPrefix("[bench_reader] ")
 
 	config.WriteTimeout = 0
+	config.ProducerPoolSize = *pubPoolSize
 	config.ReadTimeout = 0
 
 	quitChan := make(chan int)
@@ -319,6 +322,7 @@ func startSimpleTest(msg []byte, batch [][]byte) {
 func startCheckData2() {
 	var wg sync.WaitGroup
 	config.EnableTrace = *trace
+	config.ProducerPoolSize = *pubPoolSize
 	pubMgr, err := nsq.NewTopicProducerMgr(topics, config)
 	if err != nil {
 		log.Printf("init error : %v", err)
@@ -473,6 +477,7 @@ func startCheckData2() {
 func startCheckData(msg []byte, batch [][]byte, testDelay bool) {
 	var wg sync.WaitGroup
 	config.EnableTrace = *trace
+	config.ProducerPoolSize = *pubPoolSize
 	pubMgr, err := nsq.NewTopicProducerMgr(topics, config)
 	if err != nil {
 		log.Printf("init error : %v", err)
@@ -934,6 +939,7 @@ func main() {
 	config.EnableOrdered = *ordered
 	config.PubStrategy = nsq.PubRR
 	config.OutputBufferSize = 1024 * 32
+	config.ProducerPoolSize = *pubPoolSize
 	if config.EnableOrdered {
 		config.Hasher = murmur3.New32()
 	}
