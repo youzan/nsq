@@ -45,6 +45,7 @@ var (
 	topicListFile   = flagSet.String("topic-list-file", "", "the file that contains one topic each line")
 	maxDelaySecs    = flagSet.Int("max-delaysec", 30, "the max delayed message in second")
 	delayPercent    = flagSet.Int("delay-percent", 371, "the percent of delayed")
+	useSinglePubMgr = flagSet.Bool("single-pubmgr", false, "force use singe pub manager")
 )
 
 func getPartitionID(msgID nsq.NewMessageID) string {
@@ -997,18 +998,24 @@ func main() {
 
 func pubWorker(td time.Duration, globalPubMgr *nsq.TopicProducerMgr, topicName string, batchSize int,
 	batch [][]byte, rdyChan chan int, goChan chan int, testDelay bool) {
-	pubMgr, err := nsq.NewTopicProducerMgr(topics, config)
-	if err != nil {
-		log.Printf("init error : %v", err)
-		close(rdyChan)
-		return
-	}
-	pubMgr.SetLogger(log.New(os.Stderr, "", log.LstdFlags), nsq.LogLevelInfo)
-	err = pubMgr.ConnectToNSQLookupd(*lookupAddress)
-	if err != nil {
-		log.Printf("lookup connect error : %v", err)
-		close(rdyChan)
-		return
+	var pubMgr *nsq.TopicProducerMgr
+	var err error
+	if *useSinglePubMgr {
+		pubMgr = globalPubMgr
+	} else {
+		pubMgr, err = nsq.NewTopicProducerMgr(topics, config)
+		if err != nil {
+			log.Printf("init error : %v", err)
+			close(rdyChan)
+			return
+		}
+		pubMgr.SetLogger(log.New(os.Stderr, "", log.LstdFlags), nsq.LogLevelInfo)
+		err = pubMgr.ConnectToNSQLookupd(*lookupAddress)
+		if err != nil {
+			log.Printf("lookup connect error : %v", err)
+			close(rdyChan)
+			return
+		}
 	}
 
 	rdyChan <- 1
@@ -1289,18 +1296,24 @@ func subWorker2(quitChan chan int, td time.Duration, lookupAddr string, topic st
 }
 
 func pubWorker2(td time.Duration, globalPubMgr *nsq.TopicProducerMgr, topicName string, pubIDCounter *int64, rdyChan chan int, goChan chan int) {
-	pubMgr, err := nsq.NewTopicProducerMgr(topics, config)
-	if err != nil {
-		log.Printf("init pub mgr error : %v", err)
-		close(rdyChan)
-		return
-	}
-	pubMgr.SetLogger(log.New(os.Stderr, "", log.LstdFlags), nsq.LogLevelInfo)
-	err = pubMgr.ConnectToNSQLookupd(*lookupAddress)
-	if err != nil {
-		log.Printf("lookup connect error : %v", err)
-		close(rdyChan)
-		return
+	var pubMgr *nsq.TopicProducerMgr
+	var err error
+	if *useSinglePubMgr {
+		pubMgr = globalPubMgr
+	} else {
+		pubMgr, err = nsq.NewTopicProducerMgr(topics, config)
+		if err != nil {
+			log.Printf("init pub mgr error : %v", err)
+			close(rdyChan)
+			return
+		}
+		pubMgr.SetLogger(log.New(os.Stderr, "", log.LstdFlags), nsq.LogLevelInfo)
+		err = pubMgr.ConnectToNSQLookupd(*lookupAddress)
+		if err != nil {
+			log.Printf("lookup connect error : %v", err)
+			close(rdyChan)
+			return
+		}
 	}
 
 	rdyChan <- 1
