@@ -1261,8 +1261,11 @@ func (self *NsqLookupCoordinator) revokeEnableTopicWrite(topic string, partition
 	if state.waitingJoin {
 		coordLog.Warningf("request join isr while is waiting joining: %v", state)
 		if isLeadershipWait {
+			// maybe the other partition in the same topic while init, need recheck soon
 			coordLog.Warningf("interrupt the current join wait since the leader is waiting confirmation")
+			go self.triggerCheckTopics(topicInfo.Name, -1, time.Second*3)
 		} else {
+			go self.triggerCheckTopics(topicInfo.Name, topicInfo.Partition, time.Second*3)
 			return ErrWaitingJoinISR
 		}
 	}
@@ -1584,8 +1587,9 @@ func (self *NsqLookupCoordinator) handleReadyForISR(topic string, partition int,
 			rpcErr = self.notifyEnableTopicWrite(topicInfo)
 			if rpcErr != nil {
 				coordLog.Warningf("failed to enable write for topic: %v, %v ", topicInfo.GetTopicDesp(), rpcErr)
-				go self.triggerCheckTopics(topicInfo.Name, topicInfo.Partition, time.Second*3)
 			}
+			// recheck after all ok to check if any other partitions need enable
+			go self.triggerCheckTopics(topicInfo.Name, -1, time.Second*3)
 		} else {
 			coordLog.Infof("leaving the topic %v without enable write since not enough replicas.", topicInfo)
 		}
