@@ -599,6 +599,10 @@ func (self *NsqLookupCoordinator) CreateTopic(topic string, meta TopicMetaInfo) 
 			return err
 		}
 		meta.MagicCode = oldMeta.MagicCode
+		// handle old topic with large sync every param
+		if oldMeta.SyncEvery >= MAX_SYNC_EVERY {
+			meta.SyncEvery = oldMeta.SyncEvery
+		}
 		if oldMeta != meta {
 			return ErrAlreadyExist
 		}
