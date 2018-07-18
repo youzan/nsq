@@ -363,6 +363,13 @@ func (self *NsqLookupdEtcdMgr) getNsqdNodes() ([]NsqdNodeInfo, error) {
 	return nsqdNodes, nil
 }
 
+func (self *NsqLookupdEtcdMgr) GetAllTopicMetas() (map[string]*TopicMetaInfo, error) {
+	self.tmisMutex.Lock()
+	topicMetas := self.topicMetaMap
+	self.tmisMutex.Unlock()
+	return topicMetas, nil
+}
+
 func (self *NsqLookupdEtcdMgr) ScanTopics() ([]TopicPartitionMetaInfo, error) {
 	if atomic.LoadInt32(&self.ifTopicChanged) == 1 {
 		return self.scanTopics()
@@ -509,9 +516,7 @@ func (self *NsqLookupdEtcdMgr) GetTopicInfo(topic string, partition int) (*Topic
 	if !ok {
 		rsp, err := self.client.Get(self.createTopicMetaPath(topic), false, false)
 		if err != nil {
-
 			self.tmiMutex.Unlock()
-
 			if client.IsKeyNotFound(err) {
 				atomic.StoreInt32(&self.ifTopicChanged, 1)
 				return nil, ErrKeyNotFound

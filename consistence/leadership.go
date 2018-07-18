@@ -158,6 +158,7 @@ type NSQLookupdLeadership interface {
 	WatchNsqdNodes(nsqds chan []NsqdNodeInfo, stop chan struct{})
 	// get all topics info, should cache the newest to improve performance.
 	ScanTopics() ([]TopicPartitionMetaInfo, error)
+	GetAllTopicMetas() (map[string]*TopicMetaInfo, error)
 	// should return both the meta info for topic and the replica info for topic partition
 	// epoch should be updated while return
 	GetTopicInfo(topic string, partition int) (*TopicPartitionMetaInfo, error)
