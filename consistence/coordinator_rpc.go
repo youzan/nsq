@@ -1099,7 +1099,6 @@ func (self *NsqdCoordRpcServer) pullCommitLogsAndData(req *RpcPullCommitLogsReq,
 		tcData.topicInfo.Partition, offsetList, sizeList, fromDelayed)
 	ret.Logs = ret.Logs[:len(ret.DataList)]
 	if err != nil {
-		coordLog.Infof("pull log data read failed : %v, %v, %v", err, offsetList, sizeList)
 		return nil, err.ToErrorType()
 	}
 	return &ret, nil

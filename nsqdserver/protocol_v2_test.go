@@ -5119,16 +5119,12 @@ func TestTimeoutTooMuch(t *testing.T) {
 	opts.Logger = newTestLogger(t)
 	//opts.Logger = &levellogger.SimpleLogger{}
 	opts.LogLevel = 2
-	if testing.Verbose() {
-		opts.LogLevel = 5
-		nsqdNs.SetLogger(opts.Logger)
-	}
-
-	opts.ClientTimeout = time.Second * 10
+	opts.ClientTimeout = time.Second * 2
 	opts.QueueScanRefreshInterval = 100 * time.Millisecond
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqdServer.Exit()
+
 	topicName := "test_cmsg_timeout_requeue" + strconv.Itoa(int(time.Now().Unix()))
 	topic := nsqd.GetTopicIgnPart(topicName)
 	tmpCh := topic.GetChannel("ch")
@@ -5188,9 +5184,6 @@ func TestTimeoutTooMuch(t *testing.T) {
 	cnt = 0
 	for cnt < 21 {
 		msgOut := recvNextMsgAndCheck(t, conn, len(msg.Body), msg.TraceID, false)
-		if msgOut == nil {
-			break
-		}
 		t.Logf("recv msg: %v, %v", msgOut.ID, cnt)
 		_, err = nsq.Finish(nsq.MessageID(msgOut.GetFullMsgID())).WriteTo(conn)
 		test.Nil(t, err)
@@ -5199,8 +5192,7 @@ func TestTimeoutTooMuch(t *testing.T) {
 	conn.Close()
 	atomic.StoreInt32(&done, 1)
 	t.Log(time.Since(startTime))
-	// should longer than ready*msg_timout
-	if time.Since(startTime) < time.Second*3 {
+	if time.Since(startTime) < opts.ClientTimeout*2 {
 		t.Errorf("should not stop early")
 		t.FailNow()
 	}
