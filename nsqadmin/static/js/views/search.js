@@ -38,6 +38,10 @@ var SearchView = BaseView.extend({
                 'hours': hours
             }))
             .done(function(data) {
+                data['logDataDtos'] = _.map(data['logDataDtos'], function(msg){
+                    msg['dc'] = Object.keys(msg['raw_msg_data']);
+                    return msg;
+                });
                 this.template = require('./search.hbs');
                 this.render({
                     'messages': data['logDataDtos'],

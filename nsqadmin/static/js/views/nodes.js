@@ -27,14 +27,13 @@ var NodesView = BaseView.extend({
                 $.ajax({
                     url: AppState.url('/cluster/stats'),
                     success: function(data){
-                        clusterInfo = data;
+                        clustersInfo = data;
                     },
                     async: false
                 });
-                console.log("Stable: " + clusterInfo['stable']);
                 this.render({
                     'message': data['message'],
-                    'stable': clusterInfo['stable']
+                    'clusters': clustersInfo
                 });
             }.bind(this))
             .fail(this.handleViewError.bind(this))

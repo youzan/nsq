@@ -51,6 +51,8 @@ var BaseView = Backbone.View.extend({
                 AppState.get('graph_interval') !== 'off',
             'nsqlookupd': AppState.get('NSQLOOKUPD'),
             'allnsqlookupds': AppState.get('ALLNSQLOOKUPDS'),
+            'dcnsqlookupd' : AppState.get('DCNSQLOOKUPD'),
+            'dcallnsqlookupds' : AppState.get('DCALLNSQLOOKUPDS'),
             'version': AppState.get('VERSION'),
             'auth_url': AppState.get('AUTH_URL'),
             'logout_url': AppState.get('LOGOUT_URL'),

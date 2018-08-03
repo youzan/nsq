@@ -50,6 +50,7 @@
     <table class="table table-bordered table-condensed">
         <tr>
             <th>Partition ID</th>
+            <th>DC</th>
             <th>ISR and Catchup Info</th>
             <th>Sync Status</th>
         </tr>
@@ -60,6 +61,7 @@
             {{else}}
             <th>N/A</th>
             {{/if}}
+            <td>{{dc}}</td>
             {{#if isr_stats.length}}
                 <td>{{isr_stats.[0].hostname}}(ID:{{isr_stats.[0].node_id}})</td>
                 <td>Synced</td>
@@ -72,6 +74,7 @@
         {{#if @first}}
         {{else}}
         <tr>
+            <td>{{dc}}</td>
             <td>{{hostname}}(ID:{{node_id}})</td>
             <td>Synced</td>
         </tr>
@@ -108,6 +111,7 @@
         </tr>
         {{/if}}
         <tr>
+            <th>DC</th>
             <th>NSQd Host</th>
             <th>PartitionInfo</th>
             <th>QueueStart ~ QueueSize</th>
@@ -123,6 +127,9 @@
         </tr>
         {{#each nodes}}
         <tr>
+            <td>
+                {{dc}}
+            </td>
             <td>
                 <button class="btn-link red tombstone-link" data-node="{{node}}" data-topic="{{../name}}" style="padding: 0 6px; border: 0;">✘</button>
                 {{#if show_broadcast_address}}
@@ -169,6 +176,7 @@
         {{/each}}
         <tr class="info">
             <td>Total:</td>
+            <td></td>
             <td></td>
             <td>{{commafy backend_start}} ~ {{commafy backend_depth}}</td>
             <td>{{commafy message_count}}</td>
