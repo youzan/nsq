@@ -2,12 +2,13 @@ package nsqd
 
 import (
 	"fmt"
-	"github.com/youzan/nsq/internal/test"
 	"io/ioutil"
 	"os"
 	"strconv"
 	"testing"
 	"time"
+
+	"github.com/youzan/nsq/internal/test"
 )
 
 func TestDiskQueueReaderResetConfirmed(t *testing.T) {
@@ -298,6 +299,7 @@ func TestDiskQueueReaderUpdateEnd(t *testing.T) {
 	_, hasData := dqReaderWithEnd.TryReadOne()
 	equal(t, hasData, false)
 	dqReaderWithEnd.Close()
+	// should not rollback with less init read end
 	dqReaderWithEnd = newDiskQueueReader(dqName, dqName+"-meta1", tmpDir, 1024, 4, 1<<10, 1, 2*time.Second, midEnd, true)
 	test.Equal(t, dqReaderWithEnd.GetQueueReadEnd(), end)
 	test.Equal(t, dqReaderWithEnd.GetQueueConfirmed(), end)
@@ -313,10 +315,10 @@ func TestDiskQueueReaderUpdateEnd(t *testing.T) {
 
 	dqReaderWithEnd.Close()
 	dqReaderWithEnd = newDiskQueueReader(dqName, dqName+"-meta2", tmpDir, 1024, 4, 1<<10, 1, 2*time.Second, end, true)
-	test.Equal(t, dqReaderWithEnd.GetQueueReadEnd(), midEnd)
+	test.Equal(t, dqReaderWithEnd.GetQueueReadEnd(), end)
 	test.Equal(t, dqReaderWithEnd.GetQueueConfirmed(), midEnd)
 	_, hasData = dqReaderWithEnd.TryReadOne()
-	equal(t, hasData, false)
+	equal(t, hasData, true)
 	dqReaderWithEnd.UpdateQueueEnd(end, false)
 	dqReaderWithEnd.Close()
 	dqReaderWithEnd = newDiskQueueReader(dqName, dqName+"-meta2", tmpDir, 1024, 4, 1<<10, 1, 2*time.Second, end, true)

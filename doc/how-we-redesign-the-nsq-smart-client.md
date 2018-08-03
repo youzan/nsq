@@ -45,26 +45,26 @@ This is due to consideration that meta info serves message order production only
         },
         "partitions":{
             "0":{
-                "id":"10.9.52.215:33122",
-                "remote_address":"10.9.52.215:33122",
-                "hostname":"qabb-qa-sqs4",
-                "broadcast_address":"10.9.52.215",
+                "id":"127.0.0.1:33122",
+                "remote_address":"127.0.0.1:33122",
+                "hostname":"test-sqs4",
+                "broadcast_address":"127.0.0.1",
                 "tcp_port":4150,
                 "http_port":4151,
                 "version":"0.3.7-HA.1.5.4.1",
-                "distributed_id":"10.9.52.215:4250:4150:338437"
+                "distributed_id":"127.0.0.1:4250:4150:338437"
             }
         },
         "producers":[
             {
-                "id":"10.9.52.215:33122",
-                "remote_address":"10.9.52.215:33122",
+                "id":"127.0.0.1:33122",
+                "remote_address":"127.0.0.1:33122",
                 "hostname":"qabb-qa-sqs4",
-                "broadcast_address":"10.9.52.215",
+                "broadcast_address":"127.0.0.1",
                 "tcp_port":4150,
                 "http_port":4151,
                 "version":"0.3.7-HA.1.5.4.1",
-                "distributed_id":"10.9.52.215:4250:4150:338437"
+                "distributed_id":"127.0.0.1:4250:4150:338437"
             }
         ]
     }

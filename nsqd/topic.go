@@ -718,9 +718,10 @@ func (t *Topic) getOrCreateChannel(channelName string) (*Channel, bool) {
 		} else {
 			ext = 0
 		}
+		start := t.backend.GetQueueReadStart()
 		channel = NewChannel(t.GetTopicName(), t.GetTopicPart(), channelName, readEnd,
 			t.option, deleteCallback, t.flushForChannelMoreData, atomic.LoadInt32(&t.writeDisabled),
-			t.nsqdNotify, ext)
+			t.nsqdNotify, ext, start)
 
 		channel.UpdateQueueEnd(readEnd, false)
 		channel.SetDelayedQueue(t.GetDelayedQueue())

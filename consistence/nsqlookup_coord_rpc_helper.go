@@ -53,13 +53,14 @@ func (self *NsqLookupCoordinator) rpcFailRetryFunc(monitorChan chan struct{}) {
 					return
 				default:
 				}
-				coordLog.Infof("retry failed rpc call for topic: %v", info)
+				coordLog.Debugf("retry failed rpc call for topic: %v", info)
 				topicInfo, err := self.leadership.GetTopicInfo(info.topic, info.partition)
 				if err != nil {
 					if err == ErrKeyNotFound {
 						coordLog.Infof("retry cancelled for not exist topic: %v", info)
 						continue
 					}
+					coordLog.Infof("rpc call for topic: %v, failed: %v", info, err)
 					self.addRetryFailedRpc(info.topic, info.partition, info.nodeID)
 					continue
 				}
@@ -72,6 +73,7 @@ func (self *NsqLookupCoordinator) rpcFailRetryFunc(monitorChan chan struct{}) {
 				}
 				c, rpcErr := self.acquireRpcClient(info.nodeID)
 				if rpcErr != nil {
+					coordLog.Infof("rpc call for topic: %v, failed %v", info, rpcErr)
 					self.addRetryFailedRpc(info.topic, info.partition, info.nodeID)
 					continue
 				}
@@ -79,17 +81,24 @@ func (self *NsqLookupCoordinator) rpcFailRetryFunc(monitorChan chan struct{}) {
 				if rpcErr != nil {
 					// this error should not retry anymore
 					if !rpcErr.IsEqual(ErrTopicCoordExistingAndMismatch) {
+						coordLog.Infof("rpc call for topic: %v, failed %v", info, rpcErr)
 						self.addRetryFailedRpc(info.topic, info.partition, info.nodeID)
 					}
 					continue
 				}
 				leaderSession, err := self.leadership.GetTopicLeaderSession(info.topic, info.partition)
 				if err != nil {
+					if err == ErrKeyNotFound {
+						coordLog.Infof("retry cancelled for not exist topic session: %v", info)
+						continue
+					}
+					coordLog.Infof("rpc call for topic: %v, failed: %v", info, err)
 					self.addRetryFailedRpc(info.topic, info.partition, info.nodeID)
 					continue
 				}
 				rpcErr = c.NotifyTopicLeaderSession(epoch, topicInfo, leaderSession, "")
 				if rpcErr != nil {
+					coordLog.Infof("rpc call for topic: %v, failed: %v", info, rpcErr)
 					self.addRetryFailedRpc(info.topic, info.partition, info.nodeID)
 					continue
 				}
@@ -374,6 +383,7 @@ func (self *NsqLookupCoordinator) acquireRpcClient(nid string) (*NsqdRpcClient, 
 	c, _ := self.nsqdRpcClients[nid]
 	if c != nil {
 		if c.ShouldRemoved() {
+			coordLog.Infof("rpc removing removed client: %v", nid)
 			c.Close()
 			c = nil
 		}

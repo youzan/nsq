@@ -592,7 +592,20 @@ func (self *NsqLookupCoordinator) CreateTopic(topic string, meta TopicMetaInfo) 
 		}
 	} else {
 		coordLog.Warningf("topic already exist :%v ", topic)
-		return ErrAlreadyExist
+		// check if meta is the same, if so we re-create again to make sure partitions are all ready
+		oldMeta, _, err := self.leadership.GetTopicMetaInfo(topic)
+		if err != nil {
+			coordLog.Infof("get topic meta key %v failed :%v", topic, err)
+			return err
+		}
+		meta.MagicCode = oldMeta.MagicCode
+		// handle old topic with large sync every param
+		if oldMeta.SyncEvery >= MAX_SYNC_EVERY {
+			meta.SyncEvery = oldMeta.SyncEvery
+		}
+		if oldMeta != meta {
+			return ErrAlreadyExist
+		}
 	}
 	coordLog.Infof("create topic: %v, with meta: %v", topic, meta)
 
@@ -606,7 +619,7 @@ func (self *NsqLookupCoordinator) checkAndUpdateTopicPartitions(currentNodes map
 		err := self.leadership.CreateTopicPartition(topic, i)
 		if err != nil {
 			coordLog.Warningf("failed to create topic %v-%v: %v", topic, i, err)
-			// handle already exist
+			// handle already exist, the partition dir may exist but missing real topic info
 			t, err := self.leadership.GetTopicInfo(topic, i)
 			if err != nil {
 				coordLog.Warningf("exist topic partition failed to get info: %v", err)
@@ -618,6 +631,11 @@ func (self *NsqLookupCoordinator) checkAndUpdateTopicPartitions(currentNodes map
 				existPart[i] = t
 			}
 		}
+	}
+	if len(existPart) == meta.PartitionNum {
+		coordLog.Infof("topic: %v partitions %v are all ready", topic, existPart)
+		self.triggerCheckTopics("", 0, time.Millisecond*500)
+		return nil
 	}
 	leaders, isrList, err := self.dpm.allocTopicLeaderAndISR(meta.OrderedMulti, currentNodes, meta.Replica, meta.PartitionNum, existPart)
 	if err != nil {

@@ -37,6 +37,7 @@ var (
 const (
 	waitMigrateInterval          = time.Minute * 10
 	waitEmergencyMigrateInterval = time.Second * 10
+	waitRemovingNodeInterval     = time.Second * 30
 )
 
 type JoinISRState struct {
@@ -458,7 +459,7 @@ func (self *NsqLookupCoordinator) handleRemovingNodes(monitorChan chan struct{})
 	defer func() {
 		coordLog.Infof("stop handle the removing nsqd nodes.")
 	}()
-	ticker := time.NewTicker(time.Second * 30)
+	ticker := time.NewTicker(waitRemovingNodeInterval)
 	nodeTopicStats := make([]NodeTopicStats, 0, 10)
 	defer ticker.Stop()
 	for {
@@ -644,7 +645,30 @@ func (self *NsqLookupCoordinator) doCheckTopics(monitorChan chan struct{}, faile
 			}
 			return
 		}
-		coordLog.Debugf("scan found topics: %v", topics)
+		topicMetas, _ := self.leadership.GetAllTopicMetas()
+		coordLog.Debugf("scan found topics: %v, %v", topics, topicMetas)
+		// check partition number for topic, maybe failed to create
+		// some partition when creating topic.
+		topicParts := make(map[string]int, len(topicMetas))
+		for _, t := range topics {
+			parts, ok := topicParts[t.Name]
+			if !ok {
+				parts = 0
+				topicParts[t.Name] = 0
+			}
+			parts++
+			topicParts[t.Name] = parts
+		}
+
+		for name, meta := range topicMetas {
+			metaNum := meta.PartitionNum
+			pnum, _ := topicParts[name]
+			if pnum >= metaNum {
+				continue
+			}
+			coordLog.Warningf("topic %v partitions not enough : %v, %v", name, pnum, metaNum)
+			self.CreateTopic(name, *meta)
+		}
 	} else {
 		var err error
 		coordLog.Infof("check single topic : %v ", failedInfo)
@@ -657,8 +681,6 @@ func (self *NsqLookupCoordinator) doCheckTopics(monitorChan chan struct{}, faile
 		topics = append(topics, *t)
 	}
 
-	// TODO: check partition number for topic, maybe failed to create
-	// some partition when creating topic.
 	currentNodes, currentNodesEpoch := self.getCurrentNodesWithRemoving()
 	checkOK := true
 	for _, t := range topics {
@@ -863,7 +885,10 @@ func (self *NsqLookupCoordinator) doCheckTopics(monitorChan chan struct{}, faile
 					delete(lostLeaderSessions, t.GetTopicDesp())
 				}
 			}
-			if aliveCount > t.Replica && atomic.LoadInt32(&self.balanceWaiting) == 0 {
+			self.nodesMutex.RLock()
+			hasRemovingNode := len(self.removingNodes) > 0
+			self.nodesMutex.RUnlock()
+			if aliveCount > t.Replica && atomic.LoadInt32(&self.balanceWaiting) == 0 && !hasRemovingNode {
 				//remove the unwanted node in isr, it may happen that the nodes in isr is more than the configured replicator
 				coordLog.Infof("isr is more than replicator: %v, %v", aliveCount, t.Replica)
 				removeNode := self.dpm.decideUnwantedISRNode(&topicInfo, currentNodes)
@@ -1261,8 +1286,11 @@ func (self *NsqLookupCoordinator) revokeEnableTopicWrite(topic string, partition
 	if state.waitingJoin {
 		coordLog.Warningf("request join isr while is waiting joining: %v", state)
 		if isLeadershipWait {
+			// maybe the other partition in the same topic while init, need recheck soon
 			coordLog.Warningf("interrupt the current join wait since the leader is waiting confirmation")
+			go self.triggerCheckTopics(topicInfo.Name, -1, time.Second*3)
 		} else {
+			go self.triggerCheckTopics(topicInfo.Name, topicInfo.Partition, time.Second*3)
 			return ErrWaitingJoinISR
 		}
 	}
@@ -1584,8 +1612,9 @@ func (self *NsqLookupCoordinator) handleReadyForISR(topic string, partition int,
 			rpcErr = self.notifyEnableTopicWrite(topicInfo)
 			if rpcErr != nil {
 				coordLog.Warningf("failed to enable write for topic: %v, %v ", topicInfo.GetTopicDesp(), rpcErr)
-				go self.triggerCheckTopics(topicInfo.Name, topicInfo.Partition, time.Second*3)
 			}
+			// recheck after all ok to check if any other partitions need enable
+			go self.triggerCheckTopics(topicInfo.Name, -1, time.Second*3)
 		} else {
 			coordLog.Infof("leaving the topic %v without enable write since not enough replicas.", topicInfo)
 		}
