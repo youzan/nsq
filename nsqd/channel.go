@@ -20,9 +20,8 @@ import (
 
 const (
 	resetReaderTimeoutSec = 10
-	MaxMemReqTimes        = 10
+	MAX_MEM_REQ_TIMES     = 10
 	MaxWaitingDelayed     = 100
-	MaxDepthReqToEnd      = 1000000
 )
 
 var (
@@ -820,8 +819,8 @@ func (c *Channel) ConfirmBackendQueue(msg *Message) (BackendOffset, int64, bool)
 			}
 			return curConfirm.Offset(), curConfirm.TotalMsgCnt(), reduced
 		} else {
-			if nsqLog.Level() >= levellogger.LOG_DETAIL {
-				nsqLog.Debugf("channel %v merge msg %v( %v) to interval %v, confirmed to %v", c.GetName(),
+			if nsqLog.Level() >= levellogger.LOG_DETAIL || c.IsTraced() {
+				nsqLog.Logf("channel %v merge msg %v( %v) to interval %v, confirmed to %v", c.GetName(),
 					msg.Offset, msg.queueCntIndex, mergedInterval, newConfirmed)
 			}
 			c.confirmedMsgs.DeleteLower(int64(newConfirmed))
@@ -1041,32 +1040,16 @@ func (c *Channel) ShouldRequeueToEnd(clientID int64, clientAddr string, id Messa
 			c.DepthTimestamp(), msg.Attempts, atomic.LoadInt32(&c.waitingConfirm))
 	}
 
-	if (msg.Attempts >= maxAttempts-1) && (c.Depth() > c.option.MaxConfirmWin) {
-		return msg.GetCopy(), true
-	}
-
 	newTimeout := time.Now().Add(timeout)
 	if newTimeout.Sub(msg.deliveryTS) >=
 		c.option.MaxReqTimeout {
 		return msg.GetCopy(), true
 	}
-
 	if timeout > threshold {
 		return msg.GetCopy(), true
 	}
 
 	deCnt := atomic.LoadInt64(&c.deferredCount)
-	if (msg.Attempts > MaxMemReqTimes*10) &&
-		(c.Depth() > MaxDepthReqToEnd) &&
-		(c.DepthTimestamp() > msg.Timestamp+time.Hour.Nanoseconds()) &&
-		!c.isTooMuchDeferredInMem(deCnt) {
-		// too much deferred means most messages are requeued, to avoid too much in disk delay queue,
-		// we just ignore requeue.
-		nsqLog.Logf("msg %v req to end, attemptted %v and created at %v, current processing %v",
-			id, msg.Attempts, msg.Timestamp, c.DepthTimestamp())
-		return msg.GetCopy(), true
-	}
-
 	if (deCnt >= c.option.MaxConfirmWin) &&
 		(timeout > threshold/2) {
 		// if requeued by deferred is more than half of the all messages handled,
@@ -1079,8 +1062,6 @@ func (c *Channel) ShouldRequeueToEnd(clientID int64, clientAddr string, id Messa
 		}
 	}
 
-	// TODO: also check if delayed queue is blocked too much, and try increase delay and put this
-	// delayed message to delay-queue again.
 	ts := time.Now().UnixNano() - c.DepthTimestamp()
 	isBlocking := atomic.LoadInt32(&c.waitingConfirm) >= int32(c.option.MaxConfirmWin)
 	if isBlocking {
@@ -1096,7 +1077,7 @@ func (c *Channel) ShouldRequeueToEnd(clientID int64, clientAddr string, id Messa
 			return nil, false
 		}
 
-		if msg.Attempts > MaxMemReqTimes && ts > threshold.Nanoseconds() {
+		if msg.Attempts > MAX_MEM_REQ_TIMES && ts > threshold.Nanoseconds() {
 			return msg.GetCopy(), true
 		}
 		if ts > 20*threshold.Nanoseconds() {
@@ -1108,7 +1089,7 @@ func (c *Channel) ShouldRequeueToEnd(clientID int64, clientAddr string, id Messa
 			return nil, false
 		}
 
-		if msg.Attempts < MaxMemReqTimes {
+		if msg.Attempts < MAX_MEM_REQ_TIMES {
 			return nil, false
 		}
 		if ts < 20*threshold.Nanoseconds() {
@@ -2013,8 +1994,6 @@ func (c *Channel) processInFlightQueue(tnow int64) (bool, bool) {
 		msg, _ := c.inFlightPQ.PeekAndShift(tnow)
 		flightCnt = len(c.inFlightMessages)
 		if msg == nil {
-			// TODO: also check if delayed queue is blocked too much, and try increase delay and put this
-			// delayed message to delay-queue again.
 			if atomic.LoadInt32(&c.waitingConfirm) > 1 || flightCnt > 1 {
 				nsqLog.LogDebugf("channel %v no timeout, inflight %v, waiting confirm: %v, confirmed: %v",
 					c.GetName(), flightCnt, atomic.LoadInt32(&c.waitingConfirm),

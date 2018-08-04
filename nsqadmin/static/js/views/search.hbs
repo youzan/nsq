@@ -46,11 +46,14 @@
   <div class="col-md-8">
     {{#if request_msg}}
     <div class="alert alert-info">
-        <p><pre>{{request_msg}}</pre></p>
+        {{#eachInMap request_msg}}
+            <p>{{key}}</p>
+            <p><pre>{{value}}</pre></p>
+        {{/eachInMap}}
     </div>
     {{/if}}
   </div>
-</div
+</div>
 
 <div class="row">
     <div class="col-md-12">
@@ -61,17 +64,28 @@
                 <th>Channel</th>
                 <th>Timestamp</th>
                 <th>Action</th>
+                <th>DC</th>
                 <th>RawData</th>
             </tr>
             {{#each messages}}
             <tr>
-                <td>{{msgid}}</td>
-                <td>{{traceid}}</td>
-                <td>{{channel}}</td>
-                <td>{{timestamp}}</td>
-                <td>{{action}}</td>
-                <td>{{raw_msg_data}}</td>
+                <td rowspan="{{dc.length}}">{{msgid}}</td>
+                <td rowspan="{{dc.length}}">{{traceid}}</td>
+                <td rowspan="{{dc.length}}">{{channel}}</td>
+                <td rowspan="{{dc.length}}">{{timestamp}}</td>
+                <td rowspan="{{dc.length}}">{{action}}</td>
+                <td>{{dc.[0]}}</td>
+                <td>{{getVal dc.[0] raw_msg_data}}</td>
             </tr>
+            {{#each dc}}
+                {{#if @first}}
+                {{else}}
+                    <tr>
+                        <td>{{this}}</td>
+                        <td>{{getVal this ../../raw_msg_data}}</td>
+                    </tr>
+                {{/if}}
+            {{/each}}
             {{/each}}
         </table>
     </div>

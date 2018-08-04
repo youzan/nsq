@@ -79,6 +79,7 @@
                     <th class="text-center" colspan="12">Message Consume Latency Distribution(pub~sub ack & pub~sub send)</th>
                 </tr>
                 <tr>
+                    <th>DC</th>
                     <th>NSQd Host</th>
                     <th>Partition</th>
                     <th>< 16ms</th>
@@ -96,6 +97,9 @@
                 </tr>
                 {{#each nodes}}
                     <tr>
+                        <td rowspan="2">
+                            {{dc}}
+                        </td>
                         <td rowspan="2">
                             <button class="btn-link red tombstone-link" data-node="{{node}}" data-topic="{{../name}}" style="padding: 0 6px; border: 0;">✘</button>
                             {{#if show_broadcast_address}}
@@ -156,7 +160,7 @@
     <h4>Channel</h4>
     <table class="table table-bordered table-condensed">
         <tr>
-            <th colspan="2" class="text-center">&nbsp;</th>
+            <th colspan="3" class="text-center">&nbsp;</th>
             <th colspan="5" class="text-center">Message Queues</th>
             <th colspan="{{#if graph_active}}5{{else}}4{{/if}}" class="text-center">Statistics</th>
             {{#if e2e_processing_latency.percentiles.length}}
@@ -164,6 +168,7 @@
             {{/if}}
         </tr>
         <tr>
+            <th>DC</th>
             <th>NSQd Host</th>
             <th>Partition</th>
             <th>Depth</th>
@@ -182,6 +187,7 @@
         </tr>
         {{#each nodes}}
         <tr>
+            <td>{{dc}}</td>
             <td>
                 {{#if show_broadcast_address}}
                 {{hostname_port}} (<a class="link" href="/nodes/{{node}}">{{node}}</a>)
@@ -236,6 +242,7 @@
         {{/each}}
         <tr class="info">
             <td>Total:</td>
+            <td></td>
             <td></td>
             <td>{{commafy depth}}</td>
             <td></td>

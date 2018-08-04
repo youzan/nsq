@@ -35,6 +35,7 @@ type Producer struct {
 	VersionObj       semver.Version `json:"-"`
 	Topics           ProducerTopics `json:"topics"`
 	OutOfDate        bool           `json:"out_of_date"`
+	DC		 string		`json:"dc"`
 }
 
 // UnmarshalJSON implements json.Unmarshaler and postprocesses of ProducerTopics and VersionObj
@@ -114,6 +115,7 @@ type NodeStat struct {
 type ClusterNodeInfo struct {
 	Stable       bool        `json:"stable"`
 	NodeStatList []*NodeStat `json:"node_stat_list"`
+	DC	     string	`json:"dc,omitempty"`
 }
 
 type TopicStats struct {
@@ -145,6 +147,8 @@ type TopicStats struct {
 	MessageLatencyStats    [16]int64        `json:"msg_write_latency_stats"`
 
 	E2eProcessingLatency *quantile.E2eProcessingLatencyAggregate `json:"e2e_processing_latency"`
+
+	DC 		  	string		`json:"dc,omitempty"`
 }
 
 type TopicMsgStatsInfo struct {
@@ -171,8 +175,9 @@ func (t *TopicStats) Add(a *TopicStats) {
 	if a.Paused {
 		t.Paused = a.Paused
 	}
-	found := false
+
 	for _, aChannelStats := range a.Channels {
+		found := false
 		for _, channelStats := range t.Channels {
 			if aChannelStats.ChannelName == channelStats.ChannelName {
 				found = true
@@ -226,10 +231,65 @@ type ChannelStats struct {
 	E2eProcessingLatency    *quantile.E2eProcessingLatencyAggregate `json:"e2e_processing_latency"`
 	//indicate whether current channel is ths only channel under topic
 	OnlyChannel		bool					`json:"only_channel"`
+	DC 			string					`json:"dc,omitempty"`
+}
+
+/**
+merge channelStats from another dc to current channel stats
+ */
+func (c *ChannelStats) Merge(a *ChannelStats) {
+	c.Node = "*"
+	c.DC = "*"
+	if c.IsMultiOrdered || a.IsMultiOrdered {
+		c.StatsdName = c.TopicName + ".*"
+	} else {
+		c.StatsdName = c.TopicName
+	}
+	c.Depth += a.Depth
+	c.DepthSize += a.DepthSize
+	if c.DepthTimestamp == "" {
+		c.DepthTimestamp = a.DepthTimestamp
+	} else if a.DepthTimestamp < c.DepthTimestamp {
+		c.DepthTimestamp = a.DepthTimestamp
+	}
+	c.MemoryDepth += a.MemoryDepth
+	c.BackendDepth += a.BackendDepth
+	c.InFlightCount += a.InFlightCount
+	c.DeferredCount += a.DeferredCount
+	c.RequeueCount += a.RequeueCount
+	c.TimeoutCount += a.TimeoutCount
+	c.MessageCount += a.MessageCount
+	c.DelayedQueueCount += a.DelayedQueueCount
+	if c.DelayedQueueRecent == "" {
+		c.DelayedQueueRecent = a.DelayedQueueRecent
+	} else if a.DelayedQueueRecent < c.DelayedQueueRecent {
+		c.DelayedQueueRecent = a.DelayedQueueRecent
+	}
+
+	c.ClientCount += a.ClientCount
+	if a.Paused {
+		c.Paused = a.Paused
+	}
+	if a.Skipped {
+		c.Skipped = a.Skipped
+	}
+	c.NodeStats = append(c.NodeStats, a.NodeStats...)
+	sort.Sort(ChannelStatsByPartAndHost{c.NodeStats})
+	if c.E2eProcessingLatency == nil {
+		c.E2eProcessingLatency = &quantile.E2eProcessingLatencyAggregate{
+			Addr:    c.Node,
+			Topic:   c.TopicName,
+			Channel: c.ChannelName,
+		}
+	}
+	c.E2eProcessingLatency.Add(a.E2eProcessingLatency)
+	c.Clients = append(c.Clients, a.Clients...)
+	sort.Sort(ClientsByHost{c.Clients})
 }
 
 func (c *ChannelStats) Add(a *ChannelStats) {
 	c.Node = "*"
+	c.DC = "*"
 	if c.IsMultiOrdered || a.IsMultiOrdered {
 		c.StatsdName = c.TopicName + ".*"
 	} else {
@@ -479,6 +539,7 @@ type TopicCoordStat struct {
 	Partition    int           `json:"partition"`
 	ISRStats     []ISRStat     `json:"isr_stats"`
 	CatchupStats []CatchupStat `json:"catchup_stats"`
+	DC		string 		`json:"dc,omitempty"`
 }
 
 type CoordStats struct {
@@ -499,6 +560,7 @@ type NsqLookupdNodeInfo struct {
 type LookupdNodes struct {
 	LeaderNode NsqLookupdNodeInfo   `json:"lookupdleader"`
 	AllNodes   []NsqLookupdNodeInfo `json:"lookupdnodes"`
+	DC         string		`json:"dc,omitempty"`
 }
 
 type NodeHourlyPubsize struct {

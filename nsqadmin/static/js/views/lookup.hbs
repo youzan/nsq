@@ -16,13 +16,36 @@
     <div class="col-md-4">
         <table class="table table-bordered table-condensed">
             <tr>
+                <th>DC</th>
                 <th>nsqlookupd Host</th>
             </tr>
-            {{#each nsqlookupd}}
-            <tr><td>{{this}} (configured)</td></tr>
+            {{#each dcnsqlookupd}}
+            <tr>
+                <td rowspan="{{lookupAddrs.length}}">{{dc}}</td>
+                <td>{{lookupAddrs.[0]}} (configured)</td>
+                {{#each lookupAddrs}}
+                    {{#if @first}}
+                    {{else}}
+                        <tr><td>{{this}} (configured)</td></tr>
+                    {{/if}}
+                {{/each}}
+            </tr>
             {{/each}}
-            {{#each allnsqlookupds}}
-            <tr><td>{{this}}</td></tr>
+            {{#each dcallnsqlookupds}}
+            <tr>
+                <td rowspan="{{lookupAddrs.length}}">{{dc}}</td>
+                <td>
+                {{lookupAddrs.[0]}}
+                </td>
+            </tr>
+            {{#each lookupAddrs}}
+                {{#if @first}}
+                {{else}}
+                    <tr>
+                        <td>{{this}}</td>
+                    </tr>
+                {{/if}}
+            {{/each}}
             {{/each}}
         </table>
     </div>
