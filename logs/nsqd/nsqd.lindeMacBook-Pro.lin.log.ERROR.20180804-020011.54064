@@ -1,0 +1,29 @@
+Log file created at: 2018/08/04 02:00:11
+Running on machine: lindeMacBook-Pro
+Binary: Built with gc go1.9.2 for darwin/amd64
+Log line format: [IWEF]mmdd hh:mm:ss.uuuuuu threadid file:line] msg
+E0804 02:00:11.412193   54064 nsqd_node_etcd.go:83] consistence.(*NsqdEtcdMgr).refresh update error: 100: Key not found (/NSQMetaData/test-nsq-cluster-skip/NsqdNodes/Node-127.0.0.1:4250:4150:105567) [195314]
+E0804 02:07:24.200024   54064 lookup.go:198] nsqdserver.(*NsqdServer).lookupLoop LOOKUPD(127.0.0.1:4160): ERROR UNREGISTER testTopic12 2 - write tcp 127.0.0.1:63948->127.0.0.1:4160: write: broken pipe
+E0804 02:07:25.321230   54064 nsqd_node_etcd.go:83] consistence.(*NsqdEtcdMgr).refresh update error: 100: Key not found (/NSQMetaData/test-nsq-cluster-skip/NsqdNodes/Node-127.0.0.1:4250:4150:105567) [195326]
+E0804 03:48:14.224132   54064 lookup.go:198] nsqdserver.(*NsqdServer).lookupLoop LOOKUPD(127.0.0.1:4160): ERROR UNREGISTER testTopic12 2 - EOF
+E0804 03:48:14.393253   54064 nsqd_node_etcd.go:83] consistence.(*NsqdEtcdMgr).refresh update error: 100: Key not found (/NSQMetaData/test-nsq-cluster-skip/NsqdNodes/Node-127.0.0.1:4250:4150:105567) [195335]
+E0804 05:36:22.687273   54064 nsqd_node_etcd.go:83] consistence.(*NsqdEtcdMgr).refresh update error: 100: Key not found (/NSQMetaData/test-nsq-cluster-skip/NsqdNodes/Node-127.0.0.1:4250:4150:105567) [195345]
+E0804 07:24:32.694803   54064 nsqd_node_etcd.go:83] consistence.(*NsqdEtcdMgr).refresh update error: 100: Key not found (/NSQMetaData/test-nsq-cluster-skip/NsqdNodes/Node-127.0.0.1:4250:4150:105567) [195360]
+E0804 12:48:56.333203   54064 nsqd_node_etcd.go:83] consistence.(*NsqdEtcdMgr).refresh update error: 100: Key not found (/NSQMetaData/test-nsq-cluster-skip/NsqdNodes/Node-127.0.0.1:4250:4150:105567) [195488]
+E0804 13:26:17.429352   54064 nsqd_node_etcd.go:83] consistence.(*NsqdEtcdMgr).refresh update error: 100: Key not found (/NSQMetaData/test-nsq-cluster-skip/NsqdNodes/Node-127.0.0.1:4250:4150:105567) [195532]
+E0804 18:17:50.591917   54064 nsqd_node_etcd.go:83] consistence.(*NsqdEtcdMgr).refresh update error: 100: Key not found (/NSQMetaData/test-nsq-cluster-skip/NsqdNodes/Node-127.0.0.1:4250:4150:105567) [200047]
+E0804 19:58:21.589643   54064 nsqd_node_etcd.go:83] consistence.(*NsqdEtcdMgr).refresh update error: 100: Key not found (/NSQMetaData/test-nsq-cluster-skip/NsqdNodes/Node-127.0.0.1:4250:4150:105567) [200099]
+E0804 21:32:03.453231   54064 nsqd_node_etcd.go:246] consistence.(*NsqdEtcdMgr).WatchLookupdLeader watcher key[/NSQMetaData/test-nsq-cluster-skip/NsqlookupdInfo/LookupdLeaderSession] error: client: etcd cluster is unavailable or misconfigured; error #0: unexpected EOF
+E0804 21:32:04.571181   54064 nsqd_node_etcd.go:83] consistence.(*NsqdEtcdMgr).refresh update error: client: etcd cluster is unavailable or misconfigured; error #0: dial tcp 127.0.0.1:2379: getsockopt: connection refused
+E0804 21:32:04.571820   54064 nsqd_node_etcd.go:86] consistence.(*NsqdEtcdMgr).refresh set key error: client: etcd cluster is unavailable or misconfigured; error #0: dial tcp 127.0.0.1:2379: getsockopt: connection refused
+E0804 21:32:07.575864   54064 nsqd_node_etcd.go:83] consistence.(*NsqdEtcdMgr).refresh update error: client: etcd cluster is unavailable or misconfigured; error #0: dial tcp 127.0.0.1:2379: getsockopt: connection refused
+E0804 21:32:07.576411   54064 nsqd_node_etcd.go:86] consistence.(*NsqdEtcdMgr).refresh set key error: client: etcd cluster is unavailable or misconfigured; error #0: dial tcp 127.0.0.1:2379: getsockopt: connection refused
+E0804 21:32:08.457732   54064 nsqd_node_etcd.go:246] consistence.(*NsqdEtcdMgr).WatchLookupdLeader watcher key[/NSQMetaData/test-nsq-cluster-skip/NsqlookupdInfo/LookupdLeaderSession] error: client: etcd cluster is unavailable or misconfigured; error #0: dial tcp 127.0.0.1:2379: getsockopt: connection refused
+E0804 21:32:10.579577   54064 nsqd_node_etcd.go:83] consistence.(*NsqdEtcdMgr).refresh update error: client: etcd cluster is unavailable or misconfigured; error #0: dial tcp 127.0.0.1:2379: getsockopt: connection refused
+E0804 21:32:10.579911   54064 nsqd_node_etcd.go:86] consistence.(*NsqdEtcdMgr).refresh set key error: client: etcd cluster is unavailable or misconfigured; error #0: dial tcp 127.0.0.1:2379: getsockopt: connection refused
+E0804 21:32:13.460139   54064 nsqd_node_etcd.go:246] consistence.(*NsqdEtcdMgr).WatchLookupdLeader watcher key[/NSQMetaData/test-nsq-cluster-skip/NsqlookupdInfo/LookupdLeaderSession] error: client: etcd cluster is unavailable or misconfigured; error #0: dial tcp 127.0.0.1:2379: getsockopt: connection refused
+E0804 21:32:13.582239   54064 nsqd_node_etcd.go:83] consistence.(*NsqdEtcdMgr).refresh update error: client: etcd cluster is unavailable or misconfigured; error #0: dial tcp 127.0.0.1:2379: getsockopt: connection refused
+E0804 21:32:13.582483   54064 nsqd_node_etcd.go:86] consistence.(*NsqdEtcdMgr).refresh set key error: client: etcd cluster is unavailable or misconfigured; error #0: dial tcp 127.0.0.1:2379: getsockopt: connection refused
+E0804 21:32:16.583164   54064 nsqd_node_etcd.go:83] consistence.(*NsqdEtcdMgr).refresh update error: client: etcd cluster is unavailable or misconfigured; error #0: dial tcp 127.0.0.1:2379: getsockopt: connection refused
+E0804 21:32:16.583463   54064 nsqd_node_etcd.go:86] consistence.(*NsqdEtcdMgr).refresh set key error: client: etcd cluster is unavailable or misconfigured; error #0: dial tcp 127.0.0.1:2379: getsockopt: connection refused
+E0804 21:32:18.461058   54064 nsqd_node_etcd.go:246] consistence.(*NsqdEtcdMgr).WatchLookupdLeader watcher key[/NSQMetaData/test-nsq-cluster-skip/NsqlookupdInfo/LookupdLeaderSession] error: client: etcd cluster is unavailable or misconfigured; error #0: dial tcp 127.0.0.1:2379: getsockopt: connection refused

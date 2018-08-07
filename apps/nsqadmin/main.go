@@ -63,6 +63,8 @@ var (
 	nsqlookupdHTTPAddresses = app.StringArray{}
 	nsqdHTTPAddresses       = app.StringArray{}
 	accessTokens = app.StringArray{}
+
+	accessControlFile = flagSet.String("access-control-file", "", "administrator access control file")
 )
 
 func init() {

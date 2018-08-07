@@ -62,7 +62,7 @@ func NewHTTPServer(ctx *Context) *httpServer {
 
 	router := httprouter.New()
 	router.HandleMethodNotAllowed = true
-	router.PanicHandler = http_api.LogPanicHandler(adminLog)
+	//router.PanicHandler = http_api.LogPanicHandler(adminLog)
 	router.NotFound = http_api.LogNotFoundHandler(adminLog)
 	router.MethodNotAllowed = http_api.LogMethodNotAllowedHandler(adminLog)
 	s := &httpServer{
@@ -167,7 +167,7 @@ func (s *httpServer) authCheck(f http_api.APIHandler) http_api.APIHandler {
 				s.ctx.nsqadmin.logf("error in fetching user model %v", err)
 				return nil, http_api.Err{http.StatusInternalServerError, "fail to find associated user info"}
 			}
-			if !u.IsLogin() && !s.validAccessToken(req) {
+			if !(u.IsLogin() && u.IsAdmin()) && !s.validAccessToken(req) {
 				return nil, http_api.Err{http.StatusUnauthorized, "authentication needed"}
 			}
 		}

@@ -1,0 +1,5 @@
+Log file created at: 2018/08/03 23:49:06
+Running on machine: lindeMacBook-Pro
+Binary: Built with gc go1.9.2 for darwin/amd64
+Log line format: [IWEF]mmdd hh:mm:ss.uuuuuu threadid file:line] msg
+W0803 23:49:06.676227   53558 nsqd_node_etcd.go:284] consistence.(*NsqdEtcdMgr).WatchLookupdLeader key /NSQMetaData/test-nsq-cluster-skip/NsqlookupdInfo/LookupdLeaderSession new data: {Key: /NSQMetaData/test-nsq-cluster-skip/NsqlookupdInfo/LookupdLeaderSession, CreatedIndex: 190791, ModifiedIndex: 192637, TTL: 30}

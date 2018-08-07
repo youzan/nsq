@@ -37,7 +37,6 @@ type CasUserModel struct {
 	Mobile   string
 	Email    string
 	Login    bool
-	Admin  bool
 	ctx *Context
 }
 
@@ -86,7 +85,6 @@ func (u *CasUserModel) getEmail() string {
 func NewCasUserModel(ctx *Context, w http.ResponseWriter, req *http.Request) (*CasUserModel, error) {
 	casUser := &CasUserModel{
 		Login:  false,
-		Admin: false,
 		ctx: ctx,
 	}
 	session, err := store.Get(req, "session-user")
@@ -118,7 +116,11 @@ func (u *CasUserModel) GetUserRole() string {
 }
 
 func (u *CasUserModel) IsAdmin() bool {
-	return u.Admin
+	if ac := u.ctx.nsqadmin.ac; ac == nil {
+		return true
+	} else {
+		return ac.IsAdmin(u.UserName)
+	}
 }
 
 //save(persist) current case user model

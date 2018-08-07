@@ -28,6 +28,7 @@ type NSQAdmin struct {
 	graphiteURL         *url.URL
 	httpClientTLSConfig *tls.Config
 	accessTokens map[string]bool
+	ac 		    AccessControl
 }
 
 func New(opts *Options) *NSQAdmin {
@@ -185,8 +186,9 @@ func (n *NSQAdmin) handleAdminActions() {
 			"application/json", bytes.NewBuffer(content))
 		if err != nil {
 			n.logf("ERROR: failed to POST notification - %s", err)
+		} else {
+			resp.Body.Close()
 		}
-		resp.Body.Close()
 	}
 }
 
@@ -203,7 +205,16 @@ func (n *NSQAdmin) Main() {
 	n.Lock()
 	n.httpListener = httpListener
 	n.Unlock()
-	httpServer := NewHTTPServer(&Context{n})
+	cxt := &Context{n}
+	httpServer := NewHTTPServer(cxt)
+	n.ac, err = NewYamlAccessControl(cxt, n.opts.AccessControlFile)
+	if err != nil {
+		n.logf("FATAL: fail to inisialize access control - %v", err)
+		os.Exit(1)
+	}
+	if n.ac != nil {
+		n.ac.Start()
+	}
 	n.waitGroup.Wrap(func() {
 		http_api.Serve(n.httpListener, http_api.CompressHandler(httpServer), "HTTP", n.opts.Logger)
 	})
@@ -212,6 +223,9 @@ func (n *NSQAdmin) Main() {
 
 func (n *NSQAdmin) Exit() {
 	n.httpListener.Close()
+	if n.ac != nil {
+		n.ac.Stop()
+	}
 	close(n.notifications)
 	n.waitGroup.Wait()
 }
