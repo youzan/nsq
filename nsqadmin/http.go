@@ -62,7 +62,7 @@ func NewHTTPServer(ctx *Context) *httpServer {
 
 	router := httprouter.New()
 	router.HandleMethodNotAllowed = true
-	//router.PanicHandler = http_api.LogPanicHandler(adminLog)
+	router.PanicHandler = http_api.LogPanicHandler(adminLog)
 	router.NotFound = http_api.LogNotFoundHandler(adminLog)
 	router.MethodNotAllowed = http_api.LogMethodNotAllowedHandler(adminLog)
 	s := &httpServer{
