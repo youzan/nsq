@@ -51,6 +51,8 @@ func (ac *YamlAccessControl) Start() {
 	ac.updateTicker = time.NewTicker(10 * time.Second)
 	ac.wg.Add(1)
 	go func() {
+		defer ac.wg.Done()
+		defer ac.updateTicker.Stop()
 		for {
 			select {
 			case <-ac.updateTicker.C:
@@ -60,18 +62,15 @@ func (ac *YamlAccessControl) Start() {
 				}
 			case <-ac.tStopChan:
 				{
-					goto stop
+					return
 				}
 			}
 		}
-stop:
-		ac.wg.Done()
 	}()
 }
 
 func (ac *YamlAccessControl) Stop() {
-	ac.updateTicker.Stop()
-	ac.tStopChan <- 0
+	close(ac.tStopChan)
 	ac.wg.Wait()
 }
 

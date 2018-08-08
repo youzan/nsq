@@ -167,7 +167,7 @@ func (s *httpServer) adminCheck(f http_api.APIHandler) http_api.APIHandler {
 				s.ctx.nsqadmin.logf("error in fetching user model %v", err)
 				return nil, http_api.Err{http.StatusInternalServerError, "fail to find associated user info"}
 			}
-			if !(u.IsLogin() && u.IsAdmin()) && !s.validAccessToken(req) {
+			if !u.IsAdmin() && !s.validAccessToken(req) {
 				return nil, http_api.Err{http.StatusUnauthorized, "administrator priority needed"}
 			}
 		}
@@ -184,7 +184,7 @@ func (s *httpServer) authCheck(f http_api.APIHandler) http_api.APIHandler {
 				s.ctx.nsqadmin.logf("error in fetching user model %v", err)
 				return nil, http_api.Err{http.StatusInternalServerError, "fail to find associated user info"}
 			}
-			if !(u.IsLogin()) && !s.validAccessToken(req) {
+			if !u.IsLogin() && !s.validAccessToken(req) {
 				return nil, http_api.Err{http.StatusUnauthorized, "authentication needed"}
 			}
 		}

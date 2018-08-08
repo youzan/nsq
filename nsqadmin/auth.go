@@ -116,6 +116,9 @@ func (u *CasUserModel) GetUserRole() string {
 }
 
 func (u *CasUserModel) IsAdmin() bool {
+	if login := u.IsLogin(); !login {
+		return false
+	}
 	if ac := u.ctx.nsqadmin.ac; ac == nil {
 		return true
 	} else {
