@@ -105,9 +105,9 @@ func NewHTTPServer(ctx *Context) *httpServer {
 	router.Handle("POST", "/api/topics/:topic", http_api.Decorate(s.topicActionHandler, s.authCheck, log, http_api.V1))
 	router.Handle("POST", "/api/topics/:topic/:channel", http_api.Decorate(s.channelActionHandler, s.authCheck, log, http_api.V1))
 	router.Handle("POST", "/api/topics/:topic/:channel/client", http_api.Decorate(s.channelClientActionHandler, s.authCheck, log, http_api.V1))
-	router.Handle("DELETE", "/api/nodes/:node", http_api.Decorate(s.tombstoneNodeForTopicHandler, s.authCheck, log, http_api.V1))
-	router.Handle("DELETE", "/api/topics/:topic", http_api.Decorate(s.deleteTopicHandler, s.authCheck, log, http_api.V1))
-	router.Handle("DELETE", "/api/topics/:topic/:channel", http_api.Decorate(s.deleteChannelHandler, s.authCheck, log, http_api.V1))
+	router.Handle("DELETE", "/api/nodes/:node", http_api.Decorate(s.tombstoneNodeForTopicHandler, s.adminCheck, log, http_api.V1))
+	router.Handle("DELETE", "/api/topics/:topic", http_api.Decorate(s.deleteTopicHandler, s.adminCheck, log, http_api.V1))
+	router.Handle("DELETE", "/api/topics/:topic/:channel", http_api.Decorate(s.deleteChannelHandler, s.adminCheck, log, http_api.V1))
 	router.Handle("GET", "/api/counter", http_api.Decorate(s.counterHandler, log, http_api.V1))
 	router.Handle("GET", "/api/graphite", http_api.Decorate(s.graphiteHandler, log, http_api.V1))
 	router.Handle("GET", "/api/statistics", http_api.Decorate(s.statisticsHandler, log, http_api.V1))
@@ -156,6 +156,23 @@ func parseAccessToken(r *http.Request) (token string, ok bool) {
 		return
 	}
 	return auth[len(prefix):], true
+}
+
+func (s *httpServer) adminCheck(f http_api.APIHandler) http_api.APIHandler {
+	return func(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {
+		//check user info
+		if s.ctx.nsqadmin.IsAuthEnabled() {
+			u, err := s.getUserInfo(w, req)
+			if err != nil {
+				s.ctx.nsqadmin.logf("error in fetching user model %v", err)
+				return nil, http_api.Err{http.StatusInternalServerError, "fail to find associated user info"}
+			}
+			if !u.IsAdmin() && !s.validAccessToken(req) {
+				return nil, http_api.Err{http.StatusUnauthorized, "administrator priority needed"}
+			}
+		}
+		return f(w, req, ps)
+	}
 }
 
 func (s *httpServer) authCheck(f http_api.APIHandler) http_api.APIHandler {

@@ -24,3 +24,4 @@ github.com/absolute8511/bolt
 github.com/twinj/uuid
 github.com/viki-org/dnscache
 github.com/gorilla/sessions
+github.com/astaxie/beego/config/yaml

@@ -54,3 +54,5 @@ profile
 
 # vim stuff
 *.sw[op]
+/data/
+/logs/

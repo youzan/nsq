@@ -46,6 +46,8 @@ type Options struct {
 	LogDir string `flag:"log-dir" cfg:"log_dir"`
 	Logger levellogger.Logger
 	AccessTokens		[]string `flag:"access-tokens" cfg:"access_tokens"`
+
+	AccessControlFile	string `flag:"access-control-file"`
 }
 
 func NewOptions() *Options {
