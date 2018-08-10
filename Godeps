@@ -25,3 +25,5 @@ github.com/twinj/uuid
 github.com/viki-org/dnscache
 github.com/gorilla/sessions
 github.com/astaxie/beego/config/yaml
+golang.org/x/sync/semaphore
+golang.org/x/net/context
