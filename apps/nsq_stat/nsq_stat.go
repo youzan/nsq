@@ -32,10 +32,6 @@ var (
 	lookupdHTTPAddrs = app.StringArray{}
 )
 
-const (
-	DUMMY_DC = "dummy_dc"
-)
-
 type numValue struct {
 	isSet bool
 	value int
@@ -60,7 +56,7 @@ func init() {
 }
 
 func statLoop(interval time.Duration, topic string, channel string,
-	nsqdTCPAddrs []string, lookupdHTTPAddrs []string) {
+nsqdTCPAddrs []string, lookupdHTTPAddrs []clusterinfo.LookupdAddressDC) {
 	ci := clusterinfo.New(nil, http_api.NewClient(nil))
 	var o *clusterinfo.ChannelStats
 	for i := 0; !countNum.isSet || countNum.value >= i; i++ {
@@ -68,9 +64,7 @@ func statLoop(interval time.Duration, topic string, channel string,
 		var err error
 
 		if len(lookupdHTTPAddrs) != 0 {
-			dummyDCLookupdHttpAddrs := make(map[string][]string)
-			dummyDCLookupdHttpAddrs[DUMMY_DC] = lookupdHTTPAddrs
-			producers, _, err = ci.GetLookupdTopicProducers(topic, dummyDCLookupdHttpAddrs)
+			producers, _, err = ci.GetLookupdTopicProducers(topic, lookupdHTTPAddrs)
 		} else {
 			producers, err = ci.GetNSQDTopicProducers(topic, nsqdHTTPAddrs)
 		}
@@ -83,7 +77,7 @@ func statLoop(interval time.Duration, topic string, channel string,
 			log.Fatalf("ERROR: failed to get nsqd stats - %s", err)
 		}
 
-		c, ok := allChannelStats[DUMMY_DC][channel]
+		c, ok := allChannelStats[channel]
 		if !ok {
 			log.Fatalf("ERROR: failed to find channel(%s) in stats metadata for topic(%s)", channel, topic)
 		}
@@ -174,10 +168,18 @@ func main() {
 		log.Fatalf("--lookupd-http-address error - %s", err)
 	}
 
+	//build lookupdHTTPAddrsDC
+	var lookupdHTTPAddrsDC []clusterinfo.LookupdAddressDC
+	if len(lookupdHTTPAddrs) > 0 {
+		for _, lookupdHTTPAddr := range lookupdHTTPAddrs {
+			lookupdHTTPAddrsDC = append(lookupdHTTPAddrsDC, clusterinfo.LookupdAddressDC{"", lookupdHTTPAddr})
+		}
+	}
+
 	termChan := make(chan os.Signal, 1)
 	signal.Notify(termChan, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM)
 
-	go statLoop(intvl, *topic, *channel, nsqdHTTPAddrs, lookupdHTTPAddrs)
+	go statLoop(intvl, *topic, *channel, nsqdHTTPAddrs, lookupdHTTPAddrsDC)
 
 	<-termChan
 }

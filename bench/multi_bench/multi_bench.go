@@ -287,10 +287,9 @@ func startSimpleTest(msg []byte, batch [][]byte) {
 	} else {
 		log.Printf("get info: %v\n", ver)
 	}
-	tmpListMap := make(map[string][]string)
-	tmpListMap["defaultDC"] = make([]string, 0)
-	tmpListMap["defaultDC"] = append(tmpListMap["defaultDC"], *lookupAddress)
-	currentTopics, err := cluster.GetLookupdTopics(tmpListMap["defaultDC"])
+	tmpList := make([]string, 0)
+	tmpList = append(tmpList, *lookupAddress)
+	currentTopics, err := cluster.GetLookupdTopics(tmpList)
 	if err != nil {
 		log.Printf("failed : %v\n", err)
 	} else {
@@ -299,19 +298,19 @@ func startSimpleTest(msg []byte, batch [][]byte) {
 	if len(currentTopics) == 0 {
 		return
 	}
-	chs, err := cluster.GetLookupdTopicChannels(currentTopics[0], tmpListMap)
+	chs, err := cluster.GetLookupdTopicChannels(currentTopics[0], tmpList)
 	if err != nil {
 		log.Printf("failed : %v\n", err)
 	} else {
 		log.Printf("return: %v\n", chs)
 	}
-	allNodes, err := cluster.GetLookupdProducers(tmpListMap["defaultDC"])
+	allNodes, err := cluster.GetLookupdProducers(tmpList)
 	if err != nil {
 		log.Printf("failed : %v\n", err)
 	} else {
 		log.Printf("return: %v\n", allNodes)
 	}
-	producers, partitionProducers, err := cluster.GetLookupdTopicProducers(currentTopics[0], tmpListMap)
+	producers, partitionProducers, err := cluster.GetLookupdTopicProducers(currentTopics[0], tmpList)
 
 	if err != nil {
 		log.Printf("failed : %v\n", err)
@@ -698,9 +697,9 @@ func startBenchLookup() {
 		go func() {
 			defer wg.Done()
 			cluster := clusterinfo.New(nil, http_api.NewClient(nil))
-			tmpListMap := make(map[string][]string)
-			tmpListMap["defaultDC"] = append(tmpListMap["defaultDC"], *lookupAddress)
-			currentTopics, err := cluster.GetLookupdTopics(tmpListMap["defaultDC"])
+			tmpList := make([]string, 0)
+			tmpList = append(tmpList, *lookupAddress)
+			currentTopics, err := cluster.GetLookupdTopics(tmpList)
 			if err != nil {
 				log.Printf("failed : %v\n", err)
 				return
@@ -711,7 +710,7 @@ func startBenchLookup() {
 			for cnt > 0 {
 				cnt--
 				for _, t := range currentTopics {
-					_, _, err := cluster.GetLookupdTopicProducers(t, tmpListMap)
+					_, _, err := cluster.GetLookupdTopicProducers(t, tmpList)
 					if err != nil {
 						log.Printf("failed : %v\n", err)
 					}
@@ -998,7 +997,7 @@ func main() {
 }
 
 func pubWorker(td time.Duration, globalPubMgr *nsq.TopicProducerMgr, topicName string, batchSize int,
-	batch [][]byte, rdyChan chan int, goChan chan int, testDelay bool) {
+batch [][]byte, rdyChan chan int, goChan chan int, testDelay bool) {
 	var pubMgr *nsq.TopicProducerMgr
 	var err error
 	if *useSinglePubMgr {
@@ -1189,7 +1188,7 @@ func (c *consumeHandler) HandleMessage(message *nsq.Message) error {
 }
 
 func subWorker(quitChan chan int, td time.Duration, lookupAddr string, topic string, channel string,
-	rdyChan chan int, goChan chan int, id int) {
+rdyChan chan int, goChan chan int, id int) {
 	consumer, err := nsq.NewConsumer(topic, channel, config)
 	if err != nil {
 		panic(err.Error())
@@ -1267,7 +1266,7 @@ func (c *consumeTraceIDHandler) HandleMessage(message *nsq.Message) error {
 }
 
 func subWorker2(quitChan chan int, td time.Duration, lookupAddr string, topic string, channel string,
-	subIDCounter *int64, subTraceWaiting map[uint64]*nsq.Message, locker *sync.Mutex, rdyChan chan int, goChan chan int, id int) {
+subIDCounter *int64, subTraceWaiting map[uint64]*nsq.Message, locker *sync.Mutex, rdyChan chan int, goChan chan int, id int) {
 	consumer, err := nsq.NewConsumer(topic, channel, config)
 	if err != nil {
 		panic(err.Error())

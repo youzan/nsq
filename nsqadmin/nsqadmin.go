@@ -18,9 +18,8 @@ import (
 	"github.com/youzan/nsq/internal/util"
 	"github.com/youzan/nsq/internal/version"
 	"strings"
+	"github.com/youzan/nsq/internal/clusterinfo"
 )
-
-const DEFAULT_DC_KEY = "default DC"
 
 type NSQAdmin struct {
 	sync.RWMutex
@@ -32,7 +31,6 @@ type NSQAdmin struct {
 	httpClientTLSConfig *tls.Config
 	accessTokens map[string]bool
 	ac 		    AccessControl
-	dc2LookupdAddresses map[string][]string
 }
 
 func New(opts *Options) *NSQAdmin {
@@ -95,6 +93,11 @@ func New(opts *Options) *NSQAdmin {
 		os.Exit(1)
 	}
 
+	if len(opts.NSQLookupdHTTPAddresses) != 0 && len(opts.DCNSQLookupdHTTPAddresses) != 0 {
+		n.logf("use --lookupd-http-address or --dc-lookupd-http-address not both")
+		os.Exit(1)
+	}
+
 	// verify that the supplied address is valid
 	verifyAddress := func(arg string, address string) *net.TCPAddr {
 		addr, err := net.ResolveTCPAddr("tcp", address)
@@ -152,15 +155,14 @@ func New(opts *Options) *NSQAdmin {
 	}
 
 	for _, dc2address := range opts.DCNSQLookupdHTTPAddresses {
-		verifyAddress("--dc-nsqd-http-address", strings.SplitN(dc2address, ":", 2)[1])
+		verifyAddress("--dc-lookupd-http-address", strings.SplitN(dc2address, ":", 2)[1])
 	}
 	//build dc 2 lookupd map
 	if len(opts.DCNSQLookupdHTTPAddresses) > 0 {
-		n.buildDC2LookupdMap(opts.DCNSQLookupdHTTPAddresses)
-	} else if len (opts.NSQLookupdHTTPAddresses) > 0 {
-		n.buildDC2LookupdMapFromOneDC(opts.NSQLookupdHTTPAddresses)
+		n.buildLookupdAddress(opts.DCNSQLookupdHTTPAddresses, true)
+	} else {
+		n.buildLookupdAddress(opts.NSQLookupdHTTPAddresses, false)
 	}
-	n.logf("init dc lookupd http address with %v", n.DCLookupAddresses())
 
 	if opts.ProxyGraphite {
 		url, err := url.Parse(opts.GraphiteURL)
@@ -175,31 +177,24 @@ func New(opts *Options) *NSQAdmin {
 
 	return n
 }
-//1. build dc 2 lookupd map
-//2. overide opts.NSQLookupdHttpAddresses properties
-func (n *NSQAdmin) buildDC2LookupdMap(dcLookupdAddresses []string) {
-	m := make(map[string][]string)
-	var lookupdsOverride []string
-	for _, lookupdWDC := range dcLookupdAddresses {
-		parts := strings.SplitN(lookupdWDC, ":", 2)
-		lookups := m[parts[0]]
-		m[parts[0]] = append(lookups, parts[1]);
-		n.logf("add dc: %v lookup address: %v", parts[0],lookups)
-		lookupdsOverride = append(lookupdsOverride, parts[1])
-		n.logf("dclookupaddr %v,", m)
-	}
-	n.dc2LookupdAddresses = m;
-	n.logf("override original nsq lookupd http addresses with: %v", lookupdsOverride)
-	n.opts.NSQLookupdHTTPAddresses = lookupdsOverride;
-}
 
-func (n *NSQAdmin) buildDC2LookupdMapFromOneDC(lookupdAddresses []string) {
-	m := make(map[string][]string)
-	m[DEFAULT_DC_KEY] = make([]string, 0)
-	for _, lookupdWDC := range lookupdAddresses {
-		m[DEFAULT_DC_KEY] = append(m[DEFAULT_DC_KEY], lookupdWDC)
+func (n *NSQAdmin) buildLookupdAddress(dcLookupdAddresses []string, hasDC bool) {
+	var lookupdAddresses []clusterinfo.LookupdAddressDC
+	for _, lookupdWDC := range dcLookupdAddresses {
+		var dc, lookupd string
+		if hasDC {
+			parts := strings.SplitN(lookupdWDC, ":", 2)
+			dc = parts[0]
+			lookupd = parts[1]
+		} else {
+			dc = ""
+			lookupd = lookupdWDC
+		}
+		n.logf("add dc: %v lookup address: %v", dc,lookupd)
+		lookupdAddresses = append(lookupdAddresses, clusterinfo.LookupdAddressDC{dc, lookupd})
 	}
-	n.dc2LookupdAddresses = m;
+	n.opts.NSQLookupdHTTPAddressesDC = lookupdAddresses
+	n.logf("build nsq lookupd http addresses with: %v", n.opts.NSQLookupdHTTPAddressesDC)
 }
 
 func (n *NSQAdmin) logf(f string, args ...interface{}) {
@@ -262,34 +257,22 @@ func (n *NSQAdmin) Main() {
 	n.waitGroup.Wrap(func() { n.handleAdminActions() })
 }
 
+func (n *NSQAdmin) DC2LookupAddresses() map[string][]string {
+	dc2LookupdAddrs := make(map[string][]string)
+	for _, lookupd := range n.opts.NSQLookupdHTTPAddressesDC {
+		if lookupd.DC == "" {
+			continue
+		}
+		if _, exist := dc2LookupdAddrs[lookupd.DC]; !exist {
+			dc2LookupdAddrs[lookupd.DC] = make([]string, 0)
+		}
+		dc2LookupdAddrs[lookupd.DC] = append(dc2LookupdAddrs[lookupd.DC], lookupd.Addr)
+	}
+	return dc2LookupdAddrs;
+}
+
 func (n *NSQAdmin) Exit() {
 	n.httpListener.Close()
-	if n.ac != nil {
-		n.ac.Stop()
-	}
 	close(n.notifications)
 	n.waitGroup.Wait()
-}
-
-func (n *NSQAdmin) DC() []string {
-	var dcs []string
-	if len(n.dc2LookupdAddresses) > 0 {
-		var dcs []string
-		for dc := range n.dc2LookupdAddresses {
-			dcs = append(dcs, dc)
-		}
-	}
-	return dcs;
-}
-
-func (n *NSQAdmin) LookupAddress(dc string) []string {
-	if len(n.dc2LookupdAddresses) > 0 {
-		return n.dc2LookupdAddresses[dc]
-	} else {
-		return n.opts.NSQLookupdHTTPAddresses;
-	}
-}
-
-func (n *NSQAdmin) DCLookupAddresses() map[string][]string {
-	return n.dc2LookupdAddresses;
 }

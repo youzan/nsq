@@ -22,7 +22,6 @@ var NodesView = BaseView.extend({
         this.collection = new Nodes();
         this.collection.fetch()
             .done(function(data) {
-                var clusterInfo;
                 this.template = require('./nodes.hbs');
                 $.ajax({
                     url: AppState.url('/cluster/stats'),
@@ -33,7 +32,7 @@ var NodesView = BaseView.extend({
                 });
                 this.render({
                     'message': data['message'],
-                    'clusters': clustersInfo
+                    'clusters': clustersInfo['clustersInfo']
                 });
             }.bind(this))
             .fail(this.handleViewError.bind(this))

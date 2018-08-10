@@ -47,6 +47,11 @@ type logger interface {
 	Output(maxdepth int, s string) error
 }
 
+type LookupdAddressDC struct {
+	DC   string
+	Addr string
+}
+
 type ClusterInfo struct {
 	log    logger
 	client *http_api.Client
@@ -86,66 +91,64 @@ func (c *ClusterInfo) GetVersion(addr string) (semver.Version, error) {
 	return v, err
 }
 
-func (c *ClusterInfo) GetLookupdTopicsMeta(dcLookupdHTTPAddrs map[string][]string, metaInfo bool) ([]*TopicInfo, error) {
+func (c *ClusterInfo) GetLookupdTopicsMeta(lookupdHTTPAddrs []LookupdAddressDC, metaInfo bool) ([]*TopicInfo, error) {
 	var topics []*TopicInfo
 	var lock sync.Mutex
 	var wg sync.WaitGroup
 	var errs []error
-	topicContain := make(map[string]bool)
+
 	type respType struct {
 		Topics   []string     `json:"topics"`
 		MetaInfo []*TopicInfo `json:"meta_info,omitempty"`
 	}
-	var cnt int
-	for _, lookupdHTTPAddrs := range dcLookupdHTTPAddrs {
-		for _, addr := range lookupdHTTPAddrs {
-			cnt++
-			wg.Add(1)
-			go func(addr string) {
-				defer wg.Done()
-				var endpoint string
-				if metaInfo {
-					endpoint = fmt.Sprintf("http://%s/topics?metaInfo=true", addr)
-				} else {
-					endpoint = fmt.Sprintf("http://%s/topics", addr)
-				}
-				c.logf("CI: querying nsqlookupd %s", endpoint)
+	topicContain := make(map[string]bool)
+	for _, addr := range lookupdHTTPAddrs {
+		lookupd := addr
+		wg.Add(1)
+		go func(lookupd LookupdAddressDC) {
+			defer wg.Done()
+			var endpoint string
+			if metaInfo {
+				endpoint = fmt.Sprintf("http://%s/topics?metaInfo=true", lookupd.Addr)
+			} else {
+				endpoint = fmt.Sprintf("http://%s/topics", lookupd.Addr)
+			}
+			c.logf("CI: querying nsqlookupd %s", endpoint)
 
-				var resp respType
-				err := c.client.NegotiateV1(endpoint, &resp)
-				if err != nil {
-					lock.Lock()
-					errs = append(errs, err)
-					lock.Unlock()
-					return
-				}
-
+			var resp respType
+			err := c.client.NegotiateV1(endpoint, &resp)
+			if err != nil {
 				lock.Lock()
-				defer lock.Unlock()
-				if resp.MetaInfo != nil {
-					for _, topicMeta := range resp.MetaInfo {
-						if !topicContain[topicMeta.TopicName] {
-							topics = append(topics, topicMeta)
-							topicContain[topicMeta.TopicName] = true
-						}
-					}
-				} else {
-					for _, topic := range resp.Topics {
-						if !topicContain[topic] {
-							topics = append(topics, &TopicInfo{
-								TopicName: topic,
-							})
-							topicContain[topic] = true
-						}
+				errs = append(errs, err)
+				lock.Unlock()
+				return
+			}
+
+			lock.Lock()
+			defer lock.Unlock()
+			if resp.MetaInfo != nil {
+				for _, topicMeta := range resp.MetaInfo {
+					if !topicContain[topicMeta.TopicName] {
+						topics = append(topics, topicMeta)
+						topicContain[topicMeta.TopicName] = true
 					}
 				}
+			} else {
+				for _, topic := range resp.Topics {
+					if !topicContain[topic] {
+						topics = append(topics, &TopicInfo{
+							TopicName: topic,
+						})
+						topicContain[topic] = true
+					}
+				}
+			}
 
-			}(addr)
-		}
+		}(lookupd)
 	}
 	wg.Wait()
 
-	if len(errs) == cnt {
+	if len(errs) == len(lookupdHTTPAddrs) {
 		return nil, fmt.Errorf("Failed to query any nsqlookupd: %s", ErrList(errs))
 	}
 
@@ -208,7 +211,7 @@ func (c *ClusterInfo) GetLookupdTopics(lookupdHTTPAddrs []string) ([]string, err
 
 // GetLookupdTopicChannels returns a []string containing a union of all the channels
 // from all the given lookupd for the given topic
-func (c *ClusterInfo) GetLookupdTopicChannels(topic string, dcLookupdHTTPAddrs map[string][]string) ([]string, error) {
+func (c *ClusterInfo) GetLookupdTopicChannels(topic string, lookupdHTTPAddrs []LookupdAddressDC) ([]string, error) {
 	var channels []string
 	var lock sync.Mutex
 	var wg sync.WaitGroup
@@ -218,37 +221,34 @@ func (c *ClusterInfo) GetLookupdTopicChannels(topic string, dcLookupdHTTPAddrs m
 		Channels []string `json:"channels"`
 	}
 
-	var cnt int
-	for _, lookupdHTTPAddrs := range dcLookupdHTTPAddrs {
-		for _, addr := range lookupdHTTPAddrs {
-			cnt++
-			wg.Add(1)
-			go func(addr string) {
-				defer wg.Done()
+	for _, addr := range lookupdHTTPAddrs {
+		lookupd := addr
+		wg.Add(1)
+		go func(lookupd LookupdAddressDC) {
+			defer wg.Done()
 
-				endpoint :=
-					fmt.Sprintf("http://%s/channels?topic=%s", addr,
-						url.QueryEscape(topic))
-				c.logf("CI: querying nsqlookupd %s", endpoint)
+			endpoint :=
+				fmt.Sprintf("http://%s/channels?topic=%s", lookupd.Addr,
+					url.QueryEscape(topic))
+			c.logf("CI: querying nsqlookupd %s", endpoint)
 
-				var resp respType
-				err := c.client.NegotiateV1(endpoint, &resp)
-				if err != nil {
-					lock.Lock()
-					errs = append(errs, err)
-					lock.Unlock()
-					return
-				}
-
+			var resp respType
+			err := c.client.NegotiateV1(endpoint, &resp)
+			if err != nil {
 				lock.Lock()
-				defer lock.Unlock()
-				channels = append(channels, resp.Channels...)
-			}(addr)
-		}
+				errs = append(errs, err)
+				lock.Unlock()
+				return
+			}
+
+			lock.Lock()
+			defer lock.Unlock()
+			channels = append(channels, resp.Channels...)
+		}(lookupd)
 	}
 	wg.Wait()
 
-	if len(errs) == cnt {
+	if len(errs) == len(lookupdHTTPAddrs) {
 		return nil, fmt.Errorf("Failed to query any nsqlookupd: %s", ErrList(errs))
 	}
 
@@ -262,7 +262,7 @@ func (c *ClusterInfo) GetLookupdTopicChannels(topic string, dcLookupdHTTPAddrs m
 }
 
 // GetLookupdProducers returns Producers of all the nsqd connected to the given lookupds
-func (c *ClusterInfo) GetLookupdProducers(lookupdHTTPAddrs []string) (Producers, error) {
+func (c *ClusterInfo) GetLookupdProducers(lookupdHTTPAddrs []LookupdAddressDC) (Producers, error) {
 	var producers []*Producer
 	var lock sync.Mutex
 	var wg sync.WaitGroup
@@ -277,10 +277,11 @@ func (c *ClusterInfo) GetLookupdProducers(lookupdHTTPAddrs []string) (Producers,
 
 	for _, addr := range lookupdHTTPAddrs {
 		wg.Add(1)
-		go func(addr string) {
+		lookupd := addr
+		go func(lookupd LookupdAddressDC) {
 			defer wg.Done()
 
-			endpoint := fmt.Sprintf("http://%s/nodes", addr)
+			endpoint := fmt.Sprintf("http://%s/nodes", lookupd.Addr)
 			c.logf("CI: querying nsqlookupd %s", endpoint)
 
 			var resp respType
@@ -298,6 +299,7 @@ func (c *ClusterInfo) GetLookupdProducers(lookupdHTTPAddrs []string) (Producers,
 				key := producer.TCPAddress()
 				p, ok := producersByAddr[key]
 				if !ok {
+					producer.DC = lookupd.DC
 					producersByAddr[key] = producer
 					producers = append(producers, producer)
 					if maxVersion.LT(producer.VersionObj) {
@@ -309,7 +311,7 @@ func (c *ClusterInfo) GetLookupdProducers(lookupdHTTPAddrs []string) (Producers,
 				p.RemoteAddresses = append(p.RemoteAddresses,
 					fmt.Sprintf("%s/%s", addr, producer.Address()))
 			}
-		}(addr)
+		}(lookupd)
 	}
 	wg.Wait()
 
@@ -332,10 +334,9 @@ func (c *ClusterInfo) GetLookupdProducers(lookupdHTTPAddrs []string) (Producers,
 
 // GetLookupdTopicProducers returns Producers of all the nsqd for a given topic by
 // unioning the nodes returned from the given lookupd
-func (c *ClusterInfo) GetLookupdTopicProducers(topic string, dcLookupdHTTPAddrs map[string][]string) (Producers, map[string]map[string]Producers, error) {
+func (c *ClusterInfo) GetLookupdTopicProducers(topic string, lookupdHTTPAddrs []LookupdAddressDC) (Producers, map[string]Producers, error) {
 	var producers Producers
-	dcPartitionProducers := make(map[string]map[string]Producers)
-
+	partitionProducers := make(map[string]Producers)
 	var lock sync.Mutex
 	var wg sync.WaitGroup
 	var errs []error
@@ -345,80 +346,74 @@ func (c *ClusterInfo) GetLookupdTopicProducers(topic string, dcLookupdHTTPAddrs 
 		PartitionProducers map[string]*Producer `json:"partitions"`
 	}
 
-	var cnt int
-	for dc, lookupdHTTPAddrs := range dcLookupdHTTPAddrs {
-		dcInner := dc
-		partitionProducers := make(map[string]Producers)
-		dcPartitionProducers[dc] = partitionProducers
-		for _, addr := range lookupdHTTPAddrs {
-			cnt++
-			wg.Add(1)
-			go func(addr string) {
-				defer wg.Done()
+	for _, addr := range lookupdHTTPAddrs {
+		wg.Add(1)
+		lookupd := addr
+		go func(lookupd LookupdAddressDC) {
+			defer wg.Done()
 
-				endpoint := fmt.Sprintf("http://%s/lookup?topic=%s", addr, url.QueryEscape(topic))
-				c.logf("CI: querying nsqlookupd %s", endpoint)
+			endpoint := fmt.Sprintf("http://%s/lookup?topic=%s", lookupd.Addr, url.QueryEscape(topic))
+			c.logf("CI: querying nsqlookupd %s", endpoint)
 
-				var resp respType
-				err := c.client.NegotiateV1(endpoint, &resp)
-				if err != nil {
-					lock.Lock()
-					errs = append(errs, err)
-					lock.Unlock()
-					return
-				}
-
-				//c.logf("CI: querying nsqlookupd return %v, partitions: %v", resp, resp.PartitionProducers)
+			var resp respType
+			err := c.client.NegotiateV1(endpoint, &resp)
+			if err != nil {
 				lock.Lock()
-				defer lock.Unlock()
-				for _, p := range resp.Producers {
-					version, err := semver.Parse(p.Version)
-					if err != nil {
-						c.logf("CI: parse version failed %s: %v", p.Version, err)
-						version, _ = semver.Parse("0.0.0")
-					}
-					p.VersionObj = version
+				errs = append(errs, err)
+				lock.Unlock()
+				return
+			}
 
-					for _, pp := range producers {
-						if p.HTTPAddress() == pp.HTTPAddress() {
-							goto skip
-						}
-					}
-					p.DC = dcInner;
-					producers = append(producers, p)
-					skip:
+			//c.logf("CI: querying nsqlookupd return %v, partitions: %v", resp, resp.PartitionProducers)
+			lock.Lock()
+			defer lock.Unlock()
+			for _, p := range resp.Producers {
+				version, err := semver.Parse(p.Version)
+				if err != nil {
+					c.logf("CI: parse version failed %s: %v", p.Version, err)
+					version, _ = semver.Parse("0.0.0")
 				}
-				for pid, p := range resp.PartitionProducers {
-					version, err := semver.Parse(p.Version)
-					if err != nil {
-						c.logf("CI: parse version failed %s: %v", p.Version, err)
-						version, _ = semver.Parse("0.0.0")
-					}
-					p.VersionObj = version
+				p.VersionObj = version
 
-					partproducers := partitionProducers[pid]
-					for _, pp := range partproducers {
-						if p.HTTPAddress() == pp.HTTPAddress() {
-							goto skip2
-						}
+				for _, pp := range producers {
+					if p.HTTPAddress() == pp.HTTPAddress() {
+						goto skip
 					}
-					p.DC = dcInner
-					partproducers = append(partproducers, p)
-					partitionProducers[pid] = partproducers
-					skip2:
 				}
-			}(addr)
-		}
+				p.DC = lookupd.DC
+				producers = append(producers, p)
+				skip:
+			}
+			for pid, p := range resp.PartitionProducers {
+				version, err := semver.Parse(p.Version)
+				if err != nil {
+					c.logf("CI: parse version failed %s: %v", p.Version, err)
+					version, _ = semver.Parse("0.0.0")
+				}
+				p.VersionObj = version
+
+				partproducers := partitionProducers[pid]
+				for _, pp := range partproducers {
+					if p.HTTPAddress() == pp.HTTPAddress() {
+						goto skip2
+					}
+				}
+				p.DC = lookupd.DC
+				partproducers = append(partproducers, p)
+				partitionProducers[pid] = partproducers
+				skip2:
+			}
+		}(lookupd)
 	}
 	wg.Wait()
 
-	if len(errs) == cnt {
+	if len(errs) == len(lookupdHTTPAddrs) {
 		return nil, nil, fmt.Errorf("Failed to query any nsqlookupd: %s", ErrList(errs))
 	}
 	if len(errs) > 0 {
-		return producers, dcPartitionProducers, ErrList(errs)
+		return producers, partitionProducers, ErrList(errs)
 	}
-	return producers, dcPartitionProducers, nil
+	return producers, partitionProducers, nil
 }
 
 type TopicInfo struct {
@@ -687,47 +682,45 @@ func (c *ClusterInfo) GetNSQDTopicProducers(topic string, nsqdHTTPAddrs []string
 	return producers, nil
 }
 
-func (c *ClusterInfo) ListAllLookupdNodes(dcLookupdHTTPAddrs map[string][]string) ([]*LookupdNodes, error) {
+func (c *ClusterInfo) ListAllLookupdNodes(lookupdHTTPAddrs []LookupdAddressDC) ([]*LookupdNodes, error) {
 	var errs []error
 	var dcLookupdNodes []*LookupdNodes
-	var cnt int
-	for dc, lookupdHTTPAddrs := range dcLookupdHTTPAddrs {
-		for _, addr := range lookupdHTTPAddrs {
-			cnt++;
-			endpoint := fmt.Sprintf("http://%s/listlookup", addr)
-			c.logf("CI: querying nsqlookupd %s", endpoint)
-			var resp LookupdNodes
-			err := c.client.NegotiateV1(endpoint, &resp)
-			if err != nil {
-				c.logf("CI: querying nsqlookupd %s err: %v", endpoint, err)
-				errs = append(errs, err)
-				continue
-			}
-			resp.DC = dc
-			dcLookupdNodes = append(dcLookupdNodes, &resp)
-			break
+	dcHit := make(map[string]bool)
+	for _, lookupd := range lookupdHTTPAddrs {
+		if _, exist := dcHit[lookupd.DC]; !exist {
+			dcHit[lookupd.DC] = true
+		} else {
+			continue
 		}
+		endpoint := fmt.Sprintf("http://%s/listlookup", lookupd.Addr)
+		c.logf("CI: querying nsqlookupd %s", endpoint)
+		var resp LookupdNodes
+		err := c.client.NegotiateV1(endpoint, &resp)
+		if err != nil {
+			c.logf("CI: querying nsqlookupd %s err: %v", endpoint, err)
+			errs = append(errs, err)
+			continue
+		}
+		resp.DC = lookupd.DC
+		dcLookupdNodes = append(dcLookupdNodes, &resp)
 	}
 
-	if len(errs) == cnt {
+	if len(errs) == len(lookupdHTTPAddrs) {
 		return nil, fmt.Errorf("Failed to query any nsqlookupd: %s", ErrList(errs))
 	}
 
 	return dcLookupdNodes, nil
 }
 
-func (c *ClusterInfo) GetNSQDAllMessageHistoryStats(producers Producers) (map[string]map[string]int64, error) {
+func (c *ClusterInfo) GetNSQDAllMessageHistoryStats(producers Producers) (map[string]int64, error) {
 	var errs []error
 
-	dcNodeHistoryStatsMap := make(map[string]map[string]int64)
+	nodeHistoryStatsMap := make(map[string]int64)
 
 	var lock sync.Mutex
 	var wg sync.WaitGroup
 
 	for _, p := range producers {
-		if _, exist := dcNodeHistoryStatsMap[p.DC]; !exist {
-			dcNodeHistoryStatsMap[p.DC] = make(map[string]int64)
-		}
 		wg.Add(1)
 		go func(p *Producer) {
 			defer wg.Done()
@@ -745,11 +738,11 @@ func (c *ClusterInfo) GetNSQDAllMessageHistoryStats(producers Producers) (map[st
 			}
 			for _, topicMsgStat := range nodeHistoryStatsResp.HistoryStats {
 				lock.Lock()
-				_, ok := dcNodeHistoryStatsMap[p.DC][topicMsgStat.TopicName]
+				_, ok := nodeHistoryStatsMap[topicMsgStat.TopicName]
 				if !ok {
-					dcNodeHistoryStatsMap[p.DC][topicMsgStat.TopicName] = topicMsgStat.HourlyPubSize
+					nodeHistoryStatsMap[topicMsgStat.TopicName] = topicMsgStat.HourlyPubSize
 				} else {
-					dcNodeHistoryStatsMap[p.DC][topicMsgStat.TopicName] += topicMsgStat.HourlyPubSize
+					nodeHistoryStatsMap[topicMsgStat.TopicName] += topicMsgStat.HourlyPubSize
 				}
 				lock.Unlock()
 			}
@@ -760,7 +753,7 @@ func (c *ClusterInfo) GetNSQDAllMessageHistoryStats(producers Producers) (map[st
 		return nil, fmt.Errorf("Failed to query any nsqd for node topic message history: %s", ErrList(errs))
 	}
 
-	return dcNodeHistoryStatsMap, nil
+	return nodeHistoryStatsMap, nil
 }
 
 func (c *ClusterInfo) GetNSQDMessageHistoryStats(nsqdHTTPAddr string, selectedTopic string, par string) ([]int64, error) {
@@ -884,17 +877,23 @@ func (c *ClusterInfo) GetClusterInfo(lookupdAdresses []string) (*ClusterNodeInfo
 	return &resp, nil
 }
 
-func (c *ClusterInfo) GetDCClusterInfo(lookupdAdresses map[string][]string) ([]*ClusterNodeInfo, error) {
+func (c *ClusterInfo) GetClusterInfoDC(lookupdAdresses []LookupdAddressDC) ([]*ClusterNodeInfo, error) {
 	var errs []error
 	var dcClusterInfo []*ClusterNodeInfo
-	for dc, lookupdAddrs := range lookupdAdresses {
-		c.logf("lookupd address in dc %v picked. %v", dc, lookupdAddrs)
-		clusterInfo, err := c.GetClusterInfo(lookupdAddrs)
+	dcHit := make(map[string]bool)
+	for _, lookupd := range lookupdAdresses {
+		if _, exist := dcHit[lookupd.DC]; !exist {
+			dcHit[lookupd.DC] = true
+		} else {
+			continue
+		}
+		c.logf("lookupd address in dc %v picked. %v", lookupd.DC, lookupd.Addr)
+		clusterInfo, err := c.GetClusterInfo([]string{lookupd.Addr})
 		if err != nil {
 			errs = append(errs, err)
 		}
 		if clusterInfo != nil {
-			clusterInfo.DC = dc
+			clusterInfo.DC = lookupd.DC
 			dcClusterInfo = append(dcClusterInfo, clusterInfo)
 		}
 	}
@@ -908,20 +907,19 @@ func (c *ClusterInfo) GetDCClusterInfo(lookupdAdresses map[string][]string) ([]*
 //
 // if selectedTopic is empty, this will return stats for *all* topic/channels
 // and the ChannelStats dict will be keyed by topic + ':' + channel
-func (c *ClusterInfo) GetNSQDStats(producers Producers, selectedTopic string, sortBy string, leaderOnly bool) (map[string]TopicStatsList, map[string]map[string]*ChannelStats, error) {
+func (c *ClusterInfo) GetNSQDStats(producers Producers, selectedTopic string, sortBy string, leaderOnly bool) ([]*TopicStats, map[string]*ChannelStats, error) {
 	var lock sync.Mutex
 	var wg sync.WaitGroup
+	var topicStatsList TopicStatsList
 	var errs []error
 
-	dcChannelStatsMap := make(map[string]map[string]*ChannelStats)
-	dcTopicStatsList := make(map[string]TopicStatsList)
+	channelStatsMap := make(map[string]*ChannelStats)
 
 	type respType struct {
 		Topics []*TopicStats `json:"topics"`
 	}
 
 	for _, p := range producers {
-		pInner := p
 		wg.Add(1)
 		go func(p *Producer) {
 			defer wg.Done()
@@ -955,13 +953,10 @@ func (c *ClusterInfo) GetNSQDStats(producers Producers, selectedTopic string, so
 				if topic.StatsdName == "" {
 					topic.StatsdName = topic.TopicName
 				}
-				if _, exist := dcTopicStatsList[topic.DC]; !exist {
-					dcTopicStatsList[topic.DC] = TopicStatsList{}
-				}
-				dcTopicStatsList[topic.DC] = append(dcTopicStatsList[topic.DC], topic)
+				topicStatsList = append(topicStatsList, topic)
 
 				for _, channel := range topic.Channels {
-					channel.DC = p.DC
+					channel.DC = topic.DC
 					channel.Node = addr
 					channel.Hostname = p.Hostname
 					channel.TopicName = topic.TopicName
@@ -972,26 +967,25 @@ func (c *ClusterInfo) GetNSQDStats(producers Producers, selectedTopic string, so
 					channel.MemoryDepth = channel.Depth - channel.BackendDepth
 					key := channel.ChannelName
 					if selectedTopic == "" {
-						key = fmt.Sprintf("%s:%s", topic.TopicName, channel.ChannelName)
+						if p.DC == "" {
+							key = fmt.Sprintf("%s:%s", topic.TopicName, channel.ChannelName)
+						} else {
+							key = fmt.Sprintf("%s:%s:%s", p.DC, topic.TopicName, channel.ChannelName)
+						}
 					}
 					if len(channel.MsgDeliveryLatencyStats) == 0 {
 						channel.MsgDeliveryLatencyStats = make([]int64, 12)
 					}
-					channelStatsMap, exist := dcChannelStatsMap[p.DC]
-					if !exist {
-						channelStatsMap = make(map[string]*ChannelStats)
-						dcChannelStatsMap[p.DC] = channelStatsMap
-					}
 					channelStats, ok := channelStatsMap[key]
 					if !ok {
 						channelStats = &ChannelStats{
+							DC:		p.DC,
 							Node:           addr,
 							TopicName:      topic.TopicName,
 							TopicPartition: topic.TopicPartition,
 							StatsdName:     topic.StatsdName,
 							ChannelName:    channel.ChannelName,
 							IsMultiOrdered: topic.IsMultiOrdered,
-							DC:		p.DC,
 						}
 						channelStatsMap[key] = channelStats
 					}
@@ -1002,7 +996,7 @@ func (c *ClusterInfo) GetNSQDStats(producers Producers, selectedTopic string, so
 					topic.TotalChannelDepth += channel.Depth
 				}
 			}
-		}(pInner)
+		}(p)
 	}
 	wg.Wait()
 
@@ -1010,38 +1004,36 @@ func (c *ClusterInfo) GetNSQDStats(producers Producers, selectedTopic string, so
 		return nil, nil, fmt.Errorf("Failed to query any nsqd: %s", ErrList(errs))
 	}
 
-	for _, topicStatsList := range dcTopicStatsList {
-		if sortBy == "partition" {
-			sort.Sort(TopicStatsByPartitionAndHost{topicStatsList})
-		} else if sortBy == "channel-depth" {
-			sort.Sort(TopicStatsByChannelDepth{topicStatsList})
-		} else if sortBy == "message-count" {
-			sort.Sort(TopicStatsByMessageCount{topicStatsList})
-		} else {
-			sort.Sort(TopicStatsByPartitionAndHost{topicStatsList})
-		}
+	if sortBy == "partition" {
+		sort.Sort(TopicStatsByPartitionAndHost{topicStatsList})
+	} else if sortBy == "channel-depth" {
+		sort.Sort(TopicStatsByChannelDepth{topicStatsList})
+	} else if sortBy == "message-count" {
+		sort.Sort(TopicStatsByMessageCount{topicStatsList})
+	} else {
+		sort.Sort(TopicStatsByPartitionAndHost{topicStatsList})
 	}
 
 	if len(errs) > 0 {
-		return dcTopicStatsList, dcChannelStatsMap, ErrList(errs)
+		return topicStatsList, channelStatsMap, ErrList(errs)
 	}
-	return dcTopicStatsList, dcChannelStatsMap, nil
+	return topicStatsList, channelStatsMap, nil
 }
 
 // TombstoneNodeForTopic tombstones the given node for the given topic on all the given nsqlookupd
 // and deletes the topic from the node
-func (c *ClusterInfo) TombstoneNodeForTopic(topic string, node string, dcLookupdHTTPAddrs map[string][]string) error {
+func (c *ClusterInfo) TombstoneNodeForTopic(topic string, node string, lookupdHTTPAddrs []LookupdAddressDC) error {
 	var errs []error
-	var lookupdHTTPAddrs []string
+	var allLookupdHTTPAddrs []string
 	// tombstone the topic on all the lookupds
 	qs := fmt.Sprintf("topic=%s&node=%s", url.QueryEscape(topic), url.QueryEscape(node))
-	dcLookupdNodes, _ := c.ListAllLookupdNodes(dcLookupdHTTPAddrs)
-	for _, lookupdNodes := range dcLookupdNodes {
+	lookupdNodesDC, _ := c.ListAllLookupdNodes(lookupdHTTPAddrs)
+	for _, lookupdNodes := range lookupdNodesDC {
 		for _, node := range lookupdNodes.AllNodes {
-			lookupdHTTPAddrs = append(lookupdHTTPAddrs, net.JoinHostPort(node.NodeIP, node.HttpPort))
+			allLookupdHTTPAddrs = append(allLookupdHTTPAddrs, net.JoinHostPort(node.NodeIP, node.HttpPort))
 		}
 	}
-	err := c.versionPivotNSQLookupd(lookupdHTTPAddrs, "tombstone_topic_producer", "topic/tombstone", qs)
+	err := c.versionPivotNSQLookupd(allLookupdHTTPAddrs, "tombstone_topic_producer", "topic/tombstone", qs)
 	if err != nil {
 		pe, ok := err.(PartialErr)
 		if !ok {
@@ -1056,27 +1048,21 @@ func (c *ClusterInfo) TombstoneNodeForTopic(topic string, node string, dcLookupd
 	return nil
 }
 
-func (c *ClusterInfo) CreateTopicChannelAfterTopicCreation(topicName string, channelName string, dcLookupdHTTPAddrs map[string][]string, partitionNum int) error {
+func (c *ClusterInfo) CreateTopicChannelAfterTopicCreation(topicName string, channelName string, lookupdHTTPAddrs []LookupdAddressDC, partitionNum int) error {
 	var errs []error
 
 	//fetch nsqd from leader only
-	dcLookupdNodes, err := c.ListAllLookupdNodes(dcLookupdHTTPAddrs)
+	lookupdNodesDC, err := c.ListAllLookupdNodes(lookupdHTTPAddrs)
 	if err != nil {
 		c.logf("failed to list lookupd nodes while create topic: %v", err)
 		return err
 	}
-
-	dcLookupdLeader := make(map[string][]string)
-	for _, lookupdNodes := range dcLookupdNodes {
-		if _, exist :=  dcLookupdLeader[lookupdNodes.DC]; !exist {
-			dcLookupdLeader[lookupdNodes.DC] = make([]string, 0)
-		}
-		leaderAddr := dcLookupdLeader[lookupdNodes.DC]
-		leaderAddr = append(leaderAddr, net.JoinHostPort(lookupdNodes.LeaderNode.NodeIP, lookupdNodes.LeaderNode.HttpPort))
+	leaderAddr := make([]LookupdAddressDC, 0)
+	for _, lookupdNodes := range lookupdNodesDC {
+		leaderAddr = append(leaderAddr, LookupdAddressDC{lookupdNodes.DC, net.JoinHostPort(lookupdNodes.LeaderNode.NodeIP, lookupdNodes.LeaderNode.HttpPort)})
 	}
 
-
-	producers, dcPartitionProducers, err := c.GetTopicProducers(topicName, dcLookupdLeader, nil)
+	producers, partitionProducers, err := c.GetTopicProducers(topicName, leaderAddr, nil)
 	if err != nil {
 		pe, ok := err.(PartialErr)
 		if !ok {
@@ -1085,12 +1071,12 @@ func (c *ClusterInfo) CreateTopicChannelAfterTopicCreation(topicName string, cha
 		errs = append(errs, pe.Errors()...)
 	}
 
-	if len(producers) == 0 && len(dcPartitionProducers) == 0 {
-		c.logf(fmt.Sprintf("Producer:%d, DCPartitionProducers:%d", len(producers), len(dcPartitionProducers)))
+	if len(producers) == 0 && len(partitionProducers) == 0 {
+		c.logf(fmt.Sprintf("Producer:%d, PartitionProducers:%d", len(producers), len(partitionProducers)))
 		text := fmt.Sprintf("no producer or partition producer found for Topic:%s, Channel:%s", topicName, channelName)
 		return errors.New(text)
 	}
-	if len(producers) > 0 && len(dcPartitionProducers) == 0 {
+	if len(producers) > 0 && len(partitionProducers) == 0 {
 		qs := fmt.Sprintf("topic=%s&channel=%s", url.QueryEscape(topicName), url.QueryEscape(channelName))
 		err = c.versionPivotProducers(producers, "create_channel", "channel/create", qs)
 		if err != nil {
@@ -1101,21 +1087,19 @@ func (c *ClusterInfo) CreateTopicChannelAfterTopicCreation(topicName string, cha
 			errs = append(errs, pe.Errors()...)
 		}
 	} else {
-		for dc, partitionProducers := range dcPartitionProducers {
-			if len(partitionProducers) < partitionNum {
-				text := fmt.Sprintf("dc: %v, partition number: %v returned from leader lookup is less than expected partition number: %v", dc, len(partitionProducers), partitionNum)
-				return errors.New(text)
-			}
-			for pid, pp := range partitionProducers {
-				qs := fmt.Sprintf("topic=%s&channel=%s&partition=%s", url.QueryEscape(topicName), url.QueryEscape(channelName), pid)
-				err = c.versionPivotProducers(pp, "create_channel", "channel/create", qs)
-				if err != nil {
-					pe, ok := err.(PartialErr)
-					if !ok {
-						return err
-					}
-					errs = append(errs, pe.Errors()...)
+		if len(partitionProducers) < partitionNum {
+			text := fmt.Sprintf("Partition number: %v returned from leader lookup is less than expected partition number: %v", len(partitionProducers), partitionNum)
+			return errors.New(text)
+		}
+		for pid, pp := range partitionProducers {
+			qs := fmt.Sprintf("topic=%s&channel=%s&partition=%s", url.QueryEscape(topicName), url.QueryEscape(channelName), pid)
+			err = c.versionPivotProducers(pp, "create_channel", "channel/create", qs)
+			if err != nil {
+				pe, ok := err.(PartialErr)
+				if !ok {
+					return err
 				}
+				errs = append(errs, pe.Errors()...)
 			}
 		}
 	}
@@ -1125,10 +1109,10 @@ func (c *ClusterInfo) CreateTopicChannelAfterTopicCreation(topicName string, cha
 	return nil
 }
 
-func (c *ClusterInfo) CreateTopicChannel(topicName string, channelName string, dcLookupdHTTPAddrs map[string][]string) error {
+func (c *ClusterInfo) CreateTopicChannel(topicName string, channelName string, lookupdHTTPAddrs []LookupdAddressDC) error {
 	var errs []error
 
-	producers, dcPartitionProducers, err := c.GetTopicProducers(topicName, dcLookupdHTTPAddrs, nil)
+	producers, partitionProducers, err := c.GetTopicProducers(topicName, lookupdHTTPAddrs, nil)
 	if err != nil {
 		pe, ok := err.(PartialErr)
 		if !ok {
@@ -1137,7 +1121,7 @@ func (c *ClusterInfo) CreateTopicChannel(topicName string, channelName string, d
 		errs = append(errs, pe.Errors()...)
 	}
 
-	if len(dcPartitionProducers) == 0 {
+	if len(partitionProducers) == 0 {
 		qs := fmt.Sprintf("topic=%s&channel=%s", url.QueryEscape(topicName), url.QueryEscape(channelName))
 		err = c.versionPivotProducers(producers, "create_channel", "channel/create", qs)
 		if err != nil {
@@ -1148,17 +1132,15 @@ func (c *ClusterInfo) CreateTopicChannel(topicName string, channelName string, d
 			errs = append(errs, pe.Errors()...)
 		}
 	} else {
-		for _, partitionProducers := range dcPartitionProducers {
-			for pid, pp := range partitionProducers {
-				qs := fmt.Sprintf("topic=%s&channel=%s&partition=%s", url.QueryEscape(topicName), url.QueryEscape(channelName), pid)
-				err = c.versionPivotProducers(pp, "create_channel", "channel/create", qs)
-				if err != nil {
-					pe, ok := err.(PartialErr)
-					if !ok {
-						return err
-					}
-					errs = append(errs, pe.Errors()...)
+		for pid, pp := range partitionProducers {
+			qs := fmt.Sprintf("topic=%s&channel=%s&partition=%s", url.QueryEscape(topicName), url.QueryEscape(channelName), pid)
+			err = c.versionPivotProducers(pp, "create_channel", "channel/create", qs)
+			if err != nil {
+				pe, ok := err.(PartialErr)
+				if !ok {
+					return err
 				}
+				errs = append(errs, pe.Errors()...)
 			}
 		}
 	}
@@ -1169,20 +1151,20 @@ func (c *ClusterInfo) CreateTopicChannel(topicName string, channelName string, d
 }
 
 func (c *ClusterInfo) CreateTopic(topicName string, partitionNum int, replica int, syncDisk int,
-	retentionDays string, orderedmulti string, ext string, dcLookupdHTTPAddrs map[string][]string) error {
+retentionDays string, orderedmulti string, ext string, lookupdHTTPAddrs []LookupdAddressDC) error {
 	var errs []error
 
 	// TODO: found the master lookup node first
 	// create the topic on all the nsqlookupd
 	qs := fmt.Sprintf("topic=%s&partition_num=%d&replicator=%d&syncdisk=%d&retention=%s&orderedmulti=%s&extend=%s",
 		url.QueryEscape(topicName), partitionNum, replica, syncDisk, retentionDays, orderedmulti, ext)
-	dcLookupdNodes, err := c.ListAllLookupdNodes(dcLookupdHTTPAddrs)
+	lookupdNodesDC, err := c.ListAllLookupdNodes(lookupdHTTPAddrs)
 	if err != nil {
 		c.logf("failed to list lookupd nodes while create topic: %v", err)
 		return err
 	}
 	leaderAddr := make([]string, 0)
-	for _, lookupdNodes := range dcLookupdNodes {
+	for _, lookupdNodes := range lookupdNodesDC {
 		leaderAddr = append(leaderAddr, net.JoinHostPort(lookupdNodes.LeaderNode.NodeIP, lookupdNodes.LeaderNode.HttpPort))
 	}
 	err = c.versionPivotNSQLookupd(leaderAddr, "create_topic", "topic/create", qs)
@@ -1201,18 +1183,19 @@ func (c *ClusterInfo) CreateTopic(topicName string, partitionNum int, replica in
 }
 
 // this will delete all partitions of topic on all nsqd node.
-func (c *ClusterInfo) DeleteTopic(topicName string, dcLookupdHTTPAddrs map[string][]string, nsqdHTTPAddrs []string) error {
+func (c *ClusterInfo) DeleteTopic(topicName string, lookupdHTTPAddrs []LookupdAddressDC, nsqdHTTPAddrs []string) error {
 	var errs []error
 
-	dcLookupdNodes, err := c.ListAllLookupdNodes(dcLookupdHTTPAddrs)
+	lookupdNodesDC, err := c.ListAllLookupdNodes(lookupdHTTPAddrs)
 	if err != nil {
 		c.logf("failed to list lookupd nodes while delete topic: %v", err)
 		return err
 	}
 	leaderAddr := make([]string, 0)
-	for _, lookupdNodes := range dcLookupdNodes {
+	for _, lookupdNodes := range lookupdNodesDC {
 		leaderAddr = append(leaderAddr, net.JoinHostPort(lookupdNodes.LeaderNode.NodeIP, lookupdNodes.LeaderNode.HttpPort))
 	}
+
 	qs := fmt.Sprintf("topic=%s&partition=**", url.QueryEscape(topicName))
 	// remove the topic from all the nsqlookupd
 	err = c.versionPivotNSQLookupd(leaderAddr, "delete_topic", "topic/delete", qs)
@@ -1230,10 +1213,10 @@ func (c *ClusterInfo) DeleteTopic(topicName string, dcLookupdHTTPAddrs map[strin
 	return nil
 }
 
-func (c *ClusterInfo) DeleteChannel(topicName string, channelName string, dcLookupdHTTPAddrs map[string][]string, nsqdHTTPAddrs []string) error {
+func (c *ClusterInfo) DeleteChannel(topicName string, channelName string, lookupdHTTPAddrs []LookupdAddressDC, nsqdHTTPAddrs []string) error {
 	var errs []error
 	retry := true
-	producers, dcPartitionProducers, err := c.GetTopicProducers(topicName, dcLookupdHTTPAddrs, nsqdHTTPAddrs)
+	producers, partitionProducers, err := c.GetTopicProducers(topicName, lookupdHTTPAddrs, nsqdHTTPAddrs)
 	if err != nil {
 		pe, ok := err.(PartialErr)
 		if !ok {
@@ -1242,8 +1225,8 @@ func (c *ClusterInfo) DeleteChannel(topicName string, channelName string, dcLook
 		errs = append(errs, pe.Errors()...)
 	}
 
-channelDelete:
-	if len(dcPartitionProducers) == 0 {
+	channelDelete:
+	if len(partitionProducers) == 0 {
 		qs := fmt.Sprintf("topic=%s&channel=%s", url.QueryEscape(topicName), url.QueryEscape(channelName))
 		// remove the channel from all the nsqd that produce this topic
 		err = c.versionPivotProducers(producers, "delete_channel", "channel/delete", qs)
@@ -1255,24 +1238,22 @@ channelDelete:
 			errs = append(errs, pe.Errors()...)
 		}
 	} else {
-		//TODO: concurrent delete
-		for _, partitionProducers := range dcPartitionProducers {
-			for pid, pp := range partitionProducers {
-				qs := fmt.Sprintf("topic=%s&channel=%s&partition=%s", url.QueryEscape(topicName), url.QueryEscape(channelName), pid)
-				// remove the channel from all the nsqd that produce this topic
-				err = c.versionPivotProducers(pp, "delete_channel", "channel/delete", qs)
-				if err != nil {
-					pe, ok := err.(PartialErr)
-					if !ok {
-						return err
-					}
-					errs = append(errs, pe.Errors()...)
+		for pid, pp := range partitionProducers {
+			qs := fmt.Sprintf("topic=%s&channel=%s&partition=%s", url.QueryEscape(topicName), url.QueryEscape(channelName), pid)
+			// remove the channel from all the nsqd that produce this topic
+			err = c.versionPivotProducers(pp, "delete_channel", "channel/delete", qs)
+			if err != nil {
+				pe, ok := err.(PartialErr)
+				if !ok {
+					return err
 				}
+				errs = append(errs, pe.Errors()...)
 			}
 		}
 	}
 
-	_, dcAllChannelStats, err := c.GetNSQDStats(producers, topicName, "partition", true)
+	//TODO: channel name not right
+	_, allChannelStats, err := c.GetNSQDStats(producers, topicName, "partition", true)
 	if err != nil {
 		pe, ok := err.(PartialErr)
 		if !ok {
@@ -1281,21 +1262,18 @@ channelDelete:
 		errs = append(errs, pe.Errors()...)
 	}
 
-	for dc, allChannelStats := range dcAllChannelStats {
-		if _, exist := allChannelStats[channelName]; exist {
-			c.logf("channel %v are not completely deleted", channelName)
-			if retry {
-				//do delete again
-				retry = false
-				goto channelDelete
-			} else {
-				c.logf("dc: %v , fail to delete channel %v completely", dc, channelName)
-			}
+	if _, exist := allChannelStats[channelName]; exist {
+		c.logf("channel %v are not completely deleted", channelName)
+		if retry {
+			//do delete again
+			retry = false
+			goto channelDelete
 		} else {
-			c.logf("dc: %v, channel %v deleted", dc, channelName)
+			c.logf("fail to delete channel %v completely", channelName)
 		}
+	} else {
+		c.logf("channel %v deleted", channelName)
 	}
-
 
 	if len(errs) > 0 {
 		return ErrList(errs)
@@ -1303,55 +1281,55 @@ channelDelete:
 	return nil
 }
 
-func (c *ClusterInfo) PauseTopic(topicName string, dcLookupdHTTPAddrs map[string][]string, nsqdHTTPAddrs []string) error {
+func (c *ClusterInfo) PauseTopic(topicName string, lookupdHTTPAddrs []LookupdAddressDC, nsqdHTTPAddrs []string) error {
 	qs := fmt.Sprintf("topic=%s", url.QueryEscape(topicName))
-	return c.actionHelper(topicName, dcLookupdHTTPAddrs, nsqdHTTPAddrs, "pause_topic", "topic/pause", qs)
+	return c.actionHelper(topicName, lookupdHTTPAddrs, nsqdHTTPAddrs, "pause_topic", "topic/pause", qs)
 }
 
-func (c *ClusterInfo) UnPauseTopic(topicName string, dcLookupdHTTPAddrs map[string][]string, nsqdHTTPAddrs []string) error {
+func (c *ClusterInfo) UnPauseTopic(topicName string, lookupdHTTPAddrs []LookupdAddressDC, nsqdHTTPAddrs []string) error {
 	qs := fmt.Sprintf("topic=%s", url.QueryEscape(topicName))
-	return c.actionHelper(topicName, dcLookupdHTTPAddrs, nsqdHTTPAddrs, "unpause_topic", "topic/unpause", qs)
+	return c.actionHelper(topicName, lookupdHTTPAddrs, nsqdHTTPAddrs, "unpause_topic", "topic/unpause", qs)
 }
 
-func (c *ClusterInfo) PauseChannel(topicName string, channelName string, dcLookupdHTTPAddrs map[string][]string, nsqdHTTPAddrs []string) error {
+func (c *ClusterInfo) PauseChannel(topicName string, channelName string, lookupdHTTPAddrs []LookupdAddressDC, nsqdHTTPAddrs []string) error {
 	qs := fmt.Sprintf("topic=%s&channel=%s", url.QueryEscape(topicName), url.QueryEscape(channelName))
-	return c.actionHelper(topicName, dcLookupdHTTPAddrs, nsqdHTTPAddrs, "pause_channel", "channel/pause", qs)
+	return c.actionHelper(topicName, lookupdHTTPAddrs, nsqdHTTPAddrs, "pause_channel", "channel/pause", qs)
 }
 
-func (c *ClusterInfo) UnPauseChannel(topicName string, channelName string, dcLookupdHTTPAddrs map[string][]string, nsqdHTTPAddrs []string) error {
+func (c *ClusterInfo) UnPauseChannel(topicName string, channelName string, lookupdHTTPAddrs []LookupdAddressDC, nsqdHTTPAddrs []string) error {
 	qs := fmt.Sprintf("topic=%s&channel=%s", url.QueryEscape(topicName), url.QueryEscape(channelName))
-	return c.actionHelper(topicName, dcLookupdHTTPAddrs, nsqdHTTPAddrs, "unpause_channel", "channel/unpause", qs)
+	return c.actionHelper(topicName, lookupdHTTPAddrs, nsqdHTTPAddrs, "unpause_channel", "channel/unpause", qs)
 }
 
-func (c *ClusterInfo) SkipChannel(topicName string, channelName string, dcLookupdHTTPAddrs map[string][]string, nsqdHTTPAddrs []string) error {
+func (c *ClusterInfo) SkipChannel(topicName string, channelName string, lookupdHTTPAddrs []LookupdAddressDC, nsqdHTTPAddrs []string) error {
 	qs := fmt.Sprintf("topic=%s&channel=%s", url.QueryEscape(topicName), url.QueryEscape(channelName))
-	return c.actionHelper(topicName, dcLookupdHTTPAddrs, nsqdHTTPAddrs, "skip_channel", "channel/skip", qs)
+	return c.actionHelper(topicName, lookupdHTTPAddrs, nsqdHTTPAddrs, "skip_channel", "channel/skip", qs)
 }
 
-func (c *ClusterInfo) UnSkipChannel(topicName string, channelName string, dcLookupdHTTPAddrs map[string][]string, nsqdHTTPAddrs []string) error {
+func (c *ClusterInfo) UnSkipChannel(topicName string, channelName string, lookupdHTTPAddrs []LookupdAddressDC, nsqdHTTPAddrs []string) error {
 	qs := fmt.Sprintf("topic=%s&channel=%s", url.QueryEscape(topicName), url.QueryEscape(channelName))
-	return c.actionHelper(topicName, dcLookupdHTTPAddrs, nsqdHTTPAddrs, "unskip_channel", "channel/unskip", qs)
+	return c.actionHelper(topicName, lookupdHTTPAddrs, nsqdHTTPAddrs, "unskip_channel", "channel/unskip", qs)
 }
 
-func (c *ClusterInfo) EmptyTopic(topicName string, dcLookupdHTTPAddrs map[string][]string, nsqdHTTPAddrs []string) error {
+func (c *ClusterInfo) EmptyTopic(topicName string, lookupdHTTPAddrs []LookupdAddressDC, nsqdHTTPAddrs []string) error {
 	qs := fmt.Sprintf("topic=%s", url.QueryEscape(topicName))
-	return c.actionHelper(topicName, dcLookupdHTTPAddrs, nsqdHTTPAddrs, "empty_topic", "topic/empty", qs)
+	return c.actionHelper(topicName, lookupdHTTPAddrs, nsqdHTTPAddrs, "empty_topic", "topic/empty", qs)
 }
 
-func (c *ClusterInfo) EmptyChannel(topicName string, channelName string, dcLookupdHTTPAddrs map[string][]string, nsqdHTTPAddrs []string) error {
+func (c *ClusterInfo) EmptyChannel(topicName string, channelName string, lookupdHTTPAddrs []LookupdAddressDC, nsqdHTTPAddrs []string) error {
 	qs := fmt.Sprintf("topic=%s&channel=%s", url.QueryEscape(topicName), url.QueryEscape(channelName))
-	return c.actionHelper(topicName, dcLookupdHTTPAddrs, nsqdHTTPAddrs, "empty_channel", "channel/empty", qs)
+	return c.actionHelper(topicName, lookupdHTTPAddrs, nsqdHTTPAddrs, "empty_channel", "channel/empty", qs)
 }
 
-func (c *ClusterInfo) ResetChannel(topicName string, channelName string, dcLookupdHTTPAddrs map[string][]string, resetBy string) error {
+func (c *ClusterInfo) ResetChannel(topicName string, channelName string, lookupdHTTPAddrs []LookupdAddressDC, resetBy string) error {
 	qs := fmt.Sprintf("topic=%s&channel=%s", url.QueryEscape(topicName), url.QueryEscape(channelName))
-	return c.actionHelperWithContent(topicName, dcLookupdHTTPAddrs, nil, "", "channel/setoffset", qs, resetBy)
+	return c.actionHelperWithContent(topicName, lookupdHTTPAddrs, nil, "", "channel/setoffset", qs, resetBy)
 }
 
-func (c *ClusterInfo) actionHelperWithContent(topicName string, dcLookupdHTTPAddrs map[string][]string, nsqdHTTPAddrs []string, deprecatedURI string, v1URI string, qs string, content string) error {
+func (c *ClusterInfo) actionHelperWithContent(topicName string, lookupdHTTPAddrs []LookupdAddressDC, nsqdHTTPAddrs []string, deprecatedURI string, v1URI string, qs string, content string) error {
 	var errs []error
 
-	_, dcPartitionProducers, err := c.GetTopicProducers(topicName, dcLookupdHTTPAddrs, nsqdHTTPAddrs)
+	_, partitionProducers, err := c.GetTopicProducers(topicName, lookupdHTTPAddrs, nsqdHTTPAddrs)
 	if err != nil {
 		pe, ok := err.(PartialErr)
 		if !ok {
@@ -1359,32 +1337,31 @@ func (c *ClusterInfo) actionHelperWithContent(topicName string, dcLookupdHTTPAdd
 		}
 		errs = append(errs, pe.Errors()...)
 	}
-	for dc, partitionProducers := range dcPartitionProducers {
-		c.logf("CI: got %v partition producers for topic %v in dc %v", len(partitionProducers), topicName, dc)
-		if len(partitionProducers) > 0 {
-			for pid, pp := range partitionProducers {
-				qsPart := qs + "&partition=" + pid
-				err = c.versionPivotProducersWithContent(pp, deprecatedURI, v1URI, qsPart, content)
-				if err != nil {
-					pe, ok := err.(PartialErr)
-					if !ok {
-						return err
-					}
-					errs = append(errs, pe.Errors()...)
+	c.logf("CI: got %v partition producers for topic %v", len(partitionProducers), topicName)
+	if len(partitionProducers) > 0 {
+		for pid, pp := range partitionProducers {
+			qsPart := qs + "&partition=" + pid
+			err = c.versionPivotProducersWithContent(pp, deprecatedURI, v1URI, qsPart, content)
+			if err != nil {
+				pe, ok := err.(PartialErr)
+				if !ok {
+					return err
 				}
+				errs = append(errs, pe.Errors()...)
 			}
 		}
 	}
+
 	if len(errs) > 0 {
 		return ErrList(errs)
 	}
 	return nil
 }
 
-func (c *ClusterInfo) actionHelper(topicName string, dcLookupdHTTPAddrs map[string][]string, nsqdHTTPAddrs []string, deprecatedURI string, v1URI string, qs string) error {
+func (c *ClusterInfo) actionHelper(topicName string, lookupdHTTPAddrs []LookupdAddressDC, nsqdHTTPAddrs []string, deprecatedURI string, v1URI string, qs string) error {
 	var errs []error
 
-	producers, dcPartitionProducers, err := c.GetTopicProducers(topicName, dcLookupdHTTPAddrs, nsqdHTTPAddrs)
+	producers, partitionProducers, err := c.GetTopicProducers(topicName, lookupdHTTPAddrs, nsqdHTTPAddrs)
 	if err != nil {
 		pe, ok := err.(PartialErr)
 		if !ok {
@@ -1392,9 +1369,8 @@ func (c *ClusterInfo) actionHelper(topicName string, dcLookupdHTTPAddrs map[stri
 		}
 		errs = append(errs, pe.Errors()...)
 	}
-
-	c.logf("CI: got %v producer nodes %v partition producers for topic %v", len(producers), len(dcPartitionProducers), topicName)
-	if len(dcPartitionProducers) == 0 {
+	c.logf("CI: got %v producer nodes %v partition producers for topic %v", len(producers), len(partitionProducers), topicName)
+	if len(partitionProducers) == 0 {
 		err = c.versionPivotProducers(producers, deprecatedURI, v1URI, qs)
 		if err != nil {
 			pe, ok := err.(PartialErr)
@@ -1404,18 +1380,15 @@ func (c *ClusterInfo) actionHelper(topicName string, dcLookupdHTTPAddrs map[stri
 			errs = append(errs, pe.Errors()...)
 		}
 	} else {
-		for dc, partitionProducers := range dcPartitionProducers {
-			c.logf("CI: got %v partition producers for topic %v in dc %v", len(producers), len(dcPartitionProducers), topicName, dc)
-			for pid, pp := range partitionProducers {
-				qsPart := qs + "&partition=" + pid
-				err = c.versionPivotProducers(pp, deprecatedURI, v1URI, qsPart)
-				if err != nil {
-					pe, ok := err.(PartialErr)
-					if !ok {
-						return err
-					}
-					errs = append(errs, pe.Errors()...)
+		for pid, pp := range partitionProducers {
+			qsPart := qs + "&partition=" + pid
+			err = c.versionPivotProducers(pp, deprecatedURI, v1URI, qsPart)
+			if err != nil {
+				pe, ok := err.(PartialErr)
+				if !ok {
+					return err
 				}
+				errs = append(errs, pe.Errors()...)
 			}
 		}
 	}
@@ -1426,44 +1399,17 @@ func (c *ClusterInfo) actionHelper(topicName string, dcLookupdHTTPAddrs map[stri
 	return nil
 }
 
-func (c *ClusterInfo) GetDCProducers(dcLookupdHTTPAddrs map[string][]string, nsqdHTTPAddrs []string) (Producers, error) {
-	var errs []error
-	var dcProducers Producers
-	if len(dcLookupdHTTPAddrs) != 0 {
-		for dc, lookupdHTTPAddrs := range dcLookupdHTTPAddrs {
-			producers, err := c.GetLookupdProducers(lookupdHTTPAddrs)
-			if err != nil {
-				pe, ok := err.(PartialErr)
-				if !ok {
-					return nil, err
-				}
-				errs = append(errs, pe.Errors()...)
-			}
-			for _, p := range producers {
-				p.DC = dc
-				dcProducers = append(dcProducers, p)
-			}
-		}
-		if len(errs) > 0 {
-			return dcProducers, ErrList(errs)
-		} else {
-			return dcProducers, nil
-		}
-	}
-	return c.GetNSQDProducers(nsqdHTTPAddrs)
-}
-
-func (c *ClusterInfo) GetProducers(lookupdHTTPAddrs []string, nsqdHTTPAddrs []string) (Producers, error) {
+func (c *ClusterInfo) GetProducers(lookupdHTTPAddrs []LookupdAddressDC, nsqdHTTPAddrs []string) (Producers, error) {
 	if len(lookupdHTTPAddrs) != 0 {
 		return c.GetLookupdProducers(lookupdHTTPAddrs)
 	}
 	return c.GetNSQDProducers(nsqdHTTPAddrs)
 }
 
-func (c *ClusterInfo) GetTopicProducers(topicName string, dcLookupdHTTPAddrs map[string][]string, nsqdHTTPAddrs []string) (Producers, map[string]map[string]Producers, error) {
-	if len(dcLookupdHTTPAddrs) != 0 {
-		p, dpp, err := c.GetLookupdTopicProducers(topicName, dcLookupdHTTPAddrs)
-		return p, dpp, err
+func (c *ClusterInfo) GetTopicProducers(topicName string, lookupdHTTPAddrs []LookupdAddressDC, nsqdHTTPAddrs []string) (Producers, map[string]Producers, error) {
+	if len(lookupdHTTPAddrs) != 0 {
+		p, pp, err := c.GetLookupdTopicProducers(topicName, lookupdHTTPAddrs)
+		return p, pp, err
 	}
 	p, err := c.GetNSQDTopicProducers(topicName, nsqdHTTPAddrs)
 	return p, nil, err

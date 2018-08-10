@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/youzan/nsq/internal/levellogger"
+	"github.com/youzan/nsq/internal/clusterinfo"
 )
 
 type Options struct {
@@ -23,6 +24,8 @@ type Options struct {
 	NSQDHTTPAddresses       []string `flag:"nsqd-http-address" cfg:"nsqd_http_addresses"`
 
 	DCNSQLookupdHTTPAddresses []string `flag:"dc-lookupd-http-address" cfg:"dc_lookupd_http_addresses"`
+
+	NSQLookupdHTTPAddressesDC []clusterinfo.LookupdAddressDC
 
 	HTTPClientTLSInsecureSkipVerify bool   `flag:"http-client-tls-insecure-skip-verify"`
 	HTTPClientTLSRootCAFile         string `flag:"http-client-tls-root-ca-file"`

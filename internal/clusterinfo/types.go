@@ -289,7 +289,7 @@ func (c *ChannelStats) Merge(a *ChannelStats) {
 
 func (c *ChannelStats) Add(a *ChannelStats) {
 	c.Node = "*"
-	c.DC = "*"
+	c.DC = a.DC
 	if c.IsMultiOrdered || a.IsMultiOrdered {
 		c.StatsdName = c.TopicName + ".*"
 	} else {

@@ -23,6 +23,8 @@ import (
 	"github.com/youzan/nsq/internal/http_api"
 	"github.com/youzan/nsq/internal/protocol"
 	"github.com/youzan/nsq/internal/version"
+	"golang.org/x/sync/semaphore"
+	"golang.org/x/net/context"
 	"sync"
 )
 
@@ -220,45 +222,45 @@ func (s *httpServer) indexHandler(w http.ResponseWriter, req *http.Request, ps h
 
 	w.Header().Set("Content-Type", "text/html")
 	lookupdAddresses := make([]string, 0)
+	//all lookupd addresses from dc
 	dcLookupdAddresses := make(map[string][]string)
 	lookupdAddresseMap := make(map[string]bool)
-	lookupdAddressesDCMap := make(map[string]string)
+	http2DCMap := make(map[string]string)
 	for _, addr := range s.ctx.nsqadmin.opts.NSQDHTTPAddresses {
 		lookupdAddresseMap[addr] = false
 	}
-	dcLookupdNodes, err := s.ci.ListAllLookupdNodes(s.ctx.nsqadmin.DCLookupAddresses())
+
+	lookupdNodesDC, err := s.ci.ListAllLookupdNodes(s.ctx.nsqadmin.opts.NSQLookupdHTTPAddressesDC)
 	if err != nil {
 		s.ctx.nsqadmin.logf("WARNING: failed to list lookupd nodes : %v", err)
 	} else {
-		s.ctx.nsqadmin.logf("list lookupd found nodes : %v", dcLookupdNodes)
-		for _, lookupdNodes := range dcLookupdNodes {
+		s.ctx.nsqadmin.logf("list lookupd found nodes : %v", lookupdNodesDC)
+		for _, lookupdNodes := range lookupdNodesDC {
 			for _, n := range lookupdNodes.AllNodes {
 				addr := net.JoinHostPort(n.NodeIP, n.HttpPort)
 				lookupdAddresseMap[addr] = false
-				lookupdAddressesDCMap[addr] = lookupdNodes.DC
+				http2DCMap[addr] = lookupdNodes.DC
 			}
 			if lookupdNodes.LeaderNode.ID != "" {
 				leaderAddr := net.JoinHostPort(lookupdNodes.LeaderNode.NodeIP, lookupdNodes.LeaderNode.HttpPort)
 				lookupdAddresseMap[leaderAddr] = true
-				lookupdAddressesDCMap[leaderAddr] = lookupdNodes.DC
 			}
 		}
 	}
 	for addr, isLeader := range lookupdAddresseMap {
+		if _, exist := dcLookupdAddresses[http2DCMap[addr]]; !exist {
+			dcLookupdAddresses[http2DCMap[addr]] = make([]string, 0)
+		}
+
 		if isLeader {
 			lookupdAddresses = append(lookupdAddresses, addr+" (Leader)")
+			dcLookupdAddresses[http2DCMap[addr]] = append(dcLookupdAddresses[http2DCMap[addr]], addr+" (Leader)")
 		} else {
 			lookupdAddresses = append(lookupdAddresses, addr)
-		}
-		if _, exist := dcLookupdAddresses[lookupdAddressesDCMap[addr]]; !exist {
-			dcLookupdAddresses[lookupdAddressesDCMap[addr]] = make([]string, 0)
-		}
-		if isLeader {
-			dcLookupdAddresses[lookupdAddressesDCMap[addr]] = append(dcLookupdAddresses[lookupdAddressesDCMap[addr]], addr+" (Leader)")
-		} else {
-			dcLookupdAddresses[lookupdAddressesDCMap[addr]] = append(dcLookupdAddresses[lookupdAddressesDCMap[addr]], addr)
+			dcLookupdAddresses[http2DCMap[addr]] = append(dcLookupdAddresses[http2DCMap[addr]], addr)
 		}
 	}
+	delete(dcLookupdAddresses, "")
 	s.ctx.nsqadmin.logf("total lookupd nodes : %v", lookupdAddresses)
 	u, _ := s.getUserInfo(w, req)
 	//add redirect query to ca auth url
@@ -298,7 +300,7 @@ func (s *httpServer) indexHandler(w http.ResponseWriter, req *http.Request, ps h
 		StatsdGaugeFormat:   s.ctx.nsqadmin.opts.StatsdGaugeFormat,
 		StatsdPrefix:        s.ctx.nsqadmin.opts.StatsdPrefix,
 		NSQLookupd:          s.ctx.nsqadmin.opts.NSQLookupdHTTPAddresses,
-		DCNSQLookupd:	     s.ctx.nsqadmin.DCLookupAddresses(),
+		DCNSQLookupd:	     s.ctx.nsqadmin.DC2LookupAddresses(),
 		AllNSQLookupds:      lookupdAddresses,
 		DCAllNSQLookupds:    dcLookupdAddresses,
 		AuthUrl:             authUrl.String(),
@@ -352,9 +354,9 @@ func (s *httpServer) topicsHandler(w http.ResponseWriter, req *http.Request, ps 
 	}
 
 	var topics []*clusterinfo.TopicInfo
-	if len(s.ctx.nsqadmin.DCLookupAddresses()) != 0 {
+	if len(s.ctx.nsqadmin.opts.NSQLookupdHTTPAddressesDC) > 0 {
 		fetchMetaStr, _ := reqParams.Get("metaInfo")
-		topics, err = s.ci.GetLookupdTopicsMeta(s.ctx.nsqadmin.DCLookupAddresses(), fetchMetaStr == "true")
+		topics, err = s.ci.GetLookupdTopicsMeta(s.ctx.nsqadmin.opts.NSQLookupdHTTPAddressesDC, fetchMetaStr == "true")
 	} else {
 		topics, err = s.ci.GetNSQDTopics(s.ctx.nsqadmin.opts.NSQDHTTPAddresses)
 	}
@@ -370,26 +372,40 @@ func (s *httpServer) topicsHandler(w http.ResponseWriter, req *http.Request, ps 
 
 	inactive, _ := reqParams.Get("inactive")
 	if inactive == "true" {
-		var wg sync.WaitGroup
+		maxWeight := 10
+		if len(topics) < 10 {
+			maxWeight = len(topics)
+		}
+		sem := semaphore.NewWeighted(int64(maxWeight))
+		ctx := context.TODO()
+		var channelMapLock sync.RWMutex
 		topicChannelMap := make(map[string][]string)
-		if len(s.ctx.nsqadmin.DCLookupAddresses()) == 0 {
+		if len(s.ctx.nsqadmin.opts.NSQLookupdHTTPAddressesDC) == 0 {
 			goto respond
 		}
+
 		for _, topic := range topics {
-			wg.Add(1)
+			if err := sem.Acquire(ctx, 1); err != nil {
+				s.ctx.nsqadmin.logf("ERROR: failed to get semapher - %s", err)
+				break
+			}
 			go func() {
-				defer wg.Done()
+				defer sem.Release(1)
 				producers, _, _ := s.ci.GetLookupdTopicProducers(
-					topic.TopicName, s.ctx.nsqadmin.DCLookupAddresses())
+					topic.TopicName, s.ctx.nsqadmin.opts.NSQLookupdHTTPAddressesDC)
 				if len(producers) == 0 {
 					topicChannels, _ := s.ci.GetLookupdTopicChannels(
-						topic.TopicName, s.ctx.nsqadmin.DCLookupAddresses())
+						topic.TopicName, s.ctx.nsqadmin.opts.NSQLookupdHTTPAddressesDC)
+					channelMapLock.Lock()
 					topicChannelMap[topic.TopicName] = topicChannels
+					channelMapLock.Unlock()
 				}
 			}()
 		}
-		wg.Wait()
-	respond:
+		if err := sem.Acquire(ctx, int64(maxWeight)); err != nil {
+			s.ctx.nsqadmin.logf("Failed to acquire semaphore: %v", err)
+		}
+		respond:
 		return struct {
 			Topics  map[string][]string `json:"topics"`
 			Message string              `json:"message"`
@@ -404,7 +420,7 @@ func (s *httpServer) topicsHandler(w http.ResponseWriter, req *http.Request, ps 
 
 func (s *httpServer) lookupNodesHandler(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {
 	var messages []string
-	nodes, err := s.ci.ListAllLookupdNodes(s.ctx.nsqadmin.DCLookupAddresses())
+	nodesDC, err := s.ci.ListAllLookupdNodes(s.ctx.nsqadmin.opts.NSQLookupdHTTPAddressesDC)
 	if err != nil {
 		pe, ok := err.(clusterinfo.PartialErr)
 		if !ok {
@@ -415,9 +431,10 @@ func (s *httpServer) lookupNodesHandler(w http.ResponseWriter, req *http.Request
 		messages = append(messages, pe.Error())
 	}
 	return struct {
-		DCLookupdNodes []*clusterinfo.LookupdNodes `json;"dcLookupdNodes"`
+		*clusterinfo.LookupdNodes
+		LookupdNodesDC []*clusterinfo.LookupdNodes  `json:"lookupd_nodes_dc"`
 		Message string `json:"message"`
-	}{nodes, maybeWarnMsg(messages)}, nil
+	}{nodesDC[0], nodesDC, maybeWarnMsg(messages)}, nil
 }
 
 func (s *httpServer) coordinatorHandler(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {
@@ -428,7 +445,7 @@ func (s *httpServer) coordinatorHandler(w http.ResponseWriter, req *http.Request
 	node := ps.ByName("node")
 
 	producers, _, err := s.ci.GetTopicProducers(topicName,
-		s.ctx.nsqadmin.DCLookupAddresses(),
+		s.ctx.nsqadmin.opts.NSQLookupdHTTPAddressesDC,
 		s.ctx.nsqadmin.opts.NSQDHTTPAddresses)
 	if err != nil {
 		pe, ok := err.(clusterinfo.PartialErr)
@@ -463,7 +480,7 @@ func (s *httpServer) topicHandler(w http.ResponseWriter, req *http.Request, ps h
 	topicName := ps.ByName("topic")
 
 	producers, _, err := s.ci.GetTopicProducers(topicName,
-		s.ctx.nsqadmin.DCLookupAddresses(),
+		s.ctx.nsqadmin.opts.NSQLookupdHTTPAddressesDC,
 		s.ctx.nsqadmin.opts.NSQDHTTPAddresses)
 	if err != nil {
 		pe, ok := err.(clusterinfo.PartialErr)
@@ -474,7 +491,7 @@ func (s *httpServer) topicHandler(w http.ResponseWriter, req *http.Request, ps h
 		s.ctx.nsqadmin.logf("WARNING: %s", err)
 		messages = append(messages, pe.Error())
 	}
-	dcTopicStats, _, err := s.ci.GetNSQDStats(producers, topicName, "partition", true)
+	topicStats, _, err := s.ci.GetNSQDStats(producers, topicName, "partition", true)
 	if err != nil {
 		pe, ok := err.(clusterinfo.PartialErr)
 		if !ok {
@@ -490,15 +507,10 @@ func (s *httpServer) topicHandler(w http.ResponseWriter, req *http.Request, ps h
 		s.ctx.nsqadmin.logf("ERROR: failed to get nsqd topic %v coordinator stats - %s", topicName, err)
 		messages = append(messages, err.Error())
 	}
-	//dc->topic->partition
-	dcStatsMap := make(map[string]map[string]map[string]clusterinfo.TopicCoordStat)
+
+	statsMap := make(map[string]map[string]clusterinfo.TopicCoordStat)
 	if topicCoordStats != nil {
 		for _, stat := range topicCoordStats.TopicCoordStats {
-			statsMap, ok := dcStatsMap[stat.DC]
-			if !ok {
-				statsMap = make(map[string]map[string]clusterinfo.TopicCoordStat)
-				dcStatsMap[stat.DC] = statsMap
-			}
 			t, ok := statsMap[stat.Name]
 			if !ok {
 				t = make(map[string]clusterinfo.TopicCoordStat)
@@ -509,43 +521,34 @@ func (s *httpServer) topicHandler(w http.ResponseWriter, req *http.Request, ps h
 	}
 
 	isOrdered := false
-	isExt := false
-	if len(dcTopicStats) > 0 {
-		//TODO check consistence among dc
-		for _, topicStats := range dcTopicStats {
-			isOrdered = topicStats[0].IsMultiOrdered
-			isExt = topicStats[0].IsExt
-		}
+	if len(topicStats) > 0 {
+		isOrdered = topicStats[0].IsMultiOrdered
 	}
+	isExt := topicStats[0].IsExt
 	allNodesTopicStats := &clusterinfo.TopicStats{
 		TopicName:      topicName,
 		StatsdName:     topicName,
 		IsMultiOrdered: isOrdered,
 		IsExt:          isExt,
 	}
-	for dc, topicStats := range dcTopicStats {
-		for _, t := range topicStats {
-			statsMap, ok := dcStatsMap[dc]
+	for _, t := range topicStats {
+		stat, ok := statsMap[t.TopicName]
+		if ok {
+			v, ok := stat[t.TopicPartition]
 			if ok {
-				stat, ok := statsMap[t.TopicName]
-				if ok {
-					v, ok := stat[t.TopicPartition]
-					if ok {
-						t.ISRStats = v.ISRStats
-						t.CatchupStats = v.CatchupStats
-					}
-				}
-				t.SyncingNum = len(t.ISRStats) + len(t.CatchupStats)
-				historyStat, err := s.ci.GetNSQDMessageHistoryStats(t.Node, t.TopicName, t.TopicPartition)
-				if err != nil {
-					s.ctx.nsqadmin.logf("WARNING: %s", err)
-					messages = append(messages, err.Error())
-				} else {
-					t.PartitionHourlyPubSize = historyStat
-				}
-				allNodesTopicStats.Add(t)
+				t.ISRStats = v.ISRStats
+				t.CatchupStats = v.CatchupStats
 			}
 		}
+		t.SyncingNum = len(t.ISRStats) + len(t.CatchupStats)
+		historyStat, err := s.ci.GetNSQDMessageHistoryStats(t.Node, t.TopicName, t.TopicPartition)
+		if err != nil {
+			s.ctx.nsqadmin.logf("WARNING: %s", err)
+			messages = append(messages, err.Error())
+		} else {
+			t.PartitionHourlyPubSize = historyStat
+		}
+		allNodesTopicStats.Add(t)
 	}
 
 	return struct {
@@ -561,7 +564,7 @@ func (s *httpServer) channelHandler(w http.ResponseWriter, req *http.Request, ps
 	channelName := ps.ByName("channel")
 
 	producers, _, err := s.ci.GetTopicProducers(topicName,
-		s.ctx.nsqadmin.DCLookupAddresses(),
+		s.ctx.nsqadmin.opts.NSQLookupdHTTPAddressesDC,
 		s.ctx.nsqadmin.opts.NSQDHTTPAddresses)
 	if err != nil {
 		pe, ok := err.(clusterinfo.PartialErr)
@@ -572,7 +575,7 @@ func (s *httpServer) channelHandler(w http.ResponseWriter, req *http.Request, ps
 		s.ctx.nsqadmin.logf("WARNING: %s", err)
 		messages = append(messages, pe.Error())
 	}
-	_, allDCChannelStats, err := s.ci.GetNSQDStats(producers, topicName, "partition", true)
+	_, allChannelStats, err := s.ci.GetNSQDStats(producers, topicName, "partition", true)
 	if err != nil {
 		pe, ok := err.(clusterinfo.PartialErr)
 		if !ok {
@@ -583,26 +586,23 @@ func (s *httpServer) channelHandler(w http.ResponseWriter, req *http.Request, ps
 		messages = append(messages, pe.Error())
 	}
 	//if there is only one channel, disable channel deletion button
-	//aggregate channels among dc
-	//merge channel stats of same channel name from different dc into one
-	var channelStatsMerge *clusterinfo.ChannelStats
-	for _, channelStats := range allDCChannelStats {
-		if channelStatsMerge == nil {
-			channelStatsMerge = channelStats[channelName]
-		} else {
-			channelStatsMerge.Merge(channelStats[channelName])
+	if len(allChannelStats) <= 1 {
+		cs, ok := allChannelStats[channelName]
+		if ok {
+			cs.OnlyChannel = true
 		}
 	}
+
 	return struct {
 		*clusterinfo.ChannelStats
 		Message string `json:"message"`
-	}{channelStatsMerge, maybeWarnMsg(messages)}, nil
+	}{allChannelStats[channelName], maybeWarnMsg(messages)}, nil
 }
 
 func (s *httpServer) nodesHandler(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {
 	var messages []string
 
-	producers, err := s.ci.GetDCProducers(s.ctx.nsqadmin.DCLookupAddresses(), s.ctx.nsqadmin.opts.NSQDHTTPAddresses)
+	producers, err := s.ci.GetProducers(s.ctx.nsqadmin.opts.NSQLookupdHTTPAddressesDC, s.ctx.nsqadmin.opts.NSQDHTTPAddresses)
 	if err != nil {
 		pe, ok := err.(clusterinfo.PartialErr)
 		if !ok {
@@ -624,7 +624,7 @@ func (s *httpServer) nodeHandler(w http.ResponseWriter, req *http.Request, ps ht
 
 	node := ps.ByName("node")
 
-	producers, err := s.ci.GetDCProducers(s.ctx.nsqadmin.DCLookupAddresses(), s.ctx.nsqadmin.opts.NSQDHTTPAddresses)
+	producers, err := s.ci.GetProducers(s.ctx.nsqadmin.opts.NSQLookupdHTTPAddressesDC, s.ctx.nsqadmin.opts.NSQDHTTPAddresses)
 	if err != nil {
 		pe, ok := err.(clusterinfo.PartialErr)
 		if !ok {
@@ -640,7 +640,7 @@ func (s *httpServer) nodeHandler(w http.ResponseWriter, req *http.Request, ps ht
 		return nil, http_api.Err{404, "NODE_NOT_FOUND"}
 	}
 
-	dcTopicStats, _, err := s.ci.GetNSQDStats(clusterinfo.Producers{producer}, "", "channel-depth", false)
+	topicStats, _, err := s.ci.GetNSQDStats(clusterinfo.Producers{producer}, "", "channel-depth", false)
 	if err != nil {
 		s.ctx.nsqadmin.logf("ERROR: failed to get nsqd stats - %s", err)
 		return nil, http_api.Err{502, fmt.Sprintf("UPSTREAM_ERROR: %s", err)}
@@ -648,13 +648,11 @@ func (s *httpServer) nodeHandler(w http.ResponseWriter, req *http.Request, ps ht
 
 	var totalClients int64
 	var totalMessages int64
-	for _, topicStats := range dcTopicStats {
-		for _, ts := range topicStats {
-			for _, cs := range ts.Channels {
-				totalClients += int64(len(cs.Clients))
-			}
-			totalMessages += ts.MessageCount
+	for _, ts := range topicStats {
+		for _, cs := range ts.Channels {
+			totalClients += int64(len(cs.Clients))
 		}
+		totalMessages += ts.MessageCount
 	}
 
 	return struct {
@@ -665,7 +663,7 @@ func (s *httpServer) nodeHandler(w http.ResponseWriter, req *http.Request, ps ht
 		Message       string                    `json:"message"`
 	}{
 		Node:          node,
-		TopicStats:    dcTopicStats[producer.DC],
+		TopicStats:    topicStats,
 		TotalMessages: totalMessages,
 		TotalClients:  totalClients,
 		Message:       maybeWarnMsg(messages),
@@ -690,7 +688,7 @@ func (s *httpServer) tombstoneNodeForTopicHandler(w http.ResponseWriter, req *ht
 	}
 
 	err = s.ci.TombstoneNodeForTopic(body.Topic, node,
-		s.ctx.nsqadmin.DCLookupAddresses())
+		s.ctx.nsqadmin.opts.NSQLookupdHTTPAddressesDC)
 	if err != nil {
 		pe, ok := err.(clusterinfo.PartialErr)
 		if !ok {
@@ -832,6 +830,7 @@ func (s *httpServer) searchMessageTrace(w http.ResponseWriter, req *http.Request
 		}
 	}
 	resultList := traceResp.Data
+
 	if topicName == "" {
 		if len(resultList.LogDataDtos) > 0 {
 			topicName = resultList.LogDataDtos[0].Topic
@@ -841,10 +840,15 @@ func (s *httpServer) searchMessageTrace(w http.ResponseWriter, req *http.Request
 		return nil, http_api.Err{400, "topic should not be empty to search message"}
 	}
 
-	_, dcPartitionProducers, _ := s.ci.GetTopicProducers(topicName, s.ctx.nsqadmin.DCLookupAddresses(),
+	_, partitionProducers, _ := s.ci.GetTopicProducers(topicName, s.ctx.nsqadmin.opts.NSQLookupdHTTPAddressesDC,
 		s.ctx.nsqadmin.opts.NSQDHTTPAddresses)
 	needGetRequestMsg := true
+	maxWeight := int64(10)
+	ctx := context.TODO()
+	sem := semaphore.NewWeighted(maxWeight)
 	for index, m := range resultList.LogDataDtos {
+		idx := index
+		resultList.LogDataDtos[idx].RawMsgDataDC = make(map[string]string)
 		items := make([]TraceLogItemInfo, 0)
 		extraJsonStr, _ := strconv.Unquote(m.Extra)
 		err := json.Unmarshal([]byte(extraJsonStr), &items)
@@ -864,31 +868,47 @@ func (s *httpServer) searchMessageTrace(w http.ResponseWriter, req *http.Request
 		if queryParam.Channel != "" && item.Channel != queryParam.Channel {
 			continue
 		}
-		resultList.LogDataDtos[index].TraceLogItemInfo = item
+		resultList.LogDataDtos[idx].TraceLogItemInfo = item
 		pid := GetPartitionFromMsgID(int64(item.MsgID))
-
-		//loop in dc
-		for dc, partitionProducers := range dcPartitionProducers {
-			if len(partitionProducers[strconv.Itoa(pid)]) == 0 {
-				s.ctx.nsqadmin.logf("partition producer not found: %v", pid)
-				continue
-			}
-			producer := partitionProducers[strconv.Itoa(pid)][0]
-
-			if int64(item.MsgID) == requestMsgID {
-				needGetRequestMsg = false
-			}
-			msgBody, _, err := s.ci.GetNSQDMessageByID(*producer, item.Topic, strconv.Itoa(pid), int64(item.MsgID))
-			if err != nil {
-				s.ctx.nsqadmin.logf("get msg %v data failed : %v", item, err)
-				continue
-			}
-			if resultList.LogDataDtos[index].RawMsgData == nil {
-				resultList.LogDataDtos[index].RawMsgData = make(map[string]string)
-			}
-			resultList.LogDataDtos[index].RawMsgData[dc] = msgBody
+		if len(partitionProducers[strconv.Itoa(pid)]) == 0 {
+			s.ctx.nsqadmin.logf("partition producer not found: %v", pid)
+			continue
 		}
+		if int64(item.MsgID) == requestMsgID {
+			needGetRequestMsg = false
+		}
+		producersDC := partitionProducers[strconv.Itoa(pid)]
+		hasMultiDC := len(producersDC) > 1
+
+
+		if err := sem.Acquire(ctx, 1); err != nil {
+			s.ctx.nsqadmin.logf("ERROR: fail to acquire signal - %v", err)
+			warnMessages = append(warnMessages, err.Error())
+			break
+		}
+
+		go func() {
+			defer sem.Release(int64(1))
+			for _, producer := range producersDC {
+				msgBody, _, err := s.ci.GetNSQDMessageByID(*producer, item.Topic, strconv.Itoa(pid), int64(item.MsgID))
+				if err != nil {
+					s.ctx.nsqadmin.logf("get msg %v data failed : %v", item, err)
+					continue
+				}
+				if hasMultiDC {
+					resultList.LogDataDtos[idx].RawMsgDataDC[producer.DC] = msgBody
+				} else {
+					resultList.LogDataDtos[idx].RawMsgData = msgBody
+				}
+			}
+		}()
 	}
+
+	if err := sem.Acquire(ctx, maxWeight); err != nil {
+		s.ctx.nsqadmin.logf("ERROR: fail to acquire signal - %v", err)
+		warnMessages = append(warnMessages, err.Error())
+	}
+
 	//s.ctx.nsqadmin.logf("get msg trace data : %v", resultList.LogDataDtos)
 	logDataFilterEmpty := make(TLListT, 0, len(resultList.LogDataDtos))
 	for _, v := range resultList.LogDataDtos {
@@ -904,30 +924,44 @@ func (s *httpServer) searchMessageTrace(w http.ResponseWriter, req *http.Request
 		var jsv TraceLogDataForJs
 		jsv.TraceLogItemInfoForJs = v.ToJsJson()
 		jsv.RawMsgData = v.RawMsgData
+		jsv.RawMsgDataDC = v.RawMsgDataDC
 		logDataForJs = append(logDataForJs, jsv)
 	}
 	//s.ctx.nsqadmin.logf("sorted msg trace data : %v", logDataFilterEmpty)
-	requestMsg := make(map[string]string)
+	var requestMsg string
+	requestMsgDC := make(map[string]string)
 	if needGetRequestMsg && requestMsgID > 0 {
 		pid := GetPartitionFromMsgID(int64(requestMsgID))
-		//loop in dc
-		for dc, partitionProducers := range dcPartitionProducers {
-			if len(partitionProducers[strconv.Itoa(pid)]) == 0 {
-				s.ctx.nsqadmin.logf("partition producer not found: %v", pid)
-			} else {
-				producer := partitionProducers[strconv.Itoa(pid)][0]
+		if len(partitionProducers[strconv.Itoa(pid)]) == 0 {
+			s.ctx.nsqadmin.logf("partition producer not found: %v", pid)
+		} else {
+			//loop through partitionProducers in multi dc context
+			producersDC := partitionProducers[strconv.Itoa(pid)]
+			hasMultiDC := len(producersDC) > 1
+			for _, producer := range producersDC {
 				msgBody, _, err := s.ci.GetNSQDMessageByID(*producer, topicName, strconv.Itoa(pid), requestMsgID)
 				if err != nil {
 					s.ctx.nsqadmin.logf("get msg %v data failed : %v", requestMsgID, err)
 					warnMessages = append(warnMessages, err.Error())
 				} else {
-					requestMsg[dc] = msgBody
-					var buf bytes.Buffer
-					err := json.Indent(&buf, []byte(msgBody), "", "  ")
-					if err == nil {
-						requestMsg[dc] = buf.String()
+					if hasMultiDC {
+						requestMsgDC[producer.DC] = msgBody
+						var buf bytes.Buffer
+						err := json.Indent(&buf, []byte(msgBody), "", "  ")
+						if err == nil {
+							requestMsgDC[producer.DC] = buf.String()
+						} else {
+							s.ctx.nsqadmin.logf("pretty json failed : %v", err)
+						}
 					} else {
-						s.ctx.nsqadmin.logf("pretty json failed : %v", err)
+						requestMsg = msgBody
+						var buf bytes.Buffer
+						err := json.Indent(&buf, []byte(msgBody), "", "  ")
+						if err == nil {
+							requestMsg = buf.String()
+						} else {
+							s.ctx.nsqadmin.logf("pretty json failed : %v", err)
+						}
 					}
 				}
 			}
@@ -937,9 +971,10 @@ func (s *httpServer) searchMessageTrace(w http.ResponseWriter, req *http.Request
 	return struct {
 		LogDataDtos []TraceLogDataForJs `json:"logDataDtos"`
 		TotalCount  int                 `json:"totalCount"`
-		RequestMsg  map[string]string              `json:"request_msg"`
+		RequestMsg  string              `json:"request_msg"`
+		RequestMsgDC map[string]string	`json:"request_msg_dc"`
 		Message     string              `json:"message"`
-	}{logDataForJs, resultList.TotalCount, requestMsg, maybeWarnMsg(warnMessages)}, nil
+	}{logDataForJs, resultList.TotalCount, requestMsg, requestMsgDC, maybeWarnMsg(warnMessages)}, nil
 }
 
 func (s *httpServer) createTopicChannelHandler(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {
@@ -986,7 +1021,8 @@ func (s *httpServer) createTopicChannelHandler(w http.ResponseWriter, req *http.
 	syncDisk, _ := strconv.Atoi(body.SyncDisk)
 	err = s.ci.CreateTopic(body.Topic, pnum, replica,
 		syncDisk, body.RetentionDays, body.OrderedMulti, body.Ext,
-		s.ctx.nsqadmin.DCLookupAddresses())
+		s.ctx.nsqadmin.opts.NSQLookupdHTTPAddressesDC)
+
 	if err != nil {
 		pe, ok := err.(clusterinfo.PartialErr)
 		if !ok {
@@ -1003,8 +1039,10 @@ func (s *httpServer) createTopicChannelHandler(w http.ResponseWriter, req *http.
 		go func() {
 			retry := s.ctx.nsqadmin.opts.ChannelCreationRetry
 			for i := 0; i < retry; i++ {
-				err := s.ci.CreateTopicChannelAfterTopicCreation(body.Topic, body.Channel,
-					s.ctx.nsqadmin.DCLookupAddresses(), pnum)
+				var err error
+				err = s.ci.CreateTopicChannelAfterTopicCreation(body.Topic, body.Channel,
+					s.ctx.nsqadmin.opts.NSQLookupdHTTPAddressesDC, pnum)
+
 				if err == nil {
 					s.notifyAdminActionWithUser("create_channel", body.Topic, body.Channel, "", req)
 					s.ctx.nsqadmin.logf("channel created.")
@@ -1026,11 +1064,11 @@ func (s *httpServer) createTopicChannelHandler(w http.ResponseWriter, req *http.
 
 func (s *httpServer) deleteTopicHandler(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {
 	var messages []string
-
+	var err error
 	topicName := ps.ByName("topic")
 
-	err := s.ci.DeleteTopic(topicName,
-		s.ctx.nsqadmin.DCLookupAddresses(),
+	err = s.ci.DeleteTopic(topicName,
+		s.ctx.nsqadmin.opts.NSQLookupdHTTPAddressesDC,
 		s.ctx.nsqadmin.opts.NSQDHTTPAddresses)
 	if err != nil {
 		pe, ok := err.(clusterinfo.PartialErr)
@@ -1051,12 +1089,12 @@ func (s *httpServer) deleteTopicHandler(w http.ResponseWriter, req *http.Request
 
 func (s *httpServer) deleteChannelHandler(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {
 	var messages []string
-
+	var err error
 	topicName := ps.ByName("topic")
 	channelName := ps.ByName("channel")
 
-	err := s.ci.DeleteChannel(topicName, channelName,
-		s.ctx.nsqadmin.DCLookupAddresses(),
+	err = s.ci.DeleteChannel(topicName, channelName,
+		s.ctx.nsqadmin.opts.NSQLookupdHTTPAddressesDC,
 		s.ctx.nsqadmin.opts.NSQDHTTPAddresses)
 	if err != nil {
 		pe, ok := err.(clusterinfo.PartialErr)
@@ -1149,39 +1187,36 @@ func (s *httpServer) topicChannelAction(req *http.Request, topicName string, cha
 	case "pause":
 		if channelName != "" {
 			err = s.ci.PauseChannel(topicName, channelName,
-				s.ctx.nsqadmin.DCLookupAddresses(),
+				s.ctx.nsqadmin.opts.NSQLookupdHTTPAddressesDC,
 				s.ctx.nsqadmin.opts.NSQDHTTPAddresses)
-
 			s.notifyAdminActionWithUser("pause_channel", topicName, channelName, "", req)
 		} else {
 			err = s.ci.PauseTopic(topicName,
-				s.ctx.nsqadmin.DCLookupAddresses(),
+				s.ctx.nsqadmin.opts.NSQLookupdHTTPAddressesDC,
 				s.ctx.nsqadmin.opts.NSQDHTTPAddresses)
-
 			s.notifyAdminActionWithUser("pause_topic", topicName, "", "", req)
 		}
 	case "unpause":
 		if channelName != "" {
 			err = s.ci.UnPauseChannel(topicName, channelName,
-				s.ctx.nsqadmin.DCLookupAddresses(),
+				s.ctx.nsqadmin.opts.NSQLookupdHTTPAddressesDC,
 				s.ctx.nsqadmin.opts.NSQDHTTPAddresses)
-
 			s.notifyAdminActionWithUser("unpause_channel", topicName, channelName, "", req)
 		} else {
 			err = s.ci.UnPauseTopic(topicName,
-				s.ctx.nsqadmin.DCLookupAddresses(),
+				s.ctx.nsqadmin.opts.NSQLookupdHTTPAddressesDC,
 				s.ctx.nsqadmin.opts.NSQDHTTPAddresses)
-
 			s.notifyAdminActionWithUser("unpause_topic", topicName, "", "", req)
 		}
 	case "skip":
 		if channelName != "" {
 			err = s.ci.SkipChannel(topicName, channelName,
-				s.ctx.nsqadmin.DCLookupAddresses(),
+				s.ctx.nsqadmin.opts.NSQLookupdHTTPAddressesDC,
 				s.ctx.nsqadmin.opts.NSQDHTTPAddresses)
+
 			if err == nil {
 				err = s.ci.EmptyChannel(topicName, channelName,
-					s.ctx.nsqadmin.DCLookupAddresses(),
+					s.ctx.nsqadmin.opts.NSQLookupdHTTPAddressesDC,
 					s.ctx.nsqadmin.opts.NSQDHTTPAddresses)
 			}
 			s.notifyAdminActionWithUser("skip_channel", topicName, channelName, "", req)
@@ -1189,7 +1224,7 @@ func (s *httpServer) topicChannelAction(req *http.Request, topicName string, cha
 	case "unskip":
 		if channelName != "" {
 			err = s.ci.UnSkipChannel(topicName, channelName,
-				s.ctx.nsqadmin.DCLookupAddresses(),
+				s.ctx.nsqadmin.opts.NSQLookupdHTTPAddressesDC,
 				s.ctx.nsqadmin.opts.NSQDHTTPAddresses)
 
 			s.notifyAdminActionWithUser("unskip_channel", topicName, channelName, "", req)
@@ -1197,13 +1232,13 @@ func (s *httpServer) topicChannelAction(req *http.Request, topicName string, cha
 	case "empty":
 		if channelName != "" {
 			err = s.ci.EmptyChannel(topicName, channelName,
-				s.ctx.nsqadmin.DCLookupAddresses(),
+				s.ctx.nsqadmin.opts.NSQLookupdHTTPAddressesDC,
 				s.ctx.nsqadmin.opts.NSQDHTTPAddresses)
 
 			s.notifyAdminActionWithUser("empty_channel", topicName, channelName, "", req)
 		} else {
 			err = s.ci.EmptyTopic(topicName,
-				s.ctx.nsqadmin.DCLookupAddresses(),
+				s.ctx.nsqadmin.opts.NSQLookupdHTTPAddressesDC,
 				s.ctx.nsqadmin.opts.NSQDHTTPAddresses)
 
 			s.notifyAdminActionWithUser("empty_topic", topicName, "", "", req)
@@ -1211,7 +1246,7 @@ func (s *httpServer) topicChannelAction(req *http.Request, topicName string, cha
 	case "create":
 		if channelName != "" {
 			err = s.ci.CreateTopicChannel(topicName, channelName,
-				s.ctx.nsqadmin.DCLookupAddresses())
+				s.ctx.nsqadmin.opts.NSQLookupdHTTPAddressesDC)
 
 			s.notifyAdminActionWithUser("create_channel", topicName, channelName, "", req)
 		}
@@ -1220,7 +1255,8 @@ func (s *httpServer) topicChannelAction(req *http.Request, topicName string, cha
 			//parse timestamp
 			tsStr := fmt.Sprintf("timestamp:%v", body.Timestamp)
 			err = s.ci.ResetChannel(topicName, channelName,
-				s.ctx.nsqadmin.DCLookupAddresses(), tsStr)
+				s.ctx.nsqadmin.opts.NSQLookupdHTTPAddressesDC, tsStr)
+
 			s.notifyAdminActionWithUser("reset_channel", topicName, channelName, "", req)
 
 		}
@@ -1345,35 +1381,33 @@ func (s *httpServer) casAuthCallbackHandler(w http.ResponseWriter, req *http.Req
 }
 
 func (s *httpServer) clusterStatsHandler(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {
-	dc := ps.ByName("dc")
 	//get leader lookupd
-	dcLookupdNodes, err := s.ci.ListAllLookupdNodes(s.ctx.nsqadmin.DCLookupAddresses())
+	clustersInfo := make([]*clusterinfo.ClusterNodeInfo, 0)
+	lookupdNodesDC, err := s.ci.ListAllLookupdNodes(s.ctx.nsqadmin.opts.NSQLookupdHTTPAddressesDC)
 	if err != nil {
 		s.ctx.nsqadmin.logf("WARNING: failed to list lookupd nodes : %v", err)
 		return nil, err
 	} else {
-		dcLookupdLeaderNodes := make(map[string][]string)
-		for _, lookupdNodes := range dcLookupdNodes {
-			if dc == "" {
+		for _, lookupdNodes := range lookupdNodesDC {
+			if lookupdNodes.LeaderNode.ID != "" {
 				leaderAddr := net.JoinHostPort(lookupdNodes.LeaderNode.NodeIP, lookupdNodes.LeaderNode.HttpPort)
-				dcLookupdLeaderNodes[lookupdNodes.DC] = append(dcLookupdLeaderNodes[lookupdNodes.DC], leaderAddr)
-				s.ctx.nsqadmin.logf("lookupd leader addr %v append, dc %v", leaderAddr, lookupdNodes.DC)
-			}
-		}
-		s.ctx.nsqadmin.logf("dc lookupd leader nodes: %v", dcLookupdLeaderNodes)
-		if len(dcLookupdLeaderNodes) > 0 {
-			dcClusterNodeInfo, err := s.ci.GetDCClusterInfo(dcLookupdLeaderNodes)
-			if err != nil {
-				s.ctx.nsqadmin.logf("ERROR: failed to get cluster nodes stats - %s", err)
-				return nil, http_api.Err{502, fmt.Sprintf("UPSTREAM_ERROR: %s", err)}
-			} else {
-				return dcClusterNodeInfo, nil
-			}
+				clusterNodeInfo, err := s.ci.GetClusterInfo([]string{leaderAddr})
+				clusterNodeInfo.DC = lookupdNodes.DC
+				if err != nil {
+					s.ctx.nsqadmin.logf("ERROR: failed to get cluster nodes stats - %s", err)
+					return nil, http_api.Err{502, fmt.Sprintf("UPSTREAM_ERROR: %s", err)}
+				} else {
+					clustersInfo = append(clustersInfo, clusterNodeInfo)
+				}
 
-		} else {
-			s.ctx.nsqadmin.logf("WARNING: failed to find lookupd leader at this moment")
-			return nil, http_api.Err{503, "Service Unavailable"}
+			} else {
+				s.ctx.nsqadmin.logf("WARNING: failed to find lookupd leader at this moment")
+				return nil, http_api.Err{503, "Service Unavailable"}
+			}
 		}
+		return struct {
+			ClustersInfo []*clusterinfo.ClusterNodeInfo `json:"clustersInfo"`
+		}{clustersInfo}, nil
 	}
 }
 
@@ -1401,7 +1435,7 @@ func (s *httpServer) statisticsHandler(w http.ResponseWriter, req *http.Request,
 		rankName = "Top10 topics in Hourly Pub Size(in bytes)"
 	}
 
-	producers, err := s.ci.GetDCProducers(s.ctx.nsqadmin.DCLookupAddresses(), s.ctx.nsqadmin.opts.NSQDHTTPAddresses)
+	producers, err := s.ci.GetProducers(s.ctx.nsqadmin.opts.NSQLookupdHTTPAddressesDC, s.ctx.nsqadmin.opts.NSQDHTTPAddresses)
 	if err != nil {
 		pe, ok := err.(clusterinfo.PartialErr)
 		if !ok {
@@ -1412,7 +1446,7 @@ func (s *httpServer) statisticsHandler(w http.ResponseWriter, req *http.Request,
 		messages = append(messages, pe.Error())
 	}
 	//get topic channel sortted by partition depth
-	dcTopicStatsList, dcChannelStatMap, err := s.ci.GetNSQDStats(producers, "", sortBy, true)
+	topicStatsList, channelStatMap, err := s.ci.GetNSQDStats(producers, "", sortBy, true)
 	if err != nil {
 		pe, ok := err.(clusterinfo.PartialErr)
 		if !ok {
@@ -1422,12 +1456,14 @@ func (s *httpServer) statisticsHandler(w http.ResponseWriter, req *http.Request,
 		s.ctx.nsqadmin.logf("WARNING: %s", err)
 		messages = append(messages, pe.Error())
 	}
+
 	var rank []*rankStats
+	topicMap := make(map[string]*rankStats)
 	switch sortBy {
 	case "channel-depth":
 		fallthrough
 	case "hourly-pubsize":
-		dcNodeMsgHistoryMap, err := s.ci.GetNSQDAllMessageHistoryStats(producers)
+		nodeMsgHistoryMap, err := s.ci.GetNSQDAllMessageHistoryStats(producers)
 		if err != nil {
 			_, ok := err.(clusterinfo.PartialErr)
 			if !ok {
@@ -1437,63 +1473,52 @@ func (s *httpServer) statisticsHandler(w http.ResponseWriter, req *http.Request,
 			//Do not append errors to messages for compatibility with old nsqd
 		}
 
-		topicMap := make(map[string]*rankStats)
-		topicPubsizeDCTouched := make(map[string]map[string]bool)
 		//merge nodes under topic
-		for dc, topicStatsList := range dcTopicStatsList {
-			for _, topicStat := range topicStatsList {
-				item, ok := topicMap[topicStat.TopicName]
-				if !ok {
-					item = &rankStats{
-						Name:              topicStat.TopicName,
-						TotalChannelDepth: 0,
-						MessageCount:      0,
-					}
-					topicMap[topicStat.TopicName] = item
+		for _, topicStat := range topicStatsList {
+			item, ok := topicMap[topicStat.TopicName]
+			if !ok {
+				item = &rankStats{
+					Name:              topicStat.TopicName,
+					TotalChannelDepth: 0,
+					MessageCount:      0,
 				}
+				topicMap[topicStat.TopicName] = item
+			}
 
-				item.TotalChannelDepth += topicStat.TotalChannelDepth
-				item.MessageCount += topicStat.MessageCount
-				nodeMsgHistoryMap := dcNodeMsgHistoryMap[dc]
-
-				if _, exist := topicPubsizeDCTouched[dc]; !exist {
-					topicPubsizeDCTouched[dc] = make(map[string]bool)
-				}
-				topicPubsizeTouched := topicPubsizeDCTouched[dc];
-				if nodeMsgHistoryMap != nil && !topicPubsizeTouched[item.Name] {
-					hpSize, ok := nodeMsgHistoryMap[item.Name]
-					if ok {
-						item.HourlyPubSize += hpSize
-						topicPubsizeTouched[item.Name] = true
-					}
+			item.TotalChannelDepth += topicStat.TotalChannelDepth
+			item.MessageCount += topicStat.MessageCount
+			if nodeMsgHistoryMap != nil && !ok {
+				hpSize, ok := nodeMsgHistoryMap[item.Name]
+				if ok {
+					item.HourlyPubSize = hpSize
 				}
 			}
 		}
+
 		for _, item := range topicMap {
 			rank = append(rank, item)
 		}
 	case "channel-timeout":
 		fallthrough
 	case "channel-requeue":
-		rankStatsMap := make(map[string]*rankStats)
-		for _, channelStatMap := range dcChannelStatMap {
-			for key, channelStat := range channelStatMap {
-				if item, ok := rankStatsMap[key]; !ok {
-					rankStatsMap[key] = &rankStats{
-						Name:         key,
-						RequeueCount: channelStat.RequeueCount,
-						TimeoutCount: channelStat.TimeoutCount,
-					}
-				} else {
-					item.RequeueCount += channelStat.RequeueCount;
-					item.TimeoutCount += channelStat.TimeoutCount;
-				}
-
+		channelStatMapDC := make(map[string]*clusterinfo.ChannelStats)
+		for _, channelStat := range channelStatMap {
+			key := channelStat.TopicName + "/" + channelStat.ChannelName
+			if _, exist := channelStatMapDC[key]; !exist {
+				channelStatMapDC[key] = channelStat
+			} else {
+				channelStatMapDC[key].Merge(channelStat)
 			}
 		}
-		for _, item := range rankStatsMap {
+		for _, channelStat := range channelStatMapDC {
+			item := &rankStats{
+				Name:         channelStat.TopicName + "/" + channelStat.ChannelName,
+				RequeueCount: channelStat.RequeueCount,
+				TimeoutCount: channelStat.TimeoutCount,
+			}
 			rank = append(rank, item)
 		}
+
 	}
 
 	//sort by filter
@@ -1507,6 +1532,7 @@ func (s *httpServer) statisticsHandler(w http.ResponseWriter, req *http.Request,
 	case "channel-requeue":
 		sort.Sort(ChannelByRequeue{rank})
 	}
+
 	maxLen := 0
 	if len(rank) < 10 {
 		maxLen = len(rank)
@@ -1520,7 +1546,7 @@ func (s *httpServer) statisticsHandler(w http.ResponseWriter, req *http.Request,
 		Message  string       `json:"message"`
 	}{
 		RankName: rankName,
-		Top10:   rank[:maxLen],
+		Top10:    rank[:maxLen],
 		Message:  maybeWarnMsg(messages),
 	}, nil
 }
@@ -1535,7 +1561,7 @@ func (s *httpServer) counterHandler(w http.ResponseWriter, req *http.Request, ps
 	var messages []string
 	stats := make(map[string]*counterStats)
 
-	producers, err := s.ci.GetProducers(s.ctx.nsqadmin.opts.NSQLookupdHTTPAddresses, s.ctx.nsqadmin.opts.NSQDHTTPAddresses)
+	producers, err := s.ci.GetProducers(s.ctx.nsqadmin.opts.NSQLookupdHTTPAddressesDC, s.ctx.nsqadmin.opts.NSQDHTTPAddresses)
 	if err != nil {
 		pe, ok := err.(clusterinfo.PartialErr)
 		if !ok {
@@ -1545,7 +1571,7 @@ func (s *httpServer) counterHandler(w http.ResponseWriter, req *http.Request, ps
 		s.ctx.nsqadmin.logf("WARNING: %s", err)
 		messages = append(messages, pe.Error())
 	}
-	_, dcChannelStats, err := s.ci.GetNSQDStats(producers, "", "", false)
+	_, channelStats, err := s.ci.GetNSQDStats(producers, "", "", false)
 	if err != nil {
 		pe, ok := err.(clusterinfo.PartialErr)
 		if !ok {
@@ -1556,21 +1582,19 @@ func (s *httpServer) counterHandler(w http.ResponseWriter, req *http.Request, ps
 		messages = append(messages, pe.Error())
 	}
 
-	for _, channelStats := range dcChannelStats {
-		for _, channelStats := range channelStats {
-			for _, hostChannelStats := range channelStats.NodeStats {
-				key := fmt.Sprintf("%s:%s:%s", channelStats.TopicName, channelStats.ChannelName, hostChannelStats.Node)
-				s, ok := stats[key]
-				if !ok {
-					s = &counterStats{
-						Node:        hostChannelStats.Node,
-						TopicName:   channelStats.TopicName,
-						ChannelName: channelStats.ChannelName,
-					}
-					stats[key] = s
+	for _, channelStats := range channelStats {
+		for _, hostChannelStats := range channelStats.NodeStats {
+			key := fmt.Sprintf("%s:%s:%s", channelStats.TopicName, channelStats.ChannelName, hostChannelStats.Node)
+			s, ok := stats[key]
+			if !ok {
+				s = &counterStats{
+					Node:        hostChannelStats.Node,
+					TopicName:   channelStats.TopicName,
+					ChannelName: channelStats.ChannelName,
 				}
-				s.MessageCount += hostChannelStats.MessageCount
+				stats[key] = s
 			}
+			s.MessageCount += hostChannelStats.MessageCount
 		}
 	}
 

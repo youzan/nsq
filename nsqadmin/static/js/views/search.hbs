@@ -43,20 +43,37 @@
 </div>
 
 <div class="row">
-  <div class="col-md-8">
-    {{#if request_msg}}
-    <div class="alert alert-info">
-        {{#eachInMap request_msg}}
-            <p>{{key}}</p>
-            <p><pre>{{value}}</pre></p>
-        {{/eachInMap}}
+    <div class="col-md-8">
+        {{#if request_msg}}
+            <div class="alert alert-info">
+                <p><pre>{{request_msg}}</pre></p>
+            </div>
+        {{else}}
+        <table class="table table-bordered table-condensed">
+        <tr>
+            <th>DC</th>
+            <th>request message</th>
+        </tr>
+            {{#eachInMap request_msg_dc}}
+             <tr>
+                <td>
+                    {{key}}
+                </td>
+                <td>
+                    <div class="alert alert-info">
+                    <p><pre>{{value}}</pre></p>
+                    </div>
+                </td>
+             </tr>
+            {{/eachInMap}}
+        </table>
+        {{/if}}
     </div>
-    {{/if}}
-  </div>
 </div>
 
 <div class="row">
     <div class="col-md-12">
+        {{#if dcnsqlookupd.length}}
         <table class="table table-condensed table-bordered">
             <tr>
                 <th>ID</th>
@@ -75,19 +92,41 @@
                 <td rowspan="{{dc.length}}">{{timestamp}}</td>
                 <td rowspan="{{dc.length}}">{{action}}</td>
                 <td>{{dc.[0]}}</td>
-                <td>{{getVal dc.[0] raw_msg_data}}</td>
+                <td>{{getVal dc.[0] raw_msg_data_dc}}</td>
             </tr>
             {{#each dc}}
                 {{#if @first}}
                 {{else}}
                     <tr>
                         <td>{{this}}</td>
-                        <td>{{getVal this ../../raw_msg_data}}</td>
+                        <td>{{getVal this ../../raw_msg_data_dc}}</td>
                     </tr>
                 {{/if}}
             {{/each}}
             {{/each}}
         </table>
+        {{else}}
+            <table class="table table-condensed table-bordered">
+                <tr>
+                    <th>ID</th>
+                    <th>TraceID</th>
+                    <th>Channel</th>
+                    <th>Timestamp</th>
+                    <th>Action</th>
+                    <th>RawData</th>
+                </tr>
+                {{#each messages}}
+                    <tr>
+                        <td>{{msgid}}</td>
+                        <td>{{traceid}}</td>
+                        <td>{{channel}}</td>
+                        <td>{{timestamp}}</td>
+                        <td>{{action}}</td>
+                        <td>{{raw_msg_data}}</td>
+                    </tr>
+                {{/each}}
+            </table>
+        {{/if}}
     </div>
 </div>
 

@@ -7,13 +7,14 @@
     </div>
 </div>
 
-{{#unless nsqlookupd.length}}
+{{#unless (or dcnsqlookupd.length nsqlookupd.length)}}
 <div class="alert alert-warning">
     <h4>Notice</h4> nsqadmin is not configured with nsqlookupd hosts
 </div>
 {{else}}
 <div class="row">
     <div class="col-md-4">
+        {{#if dcnsqlookupd.length}}
         <table class="table table-bordered table-condensed">
             <tr>
                 <th>DC</th>
@@ -48,6 +49,19 @@
             {{/each}}
             {{/each}}
         </table>
+        {{else}}
+        <table class="table table-bordered table-condensed">
+            <tr>
+                <th>nsqlookupd Host</th>
+            </tr>
+            {{#each nsqlookupd}}
+                <tr><td>{{this}} (configured)</td></tr>
+            {{/each}}
+            {{#each allnsqlookupds}}
+                <tr><td>{{this}}</td></tr>
+            {{/each}}
+        </table>
+        {{/if}}
     </div>
 </div>
 

@@ -75,11 +75,17 @@
         <div class="canHide" style="display: none;">
             <table class="table table-bordered table-condensed">
                 <tr>
-                    <th colspan="2" class="text-center">&nbsp;</th>
+                    {{#if dcnsqlookupd.length}}
+                        <th colspan="3" class="text-center">&nbsp;</th>
+                    {{else}}
+                        <th colspan="2" class="text-center">&nbsp;</th>
+                    {{/if}}
                     <th class="text-center" colspan="12">Message Consume Latency Distribution(pub~sub ack & pub~sub send)</th>
                 </tr>
                 <tr>
+                    {{#if dcnsqlookupd.length}}
                     <th>DC</th>
+                    {{/if}}
                     <th>NSQd Host</th>
                     <th>Partition</th>
                     <th>< 16ms</th>
@@ -97,11 +103,13 @@
                 </tr>
                 {{#each nodes}}
                     <tr>
+                        {{#if ../../dcnsqlookupd.length}}
                         <td rowspan="2">
-                            {{dc}}
+                        {{dc}}
                         </td>
+                        {{/if}}
                         <td rowspan="2">
-                            <button class="btn-link red tombstone-link" data-node="{{node}}" data-topic="{{../name}}" style="padding: 0 6px; border: 0;">✘</button>
+                        <button class="btn-link red tombstone-link" data-node="{{node}}" data-topic="{{../name}}" style="padding: 0 6px; border: 0;">✘</button>
                             {{#if show_broadcast_address}}
                                 {{hostname_port}} (<a class="link" href="/nodes/{{node}}">{{node}}</a>)
                             {{else}}
@@ -160,7 +168,11 @@
     <h4>Channel</h4>
     <table class="table table-bordered table-condensed">
         <tr>
+            {{#if dcnsqlookupd.length}}
             <th colspan="3" class="text-center">&nbsp;</th>
+            {{else}}
+            <th colspan="2" class="text-center">&nbsp;</th>
+            {{/if}}
             <th colspan="5" class="text-center">Message Queues</th>
             <th colspan="{{#if graph_active}}5{{else}}4{{/if}}" class="text-center">Statistics</th>
             {{#if e2e_processing_latency.percentiles.length}}
@@ -168,7 +180,9 @@
             {{/if}}
         </tr>
         <tr>
+            {{#if dcnsqlookupd.length}}
             <th>DC</th>
+            {{/if}}
             <th>NSQd Host</th>
             <th>Partition</th>
             <th>Depth</th>
@@ -187,7 +201,9 @@
         </tr>
         {{#each nodes}}
         <tr>
+            {{#if ../../dcnsqlookupd.length}}
             <td>{{dc}}</td>
+            {{/if}}
             <td>
                 {{#if show_broadcast_address}}
                 {{hostname_port}} (<a class="link" href="/nodes/{{node}}">{{node}}</a>)
@@ -242,7 +258,9 @@
         {{/each}}
         <tr class="info">
             <td>Total:</td>
+            {{#if dcnsqlookupd.length}}
             <td></td>
+            {{/if}}
             <td></td>
             <td>{{commafy depth}}</td>
             <td></td>
