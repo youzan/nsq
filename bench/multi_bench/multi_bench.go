@@ -289,6 +289,8 @@ func startSimpleTest(msg []byte, batch [][]byte) {
 	}
 	tmpList := make([]string, 0)
 	tmpList = append(tmpList, *lookupAddress)
+	tmpListDC := make([]clusterinfo.LookupdAddressDC, 0)
+	tmpListDC = append(tmpListDC, clusterinfo.LookupdAddressDC{"", *lookupAddress})
 	currentTopics, err := cluster.GetLookupdTopics(tmpList)
 	if err != nil {
 		log.Printf("failed : %v\n", err)
@@ -298,19 +300,19 @@ func startSimpleTest(msg []byte, batch [][]byte) {
 	if len(currentTopics) == 0 {
 		return
 	}
-	chs, err := cluster.GetLookupdTopicChannels(currentTopics[0], tmpList)
+	chs, err := cluster.GetLookupdTopicChannels(currentTopics[0], tmpListDC)
 	if err != nil {
 		log.Printf("failed : %v\n", err)
 	} else {
 		log.Printf("return: %v\n", chs)
 	}
-	allNodes, err := cluster.GetLookupdProducers(tmpList)
+	allNodes, err := cluster.GetLookupdProducers(tmpListDC)
 	if err != nil {
 		log.Printf("failed : %v\n", err)
 	} else {
 		log.Printf("return: %v\n", allNodes)
 	}
-	producers, partitionProducers, err := cluster.GetLookupdTopicProducers(currentTopics[0], tmpList)
+	producers, partitionProducers, err := cluster.GetLookupdTopicProducers(currentTopics[0], tmpListDC)
 
 	if err != nil {
 		log.Printf("failed : %v\n", err)
@@ -699,6 +701,9 @@ func startBenchLookup() {
 			cluster := clusterinfo.New(nil, http_api.NewClient(nil))
 			tmpList := make([]string, 0)
 			tmpList = append(tmpList, *lookupAddress)
+
+			tmpListDC := make([]clusterinfo.LookupdAddressDC, 0)
+			tmpListDC = append(tmpListDC, clusterinfo.LookupdAddressDC{"", *lookupAddress})
 			currentTopics, err := cluster.GetLookupdTopics(tmpList)
 			if err != nil {
 				log.Printf("failed : %v\n", err)
@@ -710,7 +715,7 @@ func startBenchLookup() {
 			for cnt > 0 {
 				cnt--
 				for _, t := range currentTopics {
-					_, _, err := cluster.GetLookupdTopicProducers(t, tmpList)
+					_, _, err := cluster.GetLookupdTopicProducers(t, tmpListDC)
 					if err != nil {
 						log.Printf("failed : %v\n", err)
 					}
