@@ -86,11 +86,12 @@ type TraceLogData struct {
 	Extra    string `json:"extra"`
 	Extra1   string `json:"extra1"`
 	TraceLogItemInfo
-	RawMsgData string `json:"raw_msg_data"`
+	RawMsgData map[string]string `json:"raw_msg_data"`
 }
 type TraceLogDataForJs struct {
 	TraceLogItemInfoForJs
-	RawMsgData string `json:"raw_msg_data"`
+	RawMsgData map[string]string `json:"raw_msg_data"`
+
 }
 
 type TraceLog struct {

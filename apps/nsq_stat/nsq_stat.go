@@ -32,6 +32,10 @@ var (
 	lookupdHTTPAddrs = app.StringArray{}
 )
 
+const (
+	DUMMY_DC = "dummy_dc"
+)
+
 type numValue struct {
 	isSet bool
 	value int
@@ -64,7 +68,9 @@ func statLoop(interval time.Duration, topic string, channel string,
 		var err error
 
 		if len(lookupdHTTPAddrs) != 0 {
-			producers, _, err = ci.GetLookupdTopicProducers(topic, lookupdHTTPAddrs)
+			dummyDCLookupdHttpAddrs := make(map[string][]string)
+			dummyDCLookupdHttpAddrs[DUMMY_DC] = lookupdHTTPAddrs
+			producers, _, err = ci.GetLookupdTopicProducers(topic, dummyDCLookupdHttpAddrs)
 		} else {
 			producers, err = ci.GetNSQDTopicProducers(topic, nsqdHTTPAddrs)
 		}
@@ -77,7 +83,7 @@ func statLoop(interval time.Duration, topic string, channel string,
 			log.Fatalf("ERROR: failed to get nsqd stats - %s", err)
 		}
 
-		c, ok := allChannelStats[channel]
+		c, ok := allChannelStats[DUMMY_DC][channel]
 		if !ok {
 			log.Fatalf("ERROR: failed to find channel(%s) in stats metadata for topic(%s)", channel, topic)
 		}

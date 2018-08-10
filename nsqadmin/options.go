@@ -22,6 +22,8 @@ type Options struct {
 	NSQLookupdHTTPAddresses []string `flag:"lookupd-http-address" cfg:"nsqlookupd_http_addresses"`
 	NSQDHTTPAddresses       []string `flag:"nsqd-http-address" cfg:"nsqd_http_addresses"`
 
+	DCNSQLookupdHTTPAddresses []string `flag:"dc-lookupd-http-address" cfg:"dc_lookupd_http_addresses"`
+
 	HTTPClientTLSInsecureSkipVerify bool   `flag:"http-client-tls-insecure-skip-verify"`
 	HTTPClientTLSRootCAFile         string `flag:"http-client-tls-root-ca-file"`
 	HTTPClientTLSCert               string `flag:"http-client-tls-cert"`

@@ -27,6 +27,8 @@
         var STATSD_PREFIX = '{{.StatsdPrefix}}';
         var NSQLOOKUPD = [{{range .NSQLookupd}}'{{.}}',{{end}}];
         var ALLNSQLOOKUPDS = [{{range .AllNSQLookupds}}'{{.}}',{{end}}];
+        var DCNSQLOOKUPD = {{.DCNSQLookupd | dcLookupdList}};
+        var DCALLNSQLOOKUPDS = {{.DCAllNSQLookupds | dcLookupdList}};
         var AUTH_URL = '{{.AuthUrl}}';
         var LOGOUT_URL = '{{.LogoutUrl}}';
         var LOGIN        = {{if .Login}}true{{else}}false{{end}};

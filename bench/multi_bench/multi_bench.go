@@ -287,9 +287,10 @@ func startSimpleTest(msg []byte, batch [][]byte) {
 	} else {
 		log.Printf("get info: %v\n", ver)
 	}
-	tmpList := make([]string, 0)
-	tmpList = append(tmpList, *lookupAddress)
-	currentTopics, err := cluster.GetLookupdTopics(tmpList)
+	tmpListMap := make(map[string][]string)
+	tmpListMap["defaultDC"] = make([]string, 0)
+	tmpListMap["defaultDC"] = append(tmpListMap["defaultDC"], *lookupAddress)
+	currentTopics, err := cluster.GetLookupdTopics(tmpListMap["defaultDC"])
 	if err != nil {
 		log.Printf("failed : %v\n", err)
 	} else {
@@ -298,19 +299,19 @@ func startSimpleTest(msg []byte, batch [][]byte) {
 	if len(currentTopics) == 0 {
 		return
 	}
-	chs, err := cluster.GetLookupdTopicChannels(currentTopics[0], tmpList)
+	chs, err := cluster.GetLookupdTopicChannels(currentTopics[0], tmpListMap)
 	if err != nil {
 		log.Printf("failed : %v\n", err)
 	} else {
 		log.Printf("return: %v\n", chs)
 	}
-	allNodes, err := cluster.GetLookupdProducers(tmpList)
+	allNodes, err := cluster.GetLookupdProducers(tmpListMap["defaultDC"])
 	if err != nil {
 		log.Printf("failed : %v\n", err)
 	} else {
 		log.Printf("return: %v\n", allNodes)
 	}
-	producers, partitionProducers, err := cluster.GetLookupdTopicProducers(currentTopics[0], tmpList)
+	producers, partitionProducers, err := cluster.GetLookupdTopicProducers(currentTopics[0], tmpListMap)
 
 	if err != nil {
 		log.Printf("failed : %v\n", err)
@@ -697,9 +698,9 @@ func startBenchLookup() {
 		go func() {
 			defer wg.Done()
 			cluster := clusterinfo.New(nil, http_api.NewClient(nil))
-			tmpList := make([]string, 0)
-			tmpList = append(tmpList, *lookupAddress)
-			currentTopics, err := cluster.GetLookupdTopics(tmpList)
+			tmpListMap := make(map[string][]string)
+			tmpListMap["defaultDC"] = append(tmpListMap["defaultDC"], *lookupAddress)
+			currentTopics, err := cluster.GetLookupdTopics(tmpListMap["defaultDC"])
 			if err != nil {
 				log.Printf("failed : %v\n", err)
 				return
@@ -710,7 +711,7 @@ func startBenchLookup() {
 			for cnt > 0 {
 				cnt--
 				for _, t := range currentTopics {
-					_, _, err := cluster.GetLookupdTopicProducers(t, tmpList)
+					_, _, err := cluster.GetLookupdTopicProducers(t, tmpListMap)
 					if err != nil {
 						log.Printf("failed : %v\n", err)
 					}

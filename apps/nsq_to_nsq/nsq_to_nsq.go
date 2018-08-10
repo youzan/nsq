@@ -43,7 +43,6 @@ var (
 
 	lookupdHTTPAddrs    = app.StringArray{}
 	destNsqdTCPAddrs    = app.StringArray{}
-	destLookupdHTTPAddrs    = app.StringArray{}
 	whitelistJSONFields = app.StringArray{}
 
 	requireJSONField = flag.String("require-json-field", "", "for JSON messages: only pass messages that contain this field")
@@ -53,11 +52,8 @@ var (
 	maxBackoffDuration = flag.Duration("max-backoff-duration", 120*time.Second, "(deprecated) use --consumer-opt=max_backoff_duration,X")
 )
 
-const DESTINATION_LOOKUPD_ADDR = "destination-lookupd-address"
-
 func init() {
 	flag.Var(&destNsqdTCPAddrs, "destination-nsqd-tcp-address", "destination nsqd TCP address (may be given multiple times)")
-	flag.Var(&destLookupdHTTPAddrs, "destination-lookupd-http-address", "destination nsqlookupd HTTP address (may be given multiple times)")
 	flag.Var(&lookupdHTTPAddrs, "lookupd-http-address", "lookupd HTTP address (may be given multiple times)")
 
 	flag.Var(&whitelistJSONFields, "whitelist-json-field", "for JSON messages: pass this field (may be given multiple times)")
@@ -69,7 +65,6 @@ type PublishHandler struct {
 
 	addresses app.StringArray
 	producers map[string]*nsq.Producer
-	producerMgr *nsq.TopicProducerMgr
 	mode      int
 	hostPool  hostpool.HostPool
 	respChan  chan *nsq.ProducerTransaction
@@ -82,10 +77,6 @@ type PublishHandler struct {
 	timermetrics     *timer_metrics.TimerMetrics
 }
 
-func (ph *PublishHandler) IsTopicProducerMgrApplied() bool {
-	return ph.producerMgr != nil
-}
-
 func (ph *PublishHandler) responder() {
 	var msg *nsq.Message
 	var startTime time.Time
@@ -93,25 +84,19 @@ func (ph *PublishHandler) responder() {
 	var hostPoolResponse hostpool.HostPoolResponse
 
 	for t := range ph.respChan {
-		if !ph.IsTopicProducerMgrApplied() {
-			switch ph.mode {
-			case ModeRoundRobin:
-				msg = t.Args[0].(*nsq.Message)
-				startTime = t.Args[1].(time.Time)
-				hostPoolResponse = nil
-				address = t.Args[2].(string)
-			case ModeHostPool:
-				msg = t.Args[0].(*nsq.Message)
-				startTime = t.Args[1].(time.Time)
-				hostPoolResponse = t.Args[2].(hostpool.HostPoolResponse)
-				address = hostPoolResponse.Host()
-			}
-		} else {
+		switch ph.mode {
+		case ModeRoundRobin:
 			msg = t.Args[0].(*nsq.Message)
 			startTime = t.Args[1].(time.Time)
 			hostPoolResponse = nil
 			address = t.Args[2].(string)
+		case ModeHostPool:
+			msg = t.Args[0].(*nsq.Message)
+			startTime = t.Args[1].(time.Time)
+			hostPoolResponse = t.Args[2].(hostpool.HostPoolResponse)
+			address = hostPoolResponse.Host()
 		}
+
 		success := t.Error == nil
 
 		if hostPoolResponse != nil {
@@ -243,26 +228,21 @@ func (ph *PublishHandler) HandleMessage(m *nsq.Message) error {
 	}
 
 	startTime := time.Now()
-	if !ph.IsTopicProducerMgrApplied() {
-		switch ph.mode {
-		case ModeRoundRobin:
-			counter := atomic.AddUint64(&ph.counter, 1)
-			idx := counter % uint64(len(ph.addresses))
-			addr := ph.addresses[idx]
-			p := ph.producers[addr]
-			err = p.PublishAsync(*destTopic, msgBody, ph.respChan, m, startTime, addr)
-		case ModeHostPool:
-			hostPoolResponse := ph.hostPool.Get()
-			p := ph.producers[hostPoolResponse.Host()]
-			err = p.PublishAsync(*destTopic, msgBody, ph.respChan, m, startTime, hostPoolResponse)
-			if err != nil {
-				hostPoolResponse.Mark(err)
-			}
+
+	switch ph.mode {
+	case ModeRoundRobin:
+		counter := atomic.AddUint64(&ph.counter, 1)
+		idx := counter % uint64(len(ph.addresses))
+		addr := ph.addresses[idx]
+		p := ph.producers[addr]
+		err = p.PublishAsync(*destTopic, msgBody, ph.respChan, m, startTime, addr)
+	case ModeHostPool:
+		hostPoolResponse := ph.hostPool.Get()
+		p := ph.producers[hostPoolResponse.Host()]
+		err = p.PublishAsync(*destTopic, msgBody, ph.respChan, m, startTime, hostPoolResponse)
+		if err != nil {
+			hostPoolResponse.Mark(err)
 		}
-	} else {
-		ext := &nsq.MsgExt{}
-		pId, _ := strconv.Atoi(m.Partition)
-		err = ph.producerMgr.PublishAsyncWithPartitionId(*destTopic, pId, msgBody, ext, ph.respChan, m, startTime, DESTINATION_LOOKUPD_ADDR)
 	}
 
 	if err != nil {
@@ -324,8 +304,8 @@ func main() {
 		log.Fatal("--lookupd-http-address required")
 	}
 
-	if len(destNsqdTCPAddrs) == 0 && len(destLookupdHTTPAddrs) == 0 {
-		log.Fatal("--destination-nsqd-tcp-address or --destination-nsqlookupd-http-address required")
+	if len(destNsqdTCPAddrs) == 0 {
+		log.Fatal("--destination-nsqd-tcp-address required")
 	}
 
 	switch *mode {
@@ -357,25 +337,15 @@ func main() {
 	pCfg.UserAgent = defaultUA
 
 	producers := make(map[string]*nsq.Producer)
-	var topicProducerMgr *nsq.TopicProducerMgr
-	if len(destNsqdTCPAddrs) > 0 {
-		for _, addr := range destNsqdTCPAddrs {
-			producer, err := nsq.NewProducer(addr, pCfg)
-			if err != nil {
-				log.Fatalf("failed creating producer %s", err)
-			}
-			producers[addr] = producer
-		}
-	} else {
-		topicProducerMgr, err = nsq.NewTopicProducerMgr([]string{*destTopic}, pCfg)
+	for _, addr := range destNsqdTCPAddrs {
+		producer, err := nsq.NewProducer(addr, pCfg)
 		if err != nil {
 			log.Fatalf("failed creating producer %s", err)
 		}
-		topicProducerMgr.AddLookupdNodes(destLookupdHTTPAddrs)
+		producers[addr] = producer
 	}
 
 	perAddressStatus := make(map[string]*timer_metrics.TimerMetrics)
-
 	if len(destNsqdTCPAddrs) == 1 {
 		// disable since there is only one address
 		perAddressStatus[destNsqdTCPAddrs[0]] = timer_metrics.NewTimerMetrics(0, "")
@@ -386,12 +356,6 @@ func main() {
 		}
 	}
 
-	if len(destLookupdHTTPAddrs) > 0 {
-		perAddressStatus[DESTINATION_LOOKUPD_ADDR] = timer_metrics.NewTimerMetrics(*statusEvery,
-			fmt.Sprintf("[%s]:", DESTINATION_LOOKUPD_ADDR))
-
-	}
-
 	hostPool := hostpool.New(destNsqdTCPAddrs)
 	if *mode == "epsilon-greedy" {
 		hostPool = hostpool.NewEpsilonGreedy(destNsqdTCPAddrs, 0, &hostpool.LinearEpsilonValueCalculator{})
@@ -400,25 +364,15 @@ func main() {
 	handler := &PublishHandler{
 		addresses:        destNsqdTCPAddrs,
 		producers:        producers,
-		producerMgr:	  topicProducerMgr,
 		mode:             selectedMode,
 		hostPool:         hostPool,
 		respChan:         make(chan *nsq.ProducerTransaction, len(destNsqdTCPAddrs)),
 		perAddressStatus: perAddressStatus,
 		timermetrics:     timer_metrics.NewTimerMetrics(*statusEvery, "[aggregate]:"),
 	}
-
-	if !handler.IsTopicProducerMgrApplied() {
-		consumer.AddConcurrentHandlers(handler, len(destNsqdTCPAddrs))
-	} else {
-		consumer.AddHandler(handler)
-	}
+	consumer.AddConcurrentHandlers(handler, len(destNsqdTCPAddrs))
 
 	for i := 0; i < len(destNsqdTCPAddrs); i++ {
-		go handler.responder()
-	}
-
-	for i := 0; i < len(destLookupdHTTPAddrs); i++ {
 		go handler.responder()
 	}
 
