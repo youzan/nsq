@@ -1153,6 +1153,7 @@ func (s *httpServer) topicChannelClientAction(req *http.Request, topicName strin
 	var body struct {
 		Action    string `json:"action"`
 		Timestamp string `json:"timestamp"`
+
 	}
 	err := json.NewDecoder(req.Body).Decode(&body)
 	if err != nil {
@@ -1200,6 +1201,8 @@ func (s *httpServer) topicChannelAction(req *http.Request, topicName string, cha
 	var body struct {
 		Action    string `json:"action"`
 		Timestamp string `json:"timestamp"`
+		DC 	  string `json:"dc"`
+		MsgId	  string `json:"msgid"`
 	}
 	err := json.NewDecoder(req.Body).Decode(&body)
 	if err != nil {
@@ -1282,6 +1285,40 @@ func (s *httpServer) topicChannelAction(req *http.Request, topicName string, cha
 
 			s.notifyAdminActionWithUser("reset_channel", topicName, channelName, "", req)
 
+		}
+	case "finish":
+		if channelName != "" {
+			//parse dc
+			dc := body.DC
+			if len(s.ctx.nsqadmin.opts.DCNSQLookupdHTTPAddresses) > 0 && dc == "" {
+				return nil, http_api.Err{400, fmt.Sprintf("AT_LEAST_ONE_SC_NEEDED")}
+			}
+			//pick target dc
+			var targetLookupdAddrsDC []clusterinfo.LookupdAddressDC
+			if dc != "" {
+				for _, lookupdDC := range s.ctx.nsqadmin.opts.NSQLookupdHTTPAddressesDC {
+					if lookupdDC.DC == dc {
+						targetLookupdAddrsDC = append(targetLookupdAddrsDC, lookupdDC)
+					}
+				}
+			} else {
+				targetLookupdAddrsDC = s.ctx.nsqadmin.opts.NSQLookupdHTTPAddressesDC
+			}
+
+			//parse msgId
+			var msgid int64
+			msgid, err = strconv.ParseInt(body.MsgId, 10, 64)
+			if err != nil {
+				return nil, http_api.Err{400, fmt.Sprintf("INVALID_MSGID: %s", err)}
+			}
+			if msgid <= 0 {
+				return nil, http_api.Err{400, fmt.Sprintf("INVALID_MSGID")}
+			}
+			err = s.ci.FinishMessage(topicName, channelName, targetLookupdAddrsDC, msgid)
+			if err != nil && strings.Contains(err.Error(), "Message ID not in flight") {
+				return nil, http_api.Err{400, fmt.Sprintf("INVALID_MSGID: Message ID not in flight")}
+			}
+			s.notifyAdminActionWithUser("finish_message", topicName, channelName, "", req)
 		}
 	default:
 		return nil, http_api.Err{400, "INVALID_ACTION"}

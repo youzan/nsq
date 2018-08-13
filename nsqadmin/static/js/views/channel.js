@@ -89,6 +89,12 @@ var ChannelView = BaseView.extend({
                $.post(this.model.url(), JSON.stringify({'action': action, 'timestamp': '' + ts}))
                                    .done(function() { window.location.reload(true); })
                                    .fail(this.handleAJAXError.bind(this));
+            } else if(action === 'finish'){
+                var msgId = $('input[name=msgIdForFin]').val();
+                var dc_sel = $('select[name=dcSelect]').val();
+                $.post(this.model.url(), JSON.stringify({'action': action, 'dc': dc_sel, 'msgid': msgId}))
+                                    .done(function() { window.location.reload(true); })
+                                    .fail(this.handleAJAXError.bind(this));
             } else {
                 $.post(this.model.url(), JSON.stringify({'action': action}))
                     .done(function() { window.location.reload(true); })

@@ -59,7 +59,19 @@
     </div>
     <div class="col-md-2" title="reset consume offset to specified data time, if specified timestamp is earlier(later) than timestamp of first(last) available message in queue, offset will be set to the beginning(tail) of message queue.">
         <button class="btn btn-medium btn-primary resetbtn" data-action="reset" disabled=true>Reset Channel Offset</button>
-        <input id="resetChannelDatetime" type="text" name="resetTime" maxlength="10" size="30" placeholder="input timestamp in second" pattern="[1-9][0-9]{9}"/>
+        <input id="resetChannelDatetime" type="text" name="resetTime" maxlength="10" size="20" placeholder="input timestamp in second" pattern="[1-9][0-9]{9}"/>
+    </div>
+    <div class="col-md-2">
+        <button class="btn btn-medium btn-primary resetbtn" data-action="finish" >Finish Message</button>
+        <input type="number" name="msgIdForFin" maxlength="10" size="30" placeholder="input message internal ID" min="0"/>
+        {{#if dcnsqlookupd.length}}
+            <label>select DC:</label>
+            <select name="dcSelect">
+            {{#each dcnsqlookupd}}
+                <option value="{{dc}}">{{dc}}</option>
+            {{/each}}
+            </select>
+        {{/if}}
     </div>
 </div>
 

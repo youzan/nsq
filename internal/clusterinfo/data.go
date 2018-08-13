@@ -1326,6 +1326,11 @@ func (c *ClusterInfo) ResetChannel(topicName string, channelName string, lookupd
 	return c.actionHelperWithContent(topicName, lookupdHTTPAddrs, nil, "", "channel/setoffset", qs, resetBy)
 }
 
+func (c *ClusterInfo) FinishMessage(topicName string, channelName string, lookupdHTTPAddrs []LookupdAddressDC, msgid int64) error {
+	qs := fmt.Sprintf("topic=%s&channel=%s&msgid=%v", url.QueryEscape(topicName), url.QueryEscape(channelName), msgid)
+	return c.actionHelper(topicName, lookupdHTTPAddrs, nil, "", "message/finish", qs)
+}
+
 func (c *ClusterInfo) actionHelperWithContent(topicName string, lookupdHTTPAddrs []LookupdAddressDC, nsqdHTTPAddrs []string, deprecatedURI string, v1URI string, qs string, content string) error {
 	var errs []error
 
