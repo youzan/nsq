@@ -740,6 +740,7 @@ func (s *httpServer) searchMessageTrace(w http.ResponseWriter, req *http.Request
 		TraceID   string `json:"traceid"`
 		Hours     string `json:"hours"`
 		IsHashed  bool   `json:"ishashed"`
+		DC	  []string `json:"dc"`
 	}
 	err := json.NewDecoder(req.Body).Decode(&queryParam)
 	if err != nil {
@@ -749,7 +750,14 @@ func (s *httpServer) searchMessageTrace(w http.ResponseWriter, req *http.Request
 	if !protocol.IsValidTopicName(queryParam.Topic) {
 		return nil, http_api.Err{400, "INVALID_TOPIC"}
 	}
-
+	dcChecked := make(map[string]bool)
+	if len(queryParam.DC) > 0 {
+		for _, dc := range queryParam.DC {
+			dcChecked[dc] = true
+		}
+	} else if len(s.ctx.nsqadmin.opts.DCNSQLookupdHTTPAddresses) > 0 {
+		return nil, http_api.Err{400, "AT_LEAST_ONE_DC_NEEDED"}
+	}
 	filters := make(IndexFieldsQuery, 0)
 	reqParams, err := http_api.NewReqParams(req)
 	if err != nil {
@@ -848,7 +856,6 @@ func (s *httpServer) searchMessageTrace(w http.ResponseWriter, req *http.Request
 	sem := semaphore.NewWeighted(maxWeight)
 	for index, m := range resultList.LogDataDtos {
 		idx := index
-		resultList.LogDataDtos[idx].RawMsgDataDC = make(map[string]string)
 		items := make([]TraceLogItemInfo, 0)
 		extraJsonStr, _ := strconv.Unquote(m.Extra)
 		err := json.Unmarshal([]byte(extraJsonStr), &items)
@@ -874,12 +881,30 @@ func (s *httpServer) searchMessageTrace(w http.ResponseWriter, req *http.Request
 			s.ctx.nsqadmin.logf("partition producer not found: %v", pid)
 			continue
 		}
+
+		//check dc from trace message host
+		dcPrefix := strings.SplitN(m.HostName, "-", 2)[0]
+		if _, exist := dcChecked[dcPrefix]; len(dcChecked) > 0 && !exist {
+			//set msg id to 0 to prevent adding to logDataFilterEmpty after current loop
+			resultList.LogDataDtos[idx].TraceLogItemInfo.MsgID = 0
+			continue
+		}
+
 		if int64(item.MsgID) == requestMsgID {
 			needGetRequestMsg = false
 		}
-		producersDC := partitionProducers[strconv.Itoa(pid)]
-		hasMultiDC := len(producersDC) > 1
 
+		//assign dc to search result
+		producersDC := partitionProducers[strconv.Itoa(pid)]
+		var producersMsgBelong *clusterinfo.Producer
+		for pIdx, p := range producersDC {
+			if p.BroadcastAddress == m.HostIp {
+				resultList.LogDataDtos[idx].DC = p.DC
+				s.ctx.nsqadmin.logf("pass DC %v to msg: %v", p.DC, m.ID)
+				producersMsgBelong = producersDC[pIdx]
+				break
+			}
+		}
 
 		if err := sem.Acquire(ctx, 1); err != nil {
 			s.ctx.nsqadmin.logf("ERROR: fail to acquire signal - %v", err)
@@ -889,17 +914,11 @@ func (s *httpServer) searchMessageTrace(w http.ResponseWriter, req *http.Request
 
 		go func() {
 			defer sem.Release(int64(1))
-			for _, producer := range producersDC {
-				msgBody, _, err := s.ci.GetNSQDMessageByID(*producer, item.Topic, strconv.Itoa(pid), int64(item.MsgID))
-				if err != nil {
-					s.ctx.nsqadmin.logf("get msg %v data failed : %v", item, err)
-					continue
-				}
-				if hasMultiDC {
-					resultList.LogDataDtos[idx].RawMsgDataDC[producer.DC] = msgBody
-				} else {
-					resultList.LogDataDtos[idx].RawMsgData = msgBody
-				}
+			msgBody, _, err := s.ci.GetNSQDMessageByID(*producersMsgBelong, item.Topic, strconv.Itoa(pid), int64(item.MsgID))
+			if err != nil {
+				s.ctx.nsqadmin.logf("get msg %v data failed : %v", item, err)
+			} else {
+				resultList.LogDataDtos[idx].RawMsgData = msgBody
 			}
 		}()
 	}
@@ -924,7 +943,7 @@ func (s *httpServer) searchMessageTrace(w http.ResponseWriter, req *http.Request
 		var jsv TraceLogDataForJs
 		jsv.TraceLogItemInfoForJs = v.ToJsJson()
 		jsv.RawMsgData = v.RawMsgData
-		jsv.RawMsgDataDC = v.RawMsgDataDC
+		jsv.DC = v.DC
 		logDataForJs = append(logDataForJs, jsv)
 	}
 	//s.ctx.nsqadmin.logf("sorted msg trace data : %v", logDataFilterEmpty)
@@ -939,6 +958,10 @@ func (s *httpServer) searchMessageTrace(w http.ResponseWriter, req *http.Request
 			producersDC := partitionProducers[strconv.Itoa(pid)]
 			hasMultiDC := len(producersDC) > 1
 			for _, producer := range producersDC {
+				if _, exist := dcChecked[producer.DC]; len(dcChecked) > 0 && !exist {
+					continue
+				}
+
 				msgBody, _, err := s.ci.GetNSQDMessageByID(*producer, topicName, strconv.Itoa(pid), requestMsgID)
 				if err != nil {
 					s.ctx.nsqadmin.logf("get msg %v data failed : %v", requestMsgID, err)

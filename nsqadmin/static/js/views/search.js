@@ -28,6 +28,12 @@ var SearchView = BaseView.extend({
         var traceid = $(e.target.form.elements['traceid']).val();
         var hours = $(e.target.form.elements['hours']).val();
         var ishashed = $(e.target.form.elements['hashed']).is(':checked');
+        var dc_all = _.filter($(e.target.form.elements['dc_checked']), function(cb){
+                                return $(cb).is(':checked')
+                        });
+        var dc_checked = _.map($(dc_all), function(c){
+                        return $(c).val()
+        })
         $.ajax(AppState.url('/search/messages'), {
                 method: "POST",
                 data:JSON.stringify({
@@ -37,17 +43,12 @@ var SearchView = BaseView.extend({
                     'msgid': msgid,
                     'traceid': traceid,
                     'ishashed': ishashed,
-                    'hours': hours
+                    'hours': hours,
+                    'dc': dc_checked
                 }),
                 timeout: 60000
             })
             .done(function(data) {
-                data['logDataDtos'] = _.map(data['logDataDtos'], function(msg){
-                    if(msg['raw_msg_data_dc'] != null) {
-                        msg['dc'] = Object.keys(msg['raw_msg_data_dc']);
-                    }
-                    return msg;
-                });
                 this.template = require('./search.hbs');
                 this.render({
                     'messages': data['logDataDtos'],

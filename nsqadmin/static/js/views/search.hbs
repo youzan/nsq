@@ -34,7 +34,15 @@
           <input type="text" class="form-control" name="traceid" style="width:250px;" placeholder="Trace id for tracing">
           <input type="checkbox" name="hashed" value="" checked="checked">Is Hashed TraceID</p>
         </div>
-            <button class="btn btn-default" >Search/Trace</button>
+        {{#if dcnsqlookupd.length}}
+        <div class="form-group">
+            <label>DC</label></p>
+            {{#each dcnsqlookupd}}
+                <input type="checkbox" name="dc_checked" value="{{dc}}" checked>{{dc}}
+            {{/each}}
+        </div>
+        {{/if}}
+        <button class="btn btn-default" >Search/Trace</button>
     </form>
     <div id="loadingmessage" style="display:none">
       <p class="bg-warning">Searching...
@@ -49,84 +57,60 @@
                 <p><pre>{{request_msg}}</pre></p>
             </div>
         {{else}}
-        <table class="table table-bordered table-condensed">
-        <tr>
-            <th>DC</th>
-            <th>request message</th>
-        </tr>
-            {{#eachInMap request_msg_dc}}
-             <tr>
-                <td>
-                    {{key}}
-                </td>
-                <td>
-                    <div class="alert alert-info">
-                    <p><pre>{{value}}</pre></p>
-                    </div>
-                </td>
-             </tr>
-            {{/eachInMap}}
-        </table>
+            <table class="table table-bordered table-condensed">
+            {{#if request_msg_dc}}
+                <tr>
+                    <th>DC</th>
+                    <th>request message</th>
+                </tr>
+            {{/if}}
+                {{#eachInMap request_msg_dc}}
+                 <tr>
+                    <td>
+                        {{key}}
+                    </td>
+                    <td>
+                        <div class="alert alert-info">
+                        <p><pre>{{value}}</pre></p>
+                        </div>
+                    </td>
+                 </tr>
+                {{/eachInMap}}
+            </table>
         {{/if}}
     </div>
 </div>
 
 <div class="row">
     <div class="col-md-12">
-        {{#if dcnsqlookupd.length}}
         <table class="table table-condensed table-bordered">
+            {{#if messages.length}}
             <tr>
+                {{#if dcnsqlookupd}}
+                <th>DC</th>
+                {{/if}}
                 <th>ID</th>
                 <th>TraceID</th>
                 <th>Channel</th>
                 <th>Timestamp</th>
                 <th>Action</th>
-                <th>DC</th>
                 <th>RawData</th>
             </tr>
+            {{/if}}
             {{#each messages}}
-            <tr>
-                <td rowspan="{{dc.length}}">{{msgid}}</td>
-                <td rowspan="{{dc.length}}">{{traceid}}</td>
-                <td rowspan="{{dc.length}}">{{channel}}</td>
-                <td rowspan="{{dc.length}}">{{timestamp}}</td>
-                <td rowspan="{{dc.length}}">{{action}}</td>
-                <td>{{dc.[0]}}</td>
-                <td>{{getVal dc.[0] raw_msg_data_dc}}</td>
-            </tr>
-            {{#each dc}}
-                {{#if @first}}
-                {{else}}
-                    <tr>
-                        <td>{{this}}</td>
-                        <td>{{getVal this ../../raw_msg_data_dc}}</td>
-                    </tr>
-                {{/if}}
-            {{/each}}
+                <tr>
+                    {{#if dcnsqlookupd}}
+                    <td>{{dc}}</td>
+                    {{/if}}
+                    <td>{{msgid}}</td>
+                    <td>{{traceid}}</td>
+                    <td>{{channel}}</td>
+                    <td>{{timestamp}}</td>
+                    <td>{{action}}</td>
+                    <td>{{raw_msg_data}}</td>
+                </tr>
             {{/each}}
         </table>
-        {{else}}
-            <table class="table table-condensed table-bordered">
-                <tr>
-                    <th>ID</th>
-                    <th>TraceID</th>
-                    <th>Channel</th>
-                    <th>Timestamp</th>
-                    <th>Action</th>
-                    <th>RawData</th>
-                </tr>
-                {{#each messages}}
-                    <tr>
-                        <td>{{msgid}}</td>
-                        <td>{{traceid}}</td>
-                        <td>{{channel}}</td>
-                        <td>{{timestamp}}</td>
-                        <td>{{action}}</td>
-                        <td>{{raw_msg_data}}</td>
-                    </tr>
-                {{/each}}
-            </table>
-        {{/if}}
     </div>
 </div>
 
