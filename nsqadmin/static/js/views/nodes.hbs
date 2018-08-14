@@ -2,9 +2,20 @@
 {{> error}}
 
 <div class="row">
+    {{#if dcnsqlookupd.length}}
+    <div class="col-md-12">
+        <h2>Cluster Status</h2>
+        <div>
+            {{#each clusters}}
+                <h3>{{dc}} {{#if stable}}<a class="label label-primary">Stable</a> {{else}}<a class="label label-warning">Not Stable</a> {{/if}}</h3>
+            {{/each}}
+        </div>
+    </div>
+    {{else}}
     <div class="col-md-12">
         <h2>Cluster Status {{#if stable}}<a class="label label-primary">Stable</a> {{else}}<a class="label label-warning">Not Stable</a> {{/if}}</h2>
     </div>
+    {{/if}}
 </div>
 
 <div class="row">
@@ -17,6 +28,9 @@
     <div class="col-md-12">
         <table class="table table-condensed table-bordered">
             <tr>
+                {{#if dcnsqlookupd.length}}
+                <th>DC</th>
+                {{/if}}
                 <th>Hostname</th>
                 <th>Broadcast Address</th>
                 <th>TCP Port</th>
@@ -29,6 +43,9 @@
             </tr>
             {{#each collection}}
             <tr {{#if out_of_date}}class="warning"{{/if}}>
+                {{#if ../dcnsqlookupd.length}}
+                <td>{{dc}}</td>
+                {{/if}}
                 <td>{{hostname}}</td>
                 <td><a class="link" href="/nodes/{{broadcast_address}}:{{http_port}}">{{broadcast_address}}</a></td>
                 <td>{{tcp_port}}</td>

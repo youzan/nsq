@@ -68,6 +68,7 @@ func (tl TraceLogItemInfo) ToJsJson() TraceLogItemInfoForJs {
 }
 
 type TraceLogItemInfoForJs struct {
+	DC	  string `json:"dc"`
 	MsgID     string `json:"msgid"`
 	TraceID   string `json:"traceid"`
 	Topic     string `json:"topic"`
@@ -87,6 +88,8 @@ type TraceLogData struct {
 	Extra1   string `json:"extra1"`
 	TraceLogItemInfo
 	RawMsgData string `json:"raw_msg_data"`
+	DC	string	`json:"dc"`
+	RawMsgDataDC map[string]string `json:"raw_msg_data_dc"`
 }
 type TraceLogDataForJs struct {
 	TraceLogItemInfoForJs

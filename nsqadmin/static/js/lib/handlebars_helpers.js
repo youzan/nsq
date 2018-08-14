@@ -293,3 +293,17 @@ Handlebars.registerHelper('rate', function(typ, node, ns1, ns2) {
 
 Handlebars.registerPartial('error', require('../views/error.hbs'));
 Handlebars.registerPartial('warning', require('../views/warning.hbs'));
+
+Handlebars.registerHelper( 'eachInMap', function ( map, block ) {
+   var out = '';
+   if(map) {
+    Object.keys( map ).map(function( prop ) {
+        out += block.fn( {key: prop, value: map[ prop ]} );
+    });
+   }
+   return out;
+} );
+
+Handlebars.registerHelper( 'getVal', function (key, map) {
+   return map[key];
+} );

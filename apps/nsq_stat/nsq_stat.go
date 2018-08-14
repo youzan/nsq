@@ -56,7 +56,7 @@ func init() {
 }
 
 func statLoop(interval time.Duration, topic string, channel string,
-	nsqdTCPAddrs []string, lookupdHTTPAddrs []string) {
+nsqdTCPAddrs []string, lookupdHTTPAddrs []clusterinfo.LookupdAddressDC) {
 	ci := clusterinfo.New(nil, http_api.NewClient(nil))
 	var o *clusterinfo.ChannelStats
 	for i := 0; !countNum.isSet || countNum.value >= i; i++ {
@@ -168,10 +168,18 @@ func main() {
 		log.Fatalf("--lookupd-http-address error - %s", err)
 	}
 
+	//build lookupdHTTPAddrsDC
+	var lookupdHTTPAddrsDC []clusterinfo.LookupdAddressDC
+	if len(lookupdHTTPAddrs) > 0 {
+		for _, lookupdHTTPAddr := range lookupdHTTPAddrs {
+			lookupdHTTPAddrsDC = append(lookupdHTTPAddrsDC, clusterinfo.LookupdAddressDC{"", lookupdHTTPAddr})
+		}
+	}
+
 	termChan := make(chan os.Signal, 1)
 	signal.Notify(termChan, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM)
 
-	go statLoop(intvl, *topic, *channel, nsqdHTTPAddrs, lookupdHTTPAddrs)
+	go statLoop(intvl, *topic, *channel, nsqdHTTPAddrs, lookupdHTTPAddrsDC)
 
 	<-termChan
 }

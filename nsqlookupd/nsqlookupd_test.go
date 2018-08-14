@@ -405,7 +405,9 @@ func TestInactiveNodes(t *testing.T) {
 	tcpAddr, httpAddr, nsqlookupd := mustStartLookupd(opts)
 	defer nsqlookupd.Exit()
 
-	lookupdHTTPAddrs := []string{fmt.Sprintf("%s", httpAddr)}
+	lookupdHTTPAddrs := []clusterinfo.LookupdAddressDC{
+		{DC: "", Addr: fmt.Sprintf("%s", httpAddr),},
+	}
 
 	topicName := "inactive_nodes"
 
@@ -438,8 +440,9 @@ func TestTombstonedNodes(t *testing.T) {
 	tcpAddr, httpAddr, nsqlookupd := mustStartLookupd(opts)
 	defer nsqlookupd.Exit()
 
-	lookupdHTTPAddrs := []string{fmt.Sprintf("%s", httpAddr)}
-
+	lookupdHTTPAddrs := []clusterinfo.LookupdAddressDC{
+		{DC: "", Addr: fmt.Sprintf("%s", httpAddr),},
+	}
 	topicName := "inactive_nodes"
 
 	conn := mustConnectLookupd(t, tcpAddr)
@@ -639,7 +642,9 @@ func TestTombstonedOldNodes(t *testing.T) {
 	tcpAddr, httpAddr, nsqlookupd := mustStartLookupd(opts)
 	defer nsqlookupd.Exit()
 
-	lookupdHTTPAddrs := []string{fmt.Sprintf("%s", httpAddr)}
+	lookupdHTTPAddrs := []clusterinfo.LookupdAddressDC{
+		{DC: "", Addr: fmt.Sprintf("%s", httpAddr),},
+	}
 
 	topicName := "inactive_nodes"
 
