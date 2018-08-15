@@ -91,8 +91,8 @@ var ChannelView = BaseView.extend({
                                    .fail(this.handleAJAXError.bind(this));
             } else if(action === 'finish'){
                 var msgId = $('input[name=msgIdForFin]').val();
-                var dc_sel = $('select[name=dcSelect]').val();
-                $.post(this.model.url(), JSON.stringify({'action': action, 'dc': dc_sel, 'msgid': msgId}))
+                var nodePar_sel = $('select[name=nodeParSelect]').val();
+                $.post(this.model.adminUrl(), JSON.stringify({'action': action, 'nodePartition': nodePar_sel, 'msgid': msgId}))
                                     .done(function() { window.location.reload(true); })
                                     .fail(this.handleAJAXError.bind(this));
             } else {

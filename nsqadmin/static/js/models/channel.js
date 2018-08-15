@@ -16,6 +16,12 @@ var Channel = Backbone.Model.extend({
             encodeURIComponent(this.get('name')));
     },
 
+    adminUrl: function() {
+        return AppState.url('/topics/' +
+                    encodeURIComponent(this.get('topic')) + '/' +
+                    encodeURIComponent(this.get('name'))) + '/admin';
+    },
+
     parse: function(response) {
         response['nodes'] = _.map(response['nodes'] || [], function(node) {
             var nodeParts = node['node'].split(':');
