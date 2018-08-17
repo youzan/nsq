@@ -1326,6 +1326,37 @@ func (c *ClusterInfo) ResetChannel(topicName string, channelName string, lookupd
 	return c.actionHelperWithContent(topicName, lookupdHTTPAddrs, nil, "", "channel/setoffset", qs, resetBy)
 }
 
+func (c *ClusterInfo) FinishMessage(topicName string, channelName string, node string, partition int, msgid int64) error {
+	qs := fmt.Sprintf("topic=%s&channel=%s&msgid=%v&partition=%v", url.QueryEscape(topicName), url.QueryEscape(channelName), msgid, partition)
+	return c.actionHelperWithNSQdNode(topicName, []string{node}, "message/finish", qs)
+}
+
+func (c *ClusterInfo) actionHelperWithNSQdNode(topicName string, nsqdHTTPAddrs []string, URI string, qs string) error {
+	var errs []error
+
+	producers, err := c.GetNSQDProducers(nsqdHTTPAddrs)
+	if err != nil {
+		pe, ok := err.(PartialErr)
+		if !ok {
+			return err
+		}
+		errs = append(errs, pe.Errors()...)
+	}
+	err = c.versionPivotProducers(producers, "", URI, qs)
+	if err != nil {
+		pe, ok := err.(PartialErr)
+		if !ok {
+			return err
+		}
+		errs = append(errs, pe.Errors()...)
+	}
+
+	if len(errs) > 0 {
+		return ErrList(errs)
+	}
+	return nil
+}
+
 func (c *ClusterInfo) actionHelperWithContent(topicName string, lookupdHTTPAddrs []LookupdAddressDC, nsqdHTTPAddrs []string, deprecatedURI string, v1URI string, qs string, content string) error {
 	var errs []error
 

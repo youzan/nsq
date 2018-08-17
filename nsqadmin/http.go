@@ -107,6 +107,7 @@ func NewHTTPServer(ctx *Context) *httpServer {
 	router.Handle("POST", "/api/topics", http_api.Decorate(s.createTopicChannelHandler, s.authCheck, log, http_api.V1))
 	router.Handle("POST", "/api/topics/:topic", http_api.Decorate(s.topicActionHandler, s.authCheck, log, http_api.V1))
 	router.Handle("POST", "/api/topics/:topic/:channel", http_api.Decorate(s.channelActionHandler, s.authCheck, log, http_api.V1))
+	router.Handle("POST", "/api/topics/:topic/:channel/admin", http_api.Decorate(s.channelAdminActionHandler, s.adminCheck, log, http_api.V1))
 	router.Handle("POST", "/api/topics/:topic/:channel/client", http_api.Decorate(s.channelClientActionHandler, s.authCheck, log, http_api.V1))
 	router.Handle("DELETE", "/api/nodes/:node", http_api.Decorate(s.tombstoneNodeForTopicHandler, s.adminCheck, log, http_api.V1))
 	router.Handle("DELETE", "/api/topics/:topic", http_api.Decorate(s.deleteTopicHandler, s.adminCheck, log, http_api.V1))
@@ -1153,6 +1154,7 @@ func (s *httpServer) topicChannelClientAction(req *http.Request, topicName strin
 	var body struct {
 		Action    string `json:"action"`
 		Timestamp string `json:"timestamp"`
+
 	}
 	err := json.NewDecoder(req.Body).Decode(&body)
 	if err != nil {
@@ -1194,13 +1196,78 @@ func (s *httpServer) channelActionHandler(w http.ResponseWriter, req *http.Reque
 	return s.topicChannelAction(req, topicName, channelName)
 }
 
+func (s *httpServer) channelAdminActionHandler(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {
+	topicName := ps.ByName("topic")
+	channelName := ps.ByName("channel")
+	return s.topicChannelAdminAction(req, topicName, channelName)
+}
+
+type ChannelActionRequest struct {
+	Action    string `json:"action"`
+	Timestamp string `json:"timestamp"`
+	Node 	  string `json:"node"`
+	Partition int `json:"partition"`
+	MsgId	  string `json:"msgid"`
+}
+
+func (s *httpServer) topicChannelAdminAction(req *http.Request, topicName string, channelName string) (interface{}, error) {
+	var messages []string
+
+	var body ChannelActionRequest
+	err := json.NewDecoder(req.Body).Decode(&body)
+	if err != nil {
+		return nil, http_api.Err{400, fmt.Sprintf("INVALID_REQUEST: %v", err)}
+	}
+
+	switch body.Action {
+	case "finish":
+		if channelName != "" {
+			//parse dc
+			node := body.Node
+			//parse node and partition
+			if node == "" {
+				return nil, http_api.Err{400, fmt.Sprintf("INVALID_NSQD_NODE")}
+			}
+			partition := body.Partition
+
+			//parse msgId
+			var msgid int64
+			msgid, err = strconv.ParseInt(body.MsgId, 10, 64)
+			if err != nil {
+				return nil, http_api.Err{400, fmt.Sprintf("INVALID_MSGID: %s", err)}
+			}
+			if msgid <= 0 {
+				return nil, http_api.Err{400, fmt.Sprintf("INVALID_MSGID")}
+			}
+			err = s.ci.FinishMessage(topicName, channelName, node, partition, msgid)
+			if err != nil && strings.Contains(err.Error(), "Message ID not in flight") {
+				return nil, http_api.Err{400, fmt.Sprintf("INVALID_MSGID: Message ID not in flight")}
+			}
+			s.notifyAdminActionWithUser("finish_message", topicName, channelName, node, req)
+		}
+	default:
+		return nil, http_api.Err{400, "INVALID_ACTION"}
+	}
+
+	if err != nil {
+		pe, ok := err.(clusterinfo.PartialErr)
+		if !ok {
+			s.ctx.nsqadmin.logf("ERROR: failed to %s topic/channel - %s", body.Action, err)
+			return nil, http_api.Err{502, fmt.Sprintf("UPSTREAM_ERROR: %s", err)}
+		}
+		s.ctx.nsqadmin.logf("WARNING: %s", err)
+		messages = append(messages, pe.Error())
+	}
+
+	return struct {
+		Message string `json:"message"`
+	}{maybeWarnMsg(messages)}, nil
+}
+
 func (s *httpServer) topicChannelAction(req *http.Request, topicName string, channelName string) (interface{}, error) {
 	var messages []string
 
-	var body struct {
-		Action    string `json:"action"`
-		Timestamp string `json:"timestamp"`
-	}
+	var body ChannelActionRequest
 	err := json.NewDecoder(req.Body).Decode(&body)
 	if err != nil {
 		return nil, http_api.Err{400, err.Error()}

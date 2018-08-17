@@ -120,6 +120,12 @@ var BaseView = Backbone.View.extend({
     handleViewError: function(jqXHR) {
         this.removeSubviews();
         this.$el.html(errorTemplate({'message': this.parseErrorMessage(jqXHR)}));
+    },
+
+    showError: function(errMsg) {
+        $('#warning, #error').hide();
+        $('#error .alert').text(JSON.stringify(errMsg));
+        $('#error').show();
     }
 });
 
