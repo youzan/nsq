@@ -69,9 +69,9 @@ var ChannelView = BaseView.extend({
         var partition = $(e.currentTarget).data('partition');
         var topic = this.model.get('topic');
         var callback = function(msgId) {
-                           if(msgId<=0) {
+                           if(msgId && msgId<=0) {
                                this.showError("Invalid message internal ID");
-                           } else {
+                           } else if(msgId) {
                                $.post(this.model.adminUrl(), JSON.stringify({'action': action, 'node': node, 'msgid': msgId, 'partition': partition}))
                                    .done(function() { window.location.reload(true); })
                                    .fail(this.handleAJAXError.bind(this));
