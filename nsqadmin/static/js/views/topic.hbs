@@ -50,7 +50,9 @@
     <table class="table table-bordered table-condensed">
         <tr>
             <th>Partition ID</th>
-            <th>DC</th>
+            {{#if dcnsqlookupd}}
+                <th>DC</th>
+            {{/if}}
             <th>ISR and Catchup Info</th>
             <th>Sync Status</th>
         </tr>
@@ -61,7 +63,9 @@
             {{else}}
             <th>N/A</th>
             {{/if}}
-            <td>{{dc}}</td>
+            {{#if ../dcnsqlookupd}}
+                <td>{{dc}}</td>
+            {{/if}}
             {{#if isr_stats.length}}
                 <td>{{isr_stats.[0].hostname}}(ID:{{isr_stats.[0].node_id}})</td>
                 <td>Synced</td>
@@ -74,7 +78,9 @@
             {{#if @first}}
             {{else}}
         <tr>
-            <td>{{../../dc}}</td>
+            {{#if ../../../dcnsqlookupd}}
+            <td>{{../../../dc}}</td>
+            {{/if}}
             <td>{{hostname}}(ID:{{node_id}})</td>
             <td>Synced</td>
         </tr>
