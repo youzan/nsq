@@ -1326,18 +1326,35 @@ func (c *ClusterInfo) ResetChannel(topicName string, channelName string, lookupd
 	return c.actionHelperWithContent(topicName, lookupdHTTPAddrs, nil, "", "channel/setoffset", qs, resetBy)
 }
 
-func (c *ClusterInfo) FinishMessage(topicName string, channelName string, node string, partiton int, lookupdHTTPAddrs []LookupdAddressDC, msgid int64) error {
-	qs := fmt.Sprintf("topic=%s&channel=%s&msgid=%v", url.QueryEscape(topicName), url.QueryEscape(channelName), msgid)
-	filter := func(producers Producers, pId int) Producers {
-		var pfs []*Producer
-		for idx, producer := range producers[:] {
-			if producer.HTTPAddress() == node && pId == partiton {
-				pfs = append(pfs, producers[idx])
-			}
+func (c *ClusterInfo) FinishMessage(topicName string, channelName string, node string, partition int, msgid int64) error {
+	qs := fmt.Sprintf("topic=%s&channel=%s&msgid=%v&partition=%v", url.QueryEscape(topicName), url.QueryEscape(channelName), msgid, partition)
+	return c.actionHelperWithNSQdNode(topicName, []string{node}, "message/finish", qs)
+}
+
+func (c *ClusterInfo) actionHelperWithNSQdNode(topicName string, nsqdHTTPAddrs []string, URI string, qs string) error {
+	var errs []error
+
+	producers, err := c.GetNSQDProducers(nsqdHTTPAddrs)
+	if err != nil {
+		pe, ok := err.(PartialErr)
+		if !ok {
+			return err
 		}
-		return Producers(pfs)
+		errs = append(errs, pe.Errors()...)
 	}
-	return c.actionHelperWithPartitionFilter(topicName, lookupdHTTPAddrs, nil, "", "message/finish", qs, filter)
+	err = c.versionPivotProducers(producers, "", URI, qs)
+	if err != nil {
+		pe, ok := err.(PartialErr)
+		if !ok {
+			return err
+		}
+		errs = append(errs, pe.Errors()...)
+	}
+
+	if len(errs) > 0 {
+		return ErrList(errs)
+	}
+	return nil
 }
 
 func (c *ClusterInfo) actionHelperWithContent(topicName string, lookupdHTTPAddrs []LookupdAddressDC, nsqdHTTPAddrs []string, deprecatedURI string, v1URI string, qs string, content string) error {
@@ -1372,7 +1389,7 @@ func (c *ClusterInfo) actionHelperWithContent(topicName string, lookupdHTTPAddrs
 	return nil
 }
 
-func (c *ClusterInfo) actionHelperWithPartitionFilter(topicName string, lookupdHTTPAddrs []LookupdAddressDC, nsqdHTTPAddrs []string, deprecatedURI string, v1URI string, qs string, filter func(producers Producers, partition int) Producers) error {
+func (c *ClusterInfo) actionHelper(topicName string, lookupdHTTPAddrs []LookupdAddressDC, nsqdHTTPAddrs []string, deprecatedURI string, v1URI string, qs string) error {
 	var errs []error
 
 	producers, partitionProducers, err := c.GetTopicProducers(topicName, lookupdHTTPAddrs, nsqdHTTPAddrs)
@@ -1395,13 +1412,8 @@ func (c *ClusterInfo) actionHelperWithPartitionFilter(topicName string, lookupdH
 		}
 	} else {
 		for pid, pp := range partitionProducers {
-			par, _ := strconv.Atoi(pid)
-			pf := filter(pp, par)
-			if len(pf[:]) == 0 {
-				continue
-			}
 			qsPart := qs + "&partition=" + pid
-			err = c.versionPivotProducers(pf, deprecatedURI, v1URI, qsPart)
+			err = c.versionPivotProducers(pp, deprecatedURI, v1URI, qsPart)
 			if err != nil {
 				pe, ok := err.(PartialErr)
 				if !ok {
@@ -1416,14 +1428,6 @@ func (c *ClusterInfo) actionHelperWithPartitionFilter(topicName string, lookupdH
 		return ErrList(errs)
 	}
 	return nil
-}
-
-func doNothingFilter (producers Producers, pId int) Producers {
-	return producers
-}
-
-func (c *ClusterInfo) actionHelper(topicName string, lookupdHTTPAddrs []LookupdAddressDC, nsqdHTTPAddrs []string, deprecatedURI string, v1URI string, qs string) error {
-	return c.actionHelperWithPartitionFilter(topicName, lookupdHTTPAddrs, nsqdHTTPAddrs, deprecatedURI, v1URI, qs, doNothingFilter)
 }
 
 func (c *ClusterInfo) GetProducers(lookupdHTTPAddrs []LookupdAddressDC, nsqdHTTPAddrs []string) (Producers, error) {
