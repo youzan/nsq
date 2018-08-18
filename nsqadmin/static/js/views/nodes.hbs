@@ -2,7 +2,6 @@
 {{> error}}
 
 <div class="row">
-    {{#if dcnsqlookupd.length}}
     <div class="col-md-12">
         <h2>Cluster Status</h2>
         <div>
@@ -11,11 +10,6 @@
             {{/each}}
         </div>
     </div>
-    {{else}}
-    <div class="col-md-12">
-        <h2>Cluster Status {{#if stable}}<a class="label label-primary">Stable</a> {{else}}<a class="label label-warning">Not Stable</a> {{/if}}</h2>
-    </div>
-    {{/if}}
 </div>
 
 <div class="row">
