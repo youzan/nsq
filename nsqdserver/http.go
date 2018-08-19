@@ -602,8 +602,8 @@ func (s *httpServer) doEmptyChannel(w http.ResponseWriter, req *http.Request, ps
 		if err != nil {
 			return nil, http_api.Err{500, err.Error()}
 		}
-		nsqd.NsqLogger().Logf("empty the channel to end offset: %v:%v, by client:%v",
-			queueOffset, cnt, req.RemoteAddr)
+		nsqd.NsqLogger().Logf("topic %v empty the channel %v to end offset: %v:%v, by client:%v",
+			topic.GetTopicName(), channelName, queueOffset, cnt, req.RemoteAddr)
 		err = s.ctx.EmptyChannelDelayedQueue(channel)
 		if err != nil {
 			nsqd.NsqLogger().Logf("empty the channel %v failed to empty delayed: %v, by client:%v",

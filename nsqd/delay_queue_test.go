@@ -1,8 +1,8 @@
 package nsqd
 
 import (
-	"encoding/binary"
 	"bytes"
+	"encoding/binary"
 	//"github.com/youzan/nsq/internal/levellogger"
 	"encoding/json"
 	"fmt"
@@ -74,7 +74,7 @@ func TestDelayQueuePutRawChannelDelayed(t *testing.T) {
 	defer dqRaw.Close()
 	cnt := 20
 	rawOffset := BackendOffset(0)
-	
+
 	tag := createJsonHeaderExtWithTag(t, "tagname")
 	extCnt := 0
 	// put raw data message and normal message
@@ -92,7 +92,7 @@ func TestDelayQueuePutRawChannelDelayed(t *testing.T) {
 		}
 
 		wsize := int32(0)
-		if i % 2 == 0 {
+		if i%2 == 0 {
 			_, _, wsize, _, err = dqRaw.PutDelayMessage(msg)
 			test.Nil(t, err)
 			test.Equal(t, true, dqRaw.IsChannelMessageDelayed(msg.DelayedOrigID, "test"))
@@ -147,7 +147,6 @@ func TestDelayQueuePutRawChannelDelayed(t *testing.T) {
 	}
 	test.Equal(t, 0, extCnt)
 }
-
 
 func createJsonHeaderExtWithTag(t *testing.T, tag string) *ext.JsonHeaderExt {
 	jsonHeader := make(map[string]interface{})
@@ -214,6 +213,60 @@ func TestDelayQueueWithExtPutChannelDelayed(t *testing.T) {
 	test.Nil(t, err)
 	_, err = os.Stat(path.Join(dq.dataPath, getDelayQueueDBName(dq.tname, dq.partition)))
 	test.NotNil(t, err)
+}
+
+func TestDelayQueueEmptyAll(t *testing.T) {
+	tmpDir, err := ioutil.TempDir("", fmt.Sprintf("nsq-test-delay-%d", time.Now().UnixNano()))
+	if err != nil {
+		panic(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	opts := NewOptions()
+	opts.Logger = newTestLogger(t)
+	opts.SyncEvery = 1
+	SetLogger(opts.Logger)
+
+	dq, err := NewDelayQueue("test", 0, tmpDir, opts, nil, false)
+	test.Nil(t, err)
+	defer dq.Close()
+	oldMaxBatch := txMaxBatch
+	txMaxBatch = 100
+	defer func() {
+		txMaxBatch = oldMaxBatch
+	}()
+	cnt := txMaxBatch + 2
+	for i := 0; i < cnt; i++ {
+		msg := NewMessage(0, []byte("body"))
+		msg.DelayedType = ChannelDelayed
+		msg.DelayedTs = time.Now().Add(time.Second).UnixNano()
+		msg.DelayedChannel = "test"
+		msg.DelayedOrigID = MessageID(i + 1)
+		_, _, _, _, err := dq.PutDelayMessage(msg)
+		test.Nil(t, err)
+		msg = NewMessage(0, []byte("body"))
+		msg.DelayedType = ChannelDelayed
+		msg.DelayedTs = time.Now().Add(time.Second).UnixNano()
+		msg.DelayedChannel = "test2"
+		msg.DelayedOrigID = MessageID(i + 1)
+		_, _, _, _, err = dq.PutDelayMessage(msg)
+		test.Nil(t, err)
+		time.Sleep(time.Millisecond * 100)
+	}
+
+	newCnt, _ := dq.GetCurrentDelayedCnt(ChannelDelayed, "test")
+	test.Equal(t, cnt, int(newCnt))
+	newCnt, _ = dq.GetCurrentDelayedCnt(ChannelDelayed, "test2")
+	test.Equal(t, cnt, int(newCnt))
+	dq.EmptyDelayedChannel("test2")
+
+	newCnt, _ = dq.GetCurrentDelayedCnt(ChannelDelayed, "test2")
+	test.Equal(t, 0, int(newCnt))
+	newCnt, _ = dq.GetCurrentDelayedCnt(ChannelDelayed, "test")
+	test.Equal(t, cnt, int(newCnt))
+	dq.EmptyDelayedChannel("test")
+	newCnt, _ = dq.GetCurrentDelayedCnt(ChannelDelayed, "test")
+	test.Equal(t, 0, int(newCnt))
 }
 
 func TestDelayQueueEmptyUntil(t *testing.T) {

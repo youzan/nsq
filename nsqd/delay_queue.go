@@ -24,6 +24,8 @@ var (
 	bucketDelayedMsgIndex = []byte("delayed_message_index")
 	bucketMeta            = []byte("meta")
 	CompactThreshold      = 1024 * 1024 * 16
+	errBucketKeyNotFound  = errors.New("bucket key not found")
+	txMaxBatch            = 10000
 )
 
 const (
@@ -204,7 +206,7 @@ func deleteBucketKey(dt int, ch string, ts int64, id MessageID, tx *bolt.Tx, isE
 		}
 	} else {
 		nsqLog.Infof("failed to get the deleting delayed message: %v", msgKey)
-		return errors.New("key not found")
+		return errBucketKeyNotFound
 	}
 	return nil
 }
@@ -815,34 +817,48 @@ func (q *DelayQueue) emptyDelayedUntil(dt int, peekTs int64, id MessageID, ch st
 	prefix := getDelayedMsgDBPrefixKey(dt, ch)
 	q.compactMutex.Lock()
 	defer q.compactMutex.Unlock()
-	err := db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketDelayedMsg)
-		c := b.Cursor()
-		for k, _ := c.Seek(prefix); k != nil && bytes.HasPrefix(k, prefix); k, _ = c.Next() {
-			_, delayedTs, delayedID, delayedCh, err := decodeDelayedMsgDBKey(k)
-			if err != nil {
-				nsqLog.Infof("decode key failed : %v, %v", k, err)
-				continue
-			}
-			if delayedTs > peekTs {
-				break
-			}
-			if delayedTs == peekTs && delayedID >= id {
-				break
-			}
-			if delayedCh != ch {
-				continue
-			}
+	// to avoid too much in batch, we should empty at most 10000 at each tx
+	for {
+		batched := 0
+		err := db.Update(func(tx *bolt.Tx) error {
+			b := tx.Bucket(bucketDelayedMsg)
+			c := b.Cursor()
+			for k, _ := c.Seek(prefix); k != nil && bytes.HasPrefix(k, prefix); k, _ = c.Next() {
+				if batched > txMaxBatch {
+					break
+				}
+				_, delayedTs, delayedID, delayedCh, err := decodeDelayedMsgDBKey(k)
+				if err != nil {
+					nsqLog.Infof("decode key failed : %v, %v", k, err)
+					continue
+				}
+				if delayedTs > peekTs {
+					break
+				}
+				if delayedTs == peekTs && delayedID >= id {
+					break
+				}
+				if delayedCh != ch {
+					continue
+				}
 
-			err = deleteBucketKey(dt, ch, delayedTs, delayedID, tx, q.IsExt())
-			if err != nil {
-				nsqLog.Infof("failed to delete : %v, %v", k, err)
+				err = deleteBucketKey(dt, ch, delayedTs, delayedID, tx, q.IsExt())
+				if err != nil {
+					if err != errBucketKeyNotFound {
+						nsqLog.Warningf("failed to delete : %v, %v", k, err)
+						return err
+					}
+				}
+				batched++
 			}
+			return nil
+		})
+		if err != nil {
+			return err
 		}
-		return nil
-	})
-	if err != nil {
-		return err
+		if batched == 0 {
+			break
+		}
 	}
 	if dt == ChannelDelayed && ch != "" {
 		q.oldestMutex.Lock()
@@ -862,30 +878,45 @@ func (q *DelayQueue) emptyAllDelayedType(dt int, ch string) error {
 	prefix := getDelayedMsgDBPrefixKey(dt, ch)
 	q.compactMutex.Lock()
 	defer q.compactMutex.Unlock()
-	err := db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketDelayedMsg)
-		c := b.Cursor()
-		for k, _ := c.Seek(prefix); k != nil && bytes.HasPrefix(k, prefix); k, _ = c.Next() {
-			delayedType, delayedTs, delayedID, delayedCh, err := decodeDelayedMsgDBKey(k)
-			if err != nil {
-				nsqLog.Infof("decode key failed : %v, %v", k, err)
-				continue
+	for {
+		batched := 0
+		err := db.Update(func(tx *bolt.Tx) error {
+			b := tx.Bucket(bucketDelayedMsg)
+			c := b.Cursor()
+			for k, _ := c.Seek(prefix); k != nil && bytes.HasPrefix(k, prefix); k, _ = c.Next() {
+				if batched > txMaxBatch {
+					break
+				}
+				delayedType, delayedTs, delayedID, delayedCh, err := decodeDelayedMsgDBKey(k)
+				if err != nil {
+					nsqLog.Infof("decode key failed : %v, %v", k, err)
+					continue
+				}
+				if delayedType != uint16(dt) {
+					continue
+				}
+				if ch != "" && delayedCh != ch {
+					continue
+				}
+				err = deleteBucketKey(int(delayedType), delayedCh, delayedTs, delayedID, tx, q.IsExt())
+				if err != nil {
+					if err != errBucketKeyNotFound {
+						nsqLog.Warningf("failed to delete : %v, %v", k, err)
+						return err
+					}
+				}
+				batched++
 			}
-			if delayedType != uint16(dt) {
-				continue
-			}
-			if ch != "" && delayedCh != ch {
-				continue
-			}
-			err = deleteBucketKey(int(delayedType), delayedCh, delayedTs, delayedID, tx, q.IsExt())
-			if err != nil {
-				nsqLog.Infof("failed to delete : %v, %v", k, err)
-			}
+			return nil
+		})
+		if err != nil {
+			return err
 		}
-		return nil
-	})
-	if err != nil {
-		return err
+		nsqLog.Infof("channel %v empty batched : %v",
+			ch, batched)
+		if batched == 0 {
+			break
+		}
 	}
 	if dt == ChannelDelayed && ch != "" {
 		// no message anymore, oldest as next hour
