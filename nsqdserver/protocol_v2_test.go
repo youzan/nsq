@@ -2453,6 +2453,92 @@ func TestTcpPub(t *testing.T) {
 	conn.Close()
 }
 
+func TestTcpMpubExt(t *testing.T) {
+	opts := nsqdNs.NewOptions()
+	opts.Logger = newTestLogger(t)
+	opts.LogLevel = 1
+	opts.MaxMsgSize = 100
+	opts.MaxBodySize = 1000
+	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
+	defer os.RemoveAll(opts.DataPath)
+	defer nsqdServer.Exit()
+
+	conn, err := mustConnectNSQD(tcpAddr)
+	test.Equal(t, err, nil)
+
+	topicName := "test_tcp_mpub_ext" + strconv.Itoa(int(time.Now().Unix()))
+	nsqd.GetTopicWithExt(topicName, 0).GetChannel("ch")
+
+	identify(t, conn, nil, frameTypeResponse)
+	var msgExtList []*nsq.MsgExt
+	var msgBody [][]byte
+	// PUB ext to non-ext topic
+	for i := 0; i < 10; i++ {
+		if i%2==0 {
+			msgExtList = append(msgExtList, &nsq.MsgExt{})
+			msgBody = append(msgBody, []byte("msg has no ext"))
+		} else {
+			msgExtList = append(msgExtList, &nsq.MsgExt{
+				TraceID: 123,
+				DispatchTag: "desiredTag",
+				Custom: map[string]string{"key1":"val1", "key2":"val2"},
+			})
+			msgBody = append(msgBody, []byte("msg has ext"))
+		}
+	}
+
+	cmd, err := nsq.MultiPublishWithJsonExt(topicName, "0", msgExtList, msgBody)
+	test.Nil(t, err)
+	cmd.WriteTo(conn)
+	resp, _ := nsq.ReadResponse(conn)
+	frameType, data, _ := nsq.UnpackResponse(resp)
+	t.Logf("frameType: %d, data: %s", frameType, data)
+	test.Equal(t, frameType, frameTypeResponse)
+	test.Equal(t, len(data), 2)
+	test.Equal(t, data[:], []byte("OK"))
+	conn.Close()
+
+	conn, err = mustConnectNSQD(tcpAddr)
+	identify(t, conn, map[string]interface{}{"extend_support":true}, frameTypeResponse)
+	test.Equal(t, err, nil)
+	sub(t, conn, topicName, "ch")
+	_, err = nsq.Ready(1).WriteTo(conn)
+	test.Equal(t, err, nil)
+	isOdd := false
+	for {
+		resp, _ := nsq.ReadResponse(conn)
+		frameType, data, err := nsq.UnpackResponse(resp)
+		test.Nil(t, err)
+		test.NotEqual(t, frameTypeError, frameType)
+		if frameType == frameTypeResponse {
+			t.Logf("got response data: %v", string(data))
+			continue
+		}
+		msgOut, err := nsq.DecodeMessageWithExt(data, true)
+		//test.Equal(t, 5, len(msgOut.Body))
+		if !isOdd {
+			test.Equal(t, uint8(ext.JSON_HEADER_EXT_VER), msgOut.ExtVer)
+			var extMap map[string]interface{}
+			err := json.Unmarshal(msgOut.ExtBytes, &extMap)
+			test.Nil(t, err)
+			test.Assert(t, len(extMap) == 0, "extMap size is not 0: %v", extMap)
+		} else {
+			test.Equal(t, uint8(ext.JSON_HEADER_EXT_VER), msgOut.ExtVer)
+			var extMap map[string]interface{}
+			err := json.Unmarshal(msgOut.ExtBytes, &extMap)
+			test.Nil(t, err)
+			test.Assert(t, extMap["key1"] == "val1", "ext json kv invalid %v", extMap["key1"])
+			test.Assert(t, extMap["key2"] == "val2", "ext json kv invalid %v", extMap["key2"])
+
+		}
+		isOdd = !isOdd
+		_, err = nsq.Finish(msgOut.ID).WriteTo(conn)
+		test.Nil(t, err)
+		break
+	}
+	conn.Close()
+}
+
 func TestTcpPubExtToNonExtTopic(t *testing.T) {
 	testTcpPubExtToNonExtTopic(t, true)
 }

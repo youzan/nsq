@@ -389,6 +389,8 @@ func (p *protocolV2) Exec(client *nsqd.ClientV2, params [][]byte) ([]byte, error
 		return p.MPUB(client, params)
 	case bytes.Equal(params[0], []byte("MPUB_TRACE")):
 		return p.MPUBTRACE(client, params)
+	case bytes.Equal(params[0], []byte("MPUB_EXT")):
+		return p.MPUBEXT(client, params)
 	case bytes.Equal(params[0], []byte("NOP")):
 		return p.NOP(client, params)
 	case bytes.Equal(params[0], []byte("TOUCH")):
@@ -1358,12 +1360,16 @@ func (p *protocolV2) PUBEXT(client *nsqd.ClientV2, params [][]byte) ([]byte, err
 	return p.internalPubExtAndTrace(client, params, true, false)
 }
 
+func (p *protocolV2) MPUBEXT(client *nsqd.ClientV2, params [][]byte) ([]byte, error) {
+	return p.internalMPUBEXTAndTrace(client, params, true, false)
+}
+
 func (p *protocolV2) MPUBTRACE(client *nsqd.ClientV2, params [][]byte) ([]byte, error) {
-	return p.internalMPUBAndTrace(client, params, true)
+	return p.internalMPUBEXTAndTrace(client, params, false, true)
 }
 
 func (p *protocolV2) MPUB(client *nsqd.ClientV2, params [][]byte) ([]byte, error) {
-	return p.internalMPUBAndTrace(client, params, false)
+	return p.internalMPUBEXTAndTrace(client, params, false, false)
 }
 
 func getTracedReponse(id nsqd.MessageID, traceID uint64, offset nsqd.BackendOffset, rawSize int32) ([]byte, error) {
@@ -1511,19 +1517,7 @@ func (p *protocolV2) internalPubExtAndTrace(client *nsqd.ClientV2, params [][]by
 	}
 	if p.ctx.checkForMasterWrite(topicName, partition) {
 		if !topic.IsExt() && extContent.ExtVersion() != ext.NO_EXT_VER {
-			canIgnoreExt := true
-			if jsonHeader != nil {
-				// if only internal header, we can ignore
-				m, _ := jsonHeader.Map()
-				for k, _ := range m {
-					// for future, if any internal header can not be ignored, we should check here
-					if !strings.HasPrefix(k, "##") {
-						canIgnoreExt = false
-						nsqd.NsqLogger().Debugf("custom ext content can not be ignored in topic: %v, %v", topicName, k)
-						break
-					}
-				}
-			}
+			canIgnoreExt := canIgnoreJsonHeader(topicName, jsonHeader)
 			if p.ctx.getOpts().AllowExtCompatible && canIgnoreExt {
 				extContent = ext.NewNoExt()
 				nsqd.NsqLogger().Debugf("ext content ignored in topic: %v", topicName)
@@ -1573,15 +1567,15 @@ func (p *protocolV2) internalPubExtAndTrace(client *nsqd.ClientV2, params [][]by
 	}
 }
 
-func (p *protocolV2) internalMPUBAndTrace(client *nsqd.ClientV2, params [][]byte, traceEnable bool) ([]byte, error) {
+func (p *protocolV2) internalMPUBEXTAndTrace(client *nsqd.ClientV2, params [][]byte, mpubExt bool, traceEnable bool) ([]byte, error) {
 	startPub := time.Now().UnixNano()
 	_, topic, preErr := p.preparePub(client, params, p.ctx.getOpts().MaxBodySize, true)
 	if preErr != nil {
 		return nil, preErr
 	}
 
-	messages, buffers, preErr := readMPUB(client.Reader, client.LenSlice, topic,
-		p.ctx.getOpts().MaxMsgSize, p.ctx.getOpts().MaxBodySize, traceEnable)
+	messages, buffers, preErr := readMPUBEXT(client.Reader, client.LenSlice, topic,
+		p.ctx.getOpts().MaxMsgSize, p.ctx.getOpts().MaxBodySize, traceEnable, mpubExt, p.ctx.getOpts().AllowExtCompatible)
 
 	defer func() {
 		for _, b := range buffers {
@@ -1657,6 +1651,11 @@ func (p *protocolV2) TOUCH(client *nsqd.ClientV2, params [][]byte) ([]byte, erro
 
 func readMPUB(r io.Reader, tmp []byte, topic *nsqd.Topic, maxMessageSize int64,
 	maxBodySize int64, traceEnable bool) ([]*nsqd.Message, []*bytes.Buffer, error) {
+	return readMPUBEXT(r, tmp, topic, maxMessageSize, maxBodySize, traceEnable, false, false)
+}
+
+func readMPUBEXT(r io.Reader, tmp []byte, topic *nsqd.Topic, maxMessageSize int64,
+	maxBodySize int64, traceEnable bool, mpubExt bool, allowExtCompatible bool) ([]*nsqd.Message, []*bytes.Buffer, error) {
 	numMessages, err := readLen(r, tmp)
 	if err != nil {
 		return nil, nil, protocol.NewFatalClientErr(err, "E_BAD_BODY", "MPUB failed to read message count")
@@ -1672,6 +1671,8 @@ func readMPUB(r io.Reader, tmp []byte, topic *nsqd.Topic, maxMessageSize int64,
 
 	messages := make([]*nsqd.Message, 0, numMessages)
 	buffers := make([]*bytes.Buffer, 0, numMessages)
+	topicName := topic.GetTopicName()
+	topicExt := topic.IsExt()
 	for i := int32(0); i < numMessages; i++ {
 		messageSize, err := readLen(r, tmp)
 		if err != nil {
@@ -1695,29 +1696,98 @@ func readMPUB(r io.Reader, tmp []byte, topic *nsqd.Topic, maxMessageSize int64,
 		if err != nil {
 			return nil, buffers, protocol.NewFatalClientErr(err, "E_BAD_MESSAGE", "MPUB failed to read message body")
 		}
+
+		//parse ext header or trace
 		msgBody := b.Bytes()[:messageSize]
 
 		traceID := uint64(0)
+		var extJsonBytes []byte
 		var realBody []byte
-		if traceEnable {
+		var extJsonLen uint16
+		var canIgnoreExt bool
+		if traceEnable && !mpubExt {
 			if messageSize <= nsqd.MsgTraceIDLength {
 				return nil, buffers, protocol.NewFatalClientErr(nil, "E_BAD_MESSAGE",
 					fmt.Sprintf("MPUB invalid message(%d) body size %d for tracing", i, messageSize))
 			}
 			traceID = binary.BigEndian.Uint64(msgBody[:nsqd.MsgTraceIDLength])
 			realBody = msgBody[nsqd.MsgTraceIDLength:]
+		} else if mpubExt {
+			//read two byte header length
+			extJsonLen = binary.BigEndian.Uint16(msgBody[:nsqd.MsgJsonHeaderLength])
+			//check json length, make sure it does not exceed slice length
+			if messageSize <= nsqd.MsgJsonHeaderLength+int32(extJsonLen) {
+				return nil, buffers, protocol.NewFatalClientErr(nil, "E_BAD_BODY",
+					fmt.Sprintf("invalid body size %d in ext json header content length", messageSize))
+			}
+			extJsonBytes = msgBody[nsqd.MsgJsonHeaderLength : nsqd.MsgJsonHeaderLength+extJsonLen]
+			//parse trace id, if there is a json ext
+			if extJsonLen > 0 {
+				jsonHeader, err := simpleJson.NewJson(extJsonBytes)
+				if err != nil {
+					return nil, buffers, protocol.NewClientErr(err, ext.E_INVALID_JSON_HEADER, "fail to parse json header")
+				}
+
+				//parse traceID, if there is any
+				traceIDJson, existInJsonHeader := jsonHeader.CheckGet(ext.TRACE_ID_KEY)
+				if existInJsonHeader {
+					traceIDStr, err := traceIDJson.String()
+					if err != nil {
+						return nil, buffers, protocol.NewClientErr(err, "INVALID_TRACE_ID", "passin trace id should be string")
+					}
+					traceID, err = strconv.ParseUint(traceIDStr, 10, 0)
+					if err != nil {
+						return nil, buffers, protocol.NewClientErr(err, "INVALID_TRACE_ID", "invalid trace id")
+					}
+				}
+				//check compatibility when topic does not support ext
+				if !topicExt {
+					canIgnoreExt = canIgnoreJsonHeader(topicName, jsonHeader)
+					if allowExtCompatible && canIgnoreExt {
+						nsqd.NsqLogger().Debugf("ext content ignored in topic: %v", topicName)
+					} else {
+						nsqd.NsqLogger().Infof("ext content not supported in topic: %v", topicName)
+						return nil, buffers, protocol.NewClientErr(nil, ext.E_EXT_NOT_SUPPORT,
+							fmt.Sprintf("ext content not supported in topic %v", topicName))
+					}
+				}
+
+			}
+			realBody = msgBody[nsqd.MsgJsonHeaderLength+extJsonLen:]
 		} else {
 			realBody = msgBody
 		}
 
 		var msg *nsqd.Message
-		msg = nsqd.NewMessage(0, realBody)
+		if mpubExt && extJsonLen > 0 && topicExt {
+			msg = nsqd.NewMessageWithExt(0, realBody, ext.JSON_HEADER_EXT_VER, extJsonBytes)
+		} else {
+			msg = nsqd.NewMessage(0, realBody)
+		}
 		msg.TraceID = traceID
 		messages = append(messages, msg)
 		topic.GetDetailStats().UpdateTopicMsgStats(int64(len(realBody)), 0)
 	}
 
 	return messages, buffers, nil
+}
+
+//return true when there are only preserved kv in json header, and false otherwise
+func canIgnoreJsonHeader(topicName string, jsonHeader *simpleJson.Json) bool {
+	canIgnoreExt := true
+	if jsonHeader != nil {
+		// if only internal header, we can ignore
+		m, _ := jsonHeader.Map()
+		for k, _ := range m {
+			// for future, if any internal header can not be ignored, we should check here
+			if !strings.HasPrefix(k, "##") {
+				canIgnoreExt = false
+				nsqd.NsqLogger().Debugf("custom ext content can not be ignored in topic: %v, %v", topicName, k)
+				break
+			}
+		}
+	}
+	return canIgnoreExt
 }
 
 // validate and cast the bytes on the wire to a message ID
