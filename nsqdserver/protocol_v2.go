@@ -1003,6 +1003,11 @@ func (p *protocolV2) internalSUB(client *nsqd.ClientV2, params [][]byte, enableT
 			return nil, protocol.NewFatalClientErr(nil, E_INVALID, ErrOrderChannelOnSampleRate.Error())
 		}
 		channel.SetOrdered(true)
+	} else {
+		if !topic.IsOrdered() && channel.IsOrdered() {
+			nsqd.NsqLogger().Infof("channel %v is in ordered state on non-order topic %v but with normal sub command, remote is : %v, should convert state to non-ordered with http api.",
+				channelName, topicName, client.String())
+		}
 	}
 
 	if startFrom != nil {
@@ -1175,7 +1180,12 @@ func (p *protocolV2) REQ(client *nsqd.ClientV2, params [][]byte) ([]byte, error)
 	topic, _ := p.ctx.getExistingTopic(client.Channel.GetTopicName(), client.Channel.GetTopicPart())
 	oldMsg, toEnd := client.Channel.ShouldRequeueToEnd(client.ID, client.String(),
 		msgID, timeoutDuration, true)
+	// the channel under non-order topic may also sub with ordered
+	isOrderedCh := client.Channel.IsOrdered()
 	if topic != nil && topic.IsOrdered() {
+		isOrderedCh = true
+	}
+	if isOrderedCh {
 		toEnd = false
 		// for ordered topic, disable defer since it may block the consume
 		if timeoutDuration > 0 {

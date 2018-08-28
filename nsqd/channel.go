@@ -1966,7 +1966,8 @@ func (c *Channel) GetChannelDebugStats() string {
 
 	if nsqLog.Level() >= levellogger.LOG_DEBUG || c.IsTraced() {
 		for _, msg := range c.inFlightMessages {
-			debugStr += fmt.Sprintf("%v(%v, %v),", msg.ID, msg.Offset, msg.DelayedType)
+			debugStr += fmt.Sprintf("%v(offset: %v, cnt: %v), %v", msg.ID, msg.Offset,
+				msg.queueCntIndex, msg.DelayedType)
 		}
 	}
 	debugStr += "\n"
