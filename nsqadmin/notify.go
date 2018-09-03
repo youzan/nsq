@@ -13,6 +13,7 @@ import (
 type AdminAction struct {
 	Action    string `json:"action"`
 	Topic     string `json:"topic"`
+	Order	  bool   `json:"order"`
 	Channel   string `json:"channel,omitempty"`
 	Node      string `json:"node,omitempty"`
 	Timestamp int64  `json:"timestamp"`
@@ -49,6 +50,10 @@ func basicAuthUser(req *http.Request) string {
 
 
 func (s *httpServer) notifyAdminActionWithUser(action, topic, channel, node string, req *http.Request) {
+	s.notifyAdminActionWithUserAndOrder(action, topic, channel, node, false, req)
+}
+
+func (s *httpServer) notifyAdminActionWithUserAndOrder(action, topic, channel, node string, order bool, req *http.Request) {
 	via, _ := os.Hostname()
 	u := url.URL{
 		Scheme:   "http",
@@ -62,6 +67,7 @@ func (s *httpServer) notifyAdminActionWithUser(action, topic, channel, node stri
 	a := &AdminAction{
 		Action:    action,
 		Topic:     topic,
+		Order:	   order,
 		Channel:   channel,
 		Node:      node,
 		Timestamp: time.Now().Unix(),

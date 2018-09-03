@@ -137,12 +137,16 @@ var ChannelView = BaseView.extend({
                 '/' + this.model.get('name') + '</em>';
             txt = txt + '?';
             var topic = this.model.get('topic')
+            var order = this.model.get('is_multi_ordered')
             bootbox.confirm(txt, function(result) {
                 if (result !== true) {
                     return;
                 }
 
-                $.post(this.model.url() + "/client", JSON.stringify({'action': action}))
+                $.post(this.model.url() + "/client", JSON.stringify({
+                                                'action': action,
+                                                'order': order
+                                            }))
                     .done(function() { window.location.reload(true); })
                     .fail(this.handleAJAXError.bind(this));
             }.bind(this));

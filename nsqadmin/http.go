@@ -1154,7 +1154,7 @@ func (s *httpServer) topicChannelClientAction(req *http.Request, topicName strin
 	var body struct {
 		Action    string `json:"action"`
 		Timestamp string `json:"timestamp"`
-
+		Order     bool   `json:"order"`
 	}
 	err := json.NewDecoder(req.Body).Decode(&body)
 	if err != nil {
@@ -1164,11 +1164,11 @@ func (s *httpServer) topicChannelClientAction(req *http.Request, topicName strin
 	switch body.Action {
 	case "sink":
 		if channelName != "" {
-			s.notifyAdminActionWithUser("sink", topicName, channelName, "", req)
+			s.notifyAdminActionWithUserAndOrder("sink", topicName, channelName, "", body.Order, req)
 		}
 	case "sink_removal":
 		if channelName != "" {
-			s.notifyAdminActionWithUser("sink_removal", topicName, channelName, "", req)
+			s.notifyAdminActionWithUserAndOrder("sink_removal", topicName, channelName, "", body.Order, req)
 
 		}
 	default:
