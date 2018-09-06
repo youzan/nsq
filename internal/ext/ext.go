@@ -13,6 +13,7 @@ const (
 	CLIENT_DISPATCH_TAG_KEY = "##client_dispatch_tag"
 	TRACE_ID_KEY            = "##trace_id"
 	MaxExtLen               = 65535
+	ZAN_TEST_KEY = "zan_test"
 )
 
 var MAX_TAG_LEN = 100

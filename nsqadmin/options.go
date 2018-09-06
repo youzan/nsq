@@ -53,6 +53,7 @@ type Options struct {
 	AccessTokens		[]string `flag:"access-tokens" cfg:"access_tokens"`
 
 	AccessControlFile	string `flag:"access-control-file"`
+	EnableZanTestSkip    bool `flag:"enable-zan-test-skip"`
 }
 
 func NewOptions() *Options {

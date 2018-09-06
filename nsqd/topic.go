@@ -83,6 +83,7 @@ type ChannelMetaInfo struct {
 	Name    string `json:"name"`
 	Paused  bool   `json:"paused"`
 	Skipped bool   `json:"skipped"`
+	ZanTestSkipped bool   `json:"zanTestSkipped"`
 }
 
 type Topic struct {
@@ -436,6 +437,10 @@ func (t *Topic) LoadChannelMeta() error {
 		if ch.Skipped {
 			channel.Skip()
 		}
+		//skip zan test message according to meta file
+		if ch.ZanTestSkipped {
+			channel.SkipZanTest()
+		}
 	}
 	return nil
 }
@@ -450,6 +455,7 @@ func (t *Topic) GetChannelMeta() []ChannelMetaInfo {
 				Name:    channel.name,
 				Paused:  channel.IsPaused(),
 				Skipped: channel.IsSkipped(),
+				ZanTestSkipped: channel.IsZanTestSkipped(),
 			}
 			channels = append(channels, meta)
 		}
@@ -470,6 +476,7 @@ func (t *Topic) SaveChannelMeta() error {
 				Name:    channel.name,
 				Paused:  channel.IsPaused(),
 				Skipped: channel.IsSkipped(),
+				ZanTestSkipped: channel.IsZanTestSkipped(),
 			}
 			channels = append(channels, meta)
 		}

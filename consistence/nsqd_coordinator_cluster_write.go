@@ -946,7 +946,7 @@ func (self *NsqdCoordinator) SetChannelConsumeOffsetToCluster(ch *nsqd.Channel, 
 	return nil
 }
 
-func (self *NsqdCoordinator) UpdateChannelStateToCluster(channel *nsqd.Channel, paused int, skipped int) error {
+func (self *NsqdCoordinator) UpdateChannelStateToCluster(channel *nsqd.Channel, paused int, skipped int, zanTestSkipped int) error {
 	topicName := channel.GetTopicName()
 	partition := channel.GetTopicPart()
 	coord, checkErr := self.getTopicCoord(topicName, partition)
@@ -978,6 +978,19 @@ func (self *NsqdCoordinator) UpdateChannelStateToCluster(channel *nsqd.Channel, 
 			coordLog.Warningf("update channel(%v) state skip:%v failed: %v, topic %v,%v", channel.GetName(), skipped, pauseErr, topicName, partition)
 			return &CoordErr{pauseErr.Error(), RpcNoErr, CoordLocalErr}
 		}
+
+		var zanTestSkippedErr error
+		switch zanTestSkipped {
+		case 1:
+			zanTestSkippedErr = channel.SkipZanTest()
+		case 0:
+			zanTestSkippedErr = channel.UnskipZanTest()
+		}
+		if zanTestSkippedErr != nil {
+			coordLog.Warningf("update channel(%v) state skip zan test :%v failed: %v, topic %v,%v", channel.GetName(), zanTestSkipped, pauseErr, topicName, partition)
+			return &CoordErr{zanTestSkippedErr.Error(), RpcNoErr, CoordLocalErr}
+		}
+
 		return nil
 	}
 	doLocalExit := func(err *CoordErr) {}
@@ -991,7 +1004,7 @@ func (self *NsqdCoordinator) UpdateChannelStateToCluster(channel *nsqd.Channel, 
 	}
 	doSlaveSync := func(c *NsqdRpcClient, nodeID string, tcData *coordData) *CoordErr {
 		var rpcErr *CoordErr
-		rpcErr = c.UpdateChannelState(&tcData.topicLeaderSession, &tcData.topicInfo, channel.GetName(), paused, skipped)
+		rpcErr = c.UpdateChannelState(&tcData.topicLeaderSession, &tcData.topicInfo, channel.GetName(), paused, skipped, zanTestSkipped)
 		if rpcErr != nil {
 			coordLog.Infof("sync channel(%v) state pause:%v, skip:%v to replica %v failed: %v, topic %v,%v", channel.GetName(), paused, skipped, nodeID, rpcErr, topicName, partition)
 		}
@@ -1103,7 +1116,7 @@ func (self *NsqdCoordinator) FinishMessageToCluster(channel *nsqd.Channel, clien
 	return nil
 }
 
-func (self *NsqdCoordinator) updateChannelStateOnSlave(tc *coordData, channelName string, paused int, skipped int) *CoordErr {
+func (self *NsqdCoordinator) updateChannelStateOnSlave(tc *coordData, channelName string, paused int, skipped int, zanTestSkipped int) *CoordErr {
 	topicName := tc.topicInfo.Name
 	partition := tc.topicInfo.Partition
 
@@ -1161,6 +1174,19 @@ func (self *NsqdCoordinator) updateChannelStateOnSlave(tc *coordData, channelNam
 		coordLog.Errorf("fail to skip/unskip %v, channel: %v, %v", skipped, topic.GetTopicName(), channelName)
 		return ErrLocalChannelSkipFailed
 	}
+
+	var zanTestSkipErr error
+	switch zanTestSkipped {
+	case 1:
+		zanTestSkipErr = ch.SkipZanTest()
+	case 0:
+		zanTestSkipErr = ch.UnskipZanTest()
+	}
+	if zanTestSkipErr != nil {
+		coordLog.Errorf("fail to skip/unskip zan test %v, channel: %v, %v", zanTestSkipped, topic.GetTopicName(), channelName)
+		return ErrLocalChannelSkipZanTestFailed
+	}
+
 	topic.SaveChannelMeta()
 	return nil
 }

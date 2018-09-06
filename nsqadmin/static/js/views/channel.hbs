@@ -57,6 +57,15 @@
             <button class="btn btn-medium btn-primary" data-action="skip" {{#if login}}{{else}}disabled{{/if}}>Skip Channel</button>
         {{/if}}
     </div>
+    {{#if (and is_ext enable_zan_test_skip)}}
+    <div class="col-md-2">
+        {{#if ../zan_test_skipped}}
+            <button class="btn btn-medium btn-success" data-action="unskipZanTest" {{#if login}}{{else}}disabled{{/if}}>UnSkip Zan Test</button>
+        {{else}}
+            <button class="btn btn-medium btn-primary" data-action="skipZanTest" {{#if login}}{{else}}disabled{{/if}}>Skip Zan Test</button>
+        {{/if}}
+    </div>
+    {{/if}}
     <div class="col-md-2" title="reset consume offset to specified data time, if specified timestamp is earlier(later) than timestamp of first(last) available message in queue, offset will be set to the beginning(tail) of message queue.">
         <button class="btn btn-medium btn-primary resetbtn" data-action="reset" disabled=true>Reset Channel Offset</button>
         <input id="resetChannelDatetime" type="text" name="resetTime" maxlength="10" size="20" placeholder="input timestamp in second" pattern="[1-9][0-9]{9}"/>

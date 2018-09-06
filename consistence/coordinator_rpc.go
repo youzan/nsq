@@ -604,6 +604,7 @@ type RpcChannelState struct {
 	Channel string
 	Paused  int
 	Skipped int
+	ZanTestSkipped int
 }
 
 type RpcChannelOffsetArg struct {
@@ -743,7 +744,7 @@ func (self *NsqdCoordRpcServer) UpdateChannelState(state *RpcChannelState) *Coor
 		return &ret
 	}
 	// update local channel offset
-	err = self.nsqdCoord.updateChannelStateOnSlave(tc.GetData(), state.Channel, state.Paused, state.Skipped)
+	err = self.nsqdCoord.updateChannelStateOnSlave(tc.GetData(), state.Channel, state.Paused, state.Skipped, state.ZanTestSkipped)
 	if err != nil {
 		ret = *err
 		return &ret

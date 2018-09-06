@@ -290,6 +290,7 @@ func (s *httpServer) indexHandler(w http.ResponseWriter, req *http.Request, ps h
 		User                string
 		AuthEnabled         bool
 		HasNotificationEndpoint		bool
+		EnableZanTestSkip   bool
 	}{
 		Version:             version.Binary,
 		ProxyGraphite:       s.ctx.nsqadmin.opts.ProxyGraphite,
@@ -310,6 +311,7 @@ func (s *httpServer) indexHandler(w http.ResponseWriter, req *http.Request, ps h
 		User:                u.GetUserName(),
 		AuthEnabled:         s.ctx.nsqadmin.IsAuthEnabled(),
 		HasNotificationEndpoint:         s.ctx.nsqadmin.opts.NotificationHTTPEndpoint != "",
+		EnableZanTestSkip: s.ctx.nsqadmin.opts.EnableZanTestSkip,
 	})
 
 	return nil, nil
@@ -1318,6 +1320,32 @@ func (s *httpServer) topicChannelAction(req *http.Request, topicName string, cha
 				s.ctx.nsqadmin.opts.NSQDHTTPAddresses)
 
 			s.notifyAdminActionWithUser("unskip_channel", topicName, channelName, "", req)
+		}
+	case "skipZanTest":
+		if channelName != "" {
+			err = s.ci.SkipZanTest(topicName, channelName,
+				s.ctx.nsqadmin.opts.NSQLookupdHTTPAddressesDC,
+				s.ctx.nsqadmin.opts.NSQDHTTPAddresses)
+
+			if err == nil {
+				err = s.ci.EmptyChannel(topicName, channelName,
+					s.ctx.nsqadmin.opts.NSQLookupdHTTPAddressesDC,
+					s.ctx.nsqadmin.opts.NSQDHTTPAddresses)
+			}
+			s.notifyAdminActionWithUser("skip_zantest", topicName, channelName, "", req)
+		}
+	case "unskipZanTest":
+		if channelName != "" {
+			err = s.ci.UnskipZanTest(topicName, channelName,
+				s.ctx.nsqadmin.opts.NSQLookupdHTTPAddressesDC,
+				s.ctx.nsqadmin.opts.NSQDHTTPAddresses)
+
+			if err == nil {
+				err = s.ci.EmptyChannel(topicName, channelName,
+					s.ctx.nsqadmin.opts.NSQLookupdHTTPAddressesDC,
+					s.ctx.nsqadmin.opts.NSQDHTTPAddresses)
+			}
+			s.notifyAdminActionWithUser("unskip_zantest", topicName, channelName, "", req)
 		}
 	case "empty":
 		if channelName != "" {

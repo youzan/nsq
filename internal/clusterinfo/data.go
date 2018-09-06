@@ -986,6 +986,8 @@ func (c *ClusterInfo) GetNSQDStats(producers Producers, selectedTopic string, so
 							StatsdName:     topic.StatsdName,
 							ChannelName:    channel.ChannelName,
 							IsMultiOrdered: topic.IsMultiOrdered,
+							IsExt:		topic.IsExt,
+							ZanTestSkipped: channel.ZanTestSkipped,
 						}
 						channelStatsMap[key] = channelStats
 					}
@@ -1309,6 +1311,16 @@ func (c *ClusterInfo) SkipChannel(topicName string, channelName string, lookupdH
 func (c *ClusterInfo) UnSkipChannel(topicName string, channelName string, lookupdHTTPAddrs []LookupdAddressDC, nsqdHTTPAddrs []string) error {
 	qs := fmt.Sprintf("topic=%s&channel=%s", url.QueryEscape(topicName), url.QueryEscape(channelName))
 	return c.actionHelper(topicName, lookupdHTTPAddrs, nsqdHTTPAddrs, "unskip_channel", "channel/unskip", qs)
+}
+
+func (c *ClusterInfo) SkipZanTest(topicName string, channelName string, lookupdHTTPAddrs []LookupdAddressDC, nsqdHTTPAddrs []string) error {
+	qs := fmt.Sprintf("topic=%s&channel=%s", url.QueryEscape(topicName), url.QueryEscape(channelName))
+	return c.actionHelper(topicName, lookupdHTTPAddrs, nsqdHTTPAddrs, "", "channel/skipZanTest", qs)
+}
+
+func (c *ClusterInfo) UnskipZanTest(topicName string, channelName string, lookupdHTTPAddrs []LookupdAddressDC, nsqdHTTPAddrs []string) error {
+	qs := fmt.Sprintf("topic=%s&channel=%s", url.QueryEscape(topicName), url.QueryEscape(channelName))
+	return c.actionHelper(topicName, lookupdHTTPAddrs, nsqdHTTPAddrs, "", "channel/unskipZanTest", qs)
 }
 
 func (c *ClusterInfo) EmptyTopic(topicName string, lookupdHTTPAddrs []LookupdAddressDC, nsqdHTTPAddrs []string) error {

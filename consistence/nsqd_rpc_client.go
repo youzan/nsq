@@ -318,7 +318,7 @@ func (self *NsqdRpcClient) DeleteChannel(leaderSession *TopicLeaderSession, info
 	return convertRpcError(err, retErr)
 }
 
-func (self *NsqdRpcClient) UpdateChannelState(leaderSession *TopicLeaderSession, info *TopicPartitionMetaInfo, channel string, paused int, skipped int) *CoordErr {
+func (self *NsqdRpcClient) UpdateChannelState(leaderSession *TopicLeaderSession, info *TopicPartitionMetaInfo, channel string, paused int, skipped int, zanTestSkipped int) *CoordErr {
 	var channelState RpcChannelState
 	channelState.TopicName = info.Name
 	channelState.TopicPartition = info.Partition
@@ -329,6 +329,7 @@ func (self *NsqdRpcClient) UpdateChannelState(leaderSession *TopicLeaderSession,
 	channelState.Channel = channel
 	channelState.Paused = paused
 	channelState.Skipped = skipped
+	channelState.ZanTestSkipped = zanTestSkipped
 
 	retErr, err := self.CallWithRetry("UpdateChannelState", &channelState)
 	return convertRpcError(err, retErr)

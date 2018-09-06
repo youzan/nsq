@@ -22,7 +22,8 @@ var AppState = Backbone.Model.extend({
             'LOGIN'         : LOGIN,
             'USER'          : USER,
             'AUTH_ENABLED'  : AUTH_ENABLED,
-            'HAS_ENDPOINT'  : HAS_ENDPOINT
+            'HAS_ENDPOINT'  : HAS_ENDPOINT,
+            'ENABLE_ZAN_TEST_SKIP' : ENABLE_ZAN_TEST_SKIP,
         };
     },
 
