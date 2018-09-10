@@ -2505,6 +2505,7 @@ func TestTcpMpubExt(t *testing.T) {
 	_, err = nsq.Ready(1).WriteTo(conn)
 	test.Equal(t, err, nil)
 	isOdd := false
+	cnt := 0
 	for {
 		resp, _ := nsq.ReadResponse(conn)
 		frameType, data, err := nsq.UnpackResponse(resp)
@@ -2534,7 +2535,9 @@ func TestTcpMpubExt(t *testing.T) {
 		isOdd = !isOdd
 		_, err = nsq.Finish(msgOut.ID).WriteTo(conn)
 		test.Nil(t, err)
-		break
+		if cnt++; cnt == 10 {
+			break
+		}
 	}
 	conn.Close()
 }
@@ -3372,6 +3375,92 @@ func TestSizeLimits(t *testing.T) {
 	t.Logf("frameType: %d, data: %s", frameType, data)
 	test.Equal(t, frameType, frameTypeError)
 	test.Equal(t, string(data), fmt.Sprintf("E_BAD_MESSAGE MPUB message too big 101 > 100"))
+}
+
+func TestZanTestSkip(t *testing.T) {
+	opts := nsqdNs.NewOptions()
+	opts.Logger = newTestLogger(t)
+	opts.LogLevel = 1
+	opts.SyncEvery = 1
+	opts.MsgTimeout = time.Second * 2
+	opts.MaxReqTimeout = time.Second * 100
+	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
+	defer os.RemoveAll(opts.DataPath)
+	defer nsqdServer.Exit()
+
+	conn, err := mustConnectNSQD(tcpAddr)
+	test.Equal(t, err, nil)
+	defer conn.Close()
+
+	//send messages, zan_test and normal combined
+	topicName := "test_zan_test_skip" + strconv.Itoa(int(time.Now().Unix()))
+	ch := nsqd.GetTopicWithExt(topicName, 0).GetChannel("ch")
+
+	identify(t, conn, nil, frameTypeResponse)
+	var msgExtList []*nsq.MsgExt
+	var msgBody [][]byte
+	// PUB ext to non-ext topic
+	for i := 0; i < 10; i++ {
+		if i%2==0 {
+			msgExtList = append(msgExtList, &nsq.MsgExt{
+				Custom: map[string]string{"key1":"val1", "key2":"val2"},
+			})
+			msgBody = append(msgBody, []byte("msg has no zan_test ext"))
+		} else {
+			msgExtList = append(msgExtList, &nsq.MsgExt{
+				TraceID: 123,
+				DispatchTag: "desiredTag",
+				Custom: map[string]string{"zan_test":"true", "key1":"val1"},
+			})
+			msgBody = append(msgBody, []byte("msg has zan_test ext"))
+		}
+	}
+
+	cmd, err := nsq.MultiPublishWithJsonExt(topicName, "0", msgExtList, msgBody)
+	test.Nil(t, err)
+	cmd.WriteTo(conn)
+	resp, _ := nsq.ReadResponse(conn)
+	frameType, data, _ := nsq.UnpackResponse(resp)
+	t.Logf("frameType: %d, data: %s", frameType, data)
+	test.Equal(t, frameType, frameTypeResponse)
+	test.Equal(t, len(data), 2)
+	test.Equal(t, data[:], []byte("OK"))
+	conn.Close()
+
+	//skip zan test messages
+	ch.SkipZanTest()
+	//consume&validate zan_test messages
+	conn, err = mustConnectNSQD(tcpAddr)
+	identify(t, conn, map[string]interface{}{"extend_support":true}, frameTypeResponse)
+	test.Equal(t, err, nil)
+	sub(t, conn, topicName, "ch")
+	_, err = nsq.Ready(10).WriteTo(conn)
+	test.Equal(t, err, nil)
+	var cnt int
+	for {
+		resp, _ := nsq.ReadResponse(conn)
+		frameType, data, err := nsq.UnpackResponse(resp)
+		test.Nil(t, err)
+		test.NotEqual(t, frameTypeError, frameType)
+		if frameType == frameTypeResponse {
+			t.Logf("got response data: %v", string(data))
+			continue
+		}
+		msgOut, err := nsq.DecodeMessageWithExt(data, true)
+		//test.Equal(t, 5, len(msgOut.Body))
+
+		test.Equal(t, uint8(ext.JSON_HEADER_EXT_VER), msgOut.ExtVer)
+		var extMap map[string]interface{}
+		err = json.Unmarshal(msgOut.ExtBytes, &extMap)
+		test.Nil(t, err)
+		test.Assert(t, extMap["zan_test"] == nil, "json ext header should not contains zan_test:%v", extMap)
+		_, err = nsq.Finish(msgOut.ID).WriteTo(conn)
+		test.Nil(t, err)
+		if cnt++; cnt == 5 {
+			break
+		}
+	}
+	conn.Close()
 }
 
 func TestDelayMessage(t *testing.T) {

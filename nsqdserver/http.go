@@ -743,7 +743,7 @@ func (s *httpServer) doSkipZanTest(w http.ResponseWriter, req *http.Request, ps 
 	}
 
 	if !topic.IsExt() {
-		nsqd.NsqLogger().Errorf("could not skip zan test messages on normal topic. topic:%v, channel:%v", topic.GetTopicName())
+		nsqd.NsqLogger().Errorf("could not skip zan test messages on topic not support ext. topic:%v", topic.GetTopicName())
 		return nil, http_api.Err{400, "INVALID_REQUEST"}
 	}
 
