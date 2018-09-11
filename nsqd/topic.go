@@ -643,7 +643,11 @@ func (t *Topic) SetDynamicInfo(dynamicConf TopicDynamicConf, idGen MsgIDGenerato
 	nsqLog.Logf("topic dynamic configure changed to %v", dynamicConf)
 	t.channelLock.RLock()
 	for _, ch := range t.channelMap {
-		ch.SetExt(dynamicConf.Ext)
+		ext := dynamicConf.Ext
+		ch.SetExt(ext)
+		if ext && t.option.AllowZanTestSkip {
+			ch.SkipZanTest()
+		}
 	}
 	t.channelLock.RUnlock()
 	t.Unlock()

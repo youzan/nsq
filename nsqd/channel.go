@@ -184,6 +184,11 @@ func NewChannel(topicName string, part int, channelName string, chEnd BackendQue
 		peekedMsgs:             make([]Message, MaxWaitingDelayed),
 		Ext:                    ext,
 	}
+
+	if opt.AllowZanTestSkip && c.IsExt() {
+		c.zanTestSkip = 1
+	}
+
 	if len(opt.E2EProcessingLatencyPercentiles) > 0 {
 		c.e2eProcessingLatencyStream = quantile.New(
 			opt.E2EProcessingLatencyWindowTime,
