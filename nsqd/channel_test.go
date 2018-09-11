@@ -40,6 +40,14 @@ func (c *fakeConsumer) GetID() int64 {
 	return c.cid
 }
 
+func (c *fakeConsumer) SkipZanTest() {
+
+}
+
+func (c *fakeConsumer) UnskipZanTest() {
+
+}
+
 // ensure that we can push a message through a topic and get it out of a channel
 func TestPutMessage(t *testing.T) {
 	opts := NewOptions()
