@@ -981,9 +981,9 @@ func (self *NsqdCoordinator) UpdateChannelStateToCluster(channel *nsqd.Channel, 
 
 		var zanTestSkippedErr error
 		switch zanTestSkipped {
-		case 1:
+		case nsqd.ZanTestSkip:
 			zanTestSkippedErr = channel.SkipZanTest()
-		case 0:
+		case nsqd.ZanTestUnskip:
 			zanTestSkippedErr = channel.UnskipZanTest()
 		}
 		if zanTestSkippedErr != nil {
@@ -1177,9 +1177,9 @@ func (self *NsqdCoordinator) updateChannelStateOnSlave(tc *coordData, channelNam
 
 	var zanTestSkipErr error
 	switch zanTestSkipped {
-	case 1:
+	case nsqd.ZanTestSkip:
 		zanTestSkipErr = ch.SkipZanTest()
-	case 0:
+	case nsqd.ZanTestUnskip:
 		zanTestSkipErr = ch.UnskipZanTest()
 	}
 	if zanTestSkipErr != nil {

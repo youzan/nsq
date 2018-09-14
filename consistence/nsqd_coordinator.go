@@ -1883,7 +1883,7 @@ func (self *NsqdCoordinator) catchupFromLeader(topicInfo TopicPartitionMetaInfo,
 						if meta.Skipped {
 							ch.Skip()
 						}
-						if meta.ZanTestSkipped {
+						if meta.IsZanTestSkipepd() {
 							ch.SkipZanTest()
 						}
 					}

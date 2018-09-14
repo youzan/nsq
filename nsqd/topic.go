@@ -86,6 +86,10 @@ type ChannelMetaInfo struct {
 	ZanTestSkipped bool   `json:"zanTestSkipped"`
 }
 
+func (cm *ChannelMetaInfo) IsZanTestSkipepd() bool {
+	return cm.ZanTestSkipped
+}
+
 type Topic struct {
 	sync.Mutex
 
@@ -438,9 +442,9 @@ func (t *Topic) LoadChannelMeta() error {
 			channel.Skip()
 		}
 		//skip zan test message according to meta file
-		if ch.ZanTestSkipped {
+		if ch.IsZanTestSkipepd() {
 			channel.SkipZanTest()
-		}
+		}//else nothing maybe unskip
 	}
 	return nil
 }
@@ -645,9 +649,6 @@ func (t *Topic) SetDynamicInfo(dynamicConf TopicDynamicConf, idGen MsgIDGenerato
 	for _, ch := range t.channelMap {
 		ext := dynamicConf.Ext
 		ch.SetExt(ext)
-		if ext && t.option.AllowZanTestSkip {
-			ch.SkipZanTest()
-		}
 	}
 	t.channelLock.RUnlock()
 	t.Unlock()

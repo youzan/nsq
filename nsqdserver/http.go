@@ -756,14 +756,14 @@ func (s *httpServer) doSkipZanTest(w http.ResponseWriter, req *http.Request, ps 
 
 	if strings.Contains(req.URL.Path, "unskipZanTest") {
 		//update channel state before set channel consume offset
-		err = s.ctx.UpdateChannelState(channel, -1, -1, 0)
+		err = s.ctx.UpdateChannelState(channel, -1, -1, nsqd.ZanTestUnskip)
 		if err != nil {
 			nsqd.NsqLogger().LogErrorf("failure in %s - %s", req.URL.Path, err)
 			return nil, http_api.Err{500, "INTERNAL_ERROR"}
 		}
 		nsqd.NsqLogger().Logf("skip zan test messages")
 	} else {
-		err = s.ctx.UpdateChannelState(channel, -1, -1, 1)
+		err = s.ctx.UpdateChannelState(channel, -1, -1, nsqd.ZanTestSkip)
 		if err != nil {
 			nsqd.NsqLogger().LogErrorf("failure in %s - %s", req.URL.Path, err)
 			return nil, http_api.Err{500, "INTERNAL_ERROR"}

@@ -242,10 +242,10 @@ func (c *context) UpdateChannelState(ch *nsqd.Channel, paused int, skipped int, 
 			err = ch.UnSkip()
 		}
 
-		switch zanTestSkipped {
-		case 1:
+		switch int32(zanTestSkipped) {
+		case nsqd.ZanTestSkip:
 			err = ch.SkipZanTest()
-		case 0:
+		case nsqd.ZanTestUnskip:
 			err = ch.UnskipZanTest()
 		}
 

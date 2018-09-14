@@ -23,6 +23,8 @@ const (
 	MaxMemReqTimes        = 10
 	MaxWaitingDelayed     = 100
 	MaxDepthReqToEnd      = 1000000
+	ZanTestSkip = 0
+	ZanTestUnskip = 1
 )
 
 var (
@@ -183,10 +185,6 @@ func NewChannel(topicName string, part int, channelName string, chEnd BackendQue
 		delayedConfirmedMsgs:   make(map[MessageID]Message, MaxWaitingDelayed),
 		peekedMsgs:             make([]Message, MaxWaitingDelayed),
 		Ext:                    ext,
-	}
-
-	if opt.AllowZanTestSkip && c.IsExt() {
-		c.zanTestSkip = 1
 	}
 
 	if len(opt.E2EProcessingLatencyPercentiles) > 0 {
@@ -607,7 +605,7 @@ func (c *Channel) DepthTimestamp() int64 {
 }
 
 func (c *Channel) IsZanTestSkipped() bool {
-	return atomic.LoadInt32(&c.zanTestSkip) == 1
+	return c.IsExt() && c.option.AllowZanTestSkip && atomic.LoadInt32(&c.zanTestSkip) == ZanTestSkip
 }
 
 func (c *Channel) SkipZanTest() error {
@@ -620,10 +618,10 @@ func (c *Channel) UnskipZanTest() error {
 
 func (c *Channel) doSkipZanTest(skipped bool) error {
 	if skipped {
-		atomic.StoreInt32(&c.zanTestSkip, 1)
+		atomic.StoreInt32(&c.zanTestSkip, ZanTestSkip)
 		//
 	} else {
-		atomic.StoreInt32(&c.zanTestSkip, 0)
+		atomic.StoreInt32(&c.zanTestSkip, ZanTestUnskip)
 	}
 
 	c.RLock()
@@ -1984,7 +1982,7 @@ exit:
 }
 
 func (c *Channel) shouldSkipZanTest(msg *Message) bool {
-	if c.IsExt() && c.IsZanTestSkipped() && msg.ExtVer == ext.JSON_HEADER_EXT_VER {
+	if c.IsZanTestSkipped() && msg.ExtVer == ext.JSON_HEADER_EXT_VER {
 		//check if zan_test header contained in json header
 		extHeader, _ :=  simpleJson.NewJson(msg.ExtBytes)
 		_, exist := extHeader.CheckGet(ext.ZAN_TEST_KEY)
