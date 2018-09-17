@@ -811,7 +811,9 @@ func TestConsumeIllegalZanTestWithCompatibility(t *testing.T) {
 	jheZantest.SetJsonHeaderBytes([]byte(jsonHeaderZanTestStr))
 
 	conn, err := mustConnectNSQD(tcpAddr)
+	msgBodyZanTest := []byte("test body zan test")
 	msgBody := []byte("test body")
+
 	//case 1: tagged message goes to client with tag
 	for i := 0; i < 10; i++ {
 		if i%2 == 0 {
@@ -820,7 +822,7 @@ func TestConsumeIllegalZanTestWithCompatibility(t *testing.T) {
 			_, _, _, _, putErr := topic.PutMessage(msg)
 			test.Nil(t, putErr)
 		} else {
-			cmd, err := nsq.PublishWithJsonExt(topicName, "0", make([]byte, 5), jheZantest.GetBytes())
+			cmd, err := nsq.PublishWithJsonExt(topicName, "0", msgBodyZanTest, jheZantest.GetBytes())
 			test.Nil(t, err)
 			cmd.WriteTo(conn)
 			resp, _ := nsq.ReadResponse(conn)
