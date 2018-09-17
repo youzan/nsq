@@ -770,6 +770,77 @@ func TestConsumeTagMessageNormal(t *testing.T) {
 	test.Equal(t, false, exist)
 }
 
+func TestConsumeIllegalZanTestWithCompatibility(t *testing.T) {
+	topicName := "test_zan_test_illegal" + strconv.Itoa(int(time.Now().Unix()))
+
+	opts := nsqdNs.NewOptions()
+	opts.Logger = newTestLogger(t)
+	if testing.Verbose() {
+		opts.LogLevel = 4
+		nsqdNs.SetLogger(opts.Logger)
+	}
+	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
+	defer os.RemoveAll(opts.DataPath)
+	defer nsqdServer.Exit()
+	topic := nsqd.GetTopicIgnPart(topicName)
+	topicDynConf := nsqdNs.TopicDynamicConf{
+		AutoCommit: 1,
+		SyncEvery:  1,
+	}
+	topic.SetDynamicInfo(topicDynConf, nil)
+
+	topic.GetChannel("ch")
+
+	//subscribe normal client
+	conn1, err := mustConnectNSQD(tcpAddr)
+	test.Equal(t, err, nil)
+	client1Params := make(map[string]interface{})
+	client1Params["client_id"] = "client"
+	client1Params["hostname"] = "client"
+	identify(t, conn1, client1Params, frameTypeResponse)
+	sub(t, conn1, topicName, "ch")
+	_, err = nsq.Ready(1).WriteTo(conn1)
+	test.Equal(t, err, nil)
+
+	jsonHeaderStr := "{\"##client_dispatch_tag\":\"test_tag\",\"##channel_filter_tag\":\"test\",\"zan_test\":\"false\"}"
+	jhe := ext.NewJsonHeaderExt()
+	jhe.SetJsonHeaderBytes([]byte(jsonHeaderStr))
+
+	jsonHeaderZanTestStr := "{\"##client_dispatch_tag\":\"test_tag\",\"##channel_filter_tag\":\"test\",\"zan_test\":true}"
+	jheZantest := ext.NewJsonHeaderExt()
+	jheZantest.SetJsonHeaderBytes([]byte(jsonHeaderZanTestStr))
+
+	conn, err := mustConnectNSQD(tcpAddr)
+	msgBody := []byte("test body")
+	//case 1: tagged message goes to client with tag
+	for i := 0; i < 10; i++ {
+		if i%2 == 0 {
+			msg := nsqdNs.NewMessageWithExt(0, msgBody, jhe.ExtVersion(), jhe.GetBytes())
+			topic.GetChannel("ch")
+			_, _, _, _, putErr := topic.PutMessage(msg)
+			test.Nil(t, putErr)
+		} else {
+			cmd, err := nsq.PublishWithJsonExt(topicName, "0", make([]byte, 5), jheZantest.GetBytes())
+			test.Nil(t, err)
+			cmd.WriteTo(conn)
+			resp, _ := nsq.ReadResponse(conn)
+			frameType, data, _ := nsq.UnpackResponse(resp)
+			t.Logf("frameType: %d, data: %s", frameType, data)
+			test.Equal(t, int32(1), frameType)
+		}
+	}
+
+	for i := 0; i < 5; i++ {
+		msgOut := recvNextMsgAndCheckExt(t, conn1, len(msgBody), 0, true, false)
+		test.NotNil(t, msgOut)
+		test.Equal(t, uint8(ext.NO_EXT_VER), msgOut.ExtVer)
+	}
+
+	conn1.Close()
+	conn.Close()
+	time.Sleep(1 * time.Second)
+}
+
 func TestConsumeJsonHeaderMessageNormal(t *testing.T) {
 	topicName := "test_json_header_normal" + strconv.Itoa(int(time.Now().Unix()))
 

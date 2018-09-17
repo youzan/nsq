@@ -1517,6 +1517,9 @@ func (p *protocolV2) internalPubExtAndTrace(client *nsqd.ClientV2, params [][]by
 	}
 	if p.ctx.checkForMasterWrite(topicName, partition) {
 		if !topic.IsExt() && extContent.ExtVersion() != ext.NO_EXT_VER {
+			if p.ctx.getOpts().AllowExtCompatible {
+				filterIllegalZanTestHeader(topicName, jsonHeader)
+			}
 			canIgnoreExt := canIgnoreJsonHeader(topicName, jsonHeader)
 			if p.ctx.getOpts().AllowExtCompatible && canIgnoreExt {
 				extContent = ext.NewNoExt()
@@ -1742,6 +1745,9 @@ func readMPUBEXT(r io.Reader, tmp []byte, topic *nsqd.Topic, maxMessageSize int6
 				}
 				//check compatibility when topic does not support ext
 				if !topicExt {
+					if allowExtCompatible {
+						filterIllegalZanTestHeader(topicName, jsonHeader)
+					}
 					canIgnoreExt = canIgnoreJsonHeader(topicName, jsonHeader)
 					if allowExtCompatible && canIgnoreExt {
 						nsqd.NsqLogger().Debugf("ext content ignored in topic: %v", topicName)
@@ -1770,6 +1776,26 @@ func readMPUBEXT(r io.Reader, tmp []byte, topic *nsqd.Topic, maxMessageSize int6
 	}
 
 	return messages, buffers, nil
+}
+
+//remove any zan_test header in json ext if value != true(bool, string)
+func filterIllegalZanTestHeader(topicName string, jsonHeader *simpleJson.Json) {
+	if jsonHeader != nil {
+		flag, exist := jsonHeader.CheckGet(ext.ZAN_TEST_KEY)
+		if exist {
+			tb, err := flag.Bool()
+			if err != nil {
+				ts, _ := flag.String()
+				if ts != "" {
+					tb, _ = strconv.ParseBool(ts)
+				}
+			}
+			if !tb {
+				jsonHeader.Del(ext.ZAN_TEST_KEY)
+				nsqd.NsqLogger().Debugf("illegal zan test header removed in topic: %v, %v", topicName, flag)
+			}
+		}
+	}
 }
 
 //return true when there are only preserved kv in json header, and false otherwise

@@ -1985,8 +1985,16 @@ func (c *Channel) shouldSkipZanTest(msg *Message) bool {
 	if c.IsZanTestSkipped() && msg.ExtVer == ext.JSON_HEADER_EXT_VER {
 		//check if zan_test header contained in json header
 		extHeader, _ :=  simpleJson.NewJson(msg.ExtBytes)
-		_, exist := extHeader.CheckGet(ext.ZAN_TEST_KEY)
-		return exist
+		if flag, exist := extHeader.CheckGet(ext.ZAN_TEST_KEY); exist {
+			tb, err := flag.Bool()
+			if err != nil {
+				ts, _ := flag.String()
+				if ts != "" {
+					tb, _ = strconv.ParseBool(ts)
+				}
+			}
+			return tb
+		}
 	}
 	return false
 }
