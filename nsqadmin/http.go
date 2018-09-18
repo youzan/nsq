@@ -1335,11 +1335,6 @@ func (s *httpServer) topicChannelAction(req *http.Request, topicName string, cha
 				s.ctx.nsqadmin.opts.NSQLookupdHTTPAddressesDC,
 				s.ctx.nsqadmin.opts.NSQDHTTPAddresses)
 
-			if err == nil {
-				err = s.ci.EmptyChannel(topicName, channelName,
-					s.ctx.nsqadmin.opts.NSQLookupdHTTPAddressesDC,
-					s.ctx.nsqadmin.opts.NSQDHTTPAddresses)
-			}
 			s.notifyAdminActionWithUser("unskip_zantest", topicName, channelName, "", req)
 		}
 	case "empty":
