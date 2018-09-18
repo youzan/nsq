@@ -3457,6 +3457,7 @@ func TestZanTestSkip(t *testing.T) {
 	opts.SyncEvery = 1
 	opts.MsgTimeout = time.Second * 2
 	opts.MaxReqTimeout = time.Second * 100
+	opts.AllowZanTestSkip = true
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqdServer.Exit()
