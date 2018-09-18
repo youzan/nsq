@@ -1891,11 +1891,8 @@ LOOP:
 			}
 		}
 
-		//check if topic is ext and message has zan test header
-		zanTestSkip := c.shouldSkipZanTest(msg)
-
 		//let timer sync to update backend in replicas' channels
-		if c.IsSkipped() || zanTestSkip {
+		if c.IsSkipped() || c.shouldSkipZanTest(msg) {
 			if msg.DelayedType == ChannelDelayed {
 				c.ConfirmDelayedMessage(msg)
 			} else {
