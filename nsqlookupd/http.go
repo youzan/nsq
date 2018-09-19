@@ -452,6 +452,7 @@ func (s *httpServer) doLookup(w http.ResponseWriter, req *http.Request, ps httpr
 				"partition_num":  meta.PartitionNum,
 				"replica":        meta.Replica,
 				"extend_support": meta.Ext,
+				"ordered":        meta.OrderedMulti,
 			},
 			"producers":  peers,
 			"partitions": partitionProducers,
