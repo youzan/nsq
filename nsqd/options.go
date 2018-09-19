@@ -97,6 +97,7 @@ type Options struct {
 	StartAsFixMode        bool  `flag:"start-as-fix-mode"`
 	AllowExtCompatible    bool  `flag:"allow-ext-compatible" cfg:"allow_ext_compatible"`
 	AllowSubExtCompatible bool  `flag:"allow-sub-ext-compatible" cfg:"allow_sub_ext_compatible"`
+	AllowZanTestSkip     bool  `flag:"allow-zan-test-skip"`
 }
 
 func NewOptions() *Options {

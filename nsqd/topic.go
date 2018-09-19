@@ -83,6 +83,11 @@ type ChannelMetaInfo struct {
 	Name    string `json:"name"`
 	Paused  bool   `json:"paused"`
 	Skipped bool   `json:"skipped"`
+	ZanTestSkipped bool   `json:"zanTestSkipped"`
+}
+
+func (cm *ChannelMetaInfo) IsZanTestSkipepd() bool {
+	return cm.ZanTestSkipped
 }
 
 type Topic struct {
@@ -436,6 +441,10 @@ func (t *Topic) LoadChannelMeta() error {
 		if ch.Skipped {
 			channel.Skip()
 		}
+		//skip zan test message according to meta file
+		if ch.IsZanTestSkipepd() {
+			channel.SkipZanTest()
+		}//else nothing maybe unskip
 	}
 	return nil
 }
@@ -450,6 +459,7 @@ func (t *Topic) GetChannelMeta() []ChannelMetaInfo {
 				Name:    channel.name,
 				Paused:  channel.IsPaused(),
 				Skipped: channel.IsSkipped(),
+				ZanTestSkipped: channel.IsZanTestSkipped(),
 			}
 			channels = append(channels, meta)
 		}
@@ -470,6 +480,7 @@ func (t *Topic) SaveChannelMeta() error {
 				Name:    channel.name,
 				Paused:  channel.IsPaused(),
 				Skipped: channel.IsSkipped(),
+				ZanTestSkipped: channel.IsZanTestSkipped(),
 			}
 			channels = append(channels, meta)
 		}
@@ -636,7 +647,8 @@ func (t *Topic) SetDynamicInfo(dynamicConf TopicDynamicConf, idGen MsgIDGenerato
 	nsqLog.Logf("topic dynamic configure changed to %v", dynamicConf)
 	t.channelLock.RLock()
 	for _, ch := range t.channelMap {
-		ch.SetExt(dynamicConf.Ext)
+		ext := dynamicConf.Ext
+		ch.SetExt(ext)
 	}
 	t.channelLock.RUnlock()
 	t.Unlock()

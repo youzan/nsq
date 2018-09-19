@@ -509,6 +509,14 @@ func (c *ClientV2) StartClose() {
 	atomic.StoreInt32(&c.State, stateClosing)
 }
 
+func (c *ClientV2) SkipZanTest() {
+	c.tryUpdateReadyState()
+}
+
+func (c *ClientV2) UnskipZanTest() {
+	c.tryUpdateReadyState()
+}
+
 func (c *ClientV2) Pause() {
 	c.tryUpdateReadyState()
 }

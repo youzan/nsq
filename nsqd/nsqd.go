@@ -337,6 +337,12 @@ func (n *NSQD) LoadMetadata(disabled int32) {
 			if skipped {
 				channel.Skip()
 			}
+
+			zanTestSkipped, _ := channelJs.Get("zanTestSkipped").Bool()
+			if zanTestSkipped {
+				channel.SkipZanTest()
+			}
+
 		}
 		// we load channels from the new meta file
 		topic.LoadChannelMeta()

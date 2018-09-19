@@ -189,6 +189,7 @@ var (
 	ErrLocalTopicDataCorrupt               = NewCoordErr("local topic data corrupt", CoordLocalErr)
 	ErrLocalChannelPauseFailed             = NewCoordErr("local channel pause/unpause failed", CoordLocalErr)
 	ErrLocalChannelSkipFailed              = NewCoordErr("local channel skip/unskip failed", CoordLocalErr)
+	ErrLocalChannelSkipZanTestFailed       = NewCoordErr("local channel skip/unskip zan test failed", CoordLocalErr)
 	ErrLocalDelayedQueueMissing            = NewCoordErr("local delayed queue is missing", CoordLocalErr)
 )
 

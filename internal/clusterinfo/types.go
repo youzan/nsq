@@ -224,6 +224,7 @@ type ChannelStats struct {
 	Clients                 []*ClientStats                          `json:"clients"`
 	Paused                  bool                                    `json:"paused"`
 	Skipped                 bool                                    `json:"skipped"`
+	ZanTestSkipped          bool					`json:"zan_test_skipped"`
 	IsMultiOrdered          bool                                    `json:"is_multi_ordered"`
 	IsExt                   bool                                    `json:"is_ext"`
 	MsgConsumeLatencyStats  []int64                                 `json:"msg_consume_latency_stats"`
@@ -272,6 +273,9 @@ func (c *ChannelStats) Merge(a *ChannelStats) {
 	}
 	if a.Skipped {
 		c.Skipped = a.Skipped
+	}
+	if a.ZanTestSkipped {
+		c.ZanTestSkipped = a.ZanTestSkipped
 	}
 	c.NodeStats = append(c.NodeStats, a.NodeStats...)
 	sort.Sort(ChannelStatsByPartAndHost{c.NodeStats})
@@ -322,6 +326,9 @@ func (c *ChannelStats) Add(a *ChannelStats) {
 	}
 	if a.Skipped {
 		c.Skipped = a.Skipped
+	}
+	if a.ZanTestSkipped {
+		c.ZanTestSkipped = a.ZanTestSkipped
 	}
 	c.NodeStats = append(c.NodeStats, a)
 	sort.Sort(ChannelStatsByPartAndHost{c.NodeStats})

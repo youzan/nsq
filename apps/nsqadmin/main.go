@@ -67,6 +67,8 @@ var (
 	accessTokens = app.StringArray{}
 
 	accessControlFile = flagSet.String("access-control-file", "", "administrator access control file")
+
+	enableZanTestSkip = flagSet.Bool("enable-zan-test-skip", false, "enable skip zan test message")
 )
 
 func init() {

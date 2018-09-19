@@ -90,6 +90,7 @@ type ChannelStats struct {
 	ClientNum     int64         `json:"client_num"`
 	Paused        bool          `json:"paused"`
 	Skipped       bool          `json:"skipped"`
+	ZanTestSkipped bool		`json:"zan_test_skipped"`
 
 	DelayedQueueCount  uint64 `json:"delayed_queue_count"`
 	DelayedQueueRecent string `json:"delayed_queue_recent"`
@@ -137,6 +138,7 @@ func NewChannelStats(c *Channel, clients []ClientStats, clientNum int) ChannelSt
 		ClientNum:          int64(clientNum),
 		Paused:             c.IsPaused(),
 		Skipped:            c.IsSkipped(),
+		ZanTestSkipped:     c.IsZanTestSkipped(),
 		DelayedQueueCount:  dqCnt,
 		DelayedQueueRecent: time.Unix(0, recentTs).String(),
 

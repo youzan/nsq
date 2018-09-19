@@ -59,7 +59,8 @@ var BaseView = Backbone.View.extend({
             'auth_enabled': AppState.get('AUTH_ENABLED'),
             'login'     : AppState.get('LOGIN'),
             'user'      : AppState.get('USER'),
-            'hasEndpoint' : AppState.get('HAS_ENDPOINT')
+            'hasEndpoint' : AppState.get('HAS_ENDPOINT'),
+            'enable_zan_test_skip' : AppState.get('ENABLE_ZAN_TEST_SKIP')
         };
         if (this.model) {
             ctx = _.extend(ctx, this.model.toJSON());

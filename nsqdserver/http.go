@@ -74,6 +74,8 @@ func newHTTPServer(ctx *context, tlsEnabled bool, tlsRequired bool) *httpServer 
 	router.Handle("POST", "/channel/unpause", http_api.Decorate(s.doPauseChannel, log, http_api.V1))
 	router.Handle("POST", "/channel/skip", http_api.Decorate(s.doSkipChannel, log, http_api.V1))
 	router.Handle("POST", "/channel/unskip", http_api.Decorate(s.doSkipChannel, log, http_api.V1))
+	router.Handle("POST", "/channel/skipZanTest", http_api.Decorate(s.doSkipZanTest, log, http_api.V1))
+	router.Handle("POST", "/channel/unskipZanTest", http_api.Decorate(s.doSkipZanTest, log, http_api.V1))
 	router.Handle("POST", "/channel/create", http_api.Decorate(s.doCreateChannel, log, http_api.V1))
 	router.Handle("POST", "/channel/delete", http_api.Decorate(s.doDeleteChannel, log, http_api.V1))
 	router.Handle("POST", "/channel/empty", http_api.Decorate(s.doEmptyChannel, log, http_api.V1))
@@ -734,6 +736,46 @@ func (s *httpServer) doDeleteChannel(w http.ResponseWriter, req *http.Request, p
 	return nil, nil
 }
 
+func (s *httpServer) doSkipZanTest(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {
+	_, topic, channelName, err := s.getExistingTopicChannelFromQuery(req)
+	if err != nil {
+		return nil, err
+	}
+
+	if !topic.IsExt() {
+		nsqd.NsqLogger().Errorf("could not skip zan test messages on topic not support ext. topic:%v", topic.GetTopicName())
+		return nil, http_api.Err{400, "INVALID_REQUEST"}
+	}
+
+	channel, err := topic.GetExistingChannel(channelName)
+	if err != nil {
+		return nil, http_api.Err{404, "CHANNEL_NOT_FOUND"}
+	}
+
+	nsqd.NsqLogger().Logf("topic:%v channel:%v ", topic.GetTopicName(), channel.GetName())
+
+	if strings.Contains(req.URL.Path, "unskipZanTest") {
+		//update channel state before set channel consume offset
+		err = s.ctx.UpdateChannelState(channel, -1, -1, nsqd.ZanTestUnskip)
+		if err != nil {
+			nsqd.NsqLogger().LogErrorf("failure in %s - %s", req.URL.Path, err)
+			return nil, http_api.Err{500, "INTERNAL_ERROR"}
+		}
+		nsqd.NsqLogger().Logf("skip zan test messages")
+	} else {
+		err = s.ctx.UpdateChannelState(channel, -1, -1, nsqd.ZanTestSkip)
+		if err != nil {
+			nsqd.NsqLogger().LogErrorf("failure in %s - %s", req.URL.Path, err)
+			return nil, http_api.Err{500, "INTERNAL_ERROR"}
+		}
+		nsqd.NsqLogger().Logf("unskip zan test messages")
+	}
+
+	// pro-actively persist metadata so in case of process failure
+	topic.SaveChannelMeta()
+	return nil, nil
+}
+
 func (s *httpServer) doSkipChannel(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {
 	_, topic, channelName, err := s.getExistingTopicChannelFromQuery(req)
 	if err != nil {
@@ -749,13 +791,13 @@ func (s *httpServer) doSkipChannel(w http.ResponseWriter, req *http.Request, ps 
 
 	if strings.Contains(req.URL.Path, "unskip") {
 		//update channel state before set channel consume offset
-		err = s.ctx.UpdateChannelState(channel, -1, 0)
+		err = s.ctx.UpdateChannelState(channel, -1, 0, -1)
 		if err != nil {
 			nsqd.NsqLogger().LogErrorf("failure in %s - %s", req.URL.Path, err)
 			return nil, http_api.Err{500, "INTERNAL_ERROR"}
 		}
 	} else {
-		err = s.ctx.UpdateChannelState(channel, -1, 1)
+		err = s.ctx.UpdateChannelState(channel, -1, 1, -1)
 		if err != nil {
 			nsqd.NsqLogger().LogErrorf("failure in %s - %s", req.URL.Path, err)
 			return nil, http_api.Err{500, "INTERNAL_ERROR"}
@@ -795,9 +837,9 @@ func (s *httpServer) doPauseChannel(w http.ResponseWriter, req *http.Request, ps
 
 	nsqd.NsqLogger().Logf("topic:%v channel:%v ", topic.GetTopicName(), channel.GetName())
 	if strings.Contains(req.URL.Path, "unpause") {
-		err = s.ctx.UpdateChannelState(channel, 0, -1)
+		err = s.ctx.UpdateChannelState(channel, 0, -1, -1)
 	} else {
-		err = s.ctx.UpdateChannelState(channel, 1, -1)
+		err = s.ctx.UpdateChannelState(channel, 1, -1, -1)
 	}
 	if err != nil {
 		nsqd.NsqLogger().LogErrorf("failure in %s - %s", req.URL.Path, err)

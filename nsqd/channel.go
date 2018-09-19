@@ -23,6 +23,8 @@ const (
 	MaxMemReqTimes        = 10
 	MaxWaitingDelayed     = 100
 	MaxDepthReqToEnd      = 1000000
+	ZanTestSkip = 0
+	ZanTestUnskip = 1
 )
 
 var (
@@ -36,6 +38,8 @@ var (
 )
 
 type Consumer interface {
+	SkipZanTest()
+	UnskipZanTest()
 	UnPause()
 	Pause()
 	TimedOutMessage()
@@ -108,6 +112,7 @@ type Channel struct {
 	clients          map[int64]Consumer
 	paused           int32
 	skipped          int32
+	zanTestSkip	 int32
 	ephemeral        bool
 	deleteCallback   func(*Channel)
 	deleter          sync.Once
@@ -181,6 +186,7 @@ func NewChannel(topicName string, part int, channelName string, chEnd BackendQue
 		peekedMsgs:             make([]Message, MaxWaitingDelayed),
 		Ext:                    ext,
 	}
+
 	if len(opt.E2EProcessingLatencyPercentiles) > 0 {
 		c.e2eProcessingLatencyStream = quantile.New(
 			opt.E2EProcessingLatencyWindowTime,
@@ -596,6 +602,39 @@ func (c *Channel) DepthSize() int64 {
 
 func (c *Channel) DepthTimestamp() int64 {
 	return atomic.LoadInt64(&c.waitingProcessMsgTs)
+}
+
+func (c *Channel) IsZanTestSkipped() bool {
+	return c.IsExt() && c.option.AllowZanTestSkip && atomic.LoadInt32(&c.zanTestSkip) == ZanTestSkip
+}
+
+func (c *Channel) SkipZanTest() error {
+	return c.doSkipZanTest(true)
+}
+
+func (c *Channel) UnskipZanTest() error {
+	return c.doSkipZanTest(false)
+}
+
+func (c *Channel) doSkipZanTest(skipped bool) error {
+	if skipped {
+		atomic.StoreInt32(&c.zanTestSkip, ZanTestSkip)
+		//
+	} else {
+		atomic.StoreInt32(&c.zanTestSkip, ZanTestUnskip)
+	}
+
+	c.RLock()
+	for _, client := range c.clients {
+		if skipped {
+			client.SkipZanTest()
+		} else {
+			client.UnskipZanTest()
+		}
+	}
+	c.RUnlock()
+
+	return nil
 }
 
 func (c *Channel) Pause() error {
@@ -1853,7 +1892,7 @@ LOOP:
 		}
 
 		//let timer sync to update backend in replicas' channels
-		if c.IsSkipped() {
+		if c.IsSkipped() || c.shouldSkipZanTest(msg) {
 			if msg.DelayedType == ChannelDelayed {
 				c.ConfirmDelayedMessage(msg)
 			} else {
@@ -1937,6 +1976,24 @@ exit:
 	nsqLog.Logf("CHANNEL(%s): closing ... messagePump", c.name)
 	close(c.clientMsgChan)
 	close(c.exitSyncChan)
+}
+
+func (c *Channel) shouldSkipZanTest(msg *Message) bool {
+	if c.IsZanTestSkipped() && msg.ExtVer == ext.JSON_HEADER_EXT_VER {
+		//check if zan_test header contained in json header
+		extHeader, _ :=  simpleJson.NewJson(msg.ExtBytes)
+		if flag, exist := extHeader.CheckGet(ext.ZAN_TEST_KEY); exist {
+			tb, err := flag.Bool()
+			if err != nil {
+				ts, _ := flag.String()
+				if ts != "" {
+					tb, _ = strconv.ParseBool(ts)
+				}
+			}
+			return tb
+		}
+	}
+	return false
 }
 
 func parseTagIfAny(msg *Message) (string, error) {
