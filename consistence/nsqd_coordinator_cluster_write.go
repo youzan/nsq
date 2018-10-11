@@ -1288,7 +1288,8 @@ func (self *NsqdCoordinator) DeleteChannel(topic *nsqd.Topic, channelName string
 	doLocalWrite := func(d *coordData) *CoordErr {
 		localErr := topic.DeleteExistingChannel(channelName)
 		if localErr != nil {
-			coordLog.Infof("deleteing local channel %v error: %v", channelName, localErr)
+			coordLog.Infof("topic %v deleteing local channel %v error: %v",
+				topicName, channelName, localErr)
 		} else {
 			topic.SaveChannelMeta()
 		}
@@ -1306,11 +1307,12 @@ func (self *NsqdCoordinator) DeleteChannel(topic *nsqd.Topic, channelName string
 	doSlaveSync := func(c *NsqdRpcClient, nodeID string, tcData *coordData) *CoordErr {
 		rpcErr := c.DeleteChannel(&tcData.topicLeaderSession, &tcData.topicInfo, channelName)
 		if rpcErr != nil {
-			coordLog.Infof("delete channel(%v) to replica %v failed: %v", channelName,
+			coordLog.Infof("topic %v delete channel(%v) to replica %v failed: %v",
+				topicName, channelName,
 				nodeID, rpcErr)
 		}
-		// ignore delete channel error
-		return nil
+		// make sure delete channel will retry until success
+		return rpcErr
 	}
 	handleSyncResult := func(successNum int, tcData *coordData) bool {
 		// we can ignore the error if this channel is not ordered. (just sync next time)
@@ -1335,7 +1337,7 @@ func (self *NsqdCoordinator) deleteChannelOnSlave(tc *coordData, channelName str
 		return ErrTopicWriteOnNonISR
 	}
 
-	coordLog.Logf("got delete channel(%v) offset on slave ", channelName)
+	coordLog.Logf("topic %v got delete channel(%v) on slave ", topicName, channelName)
 	topic, localErr := self.localNsqd.GetExistingTopic(topicName, partition)
 	if localErr != nil {
 		coordLog.Warningf("slave missing topic : %v", topicName)
@@ -1344,7 +1346,7 @@ func (self *NsqdCoordinator) deleteChannelOnSlave(tc *coordData, channelName str
 
 	localErr = topic.DeleteExistingChannel(channelName)
 	if localErr != nil {
-		coordLog.Logf("delete channel %v on slave failed: %v ", channelName, localErr)
+		coordLog.Logf("topic %v delete channel %v on slave failed: %v ", topicName, channelName, localErr)
 	} else {
 		topic.SaveChannelMeta()
 	}
