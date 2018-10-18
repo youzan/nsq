@@ -35,6 +35,10 @@ func (c *fakeConsumer) RequeuedMessage() {
 }
 func (c *fakeConsumer) FinishedMessage() {
 }
+func (c *fakeConsumer) SkipZanTest() {
+}
+func (c *fakeConsumer) UnskipZanTest() {
+}
 func (c *fakeConsumer) Stats() nsqdNs.ClientStats {
 	return nsqdNs.ClientStats{}
 }
@@ -310,10 +314,10 @@ func TestNsqdCoordStartup(t *testing.T) {
 	fakeLeadership.AcquireTopicLeader(topic, partition, nodeInfo1, fakeInfo.Epoch)
 	tmp[partition] = fakeInfo
 
-	nsqd1.GetTopic(topic, partition)
-	nsqd2.GetTopic(topic, partition)
-	nsqd3.GetTopic(topic, partition)
-	nsqd4.GetTopic(topic, partition)
+	nsqd1.GetTopic(topic, partition, false)
+	nsqd2.GetTopic(topic, partition, false)
+	nsqd3.GetTopic(topic, partition, false)
+	nsqd4.GetTopic(topic, partition, false)
 
 	fakeLookupProxy, _ := NewFakeLookupRemoteProxy("127.0.0.1", 0)
 	fakeSession, _ := fakeLeadership.GetTopicLeaderSession(topic, partition)
@@ -589,7 +593,7 @@ func testNsqdCoordCatchup(t *testing.T, meta TopicMetaInfo, testUpgrade bool, te
 	if meta.Ext {
 		msgRawSize += 1
 	}
-	topicData1 := nsqd1.GetTopic(topic, partition)
+	topicData1 := nsqd1.GetTopic(topic, partition, false)
 	for i := 0; i < 20; i++ {
 		mid, _, _, _, err := nsqdCoord1.PutMessageBodyToCluster(topicData1, []byte("123"), 0)
 		test.Nil(t, err)
@@ -639,7 +643,7 @@ func testNsqdCoordCatchup(t *testing.T, meta TopicMetaInfo, testUpgrade bool, te
 			}
 		}
 	}
-	topicData2 := nsqd2.GetTopic(topic, partition)
+	topicData2 := nsqd2.GetTopic(topic, partition, false)
 	topicData1.ForceFlush()
 	topicData2.ForceFlush()
 	dq1 := topicData1.GetDelayedQueue()
@@ -689,7 +693,7 @@ func testNsqdCoordCatchup(t *testing.T, meta TopicMetaInfo, testUpgrade bool, te
 	ensureTopicLeaderSession(nsqdCoord3, topic, partition, fakeSession)
 	// wait full catchup
 	time.Sleep(time.Second * 3)
-	topicData3 := nsqd3.GetTopic(topic, partition)
+	topicData3 := nsqd3.GetTopic(topic, partition, false)
 	topicData3.ForceFlush()
 	tc3, coordErr := nsqdCoord3.getTopicCoord(topic, partition)
 	test.Nil(t, coordErr)
@@ -908,6 +912,13 @@ func testNsqdCoordCatchup(t *testing.T, meta TopicMetaInfo, testUpgrade bool, te
 	}
 }
 
+func TestNsqdCoordCatchupAbort(t *testing.T) {
+	// TODO: test two node catchup and one node is slow catchup,
+	// while the fast node already join the isr, the slow catchup will be notified to abort current catchup
+	// test the abortion while pulling logs (writing commit log)
+
+}
+
 // catchup from empty
 // catchup with more data than leader
 // catchup with same segment
@@ -1008,13 +1019,13 @@ func testNsqdCoordCatchupMultiCommitSegment(t *testing.T, meta TopicMetaInfo) {
 	if meta.Ext {
 		msgRawSize += 1
 	}
-	topicData1 := nsqd1.GetTopic(topic, partition)
+	topicData1 := nsqd1.GetTopic(topic, partition, false)
 	for i := 0; i < 30; i++ {
 		_, _, _, _, err := nsqdCoord1.PutMessageBodyToCluster(topicData1, []byte("123"), 0)
 		test.Nil(t, err)
 		msgCnt++
 	}
-	topicData2 := nsqd2.GetTopic(topic, partition)
+	topicData2 := nsqd2.GetTopic(topic, partition, false)
 	topicData1.ForceFlush()
 	topicData2.ForceFlush()
 
@@ -1045,7 +1056,7 @@ func testNsqdCoordCatchupMultiCommitSegment(t *testing.T, meta TopicMetaInfo) {
 	ensureTopicLeaderSession(nsqdCoord3, topic, partition, fakeSession)
 	// wait catchup
 	time.Sleep(time.Second * 3)
-	topicData3 := nsqd3.GetTopic(topic, partition)
+	topicData3 := nsqd3.GetTopic(topic, partition, false)
 	topicData3.ForceFlush()
 	tc3, coordErr := nsqdCoord3.getTopicCoord(topic, partition)
 	test.Nil(t, coordErr)
@@ -1255,14 +1266,14 @@ func testNsqdCoordCatchupCleanOldData(t *testing.T, meta TopicMetaInfo) {
 	if meta.Ext {
 		msgRawSize += 1
 	}
-	topicData1 := nsqd1.GetTopic(topic, partition)
+	topicData1 := nsqd1.GetTopic(topic, partition, false)
 	ch := topicData1.GetChannel("ch")
 	for i := 0; i < totalMsgNum; i++ {
 		_, _, _, _, err := nsqdCoord1.PutMessageBodyToCluster(topicData1, []byte("123"), 0)
 		test.Nil(t, err)
 		msgCnt++
 	}
-	topicData2 := nsqd2.GetTopic(topic, partition)
+	topicData2 := nsqd2.GetTopic(topic, partition, false)
 	topicData1.ForceFlush()
 	topicData2.ForceFlush()
 
@@ -1306,7 +1317,7 @@ func testNsqdCoordCatchupCleanOldData(t *testing.T, meta TopicMetaInfo) {
 	ensureTopicLeaderSession(nsqdCoord3, topic, partition, fakeSession)
 	// wait catchup
 	time.Sleep(time.Second * 3)
-	topicData3 := nsqd3.GetTopic(topic, partition)
+	topicData3 := nsqd3.GetTopic(topic, partition, false)
 	topicData3.ForceFlush()
 	tc3, coordErr := nsqdCoord3.getTopicCoord(topic, partition)
 	test.Nil(t, coordErr)
@@ -1427,7 +1438,7 @@ func testNsqdCoordPutMessageAndSyncChannelOffset(t *testing.T, isExt bool) {
 	ensureTopicLeaderSession(nsqdCoord2, topic, partition, leaderSession)
 	ensureTopicDisableWrite(nsqdCoord1, topic, partition, false)
 	ensureTopicDisableWrite(nsqdCoord2, topic, partition, false)
-	topicData1 := nsqd1.GetTopic(topic, partition)
+	topicData1 := nsqd1.GetTopic(topic, partition, false)
 	channel1 := topicData1.GetChannel("ch1")
 	_, _, _, _, err := nsqdCoord1.PutMessageBodyToCluster(topicData1, []byte("123"), 0)
 	test.Nil(t, err)
@@ -1438,7 +1449,7 @@ func testNsqdCoordPutMessageAndSyncChannelOffset(t *testing.T, isExt bool) {
 		msgRawSize += 1
 	}
 
-	topicData2 := nsqd2.GetTopic(topic, partition)
+	topicData2 := nsqd2.GetTopic(topic, partition, false)
 
 	topicData1.ForceFlush()
 	topicData2.ForceFlush()
@@ -1725,14 +1736,14 @@ func TestNsqdCoordSyncChannelList(t *testing.T) {
 	ensureTopicLeaderSession(nsqdCoord2, topic, partition, leaderSession)
 	ensureTopicDisableWrite(nsqdCoord1, topic, partition, false)
 	ensureTopicDisableWrite(nsqdCoord2, topic, partition, false)
-	topicData1 := nsqd1.GetTopic(topic, partition)
+	topicData1 := nsqd1.GetTopic(topic, partition, false)
 	topicData1.GetChannel("ch1")
 	topicData1.GetChannel("ch2")
 	topicData1.GetChannel("ch3_closed")
 	_, _, _, _, err := nsqdCoord1.PutMessageBodyToCluster(topicData1, []byte("123"), 0)
 	test.Nil(t, err)
 
-	topicData2 := nsqd2.GetTopic(topic, partition)
+	topicData2 := nsqd2.GetTopic(topic, partition, false)
 	topicData1.ForceFlush()
 	topicData2.ForceFlush()
 
@@ -1837,7 +1848,7 @@ func benchmarkNsqdCoordPubWithArg(b *testing.B, replica int, size int) {
 		}
 		msg := make([]byte, size)
 		// check if write ok
-		topicData := nsqd1.GetTopic(topic, partition)
+		topicData := nsqd1.GetTopic(topic, partition, false)
 		_, _, _, _, err := nsqdCoord1.PutMessageBodyToCluster(topicData, msg, 0)
 		if err != nil {
 			b.Logf("test put failed: %v", err)

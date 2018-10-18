@@ -21,14 +21,14 @@ func TestGetTopic(t *testing.T) {
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqd.Exit()
 
-	topic1 := nsqd.GetTopic("test", 0)
+	topic1 := nsqd.GetTopic("test", 0, false)
 	test.NotNil(t, topic1)
 	test.Equal(t, "test", topic1.GetTopicName())
 
-	topic2 := nsqd.GetTopic("test", 0)
+	topic2 := nsqd.GetTopic("test", 0, false)
 	test.Equal(t, topic1, topic2)
 
-	topic3 := nsqd.GetTopic("test2", 1)
+	topic3 := nsqd.GetTopic("test2", 1, false)
 	test.Equal(t, "test2", topic3.GetTopicName())
 	test.NotEqual(t, topic2, topic3)
 
@@ -48,7 +48,7 @@ func TestGetChannel(t *testing.T) {
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqd.Exit()
 
-	topic := nsqd.GetTopic("test", 0)
+	topic := nsqd.GetTopic("test", 0, false)
 
 	channel1 := topic.GetChannel("ch1")
 	test.NotNil(t, channel1)
@@ -89,7 +89,7 @@ func TestTopicMarkRemoved(t *testing.T) {
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqd.Exit()
 
-	topic := nsqd.GetTopic("test", 0)
+	topic := nsqd.GetTopic("test", 0, false)
 	origPath := topic.dataPath
 
 	channel1 := topic.GetChannel("ch1")
@@ -99,7 +99,7 @@ func TestTopicMarkRemoved(t *testing.T) {
 		msg.ID = 0
 		topic.PutMessage(msg)
 	}
-	topic1 := nsqd.GetTopic("test", 1)
+	topic1 := nsqd.GetTopic("test", 1, false)
 	err := topic.SetMagicCode(time.Now().UnixNano())
 	err = topic1.SetMagicCode(time.Now().UnixNano())
 	test.Equal(t, nil, err)
@@ -207,7 +207,7 @@ func TestDeleteLast(t *testing.T) {
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqd.Exit()
 
-	topic := nsqd.GetTopic("test", 0)
+	topic := nsqd.GetTopic("test", 0, false)
 
 	channel1 := topic.GetChannel("ch1")
 	test.NotNil(t, channel1)
@@ -230,7 +230,7 @@ func TestTopicBackendMaxMsgSize(t *testing.T) {
 	defer nsqd.Exit()
 
 	topicName := "test_topic_backend_maxmsgsize" + strconv.Itoa(int(time.Now().Unix()))
-	topic := nsqd.GetTopic(topicName, 0)
+	topic := nsqd.GetTopic(topicName, 0, false)
 
 	test.Equal(t, topic.backend.maxMsgSize, int32(opts.MaxMsgSize+minValidMsgLength))
 }
@@ -242,7 +242,7 @@ func TestTopicPutChannelWait(t *testing.T) {
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqd.Exit()
 
-	topic := nsqd.GetTopic("test", 0)
+	topic := nsqd.GetTopic("test", 0, false)
 	topic.dynamicConf.AutoCommit = 1
 	topic.dynamicConf.SyncEvery = 10
 
@@ -299,7 +299,7 @@ func TestTopicCleanOldDataByRetentionSize(t *testing.T) {
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqd.Exit()
 
-	topic := nsqd.GetTopic("test", 0)
+	topic := nsqd.GetTopic("test", 0, false)
 	topic.dynamicConf.AutoCommit = 1
 	topic.dynamicConf.SyncEvery = 10
 	topic.dynamicConf.RetentionDay = 1
@@ -372,7 +372,7 @@ func TestTopicCleanOldDataByRetentionDay(t *testing.T) {
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqd.Exit()
 
-	topic := nsqd.GetTopic("test", 0)
+	topic := nsqd.GetTopic("test", 0, false)
 	topic.dynamicConf.AutoCommit = 1
 	topic.dynamicConf.SyncEvery = 10
 
@@ -456,7 +456,7 @@ func TestTopicCleanOldDataByRetentionDayWithResetStart(t *testing.T) {
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqd.Exit()
 
-	topic := nsqd.GetTopic("test", 0)
+	topic := nsqd.GetTopic("test", 0, false)
 	topic.dynamicConf.AutoCommit = 1
 	topic.dynamicConf.SyncEvery = 10
 
@@ -527,7 +527,7 @@ func TestTopicResetWithQueueStart(t *testing.T) {
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqd.Exit()
 
-	topic := nsqd.GetTopic("test", 0)
+	topic := nsqd.GetTopic("test", 0, false)
 	topic.dynamicConf.AutoCommit = 1
 	topic.dynamicConf.SyncEvery = 10
 
@@ -634,7 +634,7 @@ func benchmarkTopicPut(b *testing.B, size int) {
 	b.StartTimer()
 
 	for i := 0; i <= b.N; i++ {
-		topic := nsqd.GetTopic(topicName, 0)
+		topic := nsqd.GetTopic(topicName, 0, false)
 		msg.ID = 0
 		topic.PutMessage(msg)
 	}
@@ -659,12 +659,12 @@ func BenchmarkTopicToChannelPut(b *testing.B) {
 	_, _, nsqd := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqd.Exit()
-	nsqd.GetTopic(topicName, 0).GetChannel(channelName)
+	nsqd.GetTopic(topicName, 0, false).GetChannel(channelName)
 	b.StartTimer()
 	msg := NewMessage(0, []byte("aaaaaaaaaaaaaaaaaaaaaaaaaaa"))
 
 	for i := 0; i <= b.N; i++ {
-		topic := nsqd.GetTopic(topicName, 0)
+		topic := nsqd.GetTopic(topicName, 0, false)
 		msg.ID = 0
 		topic.PutMessage(msg)
 	}

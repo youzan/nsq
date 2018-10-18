@@ -23,8 +23,9 @@ const (
 	MaxMemReqTimes        = 10
 	MaxWaitingDelayed     = 100
 	MaxDepthReqToEnd      = 1000000
-	ZanTestSkip = 0
-	ZanTestUnskip = 1
+	ZanTestSkip           = 0
+	ZanTestUnskip         = 1
+	memSizeForOrdered     = 2
 )
 
 var (
@@ -112,7 +113,7 @@ type Channel struct {
 	clients          map[int64]Consumer
 	paused           int32
 	skipped          int32
-	zanTestSkip	 int32
+	zanTestSkip      int32
 	ephemeral        bool
 	deleteCallback   func(*Channel)
 	deleter          sync.Once
@@ -152,39 +153,50 @@ type Channel struct {
 
 	//channel msg stats
 	channelStatsInfo *ChannelStatsInfo
+	topicOrdered     bool
 }
 
 // NewChannel creates a new instance of the Channel type and returns a pointer
-func NewChannel(topicName string, part int, channelName string, chEnd BackendQueueEnd, opt *Options,
+func NewChannel(topicName string, part int, topicOrdered bool, channelName string, chEnd BackendQueueEnd, opt *Options,
 	deleteCallback func(*Channel), moreDataCallback func(*Channel), consumeDisabled int32,
 	notify INsqdNotify, ext int32, queueStart BackendQueueEnd) *Channel {
 
 	c := &Channel{
-		topicName:              topicName,
-		topicPart:              part,
-		name:                   channelName,
-		requeuedMsgChan:        make(chan *Message, opt.MaxRdyCount+1),
-		waitingRequeueChanMsgs: make(map[MessageID]*Message, 100),
-		waitingRequeueMsgs:     make(map[MessageID]*Message, 100),
-		clientMsgChan:          make(chan *Message),
-		tagMsgChans:            make(map[string]*MsgChanData),
-		tagChanInitChan:        make(chan string, 2),
-		tagChanRemovedChan:     make(chan string, 2),
-		exitChan:               make(chan int),
-		exitSyncChan:           make(chan bool),
-		clients:                make(map[int64]Consumer),
-		confirmedMsgs:          NewIntervalSkipList(),
-		tryReadBackend:         make(chan bool, 1),
-		readerChanged:          make(chan resetChannelData, 10),
-		endUpdatedChan:         make(chan bool, 1),
-		deleteCallback:         deleteCallback,
-		moreDataCallback:       moreDataCallback,
-		option:                 opt,
-		nsqdNotify:             notify,
-		consumeDisabled:        consumeDisabled,
-		delayedConfirmedMsgs:   make(map[MessageID]Message, MaxWaitingDelayed),
-		peekedMsgs:             make([]Message, MaxWaitingDelayed),
-		Ext:                    ext,
+		topicName:          topicName,
+		topicPart:          part,
+		topicOrdered:       topicOrdered,
+		name:               channelName,
+		clientMsgChan:      make(chan *Message),
+		tagMsgChans:        make(map[string]*MsgChanData),
+		tagChanInitChan:    make(chan string, 2),
+		tagChanRemovedChan: make(chan string, 2),
+		exitChan:           make(chan int),
+		exitSyncChan:       make(chan bool),
+		clients:            make(map[int64]Consumer),
+		confirmedMsgs:      NewIntervalSkipList(),
+		tryReadBackend:     make(chan bool, 1),
+		readerChanged:      make(chan resetChannelData, 10),
+		endUpdatedChan:     make(chan bool, 1),
+		deleteCallback:     deleteCallback,
+		moreDataCallback:   moreDataCallback,
+		option:             opt,
+		nsqdNotify:         notify,
+		consumeDisabled:    consumeDisabled,
+		Ext:                ext,
+	}
+
+	if topicOrdered {
+		c.requeuedMsgChan = make(chan *Message, memSizeForOrdered)
+		c.waitingRequeueChanMsgs = make(map[MessageID]*Message, memSizeForOrdered)
+		c.waitingRequeueMsgs = make(map[MessageID]*Message, memSizeForOrdered)
+		c.delayedConfirmedMsgs = make(map[MessageID]Message, memSizeForOrdered)
+		c.peekedMsgs = make([]Message, memSizeForOrdered)
+	} else {
+		c.requeuedMsgChan = make(chan *Message, opt.MaxRdyCount+1)
+		c.waitingRequeueChanMsgs = make(map[MessageID]*Message, 100)
+		c.waitingRequeueMsgs = make(map[MessageID]*Message, 100)
+		c.delayedConfirmedMsgs = make(map[MessageID]Message, MaxWaitingDelayed)
+		c.peekedMsgs = make([]Message, MaxWaitingDelayed)
 	}
 
 	if len(opt.E2EProcessingLatencyPercentiles) > 0 {
@@ -465,6 +477,9 @@ func (c *Channel) IsOrdered() bool {
 
 func (c *Channel) initPQ() {
 	pqSize := int(math.Max(1, float64(c.option.MemQueueSize)/10))
+	if c.topicOrdered {
+		pqSize = memSizeForOrdered
+	}
 
 	c.inFlightMutex.Lock()
 	for _, m := range c.inFlightMessages {
@@ -1981,7 +1996,7 @@ exit:
 func (c *Channel) shouldSkipZanTest(msg *Message) bool {
 	if c.IsZanTestSkipped() && msg.ExtVer == ext.JSON_HEADER_EXT_VER {
 		//check if zan_test header contained in json header
-		extHeader, _ :=  simpleJson.NewJson(msg.ExtBytes)
+		extHeader, _ := simpleJson.NewJson(msg.ExtBytes)
 		if flag, exist := extHeader.CheckGet(ext.ZAN_TEST_KEY); exist {
 			tb, err := flag.Bool()
 			if err != nil {

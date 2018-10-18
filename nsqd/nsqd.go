@@ -40,7 +40,7 @@ var (
 	ErrTopicNotExist          = errors.New("topic does not exist")
 )
 
-var DEFAULT_RETENTION_DAYS = 7
+var DEFAULT_RETENTION_DAYS = 3
 
 var EnableDelayedQueue = int32(1)
 
@@ -305,7 +305,11 @@ func (n *NSQD) LoadMetadata(disabled int32) {
 			nsqLog.Infof("failed to parse topic extend metadata, set to false - %s", err)
 			ext = false
 		}
-		topic := n.internalGetTopic(topicName, part, ext, disabled)
+		ordered, err := topicJs.Get("ordered").Bool()
+		if err != nil {
+			ordered = false
+		}
+		topic := n.internalGetTopic(topicName, part, ext, ordered, disabled)
 
 		// old meta should also be loaded
 		channels, err := topicJs.Get("channels").Array()
@@ -388,6 +392,7 @@ func (n *NSQD) persistMetadata(currentTopicMap map[string]map[int]*Topic) error 
 			topicData["name"] = topic.GetTopicName()
 			topicData["partition"] = topic.GetTopicPart()
 			topicData["ext"] = topic.IsExt()
+			topicData["ordered"] = topic.IsOrdered()
 			// we save the channels to topic, but for compatible we need save empty channels to json
 			channels := []interface{}{}
 			err := topic.SaveChannelMeta()
@@ -484,24 +489,24 @@ func (n *NSQD) GetTopicIgnPart(topicName string) *Topic {
 		}
 	}
 	n.RUnlock()
-	return n.GetTopic(topicName, 0)
+	return n.GetTopic(topicName, 0, false)
 }
 
-func (n *NSQD) GetTopicWithDisabled(topicName string, part int, ext bool) *Topic {
-	return n.internalGetTopic(topicName, part, ext, 1)
+func (n *NSQD) GetTopicWithDisabled(topicName string, part int, ext bool, ordered bool) *Topic {
+	return n.internalGetTopic(topicName, part, ext, ordered, 1)
 }
 
 // GetTopic performs a thread safe operation
 // to return a pointer to a Topic object (potentially new)
-func (n *NSQD) GetTopic(topicName string, part int) *Topic {
-	return n.internalGetTopic(topicName, part, false, 0)
+func (n *NSQD) GetTopic(topicName string, part int, ordered bool) *Topic {
+	return n.internalGetTopic(topicName, part, false, false, 0)
 }
 
-func (n *NSQD) GetTopicWithExt(topicName string, part int) *Topic {
-	return n.internalGetTopic(topicName, part, true, 0)
+func (n *NSQD) GetTopicWithExt(topicName string, part int, ordered bool) *Topic {
+	return n.internalGetTopic(topicName, part, true, ordered, 0)
 }
 
-func (n *NSQD) internalGetTopic(topicName string, part int, ext bool, disabled int32) *Topic {
+func (n *NSQD) internalGetTopic(topicName string, part int, ext bool, ordered bool, disabled int32) *Topic {
 	if part > MAX_TOPIC_PARTITION || part < 0 {
 		return nil
 	}
@@ -538,13 +543,8 @@ func (n *NSQD) internalGetTopic(topicName string, part int, ext bool, disabled i
 		part = 0
 	}
 	var t *Topic
-	if !ext {
-		t = NewTopic(topicName, part, n.GetOpts(), disabled, n,
-			n.pubLoopFunc)
-	} else {
-		t = NewTopicWithExt(topicName, part, true, n.GetOpts(), disabled, n,
-			n.pubLoopFunc)
-	}
+	t = NewTopicWithExt(topicName, part, ext, ordered, n.GetOpts(), disabled, n,
+		n.pubLoopFunc)
 	if t == nil {
 		nsqLog.Errorf("TOPIC(%s): create failed", topicName)
 	} else {

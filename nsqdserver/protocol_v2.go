@@ -1276,7 +1276,7 @@ func (p *protocolV2) internalCreateTopic(client *nsqd.ClientV2, params [][]byte)
 			fmt.Sprintf("CREATE_TOPIC is not allowed here while cluster feature enabled."))
 	}
 
-	topic := p.ctx.getTopic(topicName, partition, ext)
+	topic := p.ctx.getTopic(topicName, partition, ext, false)
 	if topic == nil {
 		return nil, protocol.NewClientErr(err, "E_CREATE_TOPIC_FAILED",
 			fmt.Sprintf("CREATE_TOPIC %v failed", topicName))

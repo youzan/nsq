@@ -2297,18 +2297,19 @@ func (self *NsqdCoordinator) removeTopicCoord(topic string, partition int, remov
 			delete(v, partition)
 		}
 	}
-	self.coordMutex.Unlock()
 	var err *CoordErr
 	if topicCoord == nil {
 		err = ErrMissingTopicCoord
 	} else {
+		// should protected by coord lock to avoid recreated topic coord while deleting.
+		// Which will cause two topic coord use the commit writer
 		coordLog.Infof("removing topic coodinator: %v-%v", topic, partition)
-		// should outside the coord mutex lock
 		topicCoord.writeHold.Lock()
 		topicCoord.DeleteNoWriteLock(removeData)
 		topicCoord.writeHold.Unlock()
 		err = nil
 	}
+	self.coordMutex.Unlock()
 	if removeData {
 		coordLog.Infof("removing topic data: %v-%v", topic, partition)
 		// check if any data on local and try remove
@@ -2471,7 +2472,7 @@ func (self *NsqdCoordinator) notifyFlushData(topic string, partition int) {
 
 func (self *NsqdCoordinator) updateLocalTopic(topicInfo *TopicPartitionMetaInfo, tcData *coordData) (*nsqd.Topic, *CoordErr) {
 	// check topic exist and prepare on local.
-	t := self.localNsqd.GetTopicWithDisabled(topicInfo.Name, topicInfo.Partition, topicInfo.Ext)
+	t := self.localNsqd.GetTopicWithDisabled(topicInfo.Name, topicInfo.Partition, topicInfo.Ext, topicInfo.OrderedMulti)
 	if t == nil {
 		return nil, ErrLocalInitTopicFailed
 	}
