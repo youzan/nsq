@@ -313,29 +313,10 @@ func (self *NsqdCoordRpcServer) UpdateTopicInfo(rpcTopicReq *RpcAdminTopicInfo) 
 				continue
 			}
 			if pid != rpcTopicReq.Partition {
+				coordLog.Infof("found local partition %v already exist master for this topic %v", pid, rpcTopicReq)
+				ret = *ErrTopicCoordExistingAndMismatch
 				self.nsqdCoord.coordMutex.Unlock()
-				coordLog.Infof("found another partition %v already exist master for this topic %v", pid, rpcTopicReq.Name)
-				tmpInfo, err := self.nsqdCoord.leadership.GetTopicInfo(rpcTopicReq.Name, pid)
-				if err != nil {
-					if err == ErrKeyNotFound {
-						self.nsqdCoord.requestLeaveFromISR(rpcTopicReq.Name, pid)
-					} else {
-						return &CoordErr{err.Error(), RpcCommonErr, CoordNetErr}
-					}
-				} else if tmpInfo.Leader != myID {
-					coordLog.Infof("this conflict topic leader is not mine, but the data is wrong: %v, %v", tc.GetData(), tmpInfo)
-					self.nsqdCoord.requestLeaveFromISR(rpcTopicReq.Name, pid)
-				} else {
-					ret = *ErrTopicCoordExistingAndMismatch
-					return &ret
-				}
-				if _, err := self.nsqdCoord.localNsqd.GetExistingTopic(rpcTopicReq.Name, rpcTopicReq.Partition); err != nil {
-					coordLog.Infof("local no such topic, we can just remove this coord")
-					tc.logMgr.Close()
-					delete(coords, pid)
-					continue
-				}
-				return ErrMissingTopicCoord
+				return &ret
 			}
 		}
 	}
@@ -349,7 +330,11 @@ func (self *NsqdCoordRpcServer) UpdateTopicInfo(rpcTopicReq *RpcAdminTopicInfo) 
 		var ok2 bool
 		if ok {
 			tc, ok2 = coords[rpcTopicReq.Partition]
-			delete(coords, rpcTopicReq.Partition)
+			if ok2 {
+				delete(coords, rpcTopicReq.Partition)
+				coordLog.Infof("topic(%s) is removing from local node since not related", rpcTopicReq.Name)
+				tc.DeleteWithLock(false)
+			}
 		}
 		self.nsqdCoord.coordMutex.Unlock()
 		if ok && ok2 {
@@ -357,10 +342,8 @@ func (self *NsqdCoordRpcServer) UpdateTopicInfo(rpcTopicReq *RpcAdminTopicInfo) 
 			if tcData.topicInfo.Leader == myID {
 				self.nsqdCoord.releaseTopicLeader(&tcData.topicInfo, &tc.topicLeaderSession)
 			}
-			tcData.logMgr.Close()
 			// never hold any coordinator lock while close or delete local topic
 			self.nsqdCoord.localNsqd.CloseExistingTopic(rpcTopicReq.Name, rpcTopicReq.Partition)
-			coordLog.Infof("topic(%s) is removing from local node since not related", rpcTopicReq.Name)
 		}
 		return &ret
 	}
@@ -433,6 +416,9 @@ func (self *NsqdCoordRpcServer) EnableTopicWrite(rpcTopicReq *RpcAdminTopicInfo)
 		// timeout for waiting
 		coordLog.Infof("timeout while enable write for topic: %v", tp.GetData().topicInfo.GetTopicDesp())
 		err = ErrOperationExpired
+	} else if tp.IsExiting() {
+		coordLog.Infof("exiting while enable write for topic: %v", tp.GetData().topicInfo.GetTopicDesp())
+		err = ErrTopicExiting
 	} else {
 		atomic.StoreInt32(&tp.disableWrite, 0)
 
@@ -482,6 +468,9 @@ func (self *NsqdCoordRpcServer) DisableTopicWrite(rpcTopicReq *RpcAdminTopicInfo
 	if time.Since(begin) > time.Second*3 {
 		// timeout for waiting
 		err = ErrOperationExpired
+	} else if tp.IsExiting() {
+		coordLog.Infof("exiting while disable write for topic: %v", tp.GetData().topicInfo.GetTopicDesp())
+		err = ErrTopicExiting
 	} else {
 		atomic.StoreInt32(&tp.disableWrite, 1)
 
@@ -601,9 +590,9 @@ type RpcTopicData struct {
 
 type RpcChannelState struct {
 	RpcTopicData
-	Channel string
-	Paused  int
-	Skipped int
+	Channel        string
+	Paused         int
+	Skipped        int
 	ZanTestSkipped int
 }
 

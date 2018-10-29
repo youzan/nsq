@@ -25,7 +25,7 @@ const (
 	MAX_CATCHUP_RETRY           = 5
 	MAX_LOG_PULL                = 10000
 	MAX_LOG_PULL_BYTES          = 1024 * 1024 * 32
-	MAX_CATCHUP_RUNNING         = 3
+	MAX_CATCHUP_RUNNING         = 8
 	API_BACKUP_DELAYED_QUEUE_DB = "/delayqueue/backupto"
 )
 
@@ -590,6 +590,49 @@ func (self *NsqdCoordinator) forceCleanTopicData(topicName string, partition int
 	return nil
 }
 
+func (self *NsqdCoordinator) initLocalTopicCoord(topicInfo *TopicPartitionMetaInfo,
+	topicLeaderSession *TopicLeaderSession,
+	basepath string, forceFixLeader bool) (*TopicCoordinator, *nsqd.Topic, error) {
+	self.coordMutex.Lock()
+	defer self.coordMutex.Unlock()
+	coords, ok := self.topicCoords[topicInfo.Name]
+	if !ok {
+		coords = make(map[int]*TopicCoordinator)
+		self.topicCoords[topicInfo.Name] = coords
+	}
+	tc, ok := coords[topicInfo.Partition]
+	if ok {
+		// already loaded? concurrent?
+		return tc, nil, ErrAlreadyExist
+	}
+	var err error
+	topicName := topicInfo.Name
+	partition := topicInfo.Partition
+	tc, err = NewTopicCoordinatorWithFixMode(topicInfo.Name, topicInfo.Partition, basepath,
+		topicInfo.SyncEvery, topicInfo.OrderedMulti, forceFixLeader)
+	if err != nil {
+		coordLog.Infof("failed to get topic coordinator:%v-%v, err:%v", topicName, partition, err)
+		return nil, nil, err
+	}
+
+	tc.topicInfo = *topicInfo
+
+	tc.writeHold.Lock()
+	var coordErr *CoordErr
+	topic, coordErr := self.updateLocalTopic(topicInfo, tc.GetData())
+	tc.writeHold.Unlock()
+	if coordErr != nil {
+		coordLog.Errorf("failed to update local topic %v: %v", topicInfo.GetTopicDesp(), coordErr)
+		tc.DeleteWithLock(false)
+		return nil, nil, coordErr.ToErrorType()
+	}
+	if topicLeaderSession != nil {
+		tc.topicLeaderSession = *topicLeaderSession
+	}
+	coords[topicInfo.Partition] = tc
+	return tc, topic, nil
+}
+
 // check cluster meta info and load topic from disk
 func (self *NsqdCoordinator) loadLocalTopicData() error {
 	if self.localNsqd == nil {
@@ -665,40 +708,13 @@ func (self *NsqdCoordinator) loadLocalTopicData() error {
 			}
 			if shouldLoad {
 				basepath := GetTopicPartitionBasePath(self.dataRootPath, topicInfo.Name, topicInfo.Partition)
-				tc, err := NewTopicCoordinatorWithFixMode(topicInfo.Name, topicInfo.Partition, basepath,
-					topicInfo.SyncEvery, topicInfo.OrderedMulti, forceFixLeader)
-				if err != nil {
-					coordLog.Infof("failed to get topic coordinator:%v-%v, err:%v", topicName, partition, err)
-					continue
-				}
-				tc.topicInfo = *topicInfo
 				topicLeaderSession, err := self.leadership.GetTopicLeaderSession(topicName, partition)
 				if err != nil {
 					coordLog.Infof("failed to get topic leader info:%v-%v, err:%v", topicName, partition, err)
-				} else {
-					tc.topicLeaderSession = *topicLeaderSession
 				}
-				self.coordMutex.Lock()
-				coords, ok := self.topicCoords[topicInfo.Name]
-				if !ok {
-					coords = make(map[int]*TopicCoordinator)
-					self.topicCoords[topicInfo.Name] = coords
-				}
-				coords[topicInfo.Partition] = tc
-				self.coordMutex.Unlock()
-
-				tc.writeHold.Lock()
-				var coordErr *CoordErr
-				topic, coordErr = self.updateLocalTopic(topicInfo, tc.GetData())
-				tc.writeHold.Unlock()
-				if coordErr != nil {
-					coordLog.Errorf("failed to update local topic %v: %v", topicInfo.GetTopicDesp(), coordErr)
-					self.coordMutex.Lock()
-					coords, ok := self.topicCoords[topicInfo.Name]
-					if ok {
-						delete(coords, topicInfo.Partition)
-					}
-					self.coordMutex.Unlock()
+				_, _, loadErr := self.initLocalTopicCoord(topicInfo, topicLeaderSession, basepath, forceFixLeader)
+				if loadErr != nil {
+					coordLog.Infof("topic %v coord init error: %v", topicInfo.GetTopicDesp(), loadErr.Error())
 					continue
 				}
 			} else {
@@ -718,7 +734,7 @@ func (self *NsqdCoordinator) loadLocalTopicData() error {
 			tc, err := self.getTopicCoord(topicInfo.Name, topicInfo.Partition)
 			if err != nil {
 				coordLog.Errorf("no coordinator for topic: %v", topicInfo.GetTopicDesp())
-				panic(err)
+				continue
 			}
 			dyConf := &nsqd.TopicDynamicConf{SyncEvery: int64(topicInfo.SyncEvery),
 				AutoCommit:   0,
@@ -1625,6 +1641,11 @@ func (self *NsqdCoordinator) pullCatchupDataFromLeader(tc *TopicCoordinator,
 			coordLog.Infof("topic leader changed from %v to %v, abort current catchup: %v", topicInfo.Leader, tc.GetData().GetLeader(), topicInfo.GetTopicDesp())
 			return ErrTopicLeaderChanged
 		}
+		if tc.IsExiting() {
+			// the topic coordinator can be notified to close while catchup if other isr node is already joined.
+			// mostly happened while restarting some node.
+			return ErrTopicExiting
+		}
 		countNumIndex, localErr := logMgr.ConvertToCountIndex(logIndex, offset)
 		if localErr != nil {
 			coordLog.Warningf("topic %v error while convert count index:%v, offset: %v:%v", topicInfo.GetTopicDesp(),
@@ -1863,6 +1884,10 @@ func (self *NsqdCoordinator) catchupFromLeader(topicInfo TopicPartitionMetaInfo,
 			localTopic.GetDetailStats().UpdateHistory(stat.TopicHourlyPubDataList[topicInfo.GetTopicDesp()])
 			chList, ok := stat.ChannelList[topicInfo.GetTopicDesp()]
 			coordLog.Infof("topic %v sync channel list from leader: %v", topicInfo.GetTopicDesp(), chList)
+			//TODO: channel confirmed offset must be synced from leader
+			// if not, when new topic migrated to this node, channel depth=0 for new channel
+			// and then leader changed to this topic, then the channel confirmed offset
+			// will be skip to the end on the new topic node.
 			if ok && len(chList) > 0 {
 				chMetas, _ := stat.ChannelMetas[topicInfo.GetTopicDesp()]
 				metaMaps := make(map[string]nsqd.ChannelMetaInfo, len(chMetas))
@@ -2304,9 +2329,7 @@ func (self *NsqdCoordinator) removeTopicCoord(topic string, partition int, remov
 		// should protected by coord lock to avoid recreated topic coord while deleting.
 		// Which will cause two topic coord use the commit writer
 		coordLog.Infof("removing topic coodinator: %v-%v", topic, partition)
-		topicCoord.writeHold.Lock()
-		topicCoord.DeleteNoWriteLock(removeData)
-		topicCoord.writeHold.Unlock()
+		topicCoord.DeleteWithLock(removeData)
 		err = nil
 	}
 	self.coordMutex.Unlock()
