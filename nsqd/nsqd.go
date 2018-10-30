@@ -99,7 +99,9 @@ func New(opts *Options) *NSQD {
 		nsqLog.LogErrorf("failed to create directory: %v ", err)
 		os.Exit(1)
 	}
-	DEFAULT_RETENTION_DAYS = int(opts.RetentionDays)
+	if opts.RetentionSizePerDay > 0 {
+		DEFAULT_RETENTION_DAYS = int(opts.RetentionDays)
+	}
 
 	n := &NSQD{
 		startTime:            time.Now(),
