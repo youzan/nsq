@@ -276,11 +276,12 @@ func (self *NsqLookupdEtcdMgr) UpdateLookupEpoch(oldGen EpochType) (EpochType, e
 }
 
 func (self *NsqLookupdEtcdMgr) GetNsqdNodes() ([]NsqdNodeInfo, error) {
-	return self.getNsqdNodes()
+	nodes, _, err := self.getNsqdNodes(false)
+	return nodes, err
 }
 
 func (self *NsqLookupdEtcdMgr) WatchNsqdNodes(nsqds chan []NsqdNodeInfo, stop chan struct{}) {
-	nsqdNodes, err := self.getNsqdNodes()
+	nsqdNodes, nIndex, err := self.getNsqdNodes(false)
 	if err == nil {
 		select {
 		case nsqds <- nsqdNodes:
@@ -291,7 +292,7 @@ func (self *NsqLookupdEtcdMgr) WatchNsqdNodes(nsqds chan []NsqdNodeInfo, stop ch
 	}
 
 	key := self.createNsqdRootPath()
-	watcher := self.client.Watch(key, 0, true)
+	watcher := self.client.Watch(key, nIndex, true)
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
 		select {
@@ -326,7 +327,7 @@ func (self *NsqLookupdEtcdMgr) WatchNsqdNodes(nsqds chan []NsqdNodeInfo, stop ch
 				}
 			}
 		}
-		nsqdNodes, err := self.getNsqdNodes()
+		nsqdNodes, _, err := self.getNsqdNodes(true)
 		if err != nil {
 			coordLog.Errorf("key[%s] getNsqdNodes error: %s", key, err.Error())
 			continue
@@ -340,13 +341,19 @@ func (self *NsqLookupdEtcdMgr) WatchNsqdNodes(nsqds chan []NsqdNodeInfo, stop ch
 	}
 }
 
-func (self *NsqLookupdEtcdMgr) getNsqdNodes() ([]NsqdNodeInfo, error) {
-	rsp, err := self.client.Get(self.createNsqdRootPath(), false, false)
+func (self *NsqLookupdEtcdMgr) getNsqdNodes(upToDate bool) ([]NsqdNodeInfo, uint64, error) {
+	var rsp *client.Response
+	var err error
+	if upToDate {
+		rsp, err = self.client.GetNewest(self.createNsqdRootPath(), false, false)
+	} else {
+		rsp, err = self.client.Get(self.createNsqdRootPath(), false, false)
+	}
 	if err != nil {
 		if client.IsKeyNotFound(err) {
-			return nil, ErrKeyNotFound
+			return nil, 0, ErrKeyNotFound
 		}
-		return nil, err
+		return nil, 0, err
 	}
 	nsqdNodes := make([]NsqdNodeInfo, 0)
 	for _, node := range rsp.Node.Nodes {
@@ -360,7 +367,7 @@ func (self *NsqLookupdEtcdMgr) getNsqdNodes() ([]NsqdNodeInfo, error) {
 		}
 		nsqdNodes = append(nsqdNodes, nodeInfo)
 	}
-	return nsqdNodes, nil
+	return nsqdNodes, rsp.Index, err
 }
 
 func (self *NsqLookupdEtcdMgr) GetAllTopicMetas() (map[string]*TopicMetaInfo, error) {
@@ -422,7 +429,7 @@ func (self *NsqLookupdEtcdMgr) watchTopics() {
 
 func (self *NsqLookupdEtcdMgr) scanTopics() ([]TopicPartitionMetaInfo, error) {
 	atomic.StoreInt32(&self.ifTopicChanged, 0)
-	rsp, err := self.client.Get(self.topicRoot, true, true)
+	rsp, err := self.client.GetNewest(self.topicRoot, true, true)
 	if err != nil {
 		atomic.StoreInt32(&self.ifTopicChanged, 1)
 		if client.IsKeyNotFound(err) {
