@@ -345,6 +345,7 @@ func (self *NsqdCoordRpcServer) UpdateTopicInfo(rpcTopicReq *RpcAdminTopicInfo) 
 			// never hold any coordinator lock while close or delete local topic
 			self.nsqdCoord.localNsqd.CloseExistingTopic(rpcTopicReq.Name, rpcTopicReq.Partition)
 		}
+		coordLog.Infof("topic(%s) is removed from local node since not related", rpcTopicReq.Name)
 		return &ret
 	}
 	if !ok {
@@ -572,6 +573,36 @@ func (self *NsqdCoordRpcServer) GetTopicStats(topic string) *NodeTopicStats {
 			stat.ChannelList[ts.TopicFullName] = chList
 			stat.ChannelMetas[ts.TopicFullName] = localTopic.GetChannelMeta()
 			stat.ChannelNum[ts.TopicFullName] = len(chList)
+
+			if topic != "" && localTopic != nil {
+				chConsumerList := stat.ChannelOffsets[ts.TopicFullName]
+				// consumer offset only need by catchup node,
+				// so the topic must not be empty
+				channels := localTopic.GetChannelMapCopy()
+				for _, ch := range channels {
+					var syncOffset WrapChannelConsumerOffset
+					syncOffset.Name = ch.GetName()
+					syncOffset.Flush = true
+					if ch.IsSkipped() {
+						continue
+					}
+					if ch.IsEphemeral() {
+						continue
+					}
+					confirmed := ch.GetConfirmed()
+					syncOffset.VOffset = int64(confirmed.Offset())
+					syncOffset.VCnt = confirmed.TotalMsgCnt()
+					if ch.GetConfirmedIntervalLen() > 100 {
+						syncOffset.NeedUpdateConfirmed = false
+						syncOffset.ConfirmedInterval = nil
+					} else {
+						syncOffset.ConfirmedInterval = ch.GetConfirmedInterval()
+						syncOffset.NeedUpdateConfirmed = true
+					}
+					chConsumerList = append(chConsumerList, syncOffset)
+				}
+				stat.ChannelOffsets[ts.TopicFullName] = chConsumerList
+			}
 		}
 	}
 	// the status of specific topic
