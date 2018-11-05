@@ -567,7 +567,7 @@ func (c *Channel) exit(deleted bool) error {
 	<-c.exitSyncChan
 
 	// write anything leftover to disk
-	c.flush()
+	c.Flush()
 	if deleted {
 		// empty the queue (deletes the backend files, too)
 		if c.GetDelayedQueue() != nil {
@@ -593,7 +593,7 @@ func (c *Channel) skipChannelToEnd() (BackendQueueEnd, error) {
 	return e, nil
 }
 
-func (c *Channel) flush() error {
+func (c *Channel) Flush() error {
 	if c.ephemeral {
 		return nil
 	}
@@ -775,7 +775,7 @@ func (c *Channel) ConfirmBackendQueueOnSlave(offset BackendOffset, cnt int64, al
 			d, ok := c.backend.(*diskQueueReader)
 			if ok {
 				newConfirmed, err = d.ResetReadToOffset(offset, cnt)
-				nsqLog.LogDebugf("channel (%v) reset to backward: %v", c.GetName(), newConfirmed)
+				nsqLog.LogDebugf("topic %v channel (%v) reset to backward: %v", c.GetTopicName(), c.GetName(), newConfirmed)
 			}
 		}
 	} else {
@@ -783,7 +783,7 @@ func (c *Channel) ConfirmBackendQueueOnSlave(offset BackendOffset, cnt int64, al
 			d, ok := c.backend.(*diskQueueReader)
 			if ok {
 				newConfirmed, err = d.ResetReadToOffset(offset, cnt)
-				nsqLog.LogDebugf("channel (%v) reset to backward: %v", c.GetName(), newConfirmed)
+				nsqLog.LogDebugf("topic %v channel (%v) reset to backward: %v", c.GetTopicName(), c.GetName(), newConfirmed)
 			}
 		} else {
 			_, err = c.backend.SkipReadToOffset(offset, cnt)

@@ -1240,7 +1240,7 @@ func (t *Topic) ForceFlush() {
 	s = time.Now()
 	t.channelLock.RLock()
 	for _, channel := range t.channelMap {
-		channel.flush()
+		channel.Flush()
 	}
 	t.channelLock.RUnlock()
 	cost = time.Now().Sub(s)
