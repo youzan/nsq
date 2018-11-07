@@ -1799,95 +1799,104 @@ LOOP:
 		}
 
 		atomic.StoreInt32(&c.waitingDeliveryState, 0)
+		// read from requeue chan first to avoid disk data blocking requeue chan
 		select {
-		case <-c.exitChan:
-			goto exit
 		case msg = <-c.requeuedMsgChan:
 			if msg.TraceID != 0 || c.IsTraced() || nsqLog.Level() >= levellogger.LOG_DETAIL {
 				nsqLog.LogDebugf("read message %v from requeue", msg.ID)
 				nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "READ_REQ", msg.TraceID, msg, "0", 0)
 			}
-		case data = <-readChan:
-			lastDataNeedRead = false
-			if data.Err != nil {
-				nsqLog.LogErrorf("channel (%v): failed to read message - %s", c.GetName(), data.Err)
-				if data.Err == ErrReadQueueCountMissing {
-					time.Sleep(time.Second)
-				} else {
-					// TODO: fix corrupt file from other replica.
-					// and should handle the confirm offset, since some skipped data
-					// may never be confirmed any more
-					if backendErr > 10 {
-						_, skipErr := c.backend.(*diskQueueReader).SkipToNext()
-						if skipErr != nil {
-						}
-						nsqLog.Warningf("channel %v skip to next because of backend error: %v", c.GetName(), backendErr)
-						isSkipped = true
-						backendErr = 0
-					} else {
-						backendErr++
-						time.Sleep(time.Second)
-					}
+		default:
+			select {
+			case <-c.exitChan:
+				goto exit
+			case msg = <-c.requeuedMsgChan:
+				if msg.TraceID != 0 || c.IsTraced() || nsqLog.Level() >= levellogger.LOG_DETAIL {
+					nsqLog.LogDebugf("read message %v from requeue", msg.ID)
+					nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "READ_REQ", msg.TraceID, msg, "0", 0)
 				}
-				time.Sleep(time.Millisecond * 100)
-				continue LOOP
-			}
-			if backendErr > 0 {
-				nsqLog.Infof("channel %v backend error auto recovery: %v", c.GetName(), backendErr)
-			}
-			backendErr = 0
-			msg, err = decodeMessage(data.Data, c.IsExt())
-			if err != nil {
-				nsqLog.LogErrorf("channel (%v): failed to decode message - %s - %v", c.GetName(), err, data)
-				continue LOOP
-			}
-			msg.Offset = data.Offset
-			msg.RawMoveSize = data.MovedSize
-			msg.queueCntIndex = data.CurCnt
-			if msg.TraceID != 0 || c.IsTraced() || nsqLog.Level() >= levellogger.LOG_DETAIL {
-				nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "READ_QUEUE", msg.TraceID, msg, "0", 0)
-			}
+			case data = <-readChan:
+				lastDataNeedRead = false
+				if data.Err != nil {
+					nsqLog.LogErrorf("channel (%v): failed to read message - %s", c.GetName(), data.Err)
+					if data.Err == ErrReadQueueCountMissing {
+						time.Sleep(time.Second)
+					} else {
+						// TODO: fix corrupt file from other replica.
+						// and should handle the confirm offset, since some skipped data
+						// may never be confirmed any more
+						if backendErr > 10 {
+							_, skipErr := c.backend.(*diskQueueReader).SkipToNext()
+							if skipErr != nil {
+							}
+							nsqLog.Warningf("channel %v skip to next because of backend error: %v", c.GetName(), backendErr)
+							isSkipped = true
+							backendErr = 0
+						} else {
+							backendErr++
+							time.Sleep(time.Second)
+						}
+					}
+					time.Sleep(time.Millisecond * 100)
+					continue LOOP
+				}
+				if backendErr > 0 {
+					nsqLog.Infof("channel %v backend error auto recovery: %v", c.GetName(), backendErr)
+				}
+				backendErr = 0
+				msg, err = decodeMessage(data.Data, c.IsExt())
+				if err != nil {
+					nsqLog.LogErrorf("channel (%v): failed to decode message - %s - %v", c.GetName(), err, data)
+					continue LOOP
+				}
+				msg.Offset = data.Offset
+				msg.RawMoveSize = data.MovedSize
+				msg.queueCntIndex = data.CurCnt
+				if msg.TraceID != 0 || c.IsTraced() || nsqLog.Level() >= levellogger.LOG_DETAIL {
+					nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "READ_QUEUE", msg.TraceID, msg, "0", 0)
+				}
 
-			if lastMsg.ID > 0 && msg.ID < lastMsg.ID {
-				// note: this may happen if the reader pefetch some data not committed by the disk writer
-				// we need read it again later.
-				nsqLog.Warningf("read a message with less message ID: %v vs %v, raw data: %v", msg.ID, lastMsg.ID, data)
-				nsqLog.Warningf("last raw data: %v", lastDataResult)
-				time.Sleep(time.Millisecond * 5)
-				if diskQ, ok := c.backend.(*diskQueueReader); ok {
-					diskQ.ResetLastReadOne(data.Offset, data.CurCnt-1, int32(data.MovedSize))
+				if lastMsg.ID > 0 && msg.ID < lastMsg.ID {
+					// note: this may happen if the reader pefetch some data not committed by the disk writer
+					// we need read it again later.
+					nsqLog.Warningf("read a message with less message ID: %v vs %v, raw data: %v", msg.ID, lastMsg.ID, data)
+					nsqLog.Warningf("last raw data: %v", lastDataResult)
+					time.Sleep(time.Millisecond * 5)
+					if diskQ, ok := c.backend.(*diskQueueReader); ok {
+						diskQ.ResetLastReadOne(data.Offset, data.CurCnt-1, int32(data.MovedSize))
+					}
+					lastMsg = *msg
+					lastDataResult = data
+					continue LOOP
+				}
+
+				atomic.StoreInt64(&c.waitingProcessMsgTs, msg.Timestamp)
+				lastDataResult = data
+				if isSkipped {
+					// TODO: store the skipped info to retry error if possible.
+					nsqLog.LogWarningf("channel (%v): skipped message from %v:%v to the : %v:%v",
+						c.GetName(), lastMsg.ID, lastMsg.Offset, msg.ID, msg.Offset)
+				}
+				if resumedFirst {
+					if nsqLog.Level() > levellogger.LOG_DEBUG || c.IsTraced() {
+						nsqLog.LogDebugf("channel %v resumed first messsage %v at Offset: %v", c.GetName(), msg.ID, msg.Offset)
+					}
+					resumedFirst = false
 				}
 				lastMsg = *msg
-				lastDataResult = data
+				isSkipped = false
+			case <-c.tryReadBackend:
+				atomic.StoreInt32(&c.needNotifyRead, 0)
+				readBackendWait = false
+				resumedFirst = true
+				continue LOOP
+			case resetOffset := <-c.readerChanged:
+				nsqLog.Infof("got reader reset notify:%v ", resetOffset)
+				c.resetChannelReader(resetOffset, &lastDataNeedRead, origReadChan, &lastMsg, &needReadBackend, &readBackendWait)
+				continue LOOP
+			case <-waitEndUpdated:
 				continue LOOP
 			}
-
-			atomic.StoreInt64(&c.waitingProcessMsgTs, msg.Timestamp)
-			lastDataResult = data
-			if isSkipped {
-				// TODO: store the skipped info to retry error if possible.
-				nsqLog.LogWarningf("channel (%v): skipped message from %v:%v to the : %v:%v",
-					c.GetName(), lastMsg.ID, lastMsg.Offset, msg.ID, msg.Offset)
-			}
-			if resumedFirst {
-				if nsqLog.Level() > levellogger.LOG_DEBUG || c.IsTraced() {
-					nsqLog.LogDebugf("channel %v resumed first messsage %v at Offset: %v", c.GetName(), msg.ID, msg.Offset)
-				}
-				resumedFirst = false
-			}
-			lastMsg = *msg
-			isSkipped = false
-		case <-c.tryReadBackend:
-			atomic.StoreInt32(&c.needNotifyRead, 0)
-			readBackendWait = false
-			resumedFirst = true
-			continue LOOP
-		case resetOffset := <-c.readerChanged:
-			nsqLog.Infof("got reader reset notify:%v ", resetOffset)
-			c.resetChannelReader(resetOffset, &lastDataNeedRead, origReadChan, &lastMsg, &needReadBackend, &readBackendWait)
-			continue LOOP
-		case <-waitEndUpdated:
-			continue LOOP
 		}
 
 		if msg == nil {
