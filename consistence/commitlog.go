@@ -15,10 +15,11 @@ import (
 )
 
 const (
-	DEFAULT_COMMIT_BUF_SIZE = 400
-	MAX_COMMIT_BUF_SIZE     = 1000
-	MAX_INCR_ID_BIT         = 50
+	MAX_INCR_ID_BIT = 50
 )
+
+var DEFAULT_COMMIT_BUF_SIZE = 400
+var MAX_COMMIT_BUF_SIZE = 1000
 
 var (
 	ErrCommitLogWrongID              = errors.New("commit log id is wrong")

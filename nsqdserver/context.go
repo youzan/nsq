@@ -102,11 +102,11 @@ func (c *context) getExistingTopic(name string, part int) (*nsqd.Topic, error) {
 	return c.nsqd.GetExistingTopic(name, part)
 }
 
-func (c *context) getTopic(name string, part int, ext bool) *nsqd.Topic {
+func (c *context) getTopic(name string, part int, ext bool, ordered bool) *nsqd.Topic {
 	if ext {
-		return c.nsqd.GetTopicWithExt(name, part)
+		return c.nsqd.GetTopicWithExt(name, part, ordered)
 	} else {
-		return c.nsqd.GetTopic(name, part)
+		return c.nsqd.GetTopic(name, part, ordered)
 	}
 }
 

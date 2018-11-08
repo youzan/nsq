@@ -900,7 +900,7 @@ func BenchmarkHTTPpub(b *testing.B) {
 	topicName := "bench_http_pub" + strconv.Itoa(int(time.Now().Unix()))
 	url := fmt.Sprintf("http://%s/pub?topic=%s", httpAddr, topicName)
 	client := &http.Client{}
-	nsqdData.GetTopic(topicName, 0)
+	nsqdData.GetTopic(topicName, 0, false)
 	b.SetBytes(int64(len(msg)))
 	b.StartTimer()
 
@@ -1052,11 +1052,11 @@ func TestNSQDStatsFilter(t *testing.T) {
 	}
 	t.Logf("%d topic(s) deleted.", topicCnt)
 	topicName := fmt.Sprintf("test_nsqd_stats_filter%d", time.Now().UnixNano())
-	nsqd.GetTopic(topicName, 0)
+	nsqd.GetTopic(topicName, 0, false)
 	defer nsqd.DeleteExistingTopic(topicName, 0)
 
 	topicNameAnother := fmt.Sprintf("test_nsqd_stats_filter_another%d", time.Now().UnixNano())
-	nsqd.GetTopic(topicNameAnother, 0)
+	nsqd.GetTopic(topicNameAnother, 0, false)
 	topic_another, err := nsqd.GetExistingTopic(topicNameAnother, 0)
 	topic_another.DisableForSlave()
 	defer nsqd.DeleteExistingTopic(topicNameAnother, 0)
@@ -1117,7 +1117,7 @@ func BenchmarkFetchNodeHourlyPubsize(b *testing.B) {
 	for i := 0; i < 1000; i++ {
 		//create sample topics
 		topicName := fmt.Sprintf("Topic-Benchmark%04d", i)
-		nsqd1.GetTopic(topicName, 0)
+		nsqd1.GetTopic(topicName, 0, false)
 		topicNames = append(topicNames, topicName)
 		b.Logf("Topic %s created.", topicName)
 	}

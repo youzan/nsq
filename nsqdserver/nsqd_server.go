@@ -88,6 +88,13 @@ func NewNsqdServer(opts *nsqd.Options) (*nsqd.NSQD, *NsqdServer) {
 		nsqd.NsqLogger().LogWarningf("starting in data fix mode...")
 	}
 
+	if opts.DefaultCommitBuf > 0 {
+		consistence.DEFAULT_COMMIT_BUF_SIZE = int(opts.DefaultCommitBuf)
+	}
+	if opts.MaxCommitBuf > 0 {
+		consistence.MAX_COMMIT_BUF_SIZE = int(opts.MaxCommitBuf)
+	}
+
 	nsqdInstance := nsqd.New(opts)
 
 	s := &NsqdServer{}

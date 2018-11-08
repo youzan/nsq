@@ -2,14 +2,15 @@ package consistence
 
 import (
 	"fmt"
-	"github.com/youzan/nsq/internal/levellogger"
-	"github.com/youzan/nsq/internal/test"
 	"io/ioutil"
 	"math/rand"
 	"os"
 	"strconv"
 	"testing"
 	"time"
+
+	"github.com/youzan/nsq/internal/levellogger"
+	"github.com/youzan/nsq/internal/test"
 )
 
 func newTestLogger(tbl test.TbLog) levellogger.Logger {
@@ -541,9 +542,16 @@ func TestCommitLogRotateForReopen(t *testing.T) {
 	test.Equal(t, currentStart, logMgr.GetCurrentStart())
 }
 
+func TestCommitLogSearchWithChangedLogRotate(t *testing.T) {
+	testCommitLogSearch(t, true)
+}
 func TestCommitLogSearch(t *testing.T) {
+	testCommitLogSearch(t, false)
+}
+
+func testCommitLogSearch(t *testing.T, changeRotate bool) {
 	oldRotate := LOGROTATE_NUM
-	LOGROTATE_NUM = 10
+	LOGROTATE_NUM = 30
 	defer func() {
 		LOGROTATE_NUM = oldRotate
 	}()
@@ -579,10 +587,20 @@ func TestCommitLogSearch(t *testing.T) {
 	}
 	currentStart, lastOffset, _, err := logMgr.GetLastCommitLogOffsetV2()
 	test.Nil(t, err)
-	test.Equal(t, int64((LOGROTATE_NUM-1)*GetLogDataSize()), lastOffset)
+	expectOffset := num/2 - (num/2)/LOGROTATE_NUM*LOGROTATE_NUM - 1
+	if expectOffset == 0 {
+		expectOffset = LOGROTATE_NUM - 1
+	}
+	test.Equal(t, int64((expectOffset)*GetLogDataSize()), lastOffset)
 	test.Equal(t, currentStart, logMgr.GetCurrentStart())
-	// singe and multi pub
 	lastCnt := num / 2
+	changedOldRotate := LOGROTATE_NUM
+	if changeRotate {
+		// test with changed LOGROTATE_NUM
+		LOGROTATE_NUM = 10
+		t.Logf("chang log rotate: %v", lastCnt)
+	}
+	// singe and multi pub
 	for i := num / 2; i < num; i++ {
 		var logData CommitLogData
 		logData.LogID = int64(logMgr.NextID())
@@ -603,18 +621,20 @@ func TestCommitLogSearch(t *testing.T) {
 		err = logMgr.AppendCommitLog(&logData, false)
 		test.Nil(t, err)
 		test.Equal(t, logMgr.IsCommitted(logData.LogID), true)
-		test.Equal(t, logMgr.GetCurrentStart(), int64(i/LOGROTATE_NUM))
-		test.Equal(t, int64(logMgr.currentCount), int64(i)-int64(i/LOGROTATE_NUM)*int64(LOGROTATE_NUM)+1)
+		if !changeRotate {
+			test.Equal(t, logMgr.GetCurrentStart(), int64(i/LOGROTATE_NUM))
+			test.Equal(t, int64(logMgr.currentCount), int64(i)-int64(i/LOGROTATE_NUM)*int64(LOGROTATE_NUM)+1)
+		}
 	}
 
 	t.Logf("total %v messages", lastCnt)
 	for i := 1; i < lastCnt; i++ {
-		logIndex, _, l, err := logMgr.SearchLogDataByMsgCnt(int64(i))
+		logIndex, offset, l, err := logMgr.SearchLogDataByMsgCnt(int64(i))
 		test.Nil(t, err)
-		//t.Logf("searched: %v:%v, %v", logIndex, offset, l)
+		t.Logf("%v searched: %v:%v, %v", i, logIndex, offset, l)
 		if i < num/2 {
 			test.Equal(t, int64(i), l.MsgCnt)
-			test.Equal(t, int64((i-1)/LOGROTATE_NUM), logIndex)
+			test.Equal(t, int64((i-1)/changedOldRotate), logIndex)
 			test.Equal(t, l.MsgOffset, int64((i-1)*msgRawSize))
 		} else {
 			// multi pub will cause the msg count different.
@@ -657,7 +677,7 @@ func TestCommitLogSearch(t *testing.T) {
 	t.Logf("search in the cleaned commit log : %v", logStart)
 	for i := 1; i < lastCnt; i++ {
 		logIndex, offset, l, err := logMgr.SearchLogDataByMsgCnt(int64(i))
-		t.Logf("searched: %v, %v", logIndex, i)
+		t.Logf("%v searched by msg cnt: %v:%v, %v", i, logIndex, offset, l)
 		if int64(i) < logStart.SegmentStartCount+1 {
 			if err == nil {
 				test.NotEqual(t, int64(i), l.MsgCnt)
@@ -670,7 +690,7 @@ func TestCommitLogSearch(t *testing.T) {
 		test.Nil(t, err)
 		if i < num/2 {
 			test.Equal(t, int64(i), l.MsgCnt)
-			test.Equal(t, int64((i-1)/LOGROTATE_NUM), logIndex)
+			test.Equal(t, int64((i-1)/changedOldRotate), logIndex)
 			test.Equal(t, l.MsgOffset, int64((i-1)*msgRawSize))
 		} else {
 			// multi pub will cause the msg count different.
@@ -681,6 +701,7 @@ func TestCommitLogSearch(t *testing.T) {
 	lastCommitID = logMgr.GetLastCommitLogID()
 	for i := int64(2); i < lastCommitID; i++ {
 		logIndex, offset, l, err := logMgr.SearchLogDataByMsgID(int64(i))
+		t.Logf("%v searched by msgid: %v:%v, %v", i, logIndex, offset, l)
 		if int64(i) < startLog.LogID {
 			if err == nil {
 				test.NotEqual(t, int64(i), l.LogID)
@@ -726,7 +747,6 @@ func TestCommitLogSearch(t *testing.T) {
 			break
 		}
 	}
-
 }
 
 func TestCommitLogCleanOld(t *testing.T) {

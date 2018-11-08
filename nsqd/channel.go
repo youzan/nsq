@@ -23,8 +23,9 @@ const (
 	MaxMemReqTimes        = 10
 	MaxWaitingDelayed     = 100
 	MaxDepthReqToEnd      = 1000000
-	ZanTestSkip = 0
-	ZanTestUnskip = 1
+	ZanTestSkip           = 0
+	ZanTestUnskip         = 1
+	memSizeForOrdered     = 2
 )
 
 var (
@@ -112,7 +113,7 @@ type Channel struct {
 	clients          map[int64]Consumer
 	paused           int32
 	skipped          int32
-	zanTestSkip	 int32
+	zanTestSkip      int32
 	ephemeral        bool
 	deleteCallback   func(*Channel)
 	deleter          sync.Once
@@ -152,39 +153,50 @@ type Channel struct {
 
 	//channel msg stats
 	channelStatsInfo *ChannelStatsInfo
+	topicOrdered     bool
 }
 
 // NewChannel creates a new instance of the Channel type and returns a pointer
-func NewChannel(topicName string, part int, channelName string, chEnd BackendQueueEnd, opt *Options,
+func NewChannel(topicName string, part int, topicOrdered bool, channelName string, chEnd BackendQueueEnd, opt *Options,
 	deleteCallback func(*Channel), moreDataCallback func(*Channel), consumeDisabled int32,
 	notify INsqdNotify, ext int32, queueStart BackendQueueEnd) *Channel {
 
 	c := &Channel{
-		topicName:              topicName,
-		topicPart:              part,
-		name:                   channelName,
-		requeuedMsgChan:        make(chan *Message, opt.MaxRdyCount+1),
-		waitingRequeueChanMsgs: make(map[MessageID]*Message, 100),
-		waitingRequeueMsgs:     make(map[MessageID]*Message, 100),
-		clientMsgChan:          make(chan *Message),
-		tagMsgChans:            make(map[string]*MsgChanData),
-		tagChanInitChan:        make(chan string, 2),
-		tagChanRemovedChan:     make(chan string, 2),
-		exitChan:               make(chan int),
-		exitSyncChan:           make(chan bool),
-		clients:                make(map[int64]Consumer),
-		confirmedMsgs:          NewIntervalSkipList(),
-		tryReadBackend:         make(chan bool, 1),
-		readerChanged:          make(chan resetChannelData, 10),
-		endUpdatedChan:         make(chan bool, 1),
-		deleteCallback:         deleteCallback,
-		moreDataCallback:       moreDataCallback,
-		option:                 opt,
-		nsqdNotify:             notify,
-		consumeDisabled:        consumeDisabled,
-		delayedConfirmedMsgs:   make(map[MessageID]Message, MaxWaitingDelayed),
-		peekedMsgs:             make([]Message, MaxWaitingDelayed),
-		Ext:                    ext,
+		topicName:          topicName,
+		topicPart:          part,
+		topicOrdered:       topicOrdered,
+		name:               channelName,
+		clientMsgChan:      make(chan *Message),
+		tagMsgChans:        make(map[string]*MsgChanData),
+		tagChanInitChan:    make(chan string, 2),
+		tagChanRemovedChan: make(chan string, 2),
+		exitChan:           make(chan int),
+		exitSyncChan:       make(chan bool),
+		clients:            make(map[int64]Consumer),
+		confirmedMsgs:      NewIntervalSkipList(),
+		tryReadBackend:     make(chan bool, 1),
+		readerChanged:      make(chan resetChannelData, 10),
+		endUpdatedChan:     make(chan bool, 1),
+		deleteCallback:     deleteCallback,
+		moreDataCallback:   moreDataCallback,
+		option:             opt,
+		nsqdNotify:         notify,
+		consumeDisabled:    consumeDisabled,
+		Ext:                ext,
+	}
+
+	if topicOrdered {
+		c.requeuedMsgChan = make(chan *Message, memSizeForOrdered)
+		c.waitingRequeueChanMsgs = make(map[MessageID]*Message, memSizeForOrdered)
+		c.waitingRequeueMsgs = make(map[MessageID]*Message, memSizeForOrdered)
+		c.delayedConfirmedMsgs = make(map[MessageID]Message, memSizeForOrdered)
+		c.peekedMsgs = make([]Message, memSizeForOrdered)
+	} else {
+		c.requeuedMsgChan = make(chan *Message, opt.MaxRdyCount+1)
+		c.waitingRequeueChanMsgs = make(map[MessageID]*Message, 100)
+		c.waitingRequeueMsgs = make(map[MessageID]*Message, 100)
+		c.delayedConfirmedMsgs = make(map[MessageID]Message, MaxWaitingDelayed)
+		c.peekedMsgs = make([]Message, MaxWaitingDelayed)
 	}
 
 	if len(opt.E2EProcessingLatencyPercentiles) > 0 {
@@ -465,6 +477,9 @@ func (c *Channel) IsOrdered() bool {
 
 func (c *Channel) initPQ() {
 	pqSize := int(math.Max(1, float64(c.option.MemQueueSize)/10))
+	if c.topicOrdered {
+		pqSize = memSizeForOrdered
+	}
 
 	c.inFlightMutex.Lock()
 	for _, m := range c.inFlightMessages {
@@ -552,7 +567,7 @@ func (c *Channel) exit(deleted bool) error {
 	<-c.exitSyncChan
 
 	// write anything leftover to disk
-	c.flush()
+	c.Flush()
 	if deleted {
 		// empty the queue (deletes the backend files, too)
 		if c.GetDelayedQueue() != nil {
@@ -578,7 +593,7 @@ func (c *Channel) skipChannelToEnd() (BackendQueueEnd, error) {
 	return e, nil
 }
 
-func (c *Channel) flush() error {
+func (c *Channel) Flush() error {
 	if c.ephemeral {
 		return nil
 	}
@@ -760,7 +775,7 @@ func (c *Channel) ConfirmBackendQueueOnSlave(offset BackendOffset, cnt int64, al
 			d, ok := c.backend.(*diskQueueReader)
 			if ok {
 				newConfirmed, err = d.ResetReadToOffset(offset, cnt)
-				nsqLog.LogDebugf("channel (%v) reset to backward: %v", c.GetName(), newConfirmed)
+				nsqLog.LogDebugf("topic %v channel (%v) reset to backward: %v", c.GetTopicName(), c.GetName(), newConfirmed)
 			}
 		}
 	} else {
@@ -768,7 +783,7 @@ func (c *Channel) ConfirmBackendQueueOnSlave(offset BackendOffset, cnt int64, al
 			d, ok := c.backend.(*diskQueueReader)
 			if ok {
 				newConfirmed, err = d.ResetReadToOffset(offset, cnt)
-				nsqLog.LogDebugf("channel (%v) reset to backward: %v", c.GetName(), newConfirmed)
+				nsqLog.LogDebugf("topic %v channel (%v) reset to backward: %v", c.GetTopicName(), c.GetName(), newConfirmed)
 			}
 		} else {
 			_, err = c.backend.SkipReadToOffset(offset, cnt)
@@ -1784,95 +1799,104 @@ LOOP:
 		}
 
 		atomic.StoreInt32(&c.waitingDeliveryState, 0)
+		// read from requeue chan first to avoid disk data blocking requeue chan
 		select {
-		case <-c.exitChan:
-			goto exit
 		case msg = <-c.requeuedMsgChan:
 			if msg.TraceID != 0 || c.IsTraced() || nsqLog.Level() >= levellogger.LOG_DETAIL {
 				nsqLog.LogDebugf("read message %v from requeue", msg.ID)
 				nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "READ_REQ", msg.TraceID, msg, "0", 0)
 			}
-		case data = <-readChan:
-			lastDataNeedRead = false
-			if data.Err != nil {
-				nsqLog.LogErrorf("channel (%v): failed to read message - %s", c.GetName(), data.Err)
-				if data.Err == ErrReadQueueCountMissing {
-					time.Sleep(time.Second)
-				} else {
-					// TODO: fix corrupt file from other replica.
-					// and should handle the confirm offset, since some skipped data
-					// may never be confirmed any more
-					if backendErr > 10 {
-						_, skipErr := c.backend.(*diskQueueReader).SkipToNext()
-						if skipErr != nil {
-						}
-						nsqLog.Warningf("channel %v skip to next because of backend error: %v", c.GetName(), backendErr)
-						isSkipped = true
-						backendErr = 0
-					} else {
-						backendErr++
-						time.Sleep(time.Second)
-					}
+		default:
+			select {
+			case <-c.exitChan:
+				goto exit
+			case msg = <-c.requeuedMsgChan:
+				if msg.TraceID != 0 || c.IsTraced() || nsqLog.Level() >= levellogger.LOG_DETAIL {
+					nsqLog.LogDebugf("read message %v from requeue", msg.ID)
+					nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "READ_REQ", msg.TraceID, msg, "0", 0)
 				}
-				time.Sleep(time.Millisecond * 100)
-				continue LOOP
-			}
-			if backendErr > 0 {
-				nsqLog.Infof("channel %v backend error auto recovery: %v", c.GetName(), backendErr)
-			}
-			backendErr = 0
-			msg, err = decodeMessage(data.Data, c.IsExt())
-			if err != nil {
-				nsqLog.LogErrorf("channel (%v): failed to decode message - %s - %v", c.GetName(), err, data)
-				continue LOOP
-			}
-			msg.Offset = data.Offset
-			msg.RawMoveSize = data.MovedSize
-			msg.queueCntIndex = data.CurCnt
-			if msg.TraceID != 0 || c.IsTraced() || nsqLog.Level() >= levellogger.LOG_DETAIL {
-				nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "READ_QUEUE", msg.TraceID, msg, "0", 0)
-			}
+			case data = <-readChan:
+				lastDataNeedRead = false
+				if data.Err != nil {
+					nsqLog.LogErrorf("channel (%v): failed to read message - %s", c.GetName(), data.Err)
+					if data.Err == ErrReadQueueCountMissing {
+						time.Sleep(time.Second)
+					} else {
+						// TODO: fix corrupt file from other replica.
+						// and should handle the confirm offset, since some skipped data
+						// may never be confirmed any more
+						if backendErr > 10 {
+							_, skipErr := c.backend.(*diskQueueReader).SkipToNext()
+							if skipErr != nil {
+							}
+							nsqLog.Warningf("channel %v skip to next because of backend error: %v", c.GetName(), backendErr)
+							isSkipped = true
+							backendErr = 0
+						} else {
+							backendErr++
+							time.Sleep(time.Second)
+						}
+					}
+					time.Sleep(time.Millisecond * 100)
+					continue LOOP
+				}
+				if backendErr > 0 {
+					nsqLog.Infof("channel %v backend error auto recovery: %v", c.GetName(), backendErr)
+				}
+				backendErr = 0
+				msg, err = decodeMessage(data.Data, c.IsExt())
+				if err != nil {
+					nsqLog.LogErrorf("channel (%v): failed to decode message - %s - %v", c.GetName(), err, data)
+					continue LOOP
+				}
+				msg.Offset = data.Offset
+				msg.RawMoveSize = data.MovedSize
+				msg.queueCntIndex = data.CurCnt
+				if msg.TraceID != 0 || c.IsTraced() || nsqLog.Level() >= levellogger.LOG_DETAIL {
+					nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "READ_QUEUE", msg.TraceID, msg, "0", 0)
+				}
 
-			if lastMsg.ID > 0 && msg.ID < lastMsg.ID {
-				// note: this may happen if the reader pefetch some data not committed by the disk writer
-				// we need read it again later.
-				nsqLog.Warningf("read a message with less message ID: %v vs %v, raw data: %v", msg.ID, lastMsg.ID, data)
-				nsqLog.Warningf("last raw data: %v", lastDataResult)
-				time.Sleep(time.Millisecond * 5)
-				if diskQ, ok := c.backend.(*diskQueueReader); ok {
-					diskQ.ResetLastReadOne(data.Offset, data.CurCnt-1, int32(data.MovedSize))
+				if lastMsg.ID > 0 && msg.ID < lastMsg.ID {
+					// note: this may happen if the reader pefetch some data not committed by the disk writer
+					// we need read it again later.
+					nsqLog.Warningf("read a message with less message ID: %v vs %v, raw data: %v", msg.ID, lastMsg.ID, data)
+					nsqLog.Warningf("last raw data: %v", lastDataResult)
+					time.Sleep(time.Millisecond * 5)
+					if diskQ, ok := c.backend.(*diskQueueReader); ok {
+						diskQ.ResetLastReadOne(data.Offset, data.CurCnt-1, int32(data.MovedSize))
+					}
+					lastMsg = *msg
+					lastDataResult = data
+					continue LOOP
+				}
+
+				atomic.StoreInt64(&c.waitingProcessMsgTs, msg.Timestamp)
+				lastDataResult = data
+				if isSkipped {
+					// TODO: store the skipped info to retry error if possible.
+					nsqLog.LogWarningf("channel (%v): skipped message from %v:%v to the : %v:%v",
+						c.GetName(), lastMsg.ID, lastMsg.Offset, msg.ID, msg.Offset)
+				}
+				if resumedFirst {
+					if nsqLog.Level() > levellogger.LOG_DEBUG || c.IsTraced() {
+						nsqLog.LogDebugf("channel %v resumed first messsage %v at Offset: %v", c.GetName(), msg.ID, msg.Offset)
+					}
+					resumedFirst = false
 				}
 				lastMsg = *msg
-				lastDataResult = data
+				isSkipped = false
+			case <-c.tryReadBackend:
+				atomic.StoreInt32(&c.needNotifyRead, 0)
+				readBackendWait = false
+				resumedFirst = true
+				continue LOOP
+			case resetOffset := <-c.readerChanged:
+				nsqLog.Infof("got reader reset notify:%v ", resetOffset)
+				c.resetChannelReader(resetOffset, &lastDataNeedRead, origReadChan, &lastMsg, &needReadBackend, &readBackendWait)
+				continue LOOP
+			case <-waitEndUpdated:
 				continue LOOP
 			}
-
-			atomic.StoreInt64(&c.waitingProcessMsgTs, msg.Timestamp)
-			lastDataResult = data
-			if isSkipped {
-				// TODO: store the skipped info to retry error if possible.
-				nsqLog.LogWarningf("channel (%v): skipped message from %v:%v to the : %v:%v",
-					c.GetName(), lastMsg.ID, lastMsg.Offset, msg.ID, msg.Offset)
-			}
-			if resumedFirst {
-				if nsqLog.Level() > levellogger.LOG_DEBUG || c.IsTraced() {
-					nsqLog.LogDebugf("channel %v resumed first messsage %v at Offset: %v", c.GetName(), msg.ID, msg.Offset)
-				}
-				resumedFirst = false
-			}
-			lastMsg = *msg
-			isSkipped = false
-		case <-c.tryReadBackend:
-			atomic.StoreInt32(&c.needNotifyRead, 0)
-			readBackendWait = false
-			resumedFirst = true
-			continue LOOP
-		case resetOffset := <-c.readerChanged:
-			nsqLog.Infof("got reader reset notify:%v ", resetOffset)
-			c.resetChannelReader(resetOffset, &lastDataNeedRead, origReadChan, &lastMsg, &needReadBackend, &readBackendWait)
-			continue LOOP
-		case <-waitEndUpdated:
-			continue LOOP
 		}
 
 		if msg == nil {
@@ -1981,7 +2005,7 @@ exit:
 func (c *Channel) shouldSkipZanTest(msg *Message) bool {
 	if c.IsZanTestSkipped() && msg.ExtVer == ext.JSON_HEADER_EXT_VER {
 		//check if zan_test header contained in json header
-		extHeader, _ :=  simpleJson.NewJson(msg.ExtBytes)
+		extHeader, _ := simpleJson.NewJson(msg.ExtBytes)
 		if flag, exist := extHeader.CheckGet(ext.ZAN_TEST_KEY); exist {
 			tb, err := flag.Bool()
 			if err != nil {

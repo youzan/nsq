@@ -2,14 +2,15 @@ package consistence
 
 import (
 	"bytes"
+	"io"
+	"sync"
+	"time"
+
 	"github.com/absolute8511/gorpc"
 	pb "github.com/youzan/nsq/consistence/coordgrpc"
 	"github.com/youzan/nsq/nsqd"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
-	"sync"
-	"time"
-	"io"
 )
 
 const (
@@ -349,6 +350,8 @@ func (self *NsqdRpcClient) UpdateChannelOffset(leaderSession *TopicLeaderSession
 		req.TopicData = &rpcData
 		req.Channel = channel
 		req.ChannelOffset.Voffset = offset.VOffset
+		// TODO: VCnt for pb
+		// req.ChannelOffset.VCnt = offset.VCnt
 		req.ChannelOffset.Flush = offset.Flush
 		req.ChannelOffset.AllowBackward = offset.AllowBackward
 

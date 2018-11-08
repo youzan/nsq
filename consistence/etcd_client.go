@@ -33,6 +33,15 @@ func NewEClient(host string) (*EtcdClient, error) {
 	}, nil
 }
 
+func (self *EtcdClient) GetNewest(key string, sort, recursive bool) (*client.Response, error) {
+	getOptions := &client.GetOptions{
+		Recursive: recursive,
+		Sort:      sort,
+		Quorum:    true,
+	}
+	return self.kapi.Get(context.Background(), key, getOptions)
+}
+
 func (self *EtcdClient) Get(key string, sort, recursive bool) (*client.Response, error) {
 	getOptions := &client.GetOptions{
 		Recursive: recursive,

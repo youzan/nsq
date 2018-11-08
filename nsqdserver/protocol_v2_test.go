@@ -2540,21 +2540,21 @@ func TestTcpMpubExt(t *testing.T) {
 	test.Equal(t, err, nil)
 
 	topicName := "test_tcp_mpub_ext" + strconv.Itoa(int(time.Now().Unix()))
-	nsqd.GetTopicWithExt(topicName, 0).GetChannel("ch")
+	nsqd.GetTopicWithExt(topicName, 0, false).GetChannel("ch")
 
 	identify(t, conn, nil, frameTypeResponse)
 	var msgExtList []*nsq.MsgExt
 	var msgBody [][]byte
 	// PUB ext to non-ext topic
 	for i := 0; i < 10; i++ {
-		if i%2==0 {
+		if i%2 == 0 {
 			msgExtList = append(msgExtList, &nsq.MsgExt{})
 			msgBody = append(msgBody, []byte("msg has no ext"))
 		} else {
 			msgExtList = append(msgExtList, &nsq.MsgExt{
-				TraceID: 123,
+				TraceID:     123,
 				DispatchTag: "desiredTag",
-				Custom: map[string]string{"key1":"val1", "key2":"val2"},
+				Custom:      map[string]string{"key1": "val1", "key2": "val2"},
 			})
 			msgBody = append(msgBody, []byte("msg has ext"))
 		}
@@ -2572,7 +2572,7 @@ func TestTcpMpubExt(t *testing.T) {
 	conn.Close()
 
 	conn, err = mustConnectNSQD(tcpAddr)
-	identify(t, conn, map[string]interface{}{"extend_support":true}, frameTypeResponse)
+	identify(t, conn, map[string]interface{}{"extend_support": true}, frameTypeResponse)
 	test.Equal(t, err, nil)
 	sub(t, conn, topicName, "ch")
 	_, err = nsq.Ready(1).WriteTo(conn)
@@ -3468,23 +3468,23 @@ func TestZanTestSkip(t *testing.T) {
 
 	//send messages, zan_test and normal combined
 	topicName := "test_zan_test_skip" + strconv.Itoa(int(time.Now().Unix()))
-	ch := nsqd.GetTopicWithExt(topicName, 0).GetChannel("ch")
+	ch := nsqd.GetTopicWithExt(topicName, 0, false).GetChannel("ch")
 
 	identify(t, conn, nil, frameTypeResponse)
 	var msgExtList []*nsq.MsgExt
 	var msgBody [][]byte
 	// PUB ext to non-ext topic
 	for i := 0; i < 10; i++ {
-		if i%2==0 {
+		if i%2 == 0 {
 			msgExtList = append(msgExtList, &nsq.MsgExt{
-				Custom: map[string]string{"key1":"val1", "key2":"val2"},
+				Custom: map[string]string{"key1": "val1", "key2": "val2"},
 			})
 			msgBody = append(msgBody, []byte("msg has no zan_test ext"))
 		} else {
 			msgExtList = append(msgExtList, &nsq.MsgExt{
-				TraceID: 123,
+				TraceID:     123,
 				DispatchTag: "desiredTag",
-				Custom: map[string]string{"zan_test":"true", "key1":"val1"},
+				Custom:      map[string]string{"zan_test": "true", "key1": "val1"},
 			})
 			msgBody = append(msgBody, []byte("msg has zan_test ext"))
 		}
@@ -3505,7 +3505,7 @@ func TestZanTestSkip(t *testing.T) {
 	ch.SkipZanTest()
 	//consume&validate zan_test messages
 	conn, err = mustConnectNSQD(tcpAddr)
-	identify(t, conn, map[string]interface{}{"extend_support":true}, frameTypeResponse)
+	identify(t, conn, map[string]interface{}{"extend_support": true}, frameTypeResponse)
 	test.Equal(t, err, nil)
 	sub(t, conn, topicName, "ch")
 	_, err = nsq.Ready(10).WriteTo(conn)
@@ -5848,7 +5848,7 @@ func benchmarkProtocolV2PubWithArg(b *testing.B, size int, single bool) {
 		batch[i] = msg
 	}
 	topicName := "bench_v2_pub" + strconv.Itoa(int(time.Now().Unix()))
-	testTopic := nsqd.GetTopic(topicName, 0)
+	testTopic := nsqd.GetTopic(topicName, 0, false)
 
 	b.SetBytes(int64(len(msg)))
 	b.StartTimer()
