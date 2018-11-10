@@ -1456,7 +1456,7 @@ func (self *NsqdCoordinator) updateChannelListOnSlave(tc *coordData, chList []st
 			delete(oldChList, chName)
 		}
 		changed := false
-		for chName := range oldChList {
+		for chName, _ := range oldChList {
 			coordLog.Infof("topic %v local channel not on leader: %v", topicName, chName)
 			topic.CloseExistingChannel(chName, false)
 			changed = true

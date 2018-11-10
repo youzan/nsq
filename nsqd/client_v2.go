@@ -460,8 +460,8 @@ func (c *ClientV2) IncrSubError(delta int64) {
 		atomic.StoreInt64(&c.subErrCnt, 0)
 	} else if newCnt > 0 {
 		rdy := atomic.LoadInt64(&c.ReadyCount)
-		if newCnt > rdy+2*slowDownThreshold {
-			atomic.StoreInt64(&c.subErrCnt, rdy+2*slowDownThreshold)
+		if newCnt > rdy+4*slowDownThreshold {
+			atomic.StoreInt64(&c.subErrCnt, rdy+4*slowDownThreshold)
 		} else if delta < 0 && newCnt < rdy {
 			// try speed up error recover
 			newCnt = atomic.AddInt64(&c.subErrCnt, -1*(rdy-newCnt)/4)

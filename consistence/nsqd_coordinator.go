@@ -1985,6 +1985,10 @@ func (self *NsqdCoordinator) syncChannelsFromOther(c *NsqdRpcClient, topicInfo T
 						if err == nsqd.ErrExiting {
 							return &CoordErr{err.Error(), RpcNoErr, CoordTmpErr}
 						}
+						if err == nsqd.ErrReadQueueAlreadyCleaned {
+							// mark as fix, and retry catchup as full
+							localTopic.SetDataFixState(true)
+						}
 						return &CoordErr{err.Error(), RpcCommonErr, CoordSlaveErr}
 					}
 				}
@@ -1992,7 +1996,7 @@ func (self *NsqdCoordinator) syncChannelsFromOther(c *NsqdRpcClient, topicInfo T
 			}
 			if len(oldChList) > 0 {
 				coordLog.Infof("topic %v local channel not on leader: %v", topicInfo.GetTopicDesp(), oldChList)
-				for chName := range oldChList {
+				for chName, _ := range oldChList {
 					localTopic.CloseExistingChannel(chName, false)
 				}
 			}
