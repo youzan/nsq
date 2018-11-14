@@ -283,6 +283,11 @@ func (self *FakeNsqlookupLeadership) IsExistTopicPartition(topic string, partiti
 	return ok, nil
 }
 
+func (self *FakeNsqlookupLeadership) GetTopicMetaInfoTryCache(topic string) (*TopicMetaInfo, error) {
+	m, _, err := self.GetTopicMetaInfo(topic)
+	return &m, err
+}
+
 func (self *FakeNsqlookupLeadership) GetTopicMetaInfo(topic string) (TopicMetaInfo, EpochType, error) {
 	self.dataMutex.Lock()
 	defer self.dataMutex.Unlock()

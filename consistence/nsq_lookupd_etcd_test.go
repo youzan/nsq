@@ -39,25 +39,6 @@ func TestLookupd(t *testing.T) {
 	test.Nil(t, err)
 	fmt.Printf("Nsqd Lookupd Node[%s] register success.\n", lookupdInfo.ID)
 
-	// watch topic leaders
-	topicLeaders := make(chan *TopicLeaderSession)
-	go lookupdMgr.WatchTopicLeader(topicLeaders, stop)
-	luWatchTopicLeaderStopped := make(chan bool)
-	go func() {
-		for {
-			select {
-			case leader, ok := <-topicLeaders:
-				if ok {
-					fmt.Printf("watch topic leader: topic[%s] patition[%d] leader: %v\n", leader.Topic, leader.Partition, leader)
-				} else {
-					fmt.Printf("[lookup node 1] close the chan topicLeaders.\n")
-					close(luWatchTopicLeaderStopped)
-					return
-				}
-			}
-		}
-	}()
-
 	lookupdMgr2, _ := NewNsqLookupdEtcdMgr(testEtcdServers)
 	lookupdMgr2.InitClusterID(ClusterID)
 	lookupdInfo2 := &NsqLookupdNodeInfo{
@@ -164,10 +145,6 @@ func TestLookupd(t *testing.T) {
 	test.Nil(t, err)
 	fmt.Printf("[lookup node 1] topic[%s] get topic leader session leader: %v\n", topicName, topicLeaderS)
 
-	go func() {
-		<-luWatchTopicLeaderStopped
-		fmt.Printf("lookup watch topic leader loop stopped.\n")
-	}()
 	go func() {
 		<-nodeWatchLookupLeaderStopped
 		fmt.Printf("node watch lookup leader loop stopped.\n")
