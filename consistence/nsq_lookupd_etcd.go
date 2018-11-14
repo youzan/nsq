@@ -528,7 +528,21 @@ func (self *NsqLookupdEtcdMgr) GetTopicInfo(topic string, partition int) (*Topic
 
 	topicInfo.TopicMetaInfo = *metaInfo
 	var rInfo TopicPartitionReplicaInfo
-	if atomic.LoadInt32(&self.ifTopicChanged) == 1 {
+	cached := false
+	if atomic.LoadInt32(&self.ifTopicChanged) == 0 {
+		// try get cache first
+		self.tmiMutex.RLock()
+		parts, ok := self.topicReplicasMap[topic]
+		if ok {
+			p, ok := parts[strconv.Itoa(partition)]
+			if ok {
+				rInfo = p
+				cached = true
+			}
+		}
+		self.tmiMutex.RUnlock()
+	}
+	if !cached {
 		rsp, err := self.client.Get(self.createTopicReplicaInfoPath(topic, partition), false, false)
 		if err != nil {
 			if client.IsKeyNotFound(err) {
@@ -541,18 +555,6 @@ func (self *NsqLookupdEtcdMgr) GetTopicInfo(topic string, partition int) (*Topic
 			return nil, err
 		}
 		rInfo.Epoch = EpochType(rsp.Node.ModifiedIndex)
-	} else {
-		self.tmiMutex.RLock()
-		defer self.tmiMutex.RUnlock()
-		parts, ok := self.topicReplicasMap[topic]
-		if !ok {
-			return nil, ErrKeyNotFound
-		}
-		p, ok := parts[strconv.Itoa(partition)]
-		if !ok {
-			return nil, ErrKeyNotFound
-		}
-		rInfo = p
 	}
 	topicInfo.TopicPartitionReplicaInfo = rInfo
 	topicInfo.Name = topic
