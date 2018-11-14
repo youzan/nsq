@@ -493,7 +493,7 @@ func (self *DataPlacement) SetBalanceInterval(start int, end int) {
 
 func (self *DataPlacement) DoBalance(monitorChan chan struct{}) {
 	//check period for the data balance.
-	ticker := time.NewTicker(time.Minute * 10)
+	ticker := time.NewTicker(time.Minute)
 	defer func() {
 		ticker.Stop()
 		coordLog.Infof("balance check exit.")

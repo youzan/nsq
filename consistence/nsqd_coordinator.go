@@ -355,7 +355,7 @@ func (self *NsqdCoordinator) GreedyCleanTopicOldData(localTopic *nsqd.Topic) err
 
 func (self *NsqdCoordinator) checkAndCleanOldData() {
 	defer self.wg.Done()
-	ticker := time.NewTicker(time.Minute * 30)
+	ticker := time.NewTicker(time.Minute * 10)
 
 	doCheckAndCleanOld := func(checkRetentionDay bool) {
 		tmpCoords := make(map[string]map[int]*TopicCoordinator)
