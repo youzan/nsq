@@ -18,8 +18,8 @@ const (
 	MAX_INCR_ID_BIT = 50
 )
 
-var DEFAULT_COMMIT_BUF_SIZE = 400
-var MAX_COMMIT_BUF_SIZE = 1000
+var DEFAULT_COMMIT_BUF_SIZE = 100
+var MAX_COMMIT_BUF_SIZE = 2000
 
 var (
 	ErrCommitLogWrongID              = errors.New("commit log id is wrong")
