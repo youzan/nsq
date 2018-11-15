@@ -529,9 +529,9 @@ func (self *NsqLookupdEtcdMgr) GetTopicInfo(topic string, partition int) (*Topic
 	topicInfo.TopicMetaInfo = *metaInfo
 	var rInfo TopicPartitionReplicaInfo
 	cached := false
+	// try get cache first
+	self.tmiMutex.RLock()
 	if atomic.LoadInt32(&self.ifTopicChanged) == 0 {
-		// try get cache first
-		self.tmiMutex.RLock()
 		parts, ok := self.topicReplicasMap[topic]
 		if ok {
 			p, ok := parts[strconv.Itoa(partition)]
@@ -540,10 +540,10 @@ func (self *NsqLookupdEtcdMgr) GetTopicInfo(topic string, partition int) (*Topic
 				cached = true
 			}
 		}
-		self.tmiMutex.RUnlock()
 	}
+	self.tmiMutex.RUnlock()
 	if !cached {
-		rsp, err := self.client.Get(self.createTopicReplicaInfoPath(topic, partition), false, false)
+		rsp, err := self.client.GetNewest(self.createTopicReplicaInfoPath(topic, partition), false, false)
 		if err != nil {
 			if client.IsKeyNotFound(err) {
 				atomic.StoreInt32(&self.ifTopicChanged, 1)
@@ -643,9 +643,13 @@ func (self *NsqLookupdEtcdMgr) IsExistTopicPartition(topic string, partitionNum 
 }
 
 func (self *NsqLookupdEtcdMgr) GetTopicMetaInfoTryCache(topic string) (*TopicMetaInfo, error) {
+	var metaInfo *TopicMetaInfo
+	var ok bool
 	self.tmiMutex.Lock()
 	defer self.tmiMutex.Unlock()
-	metaInfo, ok := self.topicMetaMap[topic]
+	if atomic.LoadInt32(&self.ifTopicChanged) == 0 {
+		metaInfo, ok = self.topicMetaMap[topic]
+	}
 	if ok {
 		return metaInfo, nil
 	}
@@ -660,7 +664,7 @@ func (self *NsqLookupdEtcdMgr) GetTopicMetaInfoTryCache(topic string) (*TopicMet
 
 func (self *NsqLookupdEtcdMgr) GetTopicMetaInfo(topic string) (TopicMetaInfo, EpochType, error) {
 	var metaInfo TopicMetaInfo
-	rsp, err := self.client.Get(self.createTopicMetaPath(topic), false, false)
+	rsp, err := self.client.GetNewest(self.createTopicMetaPath(topic), false, false)
 	if err != nil {
 		if client.IsKeyNotFound(err) {
 			return metaInfo, 0, ErrKeyNotFound
