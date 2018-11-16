@@ -215,6 +215,7 @@ func (self *NsqLookupCoordinator) handleLeadership() {
 			self.nsqdMonitorChan = nil
 		}
 	}()
+	ticker := time.NewTicker(time.Second * 5)
 	for {
 		select {
 		case l, ok := <-lookupdLeaderChan:
@@ -241,6 +242,12 @@ func (self *NsqLookupCoordinator) handleLeadership() {
 			}
 			if self.leaderNode.GetID() == "" {
 				coordLog.Warningln("leader is missing.")
+			}
+		case <-ticker.C:
+			// reload topics to cache, used for query from client
+			_, err := self.leadership.ScanTopics()
+			if err != nil {
+				coordLog.Warningf("refresh topics failed: %v", err.Error())
 			}
 		}
 	}

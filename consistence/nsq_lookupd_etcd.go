@@ -47,6 +47,7 @@ type NsqLookupdEtcdMgr struct {
 	topicMetaInfos    []TopicPartitionMetaInfo
 	topicMetaMap      map[string]*TopicMetaInfo
 	ifTopicChanged    int32
+	ifTopicScanning   int32
 	nodeInfo          *NsqLookupdNodeInfo
 	nodeKey           string
 	nodeValue         string
@@ -70,6 +71,7 @@ func NewNsqLookupdEtcdMgr(host string) (*NsqLookupdEtcdMgr, error) {
 	return &NsqLookupdEtcdMgr{
 		client:                    client,
 		ifTopicChanged:            1,
+		ifTopicScanning:           0,
 		watchTopicLeaderStopCh:    make(chan bool, 1),
 		watchTopicsStopCh:         make(chan bool, 1),
 		watchNsqdNodesStopCh:      make(chan bool, 1),
@@ -439,7 +441,19 @@ func (self *NsqLookupdEtcdMgr) watchTopics() {
 	}
 }
 
+func (self *NsqLookupdEtcdMgr) isCacheNewest() bool {
+	if atomic.LoadInt32(&self.ifTopicChanged) == 1 {
+		return false
+	}
+	if atomic.LoadInt32(&self.ifTopicScanning) == 1 {
+		return false
+	}
+	return true
+}
+
 func (self *NsqLookupdEtcdMgr) scanTopics() ([]TopicPartitionMetaInfo, error) {
+	atomic.StoreInt32(&self.ifTopicScanning, 1)
+	defer atomic.StoreInt32(&self.ifTopicScanning, 0)
 	atomic.StoreInt32(&self.ifTopicChanged, 0)
 	rsp, err := self.client.GetNewest(self.topicRoot, true, true)
 	if err != nil {
@@ -452,7 +466,11 @@ func (self *NsqLookupdEtcdMgr) scanTopics() ([]TopicPartitionMetaInfo, error) {
 
 	topicMetaMap := make(map[string]*TopicMetaInfo)
 	topicReplicasMap := make(map[string]map[string]TopicPartitionReplicaInfo)
-	self.processTopicNode(rsp.Node.Nodes, topicMetaMap, topicReplicasMap)
+	err = self.processTopicNode(rsp.Node.Nodes, topicMetaMap, topicReplicasMap)
+	if err != nil {
+		atomic.StoreInt32(&self.ifTopicChanged, 1)
+		return nil, err
+	}
 
 	topicMetaInfos := make([]TopicPartitionMetaInfo, 0)
 	for k, v := range topicReplicasMap {
@@ -483,10 +501,15 @@ func (self *NsqLookupdEtcdMgr) scanTopics() ([]TopicPartitionMetaInfo, error) {
 	return topicMetaInfos, nil
 }
 
-func (self *NsqLookupdEtcdMgr) processTopicNode(nodes client.Nodes, topicMetaMap map[string]*TopicMetaInfo, topicReplicasMap map[string]map[string]TopicPartitionReplicaInfo) {
+func (self *NsqLookupdEtcdMgr) processTopicNode(nodes client.Nodes,
+	topicMetaMap map[string]*TopicMetaInfo,
+	topicReplicasMap map[string]map[string]TopicPartitionReplicaInfo) error {
 	for _, node := range nodes {
 		if node.Nodes != nil {
-			self.processTopicNode(node.Nodes, topicMetaMap, topicReplicasMap)
+			err := self.processTopicNode(node.Nodes, topicMetaMap, topicReplicasMap)
+			if err != nil {
+				return err
+			}
 		}
 		if node.Dir {
 			continue
@@ -495,7 +518,8 @@ func (self *NsqLookupdEtcdMgr) processTopicNode(nodes client.Nodes, topicMetaMap
 		if key == NSQ_TOPIC_REPLICA_INFO {
 			var rInfo TopicPartitionReplicaInfo
 			if err := json.Unmarshal([]byte(node.Value), &rInfo); err != nil {
-				continue
+				coordLog.Infof("process topic info: %s failed: %v", node.String(), err.Error())
+				return err
 			}
 			rInfo.Epoch = EpochType(node.ModifiedIndex)
 			keys := strings.Split(node.Key, "/")
@@ -516,7 +540,8 @@ func (self *NsqLookupdEtcdMgr) processTopicNode(nodes client.Nodes, topicMetaMap
 		} else if key == NSQ_TOPIC_META {
 			var mInfo TopicMetaInfo
 			if err := json.Unmarshal([]byte(node.Value), &mInfo); err != nil {
-				continue
+				coordLog.Infof("process topic info: %s failed: %v", node.String(), err.Error())
+				return err
 			}
 			keys := strings.Split(node.Key, "/")
 			keyLen := len(keys)
@@ -527,6 +552,7 @@ func (self *NsqLookupdEtcdMgr) processTopicNode(nodes client.Nodes, topicMetaMap
 			topicMetaMap[topicName] = &mInfo
 		}
 	}
+	return nil
 }
 
 func (self *NsqLookupdEtcdMgr) GetTopicInfo(topic string, partition int) (*TopicPartitionMetaInfo, error) {
@@ -541,7 +567,7 @@ func (self *NsqLookupdEtcdMgr) GetTopicInfo(topic string, partition int) (*Topic
 	cached := false
 	// try get cache first
 	self.tmiMutex.RLock()
-	if atomic.LoadInt32(&self.ifTopicChanged) == 0 {
+	if self.isCacheNewest() {
 		parts, ok := self.topicReplicasMap[topic]
 		if ok {
 			p, ok := parts[strconv.Itoa(partition)]
@@ -658,7 +684,7 @@ func (self *NsqLookupdEtcdMgr) GetTopicMetaInfoTryCache(topic string) (*TopicMet
 	var ok bool
 	self.tmiMutex.Lock()
 	defer self.tmiMutex.Unlock()
-	if atomic.LoadInt32(&self.ifTopicChanged) == 0 {
+	if self.isCacheNewest() {
 		metaInfo, ok = self.topicMetaMap[topic]
 	}
 	if ok {
