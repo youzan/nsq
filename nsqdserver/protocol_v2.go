@@ -200,19 +200,24 @@ func (p *protocolV2) IOLoop(conn net.Conn) error {
 				}
 				params = append(params, line[:3])
 				if len(line) >= 21 {
+					// 16bytes msg id for both fin/req
 					params = append(params, line[4:20])
-					// it must be REQ
 					if bytes.Equal(line[:3], []byte("REQ")) {
+						// it must be REQ
 						if len(line) >= 22 {
 							params = append(params, line[21:len(line)-1])
+						} else {
+							nsqd.NsqLogger().LogErrorf("read invalid command line for req:%v", line)
 						}
 					} else {
-						params = append(params, line[20:])
+						// it must be FIN
+						if len(line) != 21 {
+							nsqd.NsqLogger().LogErrorf("read invalid command line for fin :%v", line)
+						}
 					}
 				} else {
-					params = append(params, []byte(""))
+					nsqd.NsqLogger().LogErrorf("read invalid command line :%v", line)
 				}
-
 			} else if len(line) >= 5 {
 				if bytes.Equal(line[:5], []byte("TOUCH")) {
 					isSpecial = true
@@ -229,7 +234,7 @@ func (p *protocolV2) IOLoop(conn net.Conn) error {
 					if len(line) >= 23 {
 						params = append(params, line[6:22])
 					} else {
-						params = append(params, []byte(""))
+						nsqd.NsqLogger().LogErrorf("read invalid command line :%v", line)
 					}
 				}
 			}

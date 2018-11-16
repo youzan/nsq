@@ -210,8 +210,9 @@ func (self *NsqdEtcdMgr) WatchLookupdLeader(leader chan *NsqLookupdNodeInfo, sto
 	key := self.createLookupdLeaderPath()
 
 	rsp, err := self.client.Get(key, false, false)
+	var initIndex uint64
 	if err == nil {
-		coordLog.Infof("key: %s value: %s", rsp.Node.Key, rsp.Node.Value)
+		coordLog.Infof("key: %s value: %s, index: %v", rsp.Node.Key, rsp.Node.Value, rsp.Index)
 		var lookupdInfo NsqLookupdNodeInfo
 		err = json.Unmarshal([]byte(rsp.Node.Value), &lookupdInfo)
 		if err == nil {
@@ -222,11 +223,14 @@ func (self *NsqdEtcdMgr) WatchLookupdLeader(leader chan *NsqLookupdNodeInfo, sto
 				return nil
 			}
 		}
+		if rsp.Index > 0 {
+			initIndex = rsp.Index - 1
+		}
 	} else {
 		coordLog.Errorf("get error: %s", err.Error())
 	}
 
-	watcher := self.client.Watch(key, 0, true)
+	watcher := self.client.Watch(key, initIndex, true)
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
 		select {

@@ -392,7 +392,16 @@ func (self *NsqLookupdEtcdMgr) ScanTopics() ([]TopicPartitionMetaInfo, error) {
 
 // watch topics if changed
 func (self *NsqLookupdEtcdMgr) watchTopics() {
-	watcher := self.client.Watch(self.topicRoot, 0, true)
+	initIndex := uint64(0)
+	rsp, err := self.client.Get(self.topicRoot, false, true)
+	if err != nil {
+		coordLog.Errorf("get topic root key[%s] error: %s", self.topicRoot, err.Error())
+	} else {
+		if rsp.Index > 0 {
+			initIndex = rsp.Index - 1
+		}
+	}
+	watcher := self.client.Watch(self.topicRoot, initIndex, true)
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
 		select {
@@ -400,8 +409,9 @@ func (self *NsqLookupdEtcdMgr) watchTopics() {
 			cancel()
 		}
 	}()
+	atomic.StoreInt32(&self.ifTopicChanged, 1)
 	for {
-		_, err := watcher.Next(ctx)
+		rsp, err := watcher.Next(ctx)
 		if err != nil {
 			if err == context.Canceled {
 				coordLog.Infof("watch key[%s] canceled.", self.topicRoot)
@@ -424,7 +434,7 @@ func (self *NsqLookupdEtcdMgr) watchTopics() {
 				}
 			}
 		}
-		coordLog.Debugf("topic changed.")
+		coordLog.Debugf("topic changed: %v", rsp)
 		atomic.StoreInt32(&self.ifTopicChanged, 1)
 	}
 }
@@ -546,7 +556,6 @@ func (self *NsqLookupdEtcdMgr) GetTopicInfo(topic string, partition int) (*Topic
 		rsp, err := self.client.GetNewest(self.createTopicReplicaInfoPath(topic, partition), false, false)
 		if err != nil {
 			if client.IsKeyNotFound(err) {
-				atomic.StoreInt32(&self.ifTopicChanged, 1)
 				return nil, ErrKeyNotFound
 			}
 			return nil, err
@@ -554,6 +563,8 @@ func (self *NsqLookupdEtcdMgr) GetTopicInfo(topic string, partition int) (*Topic
 		if err = json.Unmarshal([]byte(rsp.Node.Value), &rInfo); err != nil {
 			return nil, err
 		}
+		// no cached, but in the etcd, something changed
+		atomic.StoreInt32(&self.ifTopicChanged, 1)
 		rInfo.Epoch = EpochType(rsp.Node.ModifiedIndex)
 	}
 	topicInfo.TopicPartitionReplicaInfo = rInfo
