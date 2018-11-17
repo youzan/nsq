@@ -28,10 +28,10 @@ func (self *NsqLookupCoordinator) GetTopicMetaInfo(topicName string) (TopicMetaI
 	if err != nil {
 		return TopicMetaInfo{}, err
 	}
-	return *meta, err
+	return meta, err
 }
 
-func (self *NsqLookupCoordinator) GetTopicsMetaInfoMap(topics []string) (map[string]*TopicMetaInfo, error) {
+func (self *NsqLookupCoordinator) GetTopicsMetaInfoMap(topics []string) (map[string]TopicMetaInfo, error) {
 	return self.leadership.GetTopicsMetaInfoMap(topics)
 }
 

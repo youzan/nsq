@@ -57,13 +57,13 @@ func NewFakeNsqlookupLeadership() *FakeNsqlookupLeadership {
 func (self *FakeNsqlookupLeadership) InitClusterID(id string) {
 }
 
-func (self *FakeNsqlookupLeadership) GetTopicsMetaInfoMap(topics []string) (map[string]*TopicMetaInfo, error) {
-	metas := make(map[string]*TopicMetaInfo)
+func (self *FakeNsqlookupLeadership) GetTopicsMetaInfoMap(topics []string) (map[string]TopicMetaInfo, error) {
+	metas := make(map[string]TopicMetaInfo)
 	self.dataMutex.Lock()
 	defer self.dataMutex.Unlock()
 	for k, v := range self.fakeTopicMetaInfo {
 		tmp := v
-		metas[k] = &tmp
+		metas[k] = tmp
 	}
 	return metas, nil
 }
@@ -187,12 +187,12 @@ func (self *FakeNsqlookupLeadership) WatchNsqdNodes(nsqds chan []NsqdNodeInfo, s
 	}
 }
 
-func (self *FakeNsqlookupLeadership) GetAllTopicMetas() (map[string]*TopicMetaInfo, error) {
-	metas := make(map[string]*TopicMetaInfo)
+func (self *FakeNsqlookupLeadership) GetAllTopicMetas() (map[string]TopicMetaInfo, error) {
+	metas := make(map[string]TopicMetaInfo)
 	self.dataMutex.Lock()
 	for n, m := range self.fakeTopicMetaInfo {
 		tmp := m
-		metas[n] = &tmp
+		metas[n] = tmp
 	}
 	self.dataMutex.Unlock()
 	return metas, nil
@@ -283,9 +283,9 @@ func (self *FakeNsqlookupLeadership) IsExistTopicPartition(topic string, partiti
 	return ok, nil
 }
 
-func (self *FakeNsqlookupLeadership) GetTopicMetaInfoTryCache(topic string) (*TopicMetaInfo, error) {
+func (self *FakeNsqlookupLeadership) GetTopicMetaInfoTryCache(topic string) (TopicMetaInfo, error) {
 	m, _, err := self.GetTopicMetaInfo(topic)
-	return &m, err
+	return m, err
 }
 
 func (self *FakeNsqlookupLeadership) GetTopicMetaInfo(topic string) (TopicMetaInfo, EpochType, error) {

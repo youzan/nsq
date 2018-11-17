@@ -25,17 +25,8 @@ const (
 	EVENT_WATCH_TOPIC_L_DELETE
 )
 
-type WatchTopicLeaderInfo struct {
-	event       int
-	topic       string
-	partition   int
-	watchStopCh chan bool
-	stoppedCh   chan bool
-}
-
 type NsqLookupdEtcdMgr struct {
-	tmiMutex  sync.RWMutex
-	wtliMutex sync.Mutex
+	tmiMutex sync.RWMutex
 
 	client            *EtcdClient
 	clusterID         string
@@ -45,22 +36,18 @@ type NsqLookupdEtcdMgr struct {
 	leaderStr         string
 	lookupdRootPath   string
 	topicMetaInfos    []TopicPartitionMetaInfo
-	topicMetaMap      map[string]*TopicMetaInfo
+	topicMetaMap      map[string]TopicMetaInfo
 	ifTopicChanged    int32
 	ifTopicScanning   int32
 	nodeInfo          *NsqLookupdNodeInfo
 	nodeKey           string
 	nodeValue         string
 
-	watchTopicLeaderChanMap   map[string]*WatchTopicLeaderInfo
-	watchTopicLeaderEventChan chan *WatchTopicLeaderInfo
+	refreshStopCh        chan bool
+	watchTopicsStopCh    chan bool
+	watchNsqdNodesStopCh chan bool
 
-	refreshStopCh          chan bool
-	watchTopicLeaderStopCh chan bool
-	watchTopicsStopCh      chan bool
-	watchNsqdNodesStopCh   chan bool
-
-	topicReplicasMap map[string]map[string]TopicPartitionReplicaInfo
+	topicReplicasMap map[string]map[int]TopicPartitionReplicaInfo
 }
 
 func NewNsqLookupdEtcdMgr(host string) (*NsqLookupdEtcdMgr, error) {
@@ -69,17 +56,14 @@ func NewNsqLookupdEtcdMgr(host string) (*NsqLookupdEtcdMgr, error) {
 		return nil, err
 	}
 	return &NsqLookupdEtcdMgr{
-		client:                    client,
-		ifTopicChanged:            1,
-		ifTopicScanning:           0,
-		watchTopicLeaderStopCh:    make(chan bool, 1),
-		watchTopicsStopCh:         make(chan bool, 1),
-		watchNsqdNodesStopCh:      make(chan bool, 1),
-		topicMetaMap:              make(map[string]*TopicMetaInfo),
-		watchTopicLeaderChanMap:   make(map[string]*WatchTopicLeaderInfo),
-		watchTopicLeaderEventChan: make(chan *WatchTopicLeaderInfo, 1),
-		refreshStopCh:             make(chan bool, 1),
-		topicReplicasMap:          make(map[string]map[string]TopicPartitionReplicaInfo),
+		client:               client,
+		ifTopicChanged:       1,
+		ifTopicScanning:      0,
+		watchTopicsStopCh:    make(chan bool, 1),
+		watchNsqdNodesStopCh: make(chan bool, 1),
+		topicMetaMap:         make(map[string]TopicMetaInfo),
+		refreshStopCh:        make(chan bool, 1),
+		topicReplicasMap:     make(map[string]map[int]TopicPartitionReplicaInfo),
 	}, nil
 }
 
@@ -152,9 +136,7 @@ func (self *NsqLookupdEtcdMgr) Unregister(value *NsqLookupdNodeInfo) error {
 
 func (self *NsqLookupdEtcdMgr) Stop() {
 	//	self.Unregister()
-	if self.watchTopicLeaderStopCh != nil {
-		close(self.watchTopicLeaderStopCh)
-	}
+
 	if self.watchNsqdNodesStopCh != nil {
 		close(self.watchNsqdNodesStopCh)
 	}
@@ -201,8 +183,8 @@ func (self *NsqLookupdEtcdMgr) AcquireAndWatchLeader(leader chan *NsqLookupdNode
 	master.Start()
 }
 
-func (self *NsqLookupdEtcdMgr) GetTopicsMetaInfoMap(topics []string) (map[string]*TopicMetaInfo, error) {
-	topicMetaInfoCache := make(map[string]*TopicMetaInfo)
+func (self *NsqLookupdEtcdMgr) GetTopicsMetaInfoMap(topics []string) (map[string]TopicMetaInfo, error) {
+	topicMetaInfoCache := make(map[string]TopicMetaInfo)
 	if atomic.LoadInt32(&self.ifTopicChanged) == 1 {
 		//fetch from etcd
 		for _, topic := range topics {
@@ -210,7 +192,7 @@ func (self *NsqLookupdEtcdMgr) GetTopicsMetaInfoMap(topics []string) (map[string
 			if err != nil {
 				return nil, err
 			}
-			topicMetaInfoCache[topic] = &topicMeta
+			topicMetaInfoCache[topic] = topicMeta
 		}
 	} else {
 		self.tmiMutex.RLock()
@@ -218,16 +200,12 @@ func (self *NsqLookupdEtcdMgr) GetTopicsMetaInfoMap(topics []string) (map[string
 		for _, topic := range topics {
 			topicMeta, exist := self.topicMetaMap[topic]
 			if !exist {
-				coordLog.Infof("meta info for %v not exist", topic)
-				topicMetaInfoCache[topic] = &TopicMetaInfo{
+				topicMetaInfoCache[topic] = TopicMetaInfo{
 					OrderedMulti: false,
 					Ext:          false,
 				}
 			} else {
-				topicMetaInfoCache[topic] = &TopicMetaInfo{
-					OrderedMulti: topicMeta.OrderedMulti,
-					Ext:          topicMeta.Ext,
-				}
+				topicMetaInfoCache[topic] = topicMeta
 			}
 		}
 	}
@@ -374,7 +352,7 @@ func (self *NsqLookupdEtcdMgr) getNsqdNodes(upToDate bool) ([]NsqdNodeInfo, uint
 	return nsqdNodes, rsp.Index, err
 }
 
-func (self *NsqLookupdEtcdMgr) GetAllTopicMetas() (map[string]*TopicMetaInfo, error) {
+func (self *NsqLookupdEtcdMgr) GetAllTopicMetas() (map[string]TopicMetaInfo, error) {
 	self.tmiMutex.RLock()
 	topicMetas := self.topicMetaMap
 	self.tmiMutex.RUnlock()
@@ -464,8 +442,8 @@ func (self *NsqLookupdEtcdMgr) scanTopics() ([]TopicPartitionMetaInfo, error) {
 		return nil, err
 	}
 
-	topicMetaMap := make(map[string]*TopicMetaInfo)
-	topicReplicasMap := make(map[string]map[string]TopicPartitionReplicaInfo)
+	topicMetaMap := make(map[string]TopicMetaInfo)
+	topicReplicasMap := make(map[string]map[int]TopicPartitionReplicaInfo)
 	err = self.processTopicNode(rsp.Node.Nodes, topicMetaMap, topicReplicasMap)
 	if err != nil {
 		atomic.StoreInt32(&self.ifTopicChanged, 1)
@@ -479,14 +457,11 @@ func (self *NsqLookupdEtcdMgr) scanTopics() ([]TopicPartitionMetaInfo, error) {
 			continue
 		}
 		for k2, v2 := range v {
-			partition, err := strconv.Atoi(k2)
-			if err != nil {
-				continue
-			}
+			partition := k2
 			var topicInfo TopicPartitionMetaInfo
 			topicInfo.Name = k
 			topicInfo.Partition = partition
-			topicInfo.TopicMetaInfo = *topicMeta
+			topicInfo.TopicMetaInfo = topicMeta
 			topicInfo.TopicPartitionReplicaInfo = v2
 			topicMetaInfos = append(topicMetaInfos, topicInfo)
 		}
@@ -502,8 +477,8 @@ func (self *NsqLookupdEtcdMgr) scanTopics() ([]TopicPartitionMetaInfo, error) {
 }
 
 func (self *NsqLookupdEtcdMgr) processTopicNode(nodes client.Nodes,
-	topicMetaMap map[string]*TopicMetaInfo,
-	topicReplicasMap map[string]map[string]TopicPartitionReplicaInfo) error {
+	topicMetaMap map[string]TopicMetaInfo,
+	topicReplicasMap map[string]map[int]TopicPartitionReplicaInfo) error {
 	for _, node := range nodes {
 		if node.Nodes != nil {
 			err := self.processTopicNode(node.Nodes, topicMetaMap, topicReplicasMap)
@@ -528,13 +503,18 @@ func (self *NsqLookupdEtcdMgr) processTopicNode(nodes client.Nodes,
 				continue
 			}
 			topicName := keys[keyLen-3]
-			partition := keys[keyLen-2]
+			partStr := keys[keyLen-2]
+			part, err := strconv.Atoi(partStr)
+			if err != nil {
+				coordLog.Infof("process topic info: %s failed: %v", node.String(), err.Error())
+				continue
+			}
 			v, ok := topicReplicasMap[topicName]
 			if ok {
-				v[partition] = rInfo
+				v[part] = rInfo
 			} else {
-				pMap := make(map[string]TopicPartitionReplicaInfo)
-				pMap[partition] = rInfo
+				pMap := make(map[int]TopicPartitionReplicaInfo)
+				pMap[part] = rInfo
 				topicReplicasMap[topicName] = pMap
 			}
 		} else if key == NSQ_TOPIC_META {
@@ -549,7 +529,7 @@ func (self *NsqLookupdEtcdMgr) processTopicNode(nodes client.Nodes,
 				continue
 			}
 			topicName := keys[keyLen-2]
-			topicMetaMap[topicName] = &mInfo
+			topicMetaMap[topicName] = mInfo
 		}
 	}
 	return nil
@@ -562,7 +542,7 @@ func (self *NsqLookupdEtcdMgr) GetTopicInfo(topic string, partition int) (*Topic
 		return nil, err
 	}
 
-	topicInfo.TopicMetaInfo = *metaInfo
+	topicInfo.TopicMetaInfo = metaInfo
 	var rInfo TopicPartitionReplicaInfo
 	cached := false
 	// try get cache first
@@ -570,7 +550,7 @@ func (self *NsqLookupdEtcdMgr) GetTopicInfo(topic string, partition int) (*Topic
 	if self.isCacheNewest() {
 		parts, ok := self.topicReplicasMap[topic]
 		if ok {
-			p, ok := parts[strconv.Itoa(partition)]
+			p, ok := parts[partition]
 			if ok {
 				rInfo = p
 				cached = true
@@ -608,30 +588,6 @@ func (self *NsqLookupdEtcdMgr) CreateTopicPartition(topic string, partition int)
 		}
 		return err
 	}
-	// if replica == 1, no need watch leader session
-	self.tmiMutex.Lock()
-	v, ok := self.topicMetaMap[topic]
-	if ok {
-		if v.Replica == 1 {
-			self.tmiMutex.Unlock()
-			return nil
-		}
-	}
-	self.tmiMutex.Unlock()
-
-	// start to watch topic leader session
-	watchTopicLeaderInfo := &WatchTopicLeaderInfo{
-		event:       EVENT_WATCH_TOPIC_L_CREATE,
-		topic:       topic,
-		partition:   partition,
-		watchStopCh: make(chan bool, 1),
-		stoppedCh:   make(chan bool, 1),
-	}
-	select {
-	case self.watchTopicLeaderEventChan <- watchTopicLeaderInfo:
-	default:
-		return nil
-	}
 	return nil
 }
 
@@ -649,7 +605,7 @@ func (self *NsqLookupdEtcdMgr) CreateTopic(topic string, meta *TopicMetaInfo) er
 	}
 
 	self.tmiMutex.Lock()
-	self.topicMetaMap[topic] = meta
+	self.topicMetaMap[topic] = *meta
 	self.tmiMutex.Unlock()
 
 	return nil
@@ -679,8 +635,8 @@ func (self *NsqLookupdEtcdMgr) IsExistTopicPartition(topic string, partitionNum 
 	return true, nil
 }
 
-func (self *NsqLookupdEtcdMgr) GetTopicMetaInfoTryCache(topic string) (*TopicMetaInfo, error) {
-	var metaInfo *TopicMetaInfo
+func (self *NsqLookupdEtcdMgr) GetTopicMetaInfoTryCache(topic string) (TopicMetaInfo, error) {
+	var metaInfo TopicMetaInfo
 	var ok bool
 	self.tmiMutex.Lock()
 	defer self.tmiMutex.Unlock()
@@ -693,10 +649,10 @@ func (self *NsqLookupdEtcdMgr) GetTopicMetaInfoTryCache(topic string) (*TopicMet
 
 	mInfo, _, err := self.GetTopicMetaInfo(topic)
 	if err != nil {
-		return nil, err
+		return metaInfo, err
 	}
-	self.topicMetaMap[topic] = &mInfo
-	return &mInfo, nil
+	self.topicMetaMap[topic] = mInfo
+	return mInfo, nil
 }
 
 func (self *NsqLookupdEtcdMgr) GetTopicMetaInfo(topic string) (TopicMetaInfo, EpochType, error) {
@@ -737,7 +693,7 @@ func (self *NsqLookupdEtcdMgr) UpdateTopicMetaInfo(topic string, meta *TopicMeta
 		atomic.StoreInt32(&self.ifTopicChanged, 1)
 		return err
 	}
-	self.topicMetaMap[topic] = &newMeta
+	self.topicMetaMap[topic] = newMeta
 	atomic.StoreInt32(&self.ifTopicChanged, 1)
 
 	return nil
@@ -759,18 +715,6 @@ func (self *NsqLookupdEtcdMgr) DeleteTopic(topic string, partition int) error {
 			return err
 		}
 	}
-	// stop watch topic leader and delete
-	topicLeaderSession := self.createTopicLeaderSessionPath(topic, partition)
-
-	self.wtliMutex.Lock()
-	defer self.wtliMutex.Unlock()
-	v, ok := self.watchTopicLeaderChanMap[topicLeaderSession]
-	if ok {
-		close(v.watchStopCh)
-		<-v.stoppedCh
-		delete(self.watchTopicLeaderChanMap, topicLeaderSession)
-	}
-
 	return nil
 }
 

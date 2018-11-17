@@ -158,7 +158,7 @@ type NSQLookupdLeadership interface {
 	WatchNsqdNodes(nsqds chan []NsqdNodeInfo, stop chan struct{})
 	// get all topics info, should cache the newest to improve performance.
 	ScanTopics() ([]TopicPartitionMetaInfo, error)
-	GetAllTopicMetas() (map[string]*TopicMetaInfo, error)
+	GetAllTopicMetas() (map[string]TopicMetaInfo, error)
 	// should return both the meta info for topic and the replica info for topic partition
 	// epoch should be updated while return
 	GetTopicInfo(topic string, partition int) (*TopicPartitionMetaInfo, error)
@@ -170,7 +170,7 @@ type NSQLookupdLeadership interface {
 	IsExistTopicPartition(topic string, partition int) (bool, error)
 	// get topic meta info only
 	GetTopicMetaInfo(topic string) (TopicMetaInfo, EpochType, error)
-	GetTopicMetaInfoTryCache(topic string) (*TopicMetaInfo, error)
+	GetTopicMetaInfoTryCache(topic string) (TopicMetaInfo, error)
 	UpdateTopicMetaInfo(topic string, meta *TopicMetaInfo, oldGen EpochType) error
 	DeleteTopic(topic string, partition int) error
 	DeleteWholeTopic(topic string) error
@@ -187,8 +187,8 @@ type NSQLookupdLeadership interface {
 	// only leader lookup can do the release, normally notify the nsqd node do the release by itself.
 	// lookup node should release only when the nsqd is lost
 	ReleaseTopicLeader(topic string, partition int, session *TopicLeaderSession) error
-	// get topic meta info map with passin topics slice
-	GetTopicsMetaInfoMap(topics []string) (map[string]*TopicMetaInfo, error)
+	// get topic meta info map with passing topics slice
+	GetTopicsMetaInfoMap(topics []string) (map[string]TopicMetaInfo, error)
 }
 
 type NSQDLeadership interface {

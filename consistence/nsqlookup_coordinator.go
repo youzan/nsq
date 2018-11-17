@@ -674,7 +674,7 @@ func (self *NsqLookupCoordinator) doCheckTopics(monitorChan chan struct{}, faile
 				continue
 			}
 			coordLog.Warningf("topic %v partitions not enough : %v, %v", name, pnum, metaNum)
-			self.CreateTopic(name, *meta)
+			self.CreateTopic(name, meta)
 		}
 	} else {
 		var err error
