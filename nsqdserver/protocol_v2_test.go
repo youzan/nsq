@@ -4244,6 +4244,52 @@ func TestSubOrderedWithFilter(t *testing.T) {
 	}
 }
 
+func TestSubWithLargeReady(t *testing.T) {
+	opts := nsqdNs.NewOptions()
+	opts.Logger = newTestLogger(t)
+	if testing.Verbose() {
+		opts.LogLevel = 2
+		nsqdNs.SetLogger(opts.Logger)
+	}
+	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
+	defer os.RemoveAll(opts.DataPath)
+	defer nsqdServer.Exit()
+
+	topicName := "test_large_rdy_count" + strconv.Itoa(int(time.Now().Unix()))
+
+	conn, err := mustConnectNSQD(tcpAddr)
+	test.Equal(t, err, nil)
+
+	topic := nsqd.GetTopicIgnPart(topicName)
+	topic.GetChannel("ch")
+	msg := nsqdNs.NewMessage(0, []byte("test body"))
+	topic.PutMessage(msg)
+
+	for i := 0; i < 100000; i++ {
+		topic.PutMessage(nsqdNs.NewMessage(0, []byte("test body")))
+	}
+
+	identify(t, conn, nil, frameTypeResponse)
+	sub(t, conn, topicName, "ch")
+
+	defer conn.Close()
+
+	_, err = nsq.Ready(2500).WriteTo(conn)
+	test.Equal(t, err, nil)
+
+	_, err = nsq.Ready(int(opts.MaxRdyCount)).WriteTo(conn)
+	test.Equal(t, err, nil)
+
+	for i := 0; i < 100000; i++ {
+		msgOut := recvNextMsgAndCheckClientMsg(t, conn, len(msg.Body), 0, false)
+		_, err = nsq.Finish(msgOut.ID).WriteTo(conn)
+		if err != nil {
+			t.Logf("fin error: %v", err.Error())
+		}
+		test.Nil(t, err)
+	}
+}
+
 func TestMaxRdyCount(t *testing.T) {
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)

@@ -180,20 +180,23 @@ func (p *protocolV2) IOLoop(conn net.Conn) error {
 				bytes.Equal(line[:3], []byte("REQ")) {
 				isSpecial = true
 				if len(line) < 21 {
-					left = left[:20-len(line)]
+					// the line will be invalid after the next read in Bufio reader
+					// so we need copy line to temp buffer
+					// the read will overwrite the slice line,
+					tmpLine = tmpLine[:len(line)]
+					copy(tmpLine, line)
+
+					left = left[:20-len(tmpLine)]
 					nr := 0
 					nr, err = io.ReadFull(client.Reader, left)
 					if err != nil {
 						nsqd.NsqLogger().LogErrorf("read param err:%v", err)
 					}
-					line = append(line, left[:nr]...)
-					tmpLine = tmpLine[:len(line)]
-					copy(tmpLine, line)
-					// the readslice will overwrite the slice line,
-					// so we should copy it and copy back.
+					tmpLine = append(tmpLine, left[:nr]...)
+
 					extra, extraErr := client.Reader.ReadSlice('\n')
 					tmpLine = append(tmpLine, extra...)
-					line = append(line[:0], tmpLine...)
+					line = tmpLine
 					if extraErr != nil {
 						nsqd.NsqLogger().LogErrorf("read param err:%v", extraErr)
 					}
@@ -222,13 +225,16 @@ func (p *protocolV2) IOLoop(conn net.Conn) error {
 				if bytes.Equal(line[:5], []byte("TOUCH")) {
 					isSpecial = true
 					if len(line) < 23 {
-						left = left[:23-len(line)]
+						tmpLine = tmpLine[:len(line)]
+						copy(tmpLine, line)
+						left = left[:23-len(tmpLine)]
 						nr := 0
 						nr, err = io.ReadFull(client.Reader, left)
 						if err != nil {
 							nsqd.NsqLogger().Logf("TOUCH param err:%v", err)
 						}
-						line = append(line, left[:nr]...)
+						tmpLine = append(tmpLine, left[:nr]...)
+						line = tmpLine
 					}
 					params = append(params, line[:5])
 					if len(line) >= 23 {
