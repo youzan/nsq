@@ -452,7 +452,7 @@ func (self *NsqdCoordinator) periodFlushCommitLogs() {
 				if !tpc.IsExiting() && tcData.GetLeader() == self.myNode.GetID() {
 					syncChList := !tpc.IsWriteDisabled() && flushAll
 					if ((pid+1)%FLUSH_DISTANCE) == matchCnt || syncChList {
-						self.trySyncTopicChannels(tcData, false, syncChList)
+						self.trySyncTopicChannels(tcData, false, syncChList, false)
 					}
 				}
 				delete(tc, pid)
@@ -2170,7 +2170,7 @@ func (self *NsqdCoordinator) switchStateForMaster(topicCoord *TopicCoordinator,
 		localTopic.Unlock()
 
 		if !isWriteDisabled {
-			self.trySyncTopicChannels(tcData, true, false)
+			self.trySyncTopicChannels(tcData, true, false, false)
 		}
 
 		coordLog.Infof("current topic %v write state: %v",
@@ -2395,7 +2395,7 @@ func (self *NsqdCoordinator) removeTopicCoord(topic string, partition int, remov
 }
 
 // sync topic channels state period.
-func (self *NsqdCoordinator) trySyncTopicChannels(tcData *coordData, syncDelayedQueue bool, syncChannelList bool) {
+func (self *NsqdCoordinator) trySyncTopicChannels(tcData *coordData, syncDelayedQueue bool, syncChannelList bool, notifyOnly bool) {
 	localTopic, _ := self.localNsqd.GetExistingTopic(tcData.topicInfo.Name, tcData.topicInfo.Partition)
 	if localTopic != nil {
 		channels := localTopic.GetChannelMapCopy()
@@ -2493,9 +2493,13 @@ func (self *NsqdCoordinator) trySyncTopicChannels(tcData *coordData, syncDelayed
 				if rpcErr != nil {
 					continue
 				}
-				rpcErr = c.UpdateChannelOffset(&tcData.topicLeaderSession, &tcData.topicInfo, ch.GetName(), syncOffset)
-				if rpcErr != nil {
-					coordLog.Debugf("node %v update channel %v offset failed %v.", nodeID, ch.GetName(), rpcErr)
+				if notifyOnly {
+					c.NotifyUpdateChannelOffset(&tcData.topicLeaderSession, &tcData.topicInfo, ch.GetName(), syncOffset)
+				} else {
+					rpcErr = c.UpdateChannelOffset(&tcData.topicLeaderSession, &tcData.topicInfo, ch.GetName(), syncOffset)
+					if rpcErr != nil {
+						coordLog.Debugf("node %v update channel %v offset failed %v.", nodeID, ch.GetName(), rpcErr)
+					}
 				}
 			}
 			// only the first channel of topic should flush.
@@ -2619,7 +2623,7 @@ func (self *NsqdCoordinator) prepareLeavingCluster() {
 
 			tpCoord.Exiting()
 			if tcData.GetLeader() == self.myNode.GetID() {
-				self.trySyncTopicChannels(tcData, true, false)
+				self.trySyncTopicChannels(tcData, true, false, true)
 			}
 			// TODO: if we release leader first, we can not transfer the leader properly,
 			// if we leave isr first, we would get the state that the leader not in isr
@@ -2637,7 +2641,7 @@ func (self *NsqdCoordinator) prepareLeavingCluster() {
 					coordLog.Infof("======= topic %v request leave isr failed: %v", topicName, err)
 					break
 				}
-				time.Sleep(time.Millisecond * 100)
+				time.Sleep(time.Millisecond * 10)
 			}
 
 			if tcData.IsMineLeaderSessionReady(self.GetMyID()) {

@@ -279,20 +279,6 @@ func (self *NsqdRpcClient) TriggerLookupChanged() error {
 	return err
 }
 
-func (self *NsqdRpcClient) NotifyUpdateChannelOffset(leaderSession *TopicLeaderSession, info *TopicPartitionMetaInfo, channel string, offset ChannelConsumerOffset) *CoordErr {
-	var updateInfo RpcChannelOffsetArg
-	updateInfo.TopicName = info.Name
-	updateInfo.TopicPartition = info.Partition
-	updateInfo.TopicWriteEpoch = info.EpochForWrite
-	updateInfo.Epoch = info.Epoch
-	updateInfo.TopicLeaderSessionEpoch = leaderSession.LeaderEpoch
-	updateInfo.TopicLeaderSession = leaderSession.Session
-	updateInfo.Channel = channel
-	updateInfo.ChannelOffset = offset
-	err := self.dc.Send("UpdateChannelOffset", &updateInfo)
-	return convertRpcError(err, nil)
-}
-
 func (self *NsqdRpcClient) NotifyChannelList(leaderSession *TopicLeaderSession, info *TopicPartitionMetaInfo, chList []string) *CoordErr {
 	var updateInfo RpcChannelListArg
 	updateInfo.TopicName = info.Name
@@ -375,6 +361,20 @@ func (self *NsqdRpcClient) UpdateChannelOffset(leaderSession *TopicLeaderSession
 	updateInfo.ChannelOffset = offset
 	retErr, err := self.CallFast("UpdateChannelOffset", &updateInfo)
 	return convertRpcError(err, retErr)
+}
+
+func (self *NsqdRpcClient) NotifyUpdateChannelOffset(leaderSession *TopicLeaderSession, info *TopicPartitionMetaInfo, channel string, offset ChannelConsumerOffset) *CoordErr {
+	var updateInfo RpcChannelOffsetArg
+	updateInfo.TopicName = info.Name
+	updateInfo.TopicPartition = info.Partition
+	updateInfo.TopicWriteEpoch = info.EpochForWrite
+	updateInfo.Epoch = info.Epoch
+	updateInfo.TopicLeaderSessionEpoch = leaderSession.LeaderEpoch
+	updateInfo.TopicLeaderSession = leaderSession.Session
+	updateInfo.Channel = channel
+	updateInfo.ChannelOffset = offset
+	err := self.dc.Send("UpdateChannelOffset", &updateInfo)
+	return convertRpcError(err, nil)
 }
 
 func (self *NsqdRpcClient) UpdateDelayedQueueState(leaderSession *TopicLeaderSession,
