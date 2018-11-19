@@ -183,6 +183,9 @@ func (p *protocolV2) IOLoop(conn net.Conn) error {
 					// the line will be invalid after the next read in Bufio reader
 					// so we need copy line to temp buffer
 					// the read will overwrite the slice line,
+					if len(tmpLine) < len(line) {
+						tmpLine = append(tmpLine, line[:len(line)-len(tmpLine)]...)
+					}
 					tmpLine = tmpLine[:len(line)]
 					copy(tmpLine, line)
 
@@ -225,6 +228,9 @@ func (p *protocolV2) IOLoop(conn net.Conn) error {
 				if bytes.Equal(line[:5], []byte("TOUCH")) {
 					isSpecial = true
 					if len(line) < 23 {
+						if len(tmpLine) < len(line) {
+							tmpLine = append(tmpLine, line[:len(line)-len(tmpLine)]...)
+						}
 						tmpLine = tmpLine[:len(line)]
 						copy(tmpLine, line)
 						left = left[:23-len(tmpLine)]
