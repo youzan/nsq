@@ -80,17 +80,17 @@ type ChannelStats struct {
 	DepthTimestamp string `json:"depth_ts"`
 	BackendDepth   int64  `json:"backend_depth"`
 	// total size sub past hour on this channel
-	HourlySubSize int64         `json:"hourly_subsize"`
-	InFlightCount int           `json:"in_flight_count"`
-	DeferredCount int           `json:"deferred_count"`
-	MessageCount  uint64        `json:"message_count"`
-	RequeueCount  uint64        `json:"requeue_count"`
-	TimeoutCount  uint64        `json:"timeout_count"`
-	Clients       []ClientStats `json:"clients"`
-	ClientNum     int64         `json:"client_num"`
-	Paused        bool          `json:"paused"`
-	Skipped       bool          `json:"skipped"`
-	ZanTestSkipped bool		`json:"zan_test_skipped"`
+	HourlySubSize  int64         `json:"hourly_subsize"`
+	InFlightCount  int           `json:"in_flight_count"`
+	DeferredCount  int           `json:"deferred_count"`
+	MessageCount   uint64        `json:"message_count"`
+	RequeueCount   uint64        `json:"requeue_count"`
+	TimeoutCount   uint64        `json:"timeout_count"`
+	Clients        []ClientStats `json:"clients"`
+	ClientNum      int64         `json:"client_num"`
+	Paused         bool          `json:"paused"`
+	Skipped        bool          `json:"skipped"`
+	ZanTestSkipped bool          `json:"zan_test_skipped"`
 
 	DelayedQueueCount  uint64 `json:"delayed_queue_count"`
 	DelayedQueueRecent string `json:"delayed_queue_recent"`
@@ -104,22 +104,8 @@ func NewChannelStats(c *Channel, clients []ClientStats, clientNum int) ChannelSt
 	c.inFlightMutex.Lock()
 	inflightCnt := len(c.inFlightMessages)
 	c.inFlightMutex.Unlock()
-	recentList, _, chCntList := c.GetDelayedQueueConsumedState()
-	var recentTs int64
-	if len(recentList) > 0 {
-		for _, k := range recentList {
-			_, ts, _, ch, err := decodeDelayedMsgDBKey(k)
-			if err != nil || ch != c.GetName() {
-				continue
-			}
-			recentTs = ts
-			break
-		}
-	}
-	dqCnt := uint64(0)
-	if len(chCntList) > 0 {
-		dqCnt, _ = chCntList[c.GetName()]
-	}
+	recentTs, dqCnt := c.GetDelayedQueueConsumedState()
+
 	return ChannelStats{
 		ChannelName:    c.name,
 		Depth:          c.Depth(),

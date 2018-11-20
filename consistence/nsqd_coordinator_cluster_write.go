@@ -1088,7 +1088,7 @@ func (self *NsqdCoordinator) FinishMessageToCluster(channel *nsqd.Channel, clien
 			rpcErr = c.UpdateChannelOffset(&tcData.topicLeaderSession, &tcData.topicInfo, channel.GetName(), syncOffset)
 		} else {
 			if delayedMsg {
-				cursorList, cntList, channelCntList := channel.GetDelayedQueueConsumedState()
+				cursorList, cntList, channelCntList := channel.GetDelayedQueueConsumedDetails()
 				rpcErr = c.UpdateDelayedQueueState(&tcData.topicLeaderSession, &tcData.topicInfo,
 					channel.GetName(), cursorList, cntList, channelCntList, false)
 			} else {
@@ -1389,7 +1389,7 @@ func (self *NsqdCoordinator) EmptyChannelDelayedStateToCluster(channel *nsqd.Cha
 			return nil
 		}
 		var rpcErr *CoordErr
-		cursorList, cntList, channelCntList := channel.GetDelayedQueueConsumedState()
+		cursorList, cntList, channelCntList := channel.GetDelayedQueueConsumedDetails()
 		rpcErr = c.UpdateDelayedQueueState(&tcData.topicLeaderSession, &tcData.topicInfo,
 			channel.GetName(), cursorList, cntList, channelCntList, true)
 		if rpcErr != nil {

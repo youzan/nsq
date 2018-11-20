@@ -1095,11 +1095,44 @@ func (c *Channel) ShouldRequeueToEnd(clientID int64, clientAddr string, id Messa
 			c.DepthTimestamp(), msg.Attempts, atomic.LoadInt32(&c.waitingConfirm))
 	}
 
-	if (msg.Attempts >= maxAttempts-1) && (c.Depth() > c.option.MaxConfirmWin) {
-		return msg.GetCopy(), true
+	tn := time.Now()
+	// check if delayed queue is blocked too much, and try increase delay and put this
+	// delayed message to delay-queue again.
+	if msg.DelayedType == ChannelDelayed {
+		// if the message is peeked from disk delayed queue,
+		// we can try to put it back to end if there are some other
+		// delayed queue messages waiting.
+		// mostly, delayed depth ts should be in future, if it is less than now,
+		// means there are some others delayed timeout need to be peeked immediately.
+
+		// waitingDelayCnt is the counter for memory waiting from delay diskqueue,
+		// dqCnt is all the delayed diskqueue counter, so
+		// if all delayed messages are in memory, we no need to put them back to disk.
+		waitingDelayCnt := atomic.LoadInt64(&c.deferredFromDelay)
+		dqDepthTs, dqCnt := c.GetDelayedQueueConsumedState()
+		blocking := tn.UnixNano()-dqDepthTs > threshold.Nanoseconds()
+		if dqDepthTs > 0 && blocking && int64(dqCnt) > waitingDelayCnt {
+			nsqLog.Logf("channel %v delayed queue message %v req to end, timestamp:%v, attempt:%v, delayed depth timestamp: %v, delay waiting : %v, %v",
+				c.GetName(), id, msg.Timestamp,
+				msg.Attempts, dqDepthTs, waitingDelayCnt, dqCnt)
+			return msg.GetCopy(), true
+		}
+		if msg.TraceID != 0 || c.IsTraced() || nsqLog.Level() >= levellogger.LOG_DEBUG {
+			nsqLog.Logf("channel %v check delayed queue message %v req to end, timestamp:%v, depth ts:%v, attempt:%v, delay waiting :%v, delayed depth timestamp: %v",
+				c.GetName(), id, msg.Timestamp,
+				c.DepthTimestamp(), msg.Attempts, waitingDelayCnt, dqDepthTs)
+		}
 	}
 
-	newTimeout := time.Now().Add(timeout)
+	depDiffTs := tn.UnixNano() - c.DepthTimestamp()
+	if msg.Attempts >= maxAttempts-1 {
+		if (c.Depth() > c.option.MaxConfirmWin) ||
+			depDiffTs > time.Hour.Nanoseconds() {
+			return msg.GetCopy(), true
+		}
+	}
+
+	newTimeout := tn.Add(timeout)
 	if newTimeout.Sub(msg.deliveryTS) >=
 		c.option.MaxReqTimeout {
 		return msg.GetCopy(), true
@@ -1133,9 +1166,6 @@ func (c *Channel) ShouldRequeueToEnd(clientID int64, clientAddr string, id Messa
 		}
 	}
 
-	// TODO: also check if delayed queue is blocked too much, and try increase delay and put this
-	// delayed message to delay-queue again.
-	ts := time.Now().UnixNano() - c.DepthTimestamp()
 	isBlocking := atomic.LoadInt32(&c.waitingConfirm) >= int32(c.option.MaxConfirmWin)
 	if isBlocking {
 		if timeout > threshold/2 || (timeout > 2*time.Minute) {
@@ -1150,10 +1180,10 @@ func (c *Channel) ShouldRequeueToEnd(clientID int64, clientAddr string, id Messa
 			return nil, false
 		}
 
-		if msg.Attempts > MaxMemReqTimes && ts > threshold.Nanoseconds() {
+		if msg.Attempts > MaxMemReqTimes && depDiffTs > threshold.Nanoseconds() {
 			return msg.GetCopy(), true
 		}
-		if ts > 20*threshold.Nanoseconds() {
+		if depDiffTs > 20*threshold.Nanoseconds() {
 			return msg.GetCopy(), true
 		}
 		return nil, false
@@ -1165,7 +1195,7 @@ func (c *Channel) ShouldRequeueToEnd(clientID int64, clientAddr string, id Messa
 		if msg.Attempts < MaxMemReqTimes {
 			return nil, false
 		}
-		if ts < 20*threshold.Nanoseconds() {
+		if depDiffTs < 20*threshold.Nanoseconds() {
 			return nil, false
 		}
 		if c.Depth() < 100 {
@@ -2218,7 +2248,14 @@ exit:
 	if waitingDelayCnt < 0 {
 		nsqLog.Logf("delayed waiting count error %v ", waitingDelayCnt)
 	}
+	// Since all messages in delayed queue stored in sorted by delayed timestamp,
+	// all old unconfirmed messages in delayed queue will be peeked at each time.
+	// So peek is no need if last peeked batch is not all confirmed.
+	// However, some of them may retry too long time in memory.
+	// If we do not confirm them soon, it may block too long time for some messages in delayed queue.
+	// So we need requeue them to the end of the delayed queue again (while req command received) if blocking too long time.
 	needPeekDelay := waitingDelayCnt <= 0
+
 	if !c.IsConsumeDisabled() && !c.IsOrdered() && delayedQueue != nil &&
 		needPeekDelay && clientNum > 0 {
 		peekStart := time.Now()
@@ -2232,7 +2269,7 @@ exit:
 				_, cok := c.delayedConfirmedMsgs[m.DelayedOrigID]
 				c.confirmMutex.Unlock()
 				if cok {
-					nsqLog.LogDebugf("delayed message already confirmed %v ", m)
+					nsqLog.Logf("delayed message already confirmed %v ", m)
 				} else {
 					oldMsg2, ok2 := c.inFlightMessages[m.DelayedOrigID]
 					_, ok3 := c.waitingRequeueChanMsgs[m.DelayedOrigID]
@@ -2259,9 +2296,8 @@ exit:
 							nsqLog.LogDebugf("channel %v delayed is too early now %v for message: %v, peeking time: %v",
 								c.GetName(), tnow, m, peekStart)
 						}
-						if m.TraceID != 0 || c.IsTraced() || nsqLog.Level() >= levellogger.LOG_DEBUG {
-							nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "DELAY_QUEUE_TIMEOUT", m.TraceID, &m, "", 0)
-						}
+
+						nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "DELAY_QUEUE_TIMEOUT", m.TraceID, &m, "", 0)
 
 						newAdded++
 						if m.belongedConsumer != nil {
@@ -2337,13 +2373,37 @@ exit:
 	return dirty, checkFast
 }
 
-func (c *Channel) GetDelayedQueueConsumedState() (RecentKeyList, map[int]uint64, map[string]uint64) {
+func (c *Channel) GetDelayedQueueConsumedDetails() (RecentKeyList, map[int]uint64, map[string]uint64) {
 	dq := c.GetDelayedQueue()
 	if dq == nil {
 		return nil, nil, nil
 	}
-
 	return dq.GetOldestConsumedState([]string{c.GetName()}, false)
+}
+
+func (c *Channel) GetDelayedQueueConsumedState() (int64, uint64) {
+	var recentTs int64
+	dqCnt := uint64(0)
+	dq := c.GetDelayedQueue()
+	if dq == nil {
+		return recentTs, dqCnt
+	}
+
+	recentList, _, chCntList := dq.GetOldestConsumedState([]string{c.GetName()}, false)
+	if len(recentList) > 0 {
+		for _, k := range recentList {
+			_, ts, _, ch, err := decodeDelayedMsgDBKey(k)
+			if err != nil || ch != c.GetName() {
+				continue
+			}
+			recentTs = ts
+			break
+		}
+	}
+	if len(chCntList) > 0 {
+		dqCnt, _ = chCntList[c.GetName()]
+	}
+	return recentTs, dqCnt
 }
 
 func (c *Channel) GetMemDelayedMsgs() []MessageID {
