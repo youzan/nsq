@@ -51,7 +51,10 @@ func identify(t *testing.T, conn io.ReadWriter, extra map[string]interface{}, f 
 	test.Equal(t, err, nil)
 	frameType, data, err := nsq.UnpackResponse(resp)
 	test.Equal(t, err, nil)
-	test.Equal(t, frameType, f)
+	if frameType != f {
+		t.Errorf("identify err: %v", string(data))
+	}
+	test.Equal(t, f, frameType)
 	return data
 }
 
@@ -3557,7 +3560,9 @@ func TestDelayMessage(t *testing.T) {
 	topic := nsqd.GetTopicIgnPart(topicName)
 	topic.GetChannel("ch")
 
-	identify(t, conn, nil, frameTypeResponse)
+	identify(t, conn, map[string]interface{}{
+		"output_buffer_timeout": 10,
+	}, frameTypeResponse)
 	sub(t, conn, topicName, "ch")
 	time.Sleep(opts.QueueScanRefreshInterval)
 
@@ -3673,7 +3678,9 @@ func TestDelayMessageToQueueEnd(t *testing.T) {
 	topic := nsqd.GetTopicIgnPart(topicName)
 	topic.GetChannel("ch")
 
-	identify(t, conn, nil, frameTypeResponse)
+	identify(t, conn, map[string]interface{}{
+		"output_buffer_timeout": 10,
+	}, frameTypeResponse)
 	sub(t, conn, topicName, "ch")
 	time.Sleep(opts.QueueScanRefreshInterval)
 
@@ -3803,6 +3810,130 @@ func TestDelayMessageToQueueEnd(t *testing.T) {
 	time.Sleep(time.Second)
 }
 
+func TestDelayMessageToQueueEndAgainAndAgain(t *testing.T) {
+	// this would test the req of delayed queue message and
+	// other delayed queue message can be poped to consumer
+	// make sure delayed message will not be blocked too long time if some
+	// of them req again and again
+
+	// note: the delayed message will be peeked in batch with MaxWaitingDelayed size
+	// so we need test MaxWaitingDelayed req for delayed messages and to see if MaxWaitingDelayed + 1
+	// message can be peeked to consumer
+
+	opts := nsqdNs.NewOptions()
+	opts.Logger = newTestLogger(t)
+	opts.LogLevel = 1
+	if testing.Verbose() {
+		opts.LogLevel = 3
+	}
+	nsqdNs.SetLogger(opts.Logger)
+	opts.SyncEvery = 1
+	opts.QueueScanInterval = time.Millisecond * 10
+	opts.MsgTimeout = time.Second * 5
+	opts.MaxReqTimeout = time.Second * 100
+	opts.MaxConfirmWin = 50
+	opts.ReqToEndThreshold = time.Millisecond * 200
+	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
+
+	defer os.RemoveAll(opts.DataPath)
+	defer nsqdServer.Exit()
+
+	conn, err := mustConnectNSQD(tcpAddr)
+	test.Equal(t, err, nil)
+	defer conn.Close()
+
+	topicName := "test_req_delay_again" + strconv.Itoa(int(time.Now().Unix()))
+	topic := nsqd.GetTopicIgnPart(topicName)
+	topic.GetChannel("ch")
+
+	identify(t, conn, map[string]interface{}{
+		"output_buffer_timeout": 10,
+	}, frameTypeResponse)
+
+	sub(t, conn, topicName, "ch")
+	time.Sleep(opts.QueueScanRefreshInterval)
+	_, err = nsq.Ready(nsqdNs.MaxWaitingDelayed).WriteTo(conn)
+	test.Equal(t, err, nil)
+
+	putCnt := 0
+	recvCnt := 0
+	finCnt := 0
+
+	for i := 0; i < nsqdNs.MaxWaitingDelayed*2; i++ {
+		msg := nsqdNs.NewMessage(0, []byte("test body"+strconv.Itoa(i+1)))
+		msg.TraceID = uint64(i + 1)
+		topic.PutMessage(msg)
+		putCnt++
+	}
+	topic.ForceFlush()
+
+	delayStart := time.Now()
+	delayToEnd := opts.ReqToEndThreshold * time.Duration(11+int(opts.MaxConfirmWin))
+	// delay all messages to the delayed queue
+	for i := 0; i < nsqdNs.MaxWaitingDelayed*2; i++ {
+		msgOut := recvNextMsgAndCheckClientMsg(t, conn, 0, 0, false)
+		recvCnt++
+		_, err = nsq.Requeue(nsq.MessageID(msgOut.GetFullMsgID()), delayToEnd).WriteTo(conn)
+		test.Nil(t, err)
+		t.Logf("delay msg to end %v, %v", msgOut.ID, recvCnt)
+	}
+	delayStart2 := time.Now()
+	// delay some delayed message again
+	for {
+		msgOut := recvNextMsgAndCheckClientMsg(t, conn, 0, 0, false)
+		recvCnt++
+		delayDone := time.Since(delayStart)
+		t.Logf("===== recv msg %v, %v, delayed: %v", msgOut.ID, recvCnt, delayDone)
+		test.Assert(t, delayDone > delayToEnd, "should delay enough")
+		if delayDone > delayToEnd*2 {
+			t.Errorf("timeout for waiting finish other messages: %v", delayDone)
+			break
+		}
+		delayDone = time.Since(delayStart2)
+		if uint64(nsq.GetNewMessageID(msgOut.ID[:])) <= uint64(nsqdNs.MaxWaitingDelayed) {
+			t.Logf("delay msg short: %v, %v", msgOut.ID, delayDone)
+			test.Assert(t, delayDone < delayToEnd+opts.ReqToEndThreshold*2, "should not delay too long time")
+			_, err = nsq.Requeue(nsq.MessageID(msgOut.GetFullMsgID()), opts.ReqToEndThreshold-time.Millisecond).WriteTo(conn)
+			test.Nil(t, err)
+			test.Assert(t, msgOut.Attempts < 5, "delayed again messages should attemp less")
+			continue
+		}
+		t.Logf("fin msg: %v, delayed: %v", msgOut.ID, delayDone)
+		nsq.Finish(msgOut.ID).WriteTo(conn)
+		test.Assert(t, delayDone < delayToEnd+opts.ReqToEndThreshold*2, "should not delay too long time")
+		finCnt++
+		test.Equal(t, uint16(2), msgOut.Attempts)
+		if finCnt >= nsqdNs.MaxWaitingDelayed {
+			break
+		}
+	}
+
+	t.Logf("recv %v, put:%v, fincnt: %v", recvCnt, putCnt, finCnt)
+	test.Assert(t, finCnt >= nsqdNs.MaxWaitingDelayed, "should consume other delayed messages")
+	test.Assert(t, recvCnt > putCnt+putCnt/2, "recv should larger than put")
+	test.Assert(t, recvCnt < putCnt*2+finCnt, "recv should less than 2*put+fin")
+	delayStart = time.Now()
+	for finCnt < putCnt {
+		msgClientOut := recvNextMsgAndCheckClientMsg(t, conn, 0, 0, false)
+		recvCnt++
+		t.Logf("recv msg %v, %v", msgClientOut.ID, recvCnt)
+
+		delayDone := time.Since(delayStart)
+		t.Logf("delayed: %v", delayDone)
+		test.Assert(t, delayDone < opts.ReqToEndThreshold*2, "should not delay too long time")
+
+		finCnt++
+		t.Logf("fin msg: %v", msgClientOut.ID)
+		nsq.Finish(msgClientOut.ID).WriteTo(conn)
+	}
+
+	t.Logf("put %v,  fin : %v, recv: %v", putCnt, finCnt, recvCnt)
+	test.Equal(t, true, putCnt <= finCnt)
+	test.Equal(t, true, putCnt+10 > finCnt)
+	test.Equal(t, true, recvCnt-finCnt > putCnt/2)
+	test.Equal(t, true, recvCnt < putCnt*3)
+}
+
 func TestDelayManyMessagesToQueueEndWithLeaderChanged(t *testing.T) {
 	testDelayManyMessagesToQueueEnd(t, true)
 }
@@ -3816,7 +3947,7 @@ func testDelayManyMessagesToQueueEnd(t *testing.T, changedLeader bool) {
 	opts.Logger = newTestLogger(t)
 	opts.LogLevel = 1
 	if testing.Verbose() {
-		opts.LogLevel = 5
+		opts.LogLevel = 4
 		nsqdNs.SetLogger(opts.Logger)
 	}
 	opts.SyncEvery = 1
@@ -3825,7 +3956,7 @@ func testDelayManyMessagesToQueueEnd(t *testing.T, changedLeader bool) {
 	opts.MaxConfirmWin = 50
 	opts.ReqToEndThreshold = nsqdNs.MaxWaitingDelayed*time.Millisecond*100 + time.Millisecond*800
 	opts.MaxReqTimeout = time.Second*30 + opts.ReqToEndThreshold*3
-	opts.MaxOutputBufferTimeout = time.Millisecond
+	opts.MaxOutputBufferTimeout = 10 * time.Millisecond
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 
 	defer os.RemoveAll(opts.DataPath)
@@ -3870,7 +4001,7 @@ func testDelayManyMessagesToQueueEnd(t *testing.T, changedLeader bool) {
 			defer conn.Close()
 			conn.(*net.TCPConn).SetNoDelay(true)
 			identify(t, conn, map[string]interface{}{
-				"output_buffer_timeout": opts.MaxOutputBufferTimeout / time.Millisecond,
+				"output_buffer_timeout": 10,
 			}, frameTypeResponse)
 			subRsp, err := subWaitResp(t, conn, topicName, "ch")
 			if changedLeader {

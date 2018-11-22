@@ -2266,10 +2266,18 @@ exit:
 				m := tmpMsg
 				c.inFlightMutex.Lock()
 				c.confirmMutex.Lock()
-				_, cok := c.delayedConfirmedMsgs[m.DelayedOrigID]
+				oldMsg, cok := c.delayedConfirmedMsgs[m.DelayedOrigID]
 				c.confirmMutex.Unlock()
 				if cok {
-					nsqLog.Logf("delayed message already confirmed %v ", m)
+					// avoid to pop some recently confirmed delayed messages, avoid possible duplicate
+
+					// the delayed confirmed message may be requeue to end again
+					// so we check if the delayed ts is the same.
+					if m.DelayedTs != oldMsg.DelayedTs {
+						nsqLog.Logf("delayed message already confirmed with different ts %v, %v ", m, oldMsg.DelayedTs)
+					} else {
+						nsqLog.Logf("delayed message already confirmed %v ", m)
+					}
 				} else {
 					oldMsg2, ok2 := c.inFlightMessages[m.DelayedOrigID]
 					_, ok3 := c.waitingRequeueChanMsgs[m.DelayedOrigID]

@@ -152,7 +152,7 @@ func NewClientV2(id int64, conn net.Conn, opts *Options, tls *tls.Config) *Clien
 		Writer: newBufioWriterSize(conn, defaultBufferSize),
 
 		outputBufferSize:    int64(defaultBufferSize),
-		outputBufferTimeout: int64(250 * time.Millisecond),
+		outputBufferTimeout: int64(50 * time.Millisecond),
 
 		msgTimeout: int64(opts.MsgTimeout),
 
