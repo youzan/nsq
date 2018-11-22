@@ -102,7 +102,7 @@ func (self *NsqdRpcClient) Close() {
 }
 
 func (self *NsqdRpcClient) ShouldRemoved() bool {
-	r := false
+	r := true
 	self.Lock()
 	if self.c != nil {
 		r = self.c.ShouldRemoved()
@@ -158,7 +158,7 @@ func (self *NsqdRpcClient) CallWithRetry(method string, arg interface{}) (interf
 		if err != nil {
 			cerr, ok := err.(*gorpc.ClientError)
 			if (ok && cerr.Connection) || self.ShouldRemoved() {
-				coordLog.Infof("rpc connection closed, error: %v", err)
+				coordLog.Warningf("rpc connection %v closed, error: %v", self.remote, err)
 				connErr := self.Reconnect()
 				if connErr != nil {
 					return reply, err

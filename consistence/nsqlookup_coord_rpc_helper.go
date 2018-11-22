@@ -386,6 +386,7 @@ func (self *NsqLookupCoordinator) acquireRpcClient(nid string) (*NsqdRpcClient, 
 			coordLog.Infof("rpc removing removed client: %v", nid)
 			c.Close()
 			c = nil
+			delete(self.nsqdRpcClients, nid)
 		}
 	}
 	if c == nil {

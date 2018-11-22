@@ -200,6 +200,7 @@ func (self *NsqdCoordinator) acquireRpcClient(nid string) (*NsqdRpcClient, *Coor
 	c, ok := self.nsqdRpcClients[nid]
 	if ok {
 		if c.ShouldRemoved() {
+			coordLog.Infof("rpc removing removed client: %v", nid)
 			c.Close()
 			delete(self.nsqdRpcClients, nid)
 			ok = false
