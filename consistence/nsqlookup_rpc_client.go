@@ -1,9 +1,10 @@
 package consistence
 
 import (
-	"github.com/absolute8511/gorpc"
 	"sync"
 	"time"
+
+	"github.com/absolute8511/gorpc"
 )
 
 type INsqlookupRemoteProxy interface {
@@ -85,7 +86,7 @@ func (self *NsqLookupRpcClient) Reconnect() error {
 }
 
 func (self *NsqLookupRpcClient) CallFast(method string, arg interface{}) (interface{}, error) {
-	reply, err := self.dc.CallTimeout(method, arg, time.Second/2)
+	reply, err := self.dc.CallTimeout(method, arg, time.Millisecond*10)
 	return reply, err
 }
 
