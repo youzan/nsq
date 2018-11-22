@@ -1888,13 +1888,13 @@ func TestNsqdCoordSyncChannelList(t *testing.T) {
 	topicData2.ForceFlush()
 
 	tc1, _ := nsqdCoord1.getTopicCoord(topic, partition)
-	nsqdCoord1.trySyncTopicChannels(tc1.GetData(), true, true)
+	nsqdCoord1.trySyncTopicChannels(tc1.GetData(), true, true, false)
 	time.Sleep(time.Second)
 	chListOnNode2 := topicData2.GetChannelMapCopy()
 	test.Equal(t, 3, len(chListOnNode2))
 
 	topicData1.CloseExistingChannel("ch3_closed", false)
-	nsqdCoord1.trySyncTopicChannels(tc1.GetData(), true, true)
+	nsqdCoord1.trySyncTopicChannels(tc1.GetData(), true, true, false)
 	time.Sleep(time.Second)
 	chListOnNode2 = topicData2.GetChannelMapCopy()
 	test.Equal(t, 2, len(chListOnNode2))

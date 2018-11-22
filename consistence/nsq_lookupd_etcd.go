@@ -546,8 +546,8 @@ func (self *NsqLookupdEtcdMgr) GetTopicInfo(topic string, partition int) (*Topic
 	var rInfo TopicPartitionReplicaInfo
 	cached := false
 	// try get cache first
-	self.tmiMutex.RLock()
 	if self.isCacheNewest() {
+		self.tmiMutex.RLock()
 		parts, ok := self.topicReplicasMap[topic]
 		if ok {
 			p, ok := parts[partition]
@@ -556,8 +556,8 @@ func (self *NsqLookupdEtcdMgr) GetTopicInfo(topic string, partition int) (*Topic
 				cached = true
 			}
 		}
+		self.tmiMutex.RUnlock()
 	}
-	self.tmiMutex.RUnlock()
 	if !cached {
 		rsp, err := self.client.GetNewest(self.createTopicReplicaInfoPath(topic, partition), false, false)
 		if err != nil {
@@ -638,10 +638,10 @@ func (self *NsqLookupdEtcdMgr) IsExistTopicPartition(topic string, partitionNum 
 func (self *NsqLookupdEtcdMgr) GetTopicMetaInfoTryCache(topic string) (TopicMetaInfo, error) {
 	var metaInfo TopicMetaInfo
 	var ok bool
-	self.tmiMutex.Lock()
-	defer self.tmiMutex.Unlock()
 	if self.isCacheNewest() {
+		self.tmiMutex.RLock()
 		metaInfo, ok = self.topicMetaMap[topic]
+		self.tmiMutex.RUnlock()
 	}
 	if ok {
 		return metaInfo, nil
@@ -651,7 +651,7 @@ func (self *NsqLookupdEtcdMgr) GetTopicMetaInfoTryCache(topic string) (TopicMeta
 	if err != nil {
 		return metaInfo, err
 	}
-	self.topicMetaMap[topic] = mInfo
+	atomic.StoreInt32(&self.ifTopicChanged, 1)
 	return mInfo, nil
 }
 
