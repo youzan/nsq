@@ -3822,14 +3822,14 @@ func TestDelayMessageToQueueEndAgainAndAgain(t *testing.T) {
 
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
-	opts.LogLevel = 1
+	opts.LogLevel = 2
 	if testing.Verbose() {
 		opts.LogLevel = 3
 	}
 	nsqdNs.SetLogger(opts.Logger)
 	opts.SyncEvery = 1
 	opts.QueueScanInterval = time.Millisecond * 10
-	opts.MsgTimeout = time.Second * 5
+	opts.MsgTimeout = time.Second * 10
 	opts.MaxReqTimeout = time.Second * 100
 	opts.MaxConfirmWin = 50
 	opts.ReqToEndThreshold = time.Millisecond * 400

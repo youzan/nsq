@@ -7,6 +7,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/youzan/nsq/internal/protocol"
 	"github.com/youzan/nsq/internal/statsd"
 	"github.com/youzan/nsq/nsqd"
 )
@@ -76,6 +77,10 @@ func (n *NsqdServer) statsdLoop() {
 				}
 
 				for _, channel := range topic.Channels {
+					// ephemeral may be too much, so we just ignore report ephemeral channel stats to remote
+					if protocol.IsEphemeral(channel.ChannelName) {
+						continue
+					}
 					// try to find the channel in the last collection
 					lastChannel := nsqd.ChannelStats{}
 					for _, checkChannel := range lastTopic.Channels {
