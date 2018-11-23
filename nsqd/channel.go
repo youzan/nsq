@@ -2274,7 +2274,7 @@ exit:
 					// the delayed confirmed message may be requeue to end again
 					// so we check if the delayed ts is the same.
 					if m.DelayedTs != oldMsg.DelayedTs {
-						nsqLog.Logf("delayed message already confirmed with different ts %v, %v ", m, oldMsg.DelayedTs)
+						nsqLog.LogDebugf("delayed message already confirmed with different ts %v, %v ", PrintMessageNoBody(&m), oldMsg.DelayedTs)
 					} else {
 						nsqLog.Logf("delayed message already confirmed %v ", m)
 					}

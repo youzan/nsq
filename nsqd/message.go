@@ -40,6 +40,12 @@ func PrintMessage(m *Message) string {
 		m.pri, m.index, m.deferredCnt, m.Offset, m.RawMoveSize, m.queueCntIndex)
 }
 
+func PrintMessageNoBody(m *Message) string {
+	return fmt.Sprintf("%v %v %v %v %v %v %v %v %v %v %v",
+		m.ID, m.TraceID, m.Timestamp, m.Attempts, m.deliveryTS,
+		m.pri, m.index, m.deferredCnt, m.Offset, m.RawMoveSize, m.queueCntIndex)
+}
+
 type Message struct {
 	ID        MessageID
 	TraceID   uint64
