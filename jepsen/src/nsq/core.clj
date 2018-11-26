@@ -36,7 +36,7 @@
 (def nsqlookupd-logfile "/var/log/nsqlookupd.log")
 (def nsqlookupd-pidfile "/var/run/nsqlookupd.pid")
 (def etcd-cluster-url "http://etcd0.example.com:2379/v2/keys/NSQMetaData/test-jepsen-dev-1")
-(def nsq-package "nsq-0.3.7-HA.1.6.4.linux-amd64.go1.8.5")
+(def nsq-package "nsq-0.3.7-HA.1.9.0.linux-amd64.go1.10.5")
 
 (defn prepare-binary! 
   [test node]

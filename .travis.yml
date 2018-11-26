@@ -12,7 +12,7 @@ script:
   - curl -s https://raw.githubusercontent.com/pote/gpm/v1.4.0/bin/gpm > gpm
   - chmod +x gpm
   - ./gpm install
-  - ./test.sh
+  - travis_wait ./test.sh
 notifications:
   email: false
 
