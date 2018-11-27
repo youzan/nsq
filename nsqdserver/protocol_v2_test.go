@@ -5451,7 +5451,7 @@ func TestTimeoutShouldNotBlockStats(t *testing.T) {
 		}
 
 		if len(stats) == 0 {
-			t.Errorf("should  not emtpy: %v", time.Since(b))
+			t.Errorf("should  not empty: %v", time.Since(b))
 			break
 		}
 		t.Logf("block at %v : %v", time.Now(), time.Since(b))

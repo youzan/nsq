@@ -18,14 +18,15 @@ import (
 	"bytes"
 	"sort"
 
+	"sync"
+
 	"github.com/julienschmidt/httprouter"
 	"github.com/youzan/nsq/internal/clusterinfo"
 	"github.com/youzan/nsq/internal/http_api"
 	"github.com/youzan/nsq/internal/protocol"
 	"github.com/youzan/nsq/internal/version"
-	"golang.org/x/sync/semaphore"
 	"golang.org/x/net/context"
-	"sync"
+	"golang.org/x/sync/semaphore"
 )
 
 func maybeWarnMsg(msgs []string) string {
@@ -205,7 +206,7 @@ func (s *httpServer) pingHandler(w http.ResponseWriter, req *http.Request, ps ht
 }
 
 type DCLookupdAddrs struct {
-	DC string `json:"dc"`
+	DC           string   `json:"dc"`
 	LookupdAddrs []string `json:"lookupAddrs"`
 }
 
@@ -219,7 +220,7 @@ func transform2DCLookupdAddrs(dcLookupdAddrs map[string][]string) []*DCLookupdAd
 
 func (s *httpServer) indexHandler(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {
 	asset, _ := Asset("index.html")
-	t, _ := template.New("index").Funcs(template.FuncMap{"dcLookupdList" : transform2DCLookupdAddrs}).Parse(string(asset))
+	t, _ := template.New("index").Funcs(template.FuncMap{"dcLookupdList": transform2DCLookupdAddrs}).Parse(string(asset))
 
 	w.Header().Set("Content-Type", "text/html")
 	lookupdAddresses := make([]string, 0)
@@ -271,47 +272,47 @@ func (s *httpServer) indexHandler(w http.ResponseWriter, req *http.Request, ps h
 		return nil, http_api.Err{http.StatusInternalServerError, "INTERNAL ERROR"}
 	}
 	t.Execute(w, struct {
-		Version             string
-		ProxyGraphite       bool
-		GraphEnabled        bool
-		GraphiteURL         string
-		StatsdInterval      int
-		UseStatsdPrefixes   bool
-		StatsdCounterFormat string
-		StatsdGaugeFormat   string
-		StatsdPrefix        string
-		NSQLookupd          []string
-		DCNSQLookupd	    map[string][]string
-		AllNSQLookupds      []string
-		DCAllNSQLookupds    map[string][]string
-		AuthUrl             string
-		LogoutUrl           string
-		Login               bool
-		User                string
-		AuthEnabled         bool
-		HasNotificationEndpoint		bool
-		EnableZanTestSkip   bool
+		Version                 string
+		ProxyGraphite           bool
+		GraphEnabled            bool
+		GraphiteURL             string
+		StatsdInterval          int
+		UseStatsdPrefixes       bool
+		StatsdCounterFormat     string
+		StatsdGaugeFormat       string
+		StatsdPrefix            string
+		NSQLookupd              []string
+		DCNSQLookupd            map[string][]string
+		AllNSQLookupds          []string
+		DCAllNSQLookupds        map[string][]string
+		AuthUrl                 string
+		LogoutUrl               string
+		Login                   bool
+		User                    string
+		AuthEnabled             bool
+		HasNotificationEndpoint bool
+		EnableZanTestSkip       bool
 	}{
-		Version:             version.Binary,
-		ProxyGraphite:       s.ctx.nsqadmin.opts.ProxyGraphite,
-		GraphEnabled:        s.ctx.nsqadmin.opts.GraphiteURL != "",
-		GraphiteURL:         s.ctx.nsqadmin.opts.GraphiteURL,
-		StatsdInterval:      int(s.ctx.nsqadmin.opts.StatsdInterval / time.Second),
-		UseStatsdPrefixes:   s.ctx.nsqadmin.opts.UseStatsdPrefixes,
-		StatsdCounterFormat: s.ctx.nsqadmin.opts.StatsdCounterFormat,
-		StatsdGaugeFormat:   s.ctx.nsqadmin.opts.StatsdGaugeFormat,
-		StatsdPrefix:        s.ctx.nsqadmin.opts.StatsdPrefix,
-		NSQLookupd:          s.ctx.nsqadmin.opts.NSQLookupdHTTPAddresses,
-		DCNSQLookupd:	     s.ctx.nsqadmin.DC2LookupAddresses(),
-		AllNSQLookupds:      lookupdAddresses,
-		DCAllNSQLookupds:    dcLookupdAddresses,
-		AuthUrl:             authUrl.String(),
-		LogoutUrl:           s.ctx.nsqadmin.opts.LogoutUrl,
-		Login:               (s.ctx.nsqadmin.IsAuthEnabled() && u.IsLogin()) || (!s.ctx.nsqadmin.IsAuthEnabled()),
-		User:                u.GetUserName(),
-		AuthEnabled:         s.ctx.nsqadmin.IsAuthEnabled(),
-		HasNotificationEndpoint:         s.ctx.nsqadmin.opts.NotificationHTTPEndpoint != "",
-		EnableZanTestSkip: s.ctx.nsqadmin.opts.EnableZanTestSkip,
+		Version:                 version.Binary,
+		ProxyGraphite:           s.ctx.nsqadmin.opts.ProxyGraphite,
+		GraphEnabled:            s.ctx.nsqadmin.opts.GraphiteURL != "",
+		GraphiteURL:             s.ctx.nsqadmin.opts.GraphiteURL,
+		StatsdInterval:          int(s.ctx.nsqadmin.opts.StatsdInterval / time.Second),
+		UseStatsdPrefixes:       s.ctx.nsqadmin.opts.UseStatsdPrefixes,
+		StatsdCounterFormat:     s.ctx.nsqadmin.opts.StatsdCounterFormat,
+		StatsdGaugeFormat:       s.ctx.nsqadmin.opts.StatsdGaugeFormat,
+		StatsdPrefix:            s.ctx.nsqadmin.opts.StatsdPrefix,
+		NSQLookupd:              s.ctx.nsqadmin.opts.NSQLookupdHTTPAddresses,
+		DCNSQLookupd:            s.ctx.nsqadmin.DC2LookupAddresses(),
+		AllNSQLookupds:          lookupdAddresses,
+		DCAllNSQLookupds:        dcLookupdAddresses,
+		AuthUrl:                 authUrl.String(),
+		LogoutUrl:               s.ctx.nsqadmin.opts.LogoutUrl,
+		Login:                   (s.ctx.nsqadmin.IsAuthEnabled() && u.IsLogin()) || (!s.ctx.nsqadmin.IsAuthEnabled()),
+		User:                    u.GetUserName(),
+		AuthEnabled:             s.ctx.nsqadmin.IsAuthEnabled(),
+		HasNotificationEndpoint: s.ctx.nsqadmin.opts.NotificationHTTPEndpoint != "",
+		EnableZanTestSkip:       s.ctx.nsqadmin.opts.EnableZanTestSkip,
 	})
 
 	return nil, nil
@@ -408,7 +409,7 @@ func (s *httpServer) topicsHandler(w http.ResponseWriter, req *http.Request, ps 
 		if err := sem.Acquire(ctx, int64(maxWeight)); err != nil {
 			s.ctx.nsqadmin.logf("Failed to acquire semaphore: %v", err)
 		}
-		respond:
+	respond:
 		return struct {
 			Topics  map[string][]string `json:"topics"`
 			Message string              `json:"message"`
@@ -435,8 +436,8 @@ func (s *httpServer) lookupNodesHandler(w http.ResponseWriter, req *http.Request
 	}
 	return struct {
 		*clusterinfo.LookupdNodes
-		LookupdNodesDC []*clusterinfo.LookupdNodes  `json:"lookupd_nodes_dc"`
-		Message string `json:"message"`
+		LookupdNodesDC []*clusterinfo.LookupdNodes `json:"lookupd_nodes_dc"`
+		Message        string                      `json:"message"`
 	}{nodesDC[0], nodesDC, maybeWarnMsg(messages)}, nil
 }
 
@@ -736,14 +737,14 @@ func (s *httpServer) searchMessageTrace(w http.ResponseWriter, req *http.Request
 		return nil, http_api.Err{400, "TRACE service url is not configured"}
 	}
 	var queryParam struct {
-		Topic     string `json:"topic"`
-		Partition string `json:"partition_id"`
-		Channel   string `json:"channel"`
-		MsgID     string `json:"msgid"`
-		TraceID   string `json:"traceid"`
-		Hours     string `json:"hours"`
-		IsHashed  bool   `json:"ishashed"`
-		DC	  []string `json:"dc"`
+		Topic     string   `json:"topic"`
+		Partition string   `json:"partition_id"`
+		Channel   string   `json:"channel"`
+		MsgID     string   `json:"msgid"`
+		TraceID   string   `json:"traceid"`
+		Hours     string   `json:"hours"`
+		IsHashed  bool     `json:"ishashed"`
+		DC        []string `json:"dc"`
 	}
 	err := json.NewDecoder(req.Body).Decode(&queryParam)
 	if err != nil {
@@ -870,7 +871,11 @@ func (s *httpServer) searchMessageTrace(w http.ResponseWriter, req *http.Request
 				extraJsonStr, _ := strconv.Unquote(m.Extra1)
 				err = json.Unmarshal([]byte(extraJsonStr), &items)
 				if err != nil || len(items) == 0 {
-					continue
+					s.ctx.nsqadmin.logf("msg extra1 invalid: %v, %v", m.Extra1, err)
+					err = json.Unmarshal([]byte(m.Extra1), &items)
+					if err != nil || len(items) == 0 {
+						continue
+					}
 				}
 			}
 		}
@@ -995,11 +1000,11 @@ func (s *httpServer) searchMessageTrace(w http.ResponseWriter, req *http.Request
 	}
 
 	return struct {
-		LogDataDtos []TraceLogDataForJs `json:"logDataDtos"`
-		TotalCount  int                 `json:"totalCount"`
-		RequestMsg  string              `json:"request_msg"`
-		RequestMsgDC map[string]string	`json:"request_msg_dc"`
-		Message     string              `json:"message"`
+		LogDataDtos  []TraceLogDataForJs `json:"logDataDtos"`
+		TotalCount   int                 `json:"totalCount"`
+		RequestMsg   string              `json:"request_msg"`
+		RequestMsgDC map[string]string   `json:"request_msg_dc"`
+		Message      string              `json:"message"`
 	}{logDataForJs, resultList.TotalCount, requestMsg, requestMsgDC, maybeWarnMsg(warnMessages)}, nil
 }
 
@@ -1207,9 +1212,9 @@ func (s *httpServer) channelAdminActionHandler(w http.ResponseWriter, req *http.
 type ChannelActionRequest struct {
 	Action    string `json:"action"`
 	Timestamp string `json:"timestamp"`
-	Node 	  string `json:"node"`
-	Partition int `json:"partition"`
-	MsgId	  string `json:"msgid"`
+	Node      string `json:"node"`
+	Partition int    `json:"partition"`
+	MsgId     string `json:"msgid"`
 }
 
 func (s *httpServer) topicChannelAdminAction(req *http.Request, topicName string, channelName string) (interface{}, error) {
@@ -1660,9 +1665,8 @@ func (s *httpServer) statisticsHandler(w http.ResponseWriter, req *http.Request,
 }
 
 type dcCounter struct {
-	DC	string `json:"dc"`
+	DC    string                   `json:"dc"`
 	Stats map[string]*counterStats `json:"stats"`
-
 }
 
 func (s *httpServer) counterHandler(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {
