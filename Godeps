@@ -20,7 +20,7 @@ github.com/golang/protobuf/proto        3852dcfda249c2097355a6aabb199a28d97b30df
 google.golang.org/grpc  4f14d195bf76d2b7e8c1bd379549b88ffe5f4ee3
 github.com/gobwas/glob
 github.com/tidwall/gjson
-github.com/absolute8511/bolt
+github.com/absolute8511/bolt  542c5384f7db8dcbfe50f7bf023672c1fb2e99e4
 github.com/twinj/uuid
 github.com/viki-org/dnscache
 github.com/gorilla/sessions

@@ -1209,11 +1209,11 @@ func (q *DelayQueue) TryCleanOldData(retentionSize int64, noRealClean bool, maxC
 		return nil, nil
 	}
 	cleanStart := q.backend.GetQueueReadStart()
-	nsqLog.Logf("clean topic %v data current start: %v, oldest end %v, max clean end: %v",
-		q.GetFullName(), cleanStart, oldestPos, maxCleanOffset)
 	if cleanStart.Offset()+BackendOffset(retentionSize) >= oldestPos.Offset() {
 		return nil, nil
 	}
+	nsqLog.Logf("clean topic %v data current start: %v, oldest end %v, max clean end: %v",
+		q.GetFullName(), cleanStart, oldestPos, maxCleanOffset)
 
 	if oldestPos.Offset() < maxCleanOffset || maxCleanOffset == BackendOffset(0) {
 		maxCleanOffset = oldestPos.Offset()
