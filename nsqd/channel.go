@@ -25,7 +25,7 @@ const (
 	MaxDepthReqToEnd      = 1000000
 	ZanTestSkip           = 0
 	ZanTestUnskip         = 1
-	memSizeForOrdered     = 2
+	memSizeForSmall       = 2
 )
 
 var (
@@ -185,12 +185,15 @@ func NewChannel(topicName string, part int, topicOrdered bool, channelName strin
 		Ext:                ext,
 	}
 
-	if topicOrdered {
-		c.requeuedMsgChan = make(chan *Message, memSizeForOrdered)
-		c.waitingRequeueChanMsgs = make(map[MessageID]*Message, memSizeForOrdered)
-		c.waitingRequeueMsgs = make(map[MessageID]*Message, memSizeForOrdered)
-		c.delayedConfirmedMsgs = make(map[MessageID]Message, memSizeForOrdered)
-		c.peekedMsgs = make([]Message, memSizeForOrdered)
+	if protocol.IsEphemeral(channelName) {
+		c.ephemeral = true
+	}
+	if topicOrdered || c.IsEphemeral() {
+		c.requeuedMsgChan = make(chan *Message, memSizeForSmall)
+		c.waitingRequeueChanMsgs = make(map[MessageID]*Message, memSizeForSmall)
+		c.waitingRequeueMsgs = make(map[MessageID]*Message, memSizeForSmall)
+		c.delayedConfirmedMsgs = make(map[MessageID]Message, memSizeForSmall)
+		c.peekedMsgs = make([]Message, memSizeForSmall)
 	} else {
 		c.requeuedMsgChan = make(chan *Message, opt.MaxRdyCount+1)
 		c.waitingRequeueChanMsgs = make(map[MessageID]*Message, 100)
@@ -216,9 +219,6 @@ func NewChannel(topicName string, part int, topicOrdered bool, channelName strin
 
 	c.initPQ()
 
-	if protocol.IsEphemeral(channelName) {
-		c.ephemeral = true
-	}
 	// backend names, for uniqueness, automatically include the topic...
 	backendReaderName := getBackendReaderName(c.topicName, c.topicPart, channelName)
 	backendName := getBackendName(c.topicName, c.topicPart)
@@ -477,8 +477,8 @@ func (c *Channel) IsOrdered() bool {
 
 func (c *Channel) initPQ() {
 	pqSize := int(math.Max(1, float64(c.option.MemQueueSize)/10))
-	if c.topicOrdered {
-		pqSize = memSizeForOrdered
+	if c.topicOrdered || c.IsEphemeral() {
+		pqSize = memSizeForSmall
 	}
 
 	c.inFlightMutex.Lock()
