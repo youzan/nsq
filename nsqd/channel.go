@@ -1108,6 +1108,9 @@ func (c *Channel) ShouldRequeueToEnd(clientID int64, clientAddr string, id Messa
 		// waitingDelayCnt is the counter for memory waiting from delay diskqueue,
 		// dqCnt is all the delayed diskqueue counter, so
 		// if all delayed messages are in memory, we no need to put them back to disk.
+
+		//to avoid some delayed messages req again and again (bad for boltdb performance )
+		// we should control the req timeout for some failed message with too much attempts
 		waitingDelayCnt := atomic.LoadInt64(&c.deferredFromDelay)
 		dqDepthTs, dqCnt := c.GetDelayedQueueConsumedState()
 		blocking := tn.UnixNano()-dqDepthTs > threshold.Nanoseconds()
@@ -1125,7 +1128,7 @@ func (c *Channel) ShouldRequeueToEnd(clientID int64, clientAddr string, id Messa
 	}
 
 	depDiffTs := tn.UnixNano() - c.DepthTimestamp()
-	if msg.Attempts >= maxAttempts-1 {
+	if msg.Attempts >= MaxAttempts-1 {
 		if (c.Depth() > c.option.MaxConfirmWin) ||
 			depDiffTs > time.Hour.Nanoseconds() {
 			return msg.GetCopy(), true

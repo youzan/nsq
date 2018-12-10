@@ -3,6 +3,7 @@ package nsqd
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -341,6 +342,12 @@ func (q *DelayQueue) CheckConsistence() error {
 		}
 		return nil
 	})
+}
+
+func (q *DelayQueue) Stats() string {
+	s := q.getStore().Stats()
+	d, _ := json.MarshalIndent(s, "", " ")
+	return string(d)
 }
 
 func (q *DelayQueue) reOpenStore() error {

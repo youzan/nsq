@@ -708,6 +708,10 @@ func (t *Topic) GetTopicChannelDebugStat(channelName string) string {
 		}
 	}
 	t.channelLock.RUnlock()
+	dq := t.GetDelayedQueue()
+	if dq != nil {
+		nsqLog.Logf("delayed queue stats: %v", dq.Stats())
+	}
 	return statStr
 }
 

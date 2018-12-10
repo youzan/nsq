@@ -16,7 +16,7 @@ const (
 	MsgTraceIDLength    = 8
 	MsgJsonHeaderLength = 2
 	minValidMsgLength   = MsgIDLength + 8 + 2 // Timestamp + Attempts
-	maxAttempts         = 4000
+	MaxAttempts         = 4000
 	extMsgHighBits      = 0xa000
 )
 
@@ -150,8 +150,8 @@ func (m *Message) internalWriteTo(w io.Writer, writeExt bool, writeCompatible bo
 	var total int64
 
 	binary.BigEndian.PutUint64(buf[:8], uint64(m.Timestamp))
-	if m.Attempts > maxAttempts {
-		m.Attempts = maxAttempts
+	if m.Attempts > MaxAttempts {
+		m.Attempts = MaxAttempts
 	}
 	combined := m.Attempts
 	if writeExt && writeCompatible {
@@ -221,8 +221,8 @@ func (m *Message) internalWriteTo(w io.Writer, writeExt bool, writeCompatible bo
 }
 
 func (m *Message) WriteDelayedTo(w io.Writer, writeExt bool) (int64, error) {
-	if m.Attempts > maxAttempts {
-		m.Attempts = maxAttempts
+	if m.Attempts > MaxAttempts {
+		m.Attempts = MaxAttempts
 	}
 	combined := m.Attempts
 	if writeExt {
@@ -361,10 +361,10 @@ func decodeMessage(b []byte, isExt bool) (*Message, error) {
 	// 1. no ext topic, all high 4-bits should be 0
 	// 2. ext topic, during update some old message has all high 4-bits with 0, and new message should equal 0xa for ext.
 	// 3. do we need handle new message with ext but have all high 4-bits with 0?
-	// 4. do we need handle some old attempts which maybe exceed the maxAttempts? (very small possible)
+	// 4. do we need handle some old attempts which maybe exceed the MaxAttempts? (very small possible)
 	// 5. if any future change, hight 4-bits can be 0xb, 0xc, 0xd, 0xe (0x1~0x9 should be reserved for future)
 	var highBits uint16
-	if combined > maxAttempts {
+	if combined > MaxAttempts {
 		highBits = combined & uint16(0xF000)
 		msg.Attempts = combined & uint16(0x0FFF)
 	} else {
@@ -454,7 +454,7 @@ func DecodeDelayedMessage(b []byte, isExt bool) (*Message, error) {
 		pos += int(dlen)
 	}
 	var highBits uint16
-	if combined > maxAttempts {
+	if combined > MaxAttempts {
 		highBits = combined & uint16(0xF000)
 		msg.Attempts = combined & uint16(0x0FFF)
 	} else {
