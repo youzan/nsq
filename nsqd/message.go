@@ -126,6 +126,14 @@ func (m *Message) GetCopy() *Message {
 	newMsg := *m
 	newMsg.Body = make([]byte, len(m.Body))
 	copy(newMsg.Body, m.Body)
+	if m.ExtBytes != nil {
+		newMsg.ExtBytes = make([]byte, len(m.ExtBytes))
+		copy(newMsg.ExtBytes, m.ExtBytes)
+	}
+	if m.DelayedData != nil {
+		newMsg.DelayedData = make([]byte, len(m.DelayedData))
+		copy(newMsg.DelayedData, m.DelayedData)
+	}
 	return &newMsg
 }
 

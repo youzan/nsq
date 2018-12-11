@@ -1,6 +1,7 @@
 package nsqd
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"math"
@@ -2285,11 +2286,30 @@ exit:
 					oldMsg2, ok2 := c.inFlightMessages[m.DelayedOrigID]
 					_, ok3 := c.waitingRequeueChanMsgs[m.DelayedOrigID]
 					_, ok4 := c.waitingRequeueMsgs[m.DelayedOrigID]
+					// it may happen the delayed message is synced to slave but the
+					// consume offset is not synced yet (since it is async), and then
+					// the leader changed to the slave. The new leader will read the
+					// old message from disk queue and put into the inflight queue.
+					// The inflight may be conflicted with the delayed and the attempts will be
+					// lost. we need handle this.
 					if ok2 {
 						// the delayed orig message id in delayed message is the actual id in the topic queue
 						if oldMsg2.ID != m.DelayedOrigID || oldMsg2.DelayedTs != m.DelayedTs {
 							nsqLog.Logf("old msg %v in flight mismatch peek from delayed queue, new %v ",
 								oldMsg2, m)
+							if oldMsg2.ID == m.DelayedOrigID &&
+								oldMsg2.DelayedChannel == "" &&
+								oldMsg2.DelayedOrigID == 0 && oldMsg2.DelayedTs == 0 &&
+								oldMsg2.DelayedType == 0 {
+								// this inflight message is caused by leader changed, and the
+								// new leader read from disk queue (which will be treated as non delayed message)
+								if bytes.Equal(oldMsg2.Body, m.Body) {
+									// just fin it
+									nsqLog.Logf("old msg %v in flight confirmed since in delayed queue",
+										PrintMessage(oldMsg2))
+									c.ConfirmBackendQueue(oldMsg2)
+								}
+							}
 						}
 					} else if ok3 || ok4 {
 						// already waiting requeue
