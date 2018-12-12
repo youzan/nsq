@@ -3896,7 +3896,7 @@ func TestDelayMessageToQueueEndAgainAndAgain(t *testing.T) {
 			test.Assert(t, delayDone < delayToEnd+maxIntervalDelayed, "should not delay too long time")
 			_, err = nsq.Requeue(nsq.MessageID(msgOut.GetFullMsgID()), opts.ReqToEndThreshold-time.Millisecond).WriteTo(conn)
 			test.Nil(t, err)
-			test.Assert(t, msgOut.Attempts < 6, "delayed again messages should attemp less")
+			//test.Assert(t, msgOut.Attempts < 6, "delayed again messages should attemp less")
 			continue
 		}
 		t.Logf("fin msg: %v, delayed: %v", msgOut.ID, delayDone)
