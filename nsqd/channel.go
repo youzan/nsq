@@ -20,13 +20,14 @@ import (
 )
 
 const (
-	resetReaderTimeoutSec = 10
-	MaxMemReqTimes        = 10
-	MaxWaitingDelayed     = 100
-	MaxDepthReqToEnd      = 1000000
-	ZanTestSkip           = 0
-	ZanTestUnskip         = 1
-	memSizeForSmall       = 2
+	resetReaderTimeoutSec      = 10
+	MaxMemReqTimes             = 10
+	MaxWaitingDelayed          = 100
+	MaxDepthReqToEnd           = 1000000
+	ZanTestSkip                = 0
+	ZanTestUnskip              = 1
+	memSizeForSmall            = 2
+	delayedReqToEndMinInterval = time.Millisecond * 64
 )
 
 var (
@@ -153,8 +154,9 @@ type Channel struct {
 	peekedMsgs             []Message
 
 	//channel msg stats
-	channelStatsInfo *ChannelStatsInfo
-	topicOrdered     bool
+	channelStatsInfo      *ChannelStatsInfo
+	topicOrdered          bool
+	lastDelayedReqToEndTs int64
 }
 
 // NewChannel creates a new instance of the Channel type and returns a pointer
@@ -1099,32 +1101,36 @@ func (c *Channel) ShouldRequeueToEnd(clientID int64, clientAddr string, id Messa
 	tn := time.Now()
 	// check if delayed queue is blocked too much, and try increase delay and put this
 	// delayed message to delay-queue again.
+
 	if msg.DelayedType == ChannelDelayed {
-		// if the message is peeked from disk delayed queue,
-		// we can try to put it back to end if there are some other
-		// delayed queue messages waiting.
-		// mostly, delayed depth ts should be in future, if it is less than now,
-		// means there are some others delayed timeout need to be peeked immediately.
-
-		// waitingDelayCnt is the counter for memory waiting from delay diskqueue,
-		// dqCnt is all the delayed diskqueue counter, so
-		// if all delayed messages are in memory, we no need to put them back to disk.
-
 		//to avoid some delayed messages req again and again (bad for boltdb performance )
 		// we should control the req timeout for some failed message with too much attempts
-		waitingDelayCnt := atomic.LoadInt64(&c.deferredFromDelay)
-		dqDepthTs, dqCnt := c.GetDelayedQueueConsumedState()
-		blocking := tn.UnixNano()-dqDepthTs > threshold.Nanoseconds()
-		if dqDepthTs > 0 && blocking && int64(dqCnt) > waitingDelayCnt {
-			nsqLog.Logf("channel %v delayed queue message %v req to end, timestamp:%v, attempt:%v, delayed depth timestamp: %v, delay waiting : %v, %v",
-				c.GetName(), id, msg.Timestamp,
-				msg.Attempts, dqDepthTs, waitingDelayCnt, dqCnt)
-			return msg.GetCopy(), true
-		}
-		if msg.TraceID != 0 || c.IsTraced() || nsqLog.Level() >= levellogger.LOG_DEBUG {
-			nsqLog.Logf("channel %v check delayed queue message %v req to end, timestamp:%v, depth ts:%v, attempt:%v, delay waiting :%v, delayed depth timestamp: %v",
-				c.GetName(), id, msg.Timestamp,
-				c.DepthTimestamp(), msg.Attempts, waitingDelayCnt, dqDepthTs)
+		if (msg.Attempts < MaxMemReqTimes*10) || (tn.UnixNano()-atomic.LoadInt64(&c.lastDelayedReqToEndTs) > delayedReqToEndMinInterval.Nanoseconds()) {
+			// if the message is peeked from disk delayed queue,
+			// we can try to put it back to end if there are some other
+			// delayed queue messages waiting.
+			// mostly, delayed depth ts should be in future, if it is less than now,
+			// means there are some others delayed timeout need to be peeked immediately.
+
+			// waitingDelayCnt is the counter for memory waiting from delay diskqueue,
+			// dqCnt is all the delayed diskqueue counter, so
+			// if all delayed messages are in memory, we no need to put them back to disk.
+
+			waitingDelayCnt := atomic.LoadInt64(&c.deferredFromDelay)
+			dqDepthTs, dqCnt := c.GetDelayedQueueConsumedState()
+			blocking := tn.UnixNano()-dqDepthTs > threshold.Nanoseconds()
+			if dqDepthTs > 0 && blocking && int64(dqCnt) > waitingDelayCnt {
+				nsqLog.Logf("channel %v delayed queue message %v req to end, timestamp:%v, attempt:%v, delayed depth timestamp: %v, delay waiting : %v, %v",
+					c.GetName(), id, msg.Timestamp,
+					msg.Attempts, dqDepthTs, waitingDelayCnt, dqCnt)
+				atomic.StoreInt64(&c.lastDelayedReqToEndTs, tn.UnixNano())
+				return msg.GetCopy(), true
+			}
+			if msg.TraceID != 0 || c.IsTraced() || nsqLog.Level() >= levellogger.LOG_DEBUG {
+				nsqLog.Logf("channel %v check delayed queue message %v req to end, timestamp:%v, depth ts:%v, attempt:%v, delay waiting :%v, delayed depth timestamp: %v",
+					c.GetName(), id, msg.Timestamp,
+					c.DepthTimestamp(), msg.Attempts, waitingDelayCnt, dqDepthTs)
+			}
 		}
 	}
 

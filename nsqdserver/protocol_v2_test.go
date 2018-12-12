@@ -3832,7 +3832,8 @@ func TestDelayMessageToQueueEndAgainAndAgain(t *testing.T) {
 	opts.MsgTimeout = time.Second * 10
 	opts.MaxReqTimeout = time.Second * 100
 	opts.MaxConfirmWin = 50
-	opts.ReqToEndThreshold = time.Millisecond * 400
+	opts.ReqToEndThreshold = time.Millisecond * 100
+	maxIntervalDelayed := opts.ReqToEndThreshold * nsqdNs.MaxWaitingDelayed / 2
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 
 	defer os.RemoveAll(opts.DataPath)
@@ -3885,22 +3886,22 @@ func TestDelayMessageToQueueEndAgainAndAgain(t *testing.T) {
 		delayDone := time.Since(delayStart)
 		t.Logf("===== recv msg %v, %v, delayed: %v", msgOut.ID, recvCnt, delayDone)
 		test.Assert(t, delayDone > delayToEnd, "should delay enough")
-		if delayDone > delayToEnd*2 {
+		if delayDone > delayToEnd*4 {
 			t.Errorf("timeout for waiting finish other messages: %v", delayDone)
 			break
 		}
 		delayDone = time.Since(delayStart2)
 		if uint64(nsq.GetNewMessageID(msgOut.ID[:])) <= uint64(nsqdNs.MaxWaitingDelayed) {
 			t.Logf("delay msg short: %v, %v", msgOut.ID, delayDone)
-			test.Assert(t, delayDone < delayToEnd+opts.ReqToEndThreshold*4, "should not delay too long time")
+			test.Assert(t, delayDone < delayToEnd+maxIntervalDelayed, "should not delay too long time")
 			_, err = nsq.Requeue(nsq.MessageID(msgOut.GetFullMsgID()), opts.ReqToEndThreshold-time.Millisecond).WriteTo(conn)
 			test.Nil(t, err)
-			test.Assert(t, msgOut.Attempts < 5, "delayed again messages should attemp less")
+			test.Assert(t, msgOut.Attempts < 6, "delayed again messages should attemp less")
 			continue
 		}
 		t.Logf("fin msg: %v, delayed: %v", msgOut.ID, delayDone)
 		nsq.Finish(msgOut.ID).WriteTo(conn)
-		test.Assert(t, delayDone < delayToEnd+opts.ReqToEndThreshold*4, "should not delay too long time")
+		test.Assert(t, delayDone < delayToEnd+maxIntervalDelayed, "should not delay too long time")
 		finCnt++
 		test.Equal(t, uint16(2), msgOut.Attempts)
 		if finCnt >= nsqdNs.MaxWaitingDelayed {
@@ -3911,7 +3912,7 @@ func TestDelayMessageToQueueEndAgainAndAgain(t *testing.T) {
 	t.Logf("recv %v, put:%v, fincnt: %v", recvCnt, putCnt, finCnt)
 	test.Assert(t, finCnt >= nsqdNs.MaxWaitingDelayed, "should consume other delayed messages")
 	test.Assert(t, recvCnt > putCnt+putCnt/2, "recv should larger than put")
-	test.Assert(t, recvCnt < putCnt*2+finCnt, "recv should less than 2*put+fin")
+	test.Assert(t, recvCnt < putCnt*2+finCnt, "recv should less")
 	delayStart = time.Now()
 	for finCnt < putCnt {
 		msgClientOut := recvNextMsgAndCheckClientMsg(t, conn, 0, 0, false)
