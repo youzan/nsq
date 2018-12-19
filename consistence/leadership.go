@@ -207,4 +207,5 @@ type NSQDLeadership interface {
 	GetTopicInfo(topic string, partition int) (*TopicPartitionMetaInfo, error)
 	// get leadership information, if not exist should return ErrLeaderSessionNotExist as error
 	GetTopicLeaderSession(topic string, partition int) (*TopicLeaderSession, error)
+	IsTopicRealDeleted(topic string) (bool, error)
 }

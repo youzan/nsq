@@ -704,6 +704,9 @@ func (self *NsqLookupdEtcdMgr) DeleteWholeTopic(topic string) error {
 	delete(self.topicMetaMap, topic)
 	rsp, err := self.client.Delete(self.createTopicPath(topic), true)
 	coordLog.Infof("delete whole topic: %v, %v, %v", topic, err, rsp)
+	// TODO: add deleted key in etcd to make sure the deleted topic can be real
+	// to avoid all the data is cleared by accident.
+	// TODO; should remove deleted key if topic re-created.
 	self.tmiMutex.Unlock()
 	return err
 }
