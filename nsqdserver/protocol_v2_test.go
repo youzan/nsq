@@ -3921,7 +3921,7 @@ func TestDelayMessageToQueueEndAgainAndAgain(t *testing.T) {
 
 		delayDone := time.Since(delayStart)
 		t.Logf("delayed: %v", delayDone)
-		test.Assert(t, delayDone < opts.ReqToEndThreshold*4, "should not delay too long time")
+		test.Assert(t, delayDone < maxIntervalDelayed, "should not delay too long time")
 
 		finCnt++
 		t.Logf("fin msg: %v", msgClientOut.ID)
