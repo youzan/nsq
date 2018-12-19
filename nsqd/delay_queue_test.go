@@ -258,12 +258,21 @@ func TestDelayQueueEmptyAll(t *testing.T) {
 	test.Equal(t, cnt, int(newCnt))
 	newCnt, _ = dq.GetCurrentDelayedCnt(ChannelDelayed, "test2")
 	test.Equal(t, cnt, int(newCnt))
+	// should at most empty one max batch size
 	dq.EmptyDelayedChannel("test2")
 
 	newCnt, _ = dq.GetCurrentDelayedCnt(ChannelDelayed, "test2")
-	test.Equal(t, 0, int(newCnt))
+	test.Equal(t, 1, int(newCnt))
 	newCnt, _ = dq.GetCurrentDelayedCnt(ChannelDelayed, "test")
 	test.Equal(t, cnt, int(newCnt))
+	dq.EmptyDelayedChannel("test")
+	newCnt, _ = dq.GetCurrentDelayedCnt(ChannelDelayed, "test")
+	test.Equal(t, 1, int(newCnt))
+
+	// empty again
+	dq.EmptyDelayedChannel("test2")
+	newCnt, _ = dq.GetCurrentDelayedCnt(ChannelDelayed, "test2")
+	test.Equal(t, 0, int(newCnt))
 	dq.EmptyDelayedChannel("test")
 	newCnt, _ = dq.GetCurrentDelayedCnt(ChannelDelayed, "test")
 	test.Equal(t, 0, int(newCnt))
@@ -314,7 +323,7 @@ func TestDelayQueueEmptyUntil(t *testing.T) {
 	test.Equal(t, cnt, int(newCnt))
 	newCnt, _ = dq.GetCurrentDelayedCnt(ChannelDelayed, "test2")
 	test.Equal(t, cnt, int(newCnt))
-	dq.emptyDelayedUntil(ChannelDelayed, middle.DelayedTs, middle.ID, "test")
+	dq.emptyDelayedUntil(ChannelDelayed, middle.DelayedTs, middle.ID, "test", false)
 	// test empty until should keep the until cursor
 	recent, _, _ := dq.GetOldestConsumedState([]string{"test"}, true)
 	test.Equal(t, 1, len(recent))
@@ -656,6 +665,44 @@ func TestDelayQueueCompactStore(t *testing.T) {
 	dq.getStore().Sync()
 	beforeCompact, _ = dq.GetCurrentDelayedCnt(ChannelDelayed, "test")
 	test.Equal(t, true, int(beforeCompact) <= cnt/10)
+	t.Log(beforeCompact)
+
+	// delete some messages but not enough, the compact will be ignored since the compact can not reduce space a lot
+	fi, err = os.Stat(dq.getStore().Path())
+	test.Nil(t, err)
+	err = dq.compactStore(false)
+	test.Nil(t, err)
+	fi2, err = os.Stat(dq.getStore().Path())
+	test.Nil(t, err)
+	t.Log(fi)
+	t.Log(fi2)
+	afterCompact, _ = dq.GetCurrentDelayedCnt(ChannelDelayed, "test")
+	test.Equal(t, beforeCompact, afterCompact)
+	test.Equal(t, true, fi2.Size() == fi.Size())
+
+	//  continue delete more messages
+	done = false
+	for !done {
+		n, err := dq.PeekRecentChannelTimeout(time.Now().UnixNano(), ret, "test")
+		test.Nil(t, err)
+		for _, m := range ret[:n] {
+			origID := m.DelayedOrigID
+			test.Equal(t, true, dq.IsChannelMessageDelayed(origID, "test"))
+			m.DelayedOrigID = m.ID
+			dq.ConfirmedMessage(&m)
+			test.Equal(t, false, dq.IsChannelMessageDelayed(origID, "test"))
+			newCnt, _ := dq.GetCurrentDelayedCnt(ChannelDelayed, "test")
+			if int(newCnt) < cnt/100 {
+				done = true
+				break
+			}
+		}
+	}
+	dq.getStore().Sync()
+
+	beforeCompact, _ = dq.GetCurrentDelayedCnt(ChannelDelayed, "test")
+	test.Equal(t, true, int(beforeCompact) <= cnt/100)
+	t.Log(beforeCompact)
 
 	fi, err = os.Stat(dq.getStore().Path())
 	test.Nil(t, err)

@@ -25,8 +25,11 @@ var (
 	bucketDelayedMsgIndex = []byte("delayed_message_index")
 	bucketMeta            = []byte("meta")
 	CompactThreshold      = 1024 * 1024 * 16
+	compactSingleAvgSize  = 1024 * 32
 	errBucketKeyNotFound  = errors.New("bucket key not found")
-	txMaxBatch            = 10000
+	txMaxBatch            = 5000
+	largeDBSize           = 1024 * 1024 * 1024 * 4
+	errDBSizeTooLarge     = errors.New("db size too large")
 )
 
 const (
@@ -236,6 +239,7 @@ type DelayQueue struct {
 	compactMutex           sync.Mutex
 	oldestChannelDelayedTs map[string]int64
 	oldestMutex            sync.Mutex
+	changedTs              int64
 }
 
 func NewDelayQueueForRead(topicName string, part int, dataPath string, opt *Options,
@@ -579,6 +583,7 @@ func (q *DelayQueue) RestoreKVStoreFrom(body io.Reader) error {
 		nsqLog.LogErrorf("topic(%v) failed to restore delayed db: %v , %v ", q.fullName, err, kvPath)
 		return err
 	}
+	atomic.StoreInt64(&q.changedTs, time.Now().UnixNano())
 	return nil
 }
 
@@ -727,6 +732,7 @@ func (q *DelayQueue) put(m *Message, rawData []byte, trace bool, checkSize int64
 		}
 		return b.Put(syncedOffsetKey, []byte(strconv.Itoa(int(dend.Offset()))))
 	})
+	atomic.StoreInt64(&q.changedTs, time.Now().UnixNano())
 	q.compactMutex.Unlock()
 	if err != nil {
 		nsqLog.LogErrorf(
@@ -819,26 +825,57 @@ func (q *DelayQueue) flush() error {
 	return err
 }
 
-func (q *DelayQueue) emptyDelayedUntil(dt int, peekTs int64, id MessageID, ch string) error {
+func (q *DelayQueue) GetChangedTs() int64 {
+	return atomic.LoadInt64(&q.changedTs)
+}
+
+func (q *DelayQueue) emptyDelayedUntil(dt int, peekTs int64, id MessageID, ch string, emptyAll bool) (int64, error) {
+	cleanedTs := int64(0)
+	totalCnt, err := q.GetCurrentDelayedCnt(dt, ch)
+	if err != nil {
+		nsqLog.Infof("get delayed counter error while empty %v, %v", ch, err.Error())
+		return cleanedTs, err
+	}
 	db := q.getStore()
 	prefix := getDelayedMsgDBPrefixKey(dt, ch)
 	q.compactMutex.Lock()
 	defer q.compactMutex.Unlock()
-	// to avoid too much in batch, we should empty at most 10000 at each tx
-	for {
-		batched := 0
-		err := db.Update(func(tx *bolt.Tx) error {
-			b := tx.Bucket(bucketDelayedMsg)
-			c := b.Cursor()
-			for k, _ := c.Seek(prefix); k != nil && bytes.HasPrefix(k, prefix); k, _ = c.Next() {
-				if batched > txMaxBatch {
-					break
-				}
-				_, delayedTs, delayedID, delayedCh, err := decodeDelayedMsgDBKey(k)
-				if err != nil {
-					nsqLog.Infof("decode key failed : %v, %v", k, err)
-					continue
-				}
+	// 1. to avoid too much in batch, we should empty at most 10000 at each tx
+	// 2. some large db size with less data may need long time to scan the batch size, so
+	// we need check the scan time also (however, we can not handle the slow if the first seek is slow)
+	scanStart := time.Now()
+	batched := 0
+	exceedMaxBatch := false
+
+	err = db.Update(func(tx *bolt.Tx) error {
+		dbSize := tx.Size()
+		if dbSize > int64(largeDBSize) && totalCnt < uint64(txMaxBatch) {
+			exceedMaxBatch = true
+			nsqLog.Infof("empty return early since exceed max size %v, %v", string(prefix), tx.Size())
+			return errDBSizeTooLarge
+		}
+		b := tx.Bucket(bucketDelayedMsg)
+		c := b.Cursor()
+		for k, _ := c.Seek(prefix); k != nil && bytes.HasPrefix(k, prefix); k, _ = c.Next() {
+			if batched > txMaxBatch {
+				exceedMaxBatch = true
+				nsqLog.Infof("empty return early since exceed max batch : %v, %v", string(prefix), batched)
+				break
+			}
+			if dbSize > int64(largeDBSize/4) && time.Since(scanStart) >= time.Second {
+				exceedMaxBatch = true
+				nsqLog.Infof("empty return early since exceed max time: %v, %v, %v", string(prefix), batched, dbSize)
+				break
+			}
+			delayedType, delayedTs, delayedID, delayedCh, err := decodeDelayedMsgDBKey(k)
+			if err != nil {
+				nsqLog.Infof("decode key failed : %v, %v", k, err)
+				continue
+			}
+			if delayedType != uint16(dt) {
+				continue
+			}
+			if !emptyAll {
 				if delayedTs > peekTs {
 					break
 				}
@@ -848,95 +885,57 @@ func (q *DelayQueue) emptyDelayedUntil(dt int, peekTs int64, id MessageID, ch st
 				if delayedCh != ch {
 					continue
 				}
-
-				err = deleteBucketKey(dt, ch, delayedTs, delayedID, tx, q.IsExt())
-				if err != nil {
-					if err != errBucketKeyNotFound {
-						nsqLog.Warningf("failed to delete : %v, %v", k, err)
-						return err
-					}
-				}
-				batched++
-			}
-			return nil
-		})
-		if err != nil {
-			return err
-		}
-		if batched == 0 {
-			break
-		}
-	}
-	if dt == ChannelDelayed && ch != "" {
-		q.oldestMutex.Lock()
-		q.oldestChannelDelayedTs[ch] = peekTs
-		if nsqLog.Level() >= levellogger.LOG_DETAIL {
-			nsqLog.LogDebugf("channel %v update oldest to %v at time %v",
-				ch, peekTs, time.Now().UnixNano())
-		}
-
-		q.oldestMutex.Unlock()
-	}
-	return nil
-}
-
-func (q *DelayQueue) emptyAllDelayedType(dt int, ch string) error {
-	db := q.getStore()
-	prefix := getDelayedMsgDBPrefixKey(dt, ch)
-	q.compactMutex.Lock()
-	defer q.compactMutex.Unlock()
-	for {
-		batched := 0
-		err := db.Update(func(tx *bolt.Tx) error {
-			b := tx.Bucket(bucketDelayedMsg)
-			c := b.Cursor()
-			for k, _ := c.Seek(prefix); k != nil && bytes.HasPrefix(k, prefix); k, _ = c.Next() {
-				if batched > txMaxBatch {
-					break
-				}
-				delayedType, delayedTs, delayedID, delayedCh, err := decodeDelayedMsgDBKey(k)
-				if err != nil {
-					nsqLog.Infof("decode key failed : %v, %v", k, err)
-					continue
-				}
-				if delayedType != uint16(dt) {
-					continue
-				}
+			} else {
 				if ch != "" && delayedCh != ch {
 					continue
 				}
-				err = deleteBucketKey(int(delayedType), delayedCh, delayedTs, delayedID, tx, q.IsExt())
-				if err != nil {
-					if err != errBucketKeyNotFound {
-						nsqLog.Warningf("failed to delete : %v, %v", k, err)
-						return err
-					}
-				}
-				batched++
 			}
-			return nil
-		})
-		if err != nil {
-			return err
+			err = deleteBucketKey(dt, ch, delayedTs, delayedID, tx, q.IsExt())
+			if err != nil {
+				if err != errBucketKeyNotFound {
+					nsqLog.Warningf("failed to delete : %v, %v", k, err)
+					return err
+				}
+			}
+			cleanedTs = delayedTs
+			batched++
 		}
-		nsqLog.Infof("channel %v empty batched : %v",
-			ch, batched)
-		if batched == 0 {
-			break
+		return nil
+	})
+	if err != nil {
+		if err == errDBSizeTooLarge {
+			return cleanedTs, nil
 		}
+		return cleanedTs, err
 	}
+	if batched == 0 {
+		return cleanedTs, nil
+	}
+	atomic.StoreInt64(&q.changedTs, time.Now().UnixNano())
 	if dt == ChannelDelayed && ch != "" {
-		// no message anymore, oldest as next hour
 		q.oldestMutex.Lock()
-		q.oldestChannelDelayedTs[ch] = time.Now().Add(time.Hour).UnixNano()
+		q.oldestChannelDelayedTs[ch] = cleanedTs
+
+		if emptyAll && !exceedMaxBatch {
+			// no message anymore, oldest as some future
+			q.oldestChannelDelayedTs[ch] = time.Now().Add(time.Minute * 10).UnixNano()
+		}
+		if nsqLog.Level() >= levellogger.LOG_DETAIL {
+			nsqLog.LogDebugf("channel %v update oldest to %v at time %v",
+				ch, cleanedTs, time.Now().UnixNano())
+		}
 		q.oldestMutex.Unlock()
 	}
+	return cleanedTs, nil
+}
 
-	return nil
+func (q *DelayQueue) emptyAllDelayedType(dt int, ch string) (int64, error) {
+	return q.emptyDelayedUntil(dt, 0, 0, ch, true)
 }
 
 func (q *DelayQueue) EmptyDelayedType(dt int) error {
-	return q.emptyAllDelayedType(dt, "")
+	_, err := q.emptyAllDelayedType(dt, "")
+	return err
 }
 
 func (q *DelayQueue) EmptyDelayedChannel(ch string) error {
@@ -945,7 +944,8 @@ func (q *DelayQueue) EmptyDelayedChannel(ch string) error {
 		// we do not allow empty channel with empty channel name
 		return errors.New("empty delayed channel name should be given")
 	}
-	return q.emptyAllDelayedType(ChannelDelayed, ch)
+	_, err := q.emptyAllDelayedType(ChannelDelayed, ch)
+	return err
 }
 
 func (q *DelayQueue) PeekRecentTimeoutWithFilter(results []Message, peekTs int64, filterType int,
@@ -966,6 +966,7 @@ func (q *DelayQueue) PeekRecentTimeoutWithFilter(results []Message, peekTs int64
 		}
 	}
 
+	oldChangeTs := q.GetChangedTs()
 	db := q.getStore()
 	idx := 0
 	var prefix []byte
@@ -1026,8 +1027,8 @@ func (q *DelayQueue) PeekRecentTimeoutWithFilter(results []Message, peekTs int64
 		}
 		return nil
 	})
-	if err == nil && oldest > 0 {
-		// no message anymore, oldest as next hour
+	// if the delayed queue changed during peeking, we should not update oldest ts since it may changed by write
+	if err == nil && oldest > 0 && oldChangeTs == q.GetChangedTs() {
 		q.oldestMutex.Lock()
 		q.oldestChannelDelayedTs[filterChannel] = oldest
 		if nsqLog.Level() >= levellogger.LOG_DETAIL {
@@ -1092,6 +1093,7 @@ func (q *DelayQueue) ConfirmedMessage(msg *Message) error {
 		return deleteBucketKey(int(msg.DelayedType), msg.DelayedChannel,
 			msg.DelayedTs, msg.DelayedOrigID, tx, q.IsExt())
 	})
+	atomic.StoreInt64(&q.changedTs, time.Now().UnixNano())
 	q.compactMutex.Unlock()
 	if err != nil {
 		nsqLog.LogErrorf(
@@ -1185,23 +1187,23 @@ func (q *DelayQueue) GetOldestConsumedState(chList []string, includeOthers bool)
 	return keyList, cntList, channelCntList
 }
 
-func (q *DelayQueue) UpdateConsumedState(keyList RecentKeyList, cntList map[int]uint64, channelCntList map[string]uint64) error {
+func (q *DelayQueue) UpdateConsumedState(ts int64, keyList RecentKeyList, cntList map[int]uint64, channelCntList map[string]uint64) error {
 	for _, k := range keyList {
 		dt, dts, id, delayedCh, err := decodeDelayedMsgDBKey(k)
 		if err != nil {
 			nsqLog.Infof("decode key failed : %v, %v", k, err)
 			continue
 		}
-		q.emptyDelayedUntil(int(dt), dts, id, delayedCh)
+		q.emptyDelayedUntil(int(dt), dts, id, delayedCh, false)
 	}
 	for dt, cnt := range cntList {
 		if cnt == 0 && dt != ChannelDelayed {
-			q.EmptyDelayedType(dt)
+			q.emptyDelayedUntil(dt, ts, 0, "", false)
 		}
 	}
 	for ch, cnt := range channelCntList {
 		if cnt == 0 {
-			q.EmptyDelayedChannel(ch)
+			q.emptyDelayedUntil(ChannelDelayed, ts, 0, ch, false)
 		}
 	}
 	return nil
@@ -1324,6 +1326,15 @@ func (q *DelayQueue) compactStore(force bool) error {
 		if cnt > CompactCntThreshold {
 			return nil
 		}
+		// 10000 msgs with no delete is about 80MB, so we should check if it can become smaller after compact
+		// to avoid too much compact.
+		if cnt > 0 {
+			singleAvgSize := fi.Size() / int64(cnt)
+			if singleAvgSize < int64(compactSingleAvgSize) {
+				nsqLog.Infof("db %v no need compact %v, %v, %v", origPath, singleAvgSize, fi.Size(), cnt)
+				return nil
+			}
+		}
 	}
 	tmpPath := fmt.Sprintf("%s-tmp.compact.%d", src.Path(), time.Now().UnixNano())
 	// Open destination database.
@@ -1336,16 +1347,28 @@ func (q *DelayQueue) compactStore(force bool) error {
 		return err
 	}
 	dst.NoSync = true
+	q.compactMutex.Lock()
+	oldChangedTs := q.GetChangedTs()
+	q.compactMutex.Unlock()
+
 	nsqLog.Infof("db %v begin compact", origPath)
 	defer nsqLog.Infof("db %v end compact", origPath)
-	q.compactMutex.Lock()
-	defer q.compactMutex.Unlock()
-	err = compactBolt(dst, src, time.Second*2)
+	err = compactBolt(dst, src, time.Second*10)
 	if err != nil {
 		nsqLog.Infof("db %v compact failed: %v", origPath, err)
+		os.Remove(tmpPath)
 		return err
 	}
+	nsqLog.Infof("db %v compact scan finished", origPath)
 
+	q.compactMutex.Lock()
+	defer q.compactMutex.Unlock()
+	if oldChangedTs != q.GetChangedTs() {
+		nsqLog.Infof("db %v changed during compact scaning: %v", origPath, oldChangedTs)
+		os.Remove(tmpPath)
+		// just return nil since no any actual error
+		return nil
+	}
 	q.dbLock.Lock()
 	defer q.dbLock.Unlock()
 	q.kvStore.Close()
@@ -1361,6 +1384,7 @@ func (q *DelayQueue) compactStore(force bool) error {
 	if openErr != nil {
 		return openErr
 	}
+	atomic.StoreInt64(&q.changedTs, time.Now().UnixNano())
 	return nil
 }
 
@@ -1384,6 +1408,7 @@ func compactBolt(dst, src *bolt.DB, maxCompactTime time.Duration) error {
 				return err
 			}
 
+			// TODO: timeout here is not enough, since scan large empty db may cost long time
 			if time.Since(startT) >= maxCompactTime {
 				return errors.New("compact timeout")
 			}

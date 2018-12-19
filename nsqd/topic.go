@@ -1434,24 +1434,26 @@ func (t *Topic) ResetBackendWithQueueStartNoLock(queueStartOffset int64, queueSt
 	return nil
 }
 
-func (t *Topic) GetDelayedQueueConsumedState() (RecentKeyList, map[int]uint64, map[string]uint64) {
+func (t *Topic) GetDelayedQueueConsumedState() (int64, RecentKeyList, map[int]uint64, map[string]uint64) {
 	if t.IsOrdered() {
-		return nil, nil, nil
+		return 0, nil, nil, nil
 	}
 	dq := t.GetDelayedQueue()
 	if dq == nil {
-		return nil, nil, nil
+		return 0, nil, nil, nil
 	}
+	ts := time.Now().UnixNano()
 	chList := make([]string, 0)
 	t.channelLock.RLock()
 	for _, ch := range t.channelMap {
 		chList = append(chList, ch.GetName())
 	}
 	t.channelLock.RUnlock()
-	return dq.GetOldestConsumedState(chList, true)
+	kl, cntList, chDelayCntList := dq.GetOldestConsumedState(chList, true)
+	return ts, kl, cntList, chDelayCntList
 }
 
-func (t *Topic) UpdateDelayedQueueConsumedState(keyList RecentKeyList, cntList map[int]uint64, channelCntList map[string]uint64) error {
+func (t *Topic) UpdateDelayedQueueConsumedState(ts int64, keyList RecentKeyList, cntList map[int]uint64, channelCntList map[string]uint64) error {
 	if t.IsOrdered() {
 		nsqLog.Infof("should never delayed queue in ordered topic: %v", t.GetFullName())
 		return nil
@@ -1462,5 +1464,5 @@ func (t *Topic) UpdateDelayedQueueConsumedState(keyList RecentKeyList, cntList m
 		return nil
 	}
 
-	return dq.UpdateConsumedState(keyList, cntList, channelCntList)
+	return dq.UpdateConsumedState(ts, keyList, cntList, channelCntList)
 }

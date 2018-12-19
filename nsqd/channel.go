@@ -28,6 +28,7 @@ const (
 	ZanTestUnskip              = 1
 	memSizeForSmall            = 2
 	delayedReqToEndMinInterval = time.Millisecond * 64
+	DefaultMaxChDelayedQNum    = 10000 * 16
 )
 
 var (
@@ -1105,6 +1106,7 @@ func (c *Channel) ShouldRequeueToEnd(clientID int64, clientAddr string, id Messa
 	if msg.DelayedType == ChannelDelayed {
 		//to avoid some delayed messages req again and again (bad for boltdb performance )
 		// we should control the req timeout for some failed message with too much attempts
+		// and this may cause some delay more time than expected.
 		if (msg.Attempts < MaxMemReqTimes*10) || (tn.UnixNano()-atomic.LoadInt64(&c.lastDelayedReqToEndTs) > delayedReqToEndMinInterval.Nanoseconds()) {
 			// if the message is peeked from disk delayed queue,
 			// we can try to put it back to end if there are some other
@@ -1144,12 +1146,11 @@ func (c *Channel) ShouldRequeueToEnd(clientID int64, clientAddr string, id Messa
 
 	newTimeout := tn.Add(timeout)
 	if newTimeout.Sub(msg.deliveryTS) >=
-		c.option.MaxReqTimeout {
-		return msg.GetCopy(), true
-	}
-
-	if timeout > threshold {
-		return msg.GetCopy(), true
+		c.option.MaxReqTimeout || timeout > threshold {
+		_, dqCnt := c.GetDelayedQueueConsumedState()
+		if c.option.MaxChannelDelayedQNum == 0 || int64(dqCnt) < c.option.MaxChannelDelayedQNum {
+			return msg.GetCopy(), true
+		}
 	}
 
 	deCnt := atomic.LoadInt64(&c.deferredCount)
@@ -2410,12 +2411,14 @@ exit:
 	return dirty, checkFast
 }
 
-func (c *Channel) GetDelayedQueueConsumedDetails() (RecentKeyList, map[int]uint64, map[string]uint64) {
+func (c *Channel) GetDelayedQueueConsumedDetails() (int64, RecentKeyList, map[int]uint64, map[string]uint64) {
 	dq := c.GetDelayedQueue()
 	if dq == nil {
-		return nil, nil, nil
+		return 0, nil, nil, nil
 	}
-	return dq.GetOldestConsumedState([]string{c.GetName()}, false)
+	ts := time.Now().UnixNano()
+	kl, cntList, chList := dq.GetOldestConsumedState([]string{c.GetName()}, false)
+	return ts, kl, cntList, chList
 }
 
 func (c *Channel) GetDelayedQueueConsumedState() (int64, uint64) {

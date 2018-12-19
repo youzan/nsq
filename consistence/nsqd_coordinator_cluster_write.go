@@ -1088,9 +1088,9 @@ func (self *NsqdCoordinator) FinishMessageToCluster(channel *nsqd.Channel, clien
 			rpcErr = c.UpdateChannelOffset(&tcData.topicLeaderSession, &tcData.topicInfo, channel.GetName(), syncOffset)
 		} else {
 			if delayedMsg {
-				cursorList, cntList, channelCntList := channel.GetDelayedQueueConsumedDetails()
+				ts, cursorList, cntList, channelCntList := channel.GetDelayedQueueConsumedDetails()
 				rpcErr = c.UpdateDelayedQueueState(&tcData.topicLeaderSession, &tcData.topicInfo,
-					channel.GetName(), cursorList, cntList, channelCntList, false)
+					channel.GetName(), ts, cursorList, cntList, channelCntList, false)
 			} else {
 				c.NotifyUpdateChannelOffset(&tcData.topicLeaderSession, &tcData.topicInfo, channel.GetName(), syncOffset)
 			}
@@ -1389,9 +1389,9 @@ func (self *NsqdCoordinator) EmptyChannelDelayedStateToCluster(channel *nsqd.Cha
 			return nil
 		}
 		var rpcErr *CoordErr
-		cursorList, cntList, channelCntList := channel.GetDelayedQueueConsumedDetails()
+		ts, cursorList, cntList, channelCntList := channel.GetDelayedQueueConsumedDetails()
 		rpcErr = c.UpdateDelayedQueueState(&tcData.topicLeaderSession, &tcData.topicInfo,
-			channel.GetName(), cursorList, cntList, channelCntList, true)
+			channel.GetName(), ts, cursorList, cntList, channelCntList, true)
 		if rpcErr != nil {
 			coordLog.Infof("sync channel(%v) delayed queue state to replica %v failed: %v", channel.GetName(),
 				nodeID, rpcErr)
@@ -1414,7 +1414,7 @@ func (self *NsqdCoordinator) EmptyChannelDelayedStateToCluster(channel *nsqd.Cha
 }
 
 func (self *NsqdCoordinator) updateDelayedQueueStateOnSlave(tc *coordData, channelName string,
-	keyList [][]byte, cntList map[int]uint64, channelCntList map[string]uint64) *CoordErr {
+	ts int64, keyList [][]byte, cntList map[int]uint64, channelCntList map[string]uint64) *CoordErr {
 	topicName := tc.topicInfo.Name
 	partition := tc.topicInfo.Partition
 
@@ -1429,7 +1429,8 @@ func (self *NsqdCoordinator) updateDelayedQueueStateOnSlave(tc *coordData, chann
 		return nil
 	}
 
-	localErr = topic.UpdateDelayedQueueConsumedState(keyList, cntList, channelCntList)
+	// TODO: optimize here, if a large delayed queue waiting empty
+	localErr = topic.UpdateDelayedQueueConsumedState(ts, keyList, cntList, channelCntList)
 	if localErr != nil {
 		coordLog.Logf("update delayed state (%v) on slave failed: %v ", channelName, localErr)
 		return &CoordErr{localErr.Error(), RpcNoErr, CoordLocalErr}
