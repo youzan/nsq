@@ -17,6 +17,18 @@ const (
 	FailedOnNotWritable = consistence.ErrFailedOnNotWritable
 )
 
+var (
+	serverPubFailedCnt int64
+)
+
+func incrServerPubFailed() {
+	atomic.AddInt64(&serverPubFailedCnt, 1)
+}
+
+func getServerPubFailed() int64 {
+	return atomic.LoadInt64(&serverPubFailedCnt)
+}
+
 type context struct {
 	clientIDSequence int64
 	nsqd             *nsqd.NSQD
@@ -417,6 +429,10 @@ func (c *context) internalPubLoop(topic *nsqd.Topic) {
 				nsqd.NsqLogger().LogDebugf("should put to master: %v",
 					topic.GetFullName())
 				retErr = consistence.ErrNotTopicLeader.ToErrorType()
+			}
+			if retErr != nil {
+				topic.IncrPubFailed()
+				incrServerPubFailed()
 			}
 			for _, info := range pubInfoList {
 				info.Err = retErr

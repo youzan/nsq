@@ -130,6 +130,7 @@ type Topic struct {
 	delayedQueue atomic.Value
 	isExt        int32
 	saveMutex    sync.Mutex
+	pubFailedCnt int64
 }
 
 func (t *Topic) setExt() {
@@ -138,6 +139,14 @@ func (t *Topic) setExt() {
 
 func (t *Topic) IsExt() bool {
 	return atomic.LoadInt32(&t.isExt) == 1
+}
+
+func (t *Topic) IncrPubFailed() {
+	atomic.AddInt64(&t.pubFailedCnt, 1)
+}
+
+func (t *Topic) PubFailed() int64 {
+	return atomic.LoadInt64(&t.pubFailedCnt)
 }
 
 func GetTopicFullName(topic string, part int) string {

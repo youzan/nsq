@@ -428,6 +428,13 @@ func (p *protocolV2) Exec(client *nsqd.ClientV2, params [][]byte) ([]byte, error
 	return nil, protocol.NewFatalClientErr(nil, E_INVALID, fmt.Sprintf("invalid command %v", params))
 }
 
+func (p *protocolV2) messagePumpForAllProducerOnly(client *nsqd.ClientV2, startedChan chan bool,
+	stoppedChan chan bool) {
+	// TODO: for some producer clients which no need pump messages from channel, we hold in the same
+	// goroutine to avoid too much unused goroutines.
+	// once sub is received we start new pump goroutine.
+}
+
 func (p *protocolV2) messagePump(client *nsqd.ClientV2, startedChan chan bool,
 	stoppedChan chan bool) {
 	var err error
@@ -1434,6 +1441,8 @@ func internalPubAsync(clientTimer *time.Timer, msgBody *bytes.Buffer, topic *nsq
 			return nsqd.ErrExiting
 		case <-clientTimer.C:
 			nsqd.NsqLogger().Infof("topic %v put messages timeout ", topic.GetFullName())
+			topic.IncrPubFailed()
+			incrServerPubFailed()
 			return ErrPubToWaitTimeout
 		}
 	}
@@ -1612,6 +1621,8 @@ func (p *protocolV2) internalMPUBEXTAndTrace(client *nsqd.ClientV2, params [][]b
 		id, offset, rawSize, err := p.ctx.PutMessages(topic, messages)
 		//p.ctx.setHealth(err)
 		if err != nil {
+			topic.IncrPubFailed()
+			incrServerPubFailed()
 			topic.GetDetailStats().UpdatePubClientStats(client.String(), client.UserAgent, "tcp", int64(len(messages)), true)
 			nsqd.NsqLogger().LogErrorf("topic %v put message failed: %v", topic.GetFullName(), err)
 
@@ -1630,6 +1641,8 @@ func (p *protocolV2) internalMPUBEXTAndTrace(client *nsqd.ClientV2, params [][]b
 		}
 		return getTracedReponse(id, 0, offset, rawSize)
 	} else {
+		topic.IncrPubFailed()
+		incrServerPubFailed()
 		topic.GetDetailStats().UpdatePubClientStats(client.String(), client.UserAgent, "tcp", int64(len(messages)), true)
 		//forward to master of topic
 		nsqd.NsqLogger().LogDebugf("should put to master: %v, from %v",
