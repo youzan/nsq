@@ -16,8 +16,8 @@ var Rank = Backbone.Model.extend({
 
     parse: function(resp) {
         var filter = this.get('filter');
-        resp['top10'] = _.map(resp['top10'], function(data){
-            switch(filter){
+        resp['top10'] = _.map(resp['top10'], function(data) {
+            switch (filter) {
                 case 'channel-depth':
                     data['rank_value'] = data['total_channel_depth'];
                     break;
@@ -32,12 +32,16 @@ var Rank = Backbone.Model.extend({
                     data['name'] = data['name'].replace(':', '/');
                     data['rank_value'] = data['timeout_count'];
                     break;
+                case 'channel-delayedqueue':
+                    data['name'] = data['name'].replace(':', '/');
+                    data['rank_value'] = data['delayed_queue_count'];
+                    break;
                 default:
                     data['rank_value'] = data['message_count'];
             }
             return data;
         });
-        resp['top10'] = _.filter(resp['top10'], function(data){
+        resp['top10'] = _.filter(resp['top10'], function(data) {
             return (null !== data['rank_value'] && data['rank_value'] > 0);
         });
         return resp;
