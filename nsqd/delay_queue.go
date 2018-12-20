@@ -851,7 +851,7 @@ func (q *DelayQueue) emptyDelayedUntil(dt int, peekTs int64, id MessageID, ch st
 		dbSize := tx.Size()
 		if dbSize > int64(largeDBSize) && totalCnt < uint64(txMaxBatch) {
 			exceedMaxBatch = true
-			nsqLog.Infof("empty return early since exceed max size %v, %v", string(prefix), tx.Size())
+			nsqLog.Infof("topic %v empty return early since exceed max size %v, %v", q.GetFullName(), string(prefix), tx.Size())
 			return errDBSizeTooLarge
 		}
 		b := tx.Bucket(bucketDelayedMsg)
@@ -859,12 +859,12 @@ func (q *DelayQueue) emptyDelayedUntil(dt int, peekTs int64, id MessageID, ch st
 		for k, _ := c.Seek(prefix); k != nil && bytes.HasPrefix(k, prefix); k, _ = c.Next() {
 			if batched > txMaxBatch {
 				exceedMaxBatch = true
-				nsqLog.Infof("empty return early since exceed max batch : %v, %v", string(prefix), batched)
+				nsqLog.Infof("topic %v empty return early since exceed max batch : %v, %v", q.GetFullName(), string(prefix), batched)
 				break
 			}
 			if dbSize > int64(largeDBSize/4) && time.Since(scanStart) >= time.Second {
 				exceedMaxBatch = true
-				nsqLog.Infof("empty return early since exceed max time: %v, %v, %v", string(prefix), batched, dbSize)
+				nsqLog.Infof("topic %v empty return early since exceed max time: %v, %v, %v", q.GetFullName(), string(prefix), batched, dbSize)
 				break
 			}
 			delayedType, delayedTs, delayedID, delayedCh, err := decodeDelayedMsgDBKey(k)

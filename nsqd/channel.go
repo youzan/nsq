@@ -1107,7 +1107,9 @@ func (c *Channel) ShouldRequeueToEnd(clientID int64, clientAddr string, id Messa
 		//to avoid some delayed messages req again and again (bad for boltdb performance )
 		// we should control the req timeout for some failed message with too much attempts
 		// and this may cause some delay more time than expected.
-		if (msg.Attempts < MaxMemReqTimes*10) || (tn.UnixNano()-atomic.LoadInt64(&c.lastDelayedReqToEndTs) > delayedReqToEndMinInterval.Nanoseconds()) {
+		dqDepthTs, dqCnt := c.GetDelayedQueueConsumedState()
+		blockingTooLong := tn.UnixNano()-dqDepthTs > 10*threshold.Nanoseconds()
+		if blockingTooLong || (msg.Attempts < MaxMemReqTimes*10) || (tn.UnixNano()-atomic.LoadInt64(&c.lastDelayedReqToEndTs) > delayedReqToEndMinInterval.Nanoseconds()) {
 			// if the message is peeked from disk delayed queue,
 			// we can try to put it back to end if there are some other
 			// delayed queue messages waiting.
@@ -1117,10 +1119,8 @@ func (c *Channel) ShouldRequeueToEnd(clientID int64, clientAddr string, id Messa
 			// waitingDelayCnt is the counter for memory waiting from delay diskqueue,
 			// dqCnt is all the delayed diskqueue counter, so
 			// if all delayed messages are in memory, we no need to put them back to disk.
-
-			waitingDelayCnt := atomic.LoadInt64(&c.deferredFromDelay)
-			dqDepthTs, dqCnt := c.GetDelayedQueueConsumedState()
 			blocking := tn.UnixNano()-dqDepthTs > threshold.Nanoseconds()
+			waitingDelayCnt := atomic.LoadInt64(&c.deferredFromDelay)
 			if dqDepthTs > 0 && blocking && int64(dqCnt) > waitingDelayCnt {
 				nsqLog.Logf("channel %v delayed queue message %v req to end, timestamp:%v, attempt:%v, delayed depth timestamp: %v, delay waiting : %v, %v",
 					c.GetName(), id, msg.Timestamp,
@@ -1187,6 +1187,7 @@ func (c *Channel) ShouldRequeueToEnd(clientID int64, clientAddr string, id Messa
 			return nil, false
 		}
 
+		// check if req this message can avoid the blocking
 		if msg.Timestamp > c.DepthTimestamp()+threshold.Nanoseconds() {
 			return nil, false
 		}
@@ -1194,7 +1195,7 @@ func (c *Channel) ShouldRequeueToEnd(clientID int64, clientAddr string, id Messa
 		if msg.Attempts > MaxMemReqTimes && depDiffTs > threshold.Nanoseconds() {
 			return msg.GetCopy(), true
 		}
-		if depDiffTs > 20*threshold.Nanoseconds() {
+		if depDiffTs > 2*threshold.Nanoseconds() {
 			return msg.GetCopy(), true
 		}
 		return nil, false
@@ -1202,16 +1203,27 @@ func (c *Channel) ShouldRequeueToEnd(clientID int64, clientAddr string, id Messa
 		if msg.Timestamp > c.DepthTimestamp()+threshold.Nanoseconds()/10 {
 			return nil, false
 		}
-
 		if msg.Attempts < MaxMemReqTimes {
 			return nil, false
 		}
-		if depDiffTs < 20*threshold.Nanoseconds() {
+
+		if depDiffTs < threshold.Nanoseconds() {
+			// the newest confirmed is near now, we
+			// check if the message is too old and depth is large
+			// to avoid re-consume too old messages if leader changed
+			if msg.Timestamp < c.DepthTimestamp()-10*threshold.Nanoseconds() &&
+				c.Depth() > MaxDepthReqToEnd {
+				return msg.GetCopy(), true
+			}
 			return nil, false
 		}
-		if c.Depth() < 100 {
+		if msg.Attempts > MaxMemReqTimes*10 && msg.Timestamp <= c.DepthTimestamp() && depDiffTs > 2*threshold.Nanoseconds() && c.Depth() > 100 {
+			return msg.GetCopy(), true
+		}
+		if c.Depth() < MaxDepthReqToEnd/10 {
 			return nil, false
 		}
+		// req to end since depth is large and the depth timestamp is also old
 		return msg.GetCopy(), true
 	}
 }
