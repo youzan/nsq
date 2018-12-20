@@ -890,7 +890,7 @@ func (q *DelayQueue) emptyDelayedUntil(dt int, peekTs int64, id MessageID, ch st
 					continue
 				}
 			}
-			err = deleteBucketKey(dt, ch, delayedTs, delayedID, tx, q.IsExt())
+			err = deleteBucketKey(dt, delayedCh, delayedTs, delayedID, tx, q.IsExt())
 			if err != nil {
 				if err != errBucketKeyNotFound {
 					nsqLog.Warningf("failed to delete : %v, %v", k, err)
@@ -899,6 +899,26 @@ func (q *DelayQueue) emptyDelayedUntil(dt int, peekTs int64, id MessageID, ch st
 			}
 			cleanedTs = delayedTs
 			batched++
+		}
+		if batched == 0 && !exceedMaxBatch && emptyAll && ch != "" {
+			bm := tx.Bucket(bucketMeta)
+			cntKey := append([]byte("counter_"), getDelayedMsgDBPrefixKey(dt, ch)...)
+			cnt := uint64(0)
+			cntBytes := bm.Get(cntKey)
+			if cntBytes != nil && len(cntBytes) == 8 {
+				cnt = binary.BigEndian.Uint64(cntBytes)
+			}
+			if cnt > 0 {
+				nsqLog.Warningf("topic %v empty delayed counter need fix: %v, %v", q.GetFullName(), string(prefix), cnt)
+				cnt = 0
+				cntBytes = make([]byte, 8)
+				binary.BigEndian.PutUint64(cntBytes[:8], cnt)
+				err = bm.Put(cntKey, cntBytes)
+				if err != nil {
+					nsqLog.Infof("failed to update the meta count: %v, %v", cntKey, err)
+					return err
+				}
+			}
 		}
 		return nil
 	})
@@ -910,6 +930,9 @@ func (q *DelayQueue) emptyDelayedUntil(dt int, peekTs int64, id MessageID, ch st
 	}
 	if batched == 0 {
 		return cleanedTs, nil
+	}
+	if emptyAll || exceedMaxBatch {
+		nsqLog.Infof("topic %v empty delayed: %v, %v, %v", q.GetFullName(), string(prefix), batched, peekTs)
 	}
 	atomic.StoreInt64(&q.changedTs, time.Now().UnixNano())
 	if dt == ChannelDelayed && ch != "" {

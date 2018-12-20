@@ -1888,6 +1888,9 @@ LOOP:
 						} else {
 							backendErr++
 							time.Sleep(time.Second)
+							// it may happen the read position for (filenum, fileoffset) is invalid (the segment file is changed or cleaned)
+							// but the virtual offset is still valid, so we try fix this
+							// it will be fixed while updating the channel end.
 						}
 					}
 					time.Sleep(time.Millisecond * 100)

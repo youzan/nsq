@@ -469,7 +469,7 @@ func (c *context) internalRequeueToEnd(ch *nsqd.Channel,
 	if newMsg.Attempts >= nsqd.MaxAttempts/4 {
 		// to avoid requeue to end again and again, the message attempts many times should be
 		// delayed enough time.
-		nto := time.Second * time.Duration(newMsg.Attempts/2)
+		nto := time.Second * time.Duration(newMsg.Attempts)
 		if timeoutDuration <= nto {
 			timeoutDuration = nto
 		}

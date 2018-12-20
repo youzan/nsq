@@ -586,7 +586,7 @@ func (d *diskQueueReader) internalConfirm(offset BackendOffset, cnt int64) error
 		return nil
 	}
 	if offset > d.readQueueInfo.Offset() {
-		nsqLog.LogErrorf("confirm exceed read: %v, %v", offset, d.readQueueInfo.Offset())
+		nsqLog.LogErrorf("%v confirm exceed read: %v, %v", d.readerMetaName, offset, d.readQueueInfo.Offset())
 		return ErrConfirmSizeInvalid
 	}
 	if offset == d.readQueueInfo.Offset() {
@@ -1181,14 +1181,42 @@ func (d *diskQueueReader) internalUpdateEnd(endPos *diskQueueEndInfo, forceReloa
 	}
 	d.needSync = true
 	if d.readQueueInfo.EndOffset.GreatThan(&endPos.EndOffset) || d.readQueueInfo.Offset() > endPos.Offset() {
-		nsqLog.LogWarningf("new end old than the read end: %v, %v, %v", d.readQueueInfo.EndOffset,
+		nsqLog.LogWarningf("%v new end old than the read end: %v, %v, %v",
+			d.readerMetaName, d.readQueueInfo.EndOffset,
 			endPos, d.queueEndInfo)
-		if !forceReload {
-			// if rollback or reset, should set the force reload flag
-			return false, nil
+
+		if d.readQueueInfo.Offset() <= endPos.Offset() {
+			// reader for file position is great than end but the virtual offset is smaller,
+			// something is wrong. (the file position should be fixed using the virtual offset)
+			// The confirmed offset should be fixed together.
+			newPos, err := stepOffset(d.dataPath, d.readFrom, *endPos,
+				d.readQueueInfo.Offset()-endPos.Offset(), *endPos)
+			if err != nil {
+				nsqLog.LogWarningf("%v fix read and confirmed file position failed: %v",
+					d.readerMetaName, err.Error())
+				return false, nil
+			}
+			newPos2, err := stepOffset(d.dataPath, d.readFrom, *endPos,
+				d.confirmedQueueInfo.Offset()-endPos.Offset(), *endPos)
+			if err != nil {
+				nsqLog.LogWarningf("%v fix read and confirmed file position failed: %v",
+					d.readerMetaName, err.Error())
+				return false, nil
+			}
+			nsqLog.LogWarningf("%v fix read and confirmed file position: %v, %v, %v to %v, %v",
+				d.readerMetaName, d.readQueueInfo, d.confirmedQueueInfo,
+				endPos, newPos, newPos2)
+			d.readQueueInfo.EndOffset = newPos
+			d.confirmedQueueInfo.EndOffset = newPos2
+			forceReload = true
+		} else {
+			if !forceReload {
+				// if rollback or reset, should set the force reload flag
+				return false, nil
+			}
+			d.readQueueInfo = *endPos
+			forceReload = true
 		}
-		d.readQueueInfo = *endPos
-		forceReload = true
 	}
 	if d.confirmedQueueInfo.EndOffset.GreatThan(&d.readQueueInfo.EndOffset) ||
 		d.confirmedQueueInfo.Offset() > d.readQueueInfo.Offset() {
