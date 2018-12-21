@@ -1583,7 +1583,7 @@ func (s *httpServer) statisticsHandler(w http.ResponseWriter, req *http.Request,
 		messages = append(messages, pe.Error())
 	}
 
-	var rank []*rankStats
+	rank := make([]*rankStats, 0, 1000)
 	topicMap := make(map[string]*rankStats)
 	switch sortBy {
 	case "channel-depth":
@@ -1622,6 +1622,9 @@ func (s *httpServer) statisticsHandler(w http.ResponseWriter, req *http.Request,
 		}
 
 		for _, item := range topicMap {
+			if item.TotalChannelDepth <= 0 && item.MessageCount <= 0 {
+				continue
+			}
 			rank = append(rank, item)
 		}
 	case "channel-timeout":
@@ -1639,6 +1642,9 @@ func (s *httpServer) statisticsHandler(w http.ResponseWriter, req *http.Request,
 			}
 		}
 		for _, channelStat := range channelStatMapDC {
+			if channelStat.RequeueCount <= 0 && channelStat.TimeoutCount <= 0 && channelStat.DelayedQueueCount <= 0 {
+				continue
+			}
 			item := &rankStats{
 				Name:              channelStat.TopicName + "/" + channelStat.ChannelName,
 				RequeueCount:      channelStat.RequeueCount,
@@ -1671,9 +1677,6 @@ func (s *httpServer) statisticsHandler(w http.ResponseWriter, req *http.Request,
 		maxLen = 10
 	}
 
-	for _, r := range rank[:maxLen] {
-		s.ctx.nsqadmin.logf("sortBy rank: %v, %v", sortBy, r)
-	}
 	return struct {
 		RankName string       `json:"rank_name"`
 		Top10    []*rankStats `json:"top10"`
