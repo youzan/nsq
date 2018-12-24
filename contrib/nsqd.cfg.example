@@ -35,6 +35,9 @@ lookup_ping_interval = "5s"
 
 ## default retention days to keep the consumed topic data
 retention_days = 7
+## retention size bytes for one day at most
+retention_size_per_day = 1000000000
+
 ## number of messages to keep in memory (per topic/channel)
 mem_queue_size = 10000
 
@@ -157,3 +160,10 @@ queue_scan_selection_count = 100
 queue_scan_worker_pool_max = 8
 ## re-scan trigger if there is dirty percent channels timeout
 queue_scan_dirty_percent = 0.1
+
+# the max delayed messages allowed in each channel if no any depth on the normal queue
+# max_channel_delayed_qnum=160000
+
+# commit buffer size used to reduce the memory usage by each topic
+#default_commit_buf=1000
+#max_commit_buf=4000

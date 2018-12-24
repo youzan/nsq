@@ -1405,8 +1405,9 @@ type rankStats struct {
 	MessageCount      int64  `json:"message_count,omitempty"`
 	HourlyPubSize     int64  `json:"hourly_pubsize,omitempty"`
 
-	RequeueCount int64 `json:"requeue_count,omitempty"`
-	TimeoutCount int64 `json:"timeout_count,omitempty"`
+	RequeueCount      int64  `json:"requeue_count,omitempty"`
+	DelayedQueueCount uint64 `json:"delayed_queue_count,omitempty"`
+	TimeoutCount      int64  `json:"timeout_count,omitempty"`
 }
 
 type RankList []*rankStats
@@ -1432,6 +1433,16 @@ func (c ChannelByRequeue) Less(i, j int) bool {
 	channeli := c.RankList[i]
 	channelj := c.RankList[j]
 	return channeli.RequeueCount > channelj.RequeueCount
+}
+
+type ChannelByDelayedQueue struct {
+	RankList
+}
+
+func (c ChannelByDelayedQueue) Less(i, j int) bool {
+	channeli := c.RankList[i]
+	channelj := c.RankList[j]
+	return channeli.DelayedQueueCount > channelj.DelayedQueueCount
 }
 
 type TopicsByChannelDepth struct {
@@ -1530,7 +1541,7 @@ func (s *httpServer) statisticsHandler(w http.ResponseWriter, req *http.Request,
 	sortBy := ps.ByName("sortBy")
 	s.ctx.nsqadmin.logf("sortBy filter passed in statisticsHandler: " + sortBy)
 	if "" == sortBy {
-		sortByStr := []string{"channel-depth", "hourly-pubsize", "channel-timeout", "channel-requeue"}
+		sortByStr := []string{"channel-depth", "hourly-pubsize", "channel-timeout", "channel-requeue", "channel-delayedqueue"}
 		return struct {
 			Filter []string `json:"filters"`
 		}{sortByStr}, nil
@@ -1544,6 +1555,8 @@ func (s *httpServer) statisticsHandler(w http.ResponseWriter, req *http.Request,
 		rankName = "Top10 channels in Timeout"
 	case "channel-requeue":
 		rankName = "Top10 channels in Requeue"
+	case "channel-delayedqueue":
+		rankName = "Top10 channels in Delayed Queue"
 	default:
 		rankName = "Top10 topics in Hourly Pub Size(in bytes)"
 	}
@@ -1570,7 +1583,7 @@ func (s *httpServer) statisticsHandler(w http.ResponseWriter, req *http.Request,
 		messages = append(messages, pe.Error())
 	}
 
-	var rank []*rankStats
+	rank := make([]*rankStats, 0, 1000)
 	topicMap := make(map[string]*rankStats)
 	switch sortBy {
 	case "channel-depth":
@@ -1609,9 +1622,14 @@ func (s *httpServer) statisticsHandler(w http.ResponseWriter, req *http.Request,
 		}
 
 		for _, item := range topicMap {
+			if item.TotalChannelDepth <= 0 && item.MessageCount <= 0 {
+				continue
+			}
 			rank = append(rank, item)
 		}
 	case "channel-timeout":
+		fallthrough
+	case "channel-delayedqueue":
 		fallthrough
 	case "channel-requeue":
 		channelStatMapDC := make(map[string]*clusterinfo.ChannelStats)
@@ -1624,10 +1642,14 @@ func (s *httpServer) statisticsHandler(w http.ResponseWriter, req *http.Request,
 			}
 		}
 		for _, channelStat := range channelStatMapDC {
+			if channelStat.RequeueCount <= 0 && channelStat.TimeoutCount <= 0 && channelStat.DelayedQueueCount <= 0 {
+				continue
+			}
 			item := &rankStats{
-				Name:         channelStat.TopicName + "/" + channelStat.ChannelName,
-				RequeueCount: channelStat.RequeueCount,
-				TimeoutCount: channelStat.TimeoutCount,
+				Name:              channelStat.TopicName + "/" + channelStat.ChannelName,
+				RequeueCount:      channelStat.RequeueCount,
+				TimeoutCount:      channelStat.TimeoutCount,
+				DelayedQueueCount: channelStat.DelayedQueueCount,
 			}
 			rank = append(rank, item)
 		}
@@ -1642,6 +1664,8 @@ func (s *httpServer) statisticsHandler(w http.ResponseWriter, req *http.Request,
 		sort.Sort(TopicsByHourlyPubsize{rank})
 	case "channel-timeout":
 		sort.Sort(ChannelByTimeout{rank})
+	case "channel-delayedqueue":
+		sort.Sort(ChannelByDelayedQueue{rank})
 	case "channel-requeue":
 		sort.Sort(ChannelByRequeue{rank})
 	}

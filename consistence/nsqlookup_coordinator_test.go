@@ -57,6 +57,10 @@ func NewFakeNsqlookupLeadership() *FakeNsqlookupLeadership {
 func (self *FakeNsqlookupLeadership) InitClusterID(id string) {
 }
 
+func (self *FakeNsqlookupLeadership) IsTopicRealDeleted(topics string) (bool, error) {
+	return true, nil
+}
+
 func (self *FakeNsqlookupLeadership) GetTopicsMetaInfoMap(topics []string) (map[string]TopicMetaInfo, error) {
 	metas := make(map[string]TopicMetaInfo)
 	self.dataMutex.Lock()

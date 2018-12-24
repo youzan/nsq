@@ -378,7 +378,7 @@ func (self *NsqdRpcClient) NotifyUpdateChannelOffset(leaderSession *TopicLeaderS
 }
 
 func (self *NsqdRpcClient) UpdateDelayedQueueState(leaderSession *TopicLeaderSession,
-	info *TopicPartitionMetaInfo, ch string, cursorList [][]byte,
+	info *TopicPartitionMetaInfo, ch string, ts int64, cursorList [][]byte,
 	cntList map[int]uint64, channelCntList map[string]uint64, wait bool) *CoordErr {
 	var updateInfo RpcConfirmedDelayedCursor
 	updateInfo.TopicName = info.Name
@@ -390,6 +390,7 @@ func (self *NsqdRpcClient) UpdateDelayedQueueState(leaderSession *TopicLeaderSes
 	updateInfo.UpdatedChannel = ch
 	updateInfo.KeyList = cursorList
 	updateInfo.ChannelCntList = channelCntList
+	updateInfo.Timestamp = ts
 	updateInfo.OtherCntList = cntList
 	if wait {
 		retErr, err := self.CallFast("UpdateDelayedQueueState", &updateInfo)

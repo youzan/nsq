@@ -38,6 +38,7 @@ type TopicStats struct {
 	IsMultiOrdered       bool             `json:"is_multi_ordered"`
 	IsExt                bool             `json:"is_ext"`
 	StatsdName           string           `json:"statsd_name"`
+	PubFailedCnt         int64            `json:"pub_failed_cnt"`
 
 	E2eProcessingLatency *quantile.Result `json:"e2e_processing_latency"`
 }
@@ -66,6 +67,7 @@ func NewTopicStats(t *Topic, channels []ChannelStats, filterClients bool) TopicS
 		MsgWriteLatencyStats: t.detailStats.GetMsgWriteLatencyStats(),
 		IsMultiOrdered:       t.IsOrdered(),
 		IsExt:                t.IsExt(),
+		PubFailedCnt:         t.PubFailed(),
 		StatsdName:           statsdName,
 
 		E2eProcessingLatency: t.AggregateChannelE2eProcessingLatency().Result(),

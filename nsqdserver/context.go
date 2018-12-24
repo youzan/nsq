@@ -17,6 +17,18 @@ const (
 	FailedOnNotWritable = consistence.ErrFailedOnNotWritable
 )
 
+var (
+	serverPubFailedCnt int64
+)
+
+func incrServerPubFailed() {
+	atomic.AddInt64(&serverPubFailedCnt, 1)
+}
+
+func getServerPubFailed() int64 {
+	return atomic.LoadInt64(&serverPubFailedCnt)
+}
+
 type context struct {
 	clientIDSequence int64
 	nsqd             *nsqd.NSQD
@@ -418,6 +430,10 @@ func (c *context) internalPubLoop(topic *nsqd.Topic) {
 					topic.GetFullName())
 				retErr = consistence.ErrNotTopicLeader.ToErrorType()
 			}
+			if retErr != nil {
+				topic.IncrPubFailed()
+				incrServerPubFailed()
+			}
 			for _, info := range pubInfoList {
 				info.Err = retErr
 				close(info.Done)
@@ -453,7 +469,7 @@ func (c *context) internalRequeueToEnd(ch *nsqd.Channel,
 	if newMsg.Attempts >= nsqd.MaxAttempts/4 {
 		// to avoid requeue to end again and again, the message attempts many times should be
 		// delayed enough time.
-		nto := time.Second * time.Duration(newMsg.Attempts/2)
+		nto := time.Second * time.Duration(newMsg.Attempts)
 		if timeoutDuration <= nto {
 			timeoutDuration = nto
 		}

@@ -63,6 +63,7 @@ func newHTTPServer(ctx *context, tlsEnabled bool, tlsRequired bool) *httpServer 
 	router.Handle("POST", "/pubtrace", http_api.Decorate(s.doPUBTrace, http_api.V1))
 	router.Handle("POST", "/mpub", http_api.Decorate(s.doMPUB, http_api.NegotiateVersion))
 	router.Handle("GET", "/stats", http_api.Decorate(s.doStats, log, http_api.NegotiateVersion))
+	router.Handle("GET", "/serverstats", http_api.Decorate(s.doServerStats, log, http_api.V1))
 	router.Handle("GET", "/coordinator/stats", http_api.Decorate(s.doCoordStats, log, http_api.V1))
 	router.Handle("GET", "/message/stats", http_api.Decorate(s.doMessageStats, log, http_api.V1))
 	router.Handle("GET", "/message/get", http_api.Decorate(s.doMessageGet, log, http_api.V1))
@@ -1149,6 +1150,18 @@ func (s *httpServer) doCoordStats(w http.ResponseWriter, req *http.Request, ps h
 		return s.ctx.nsqdCoord.Stats(topicName, topicPart), nil
 	}
 	return nil, http_api.Err{500, "Coordinator is disabled."}
+}
+
+func (s *httpServer) doServerStats(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {
+	health := s.ctx.getHealth()
+	startTime := s.ctx.getStartTime()
+	pubFailed := getServerPubFailed()
+	return struct {
+		Version         string `json:"version"`
+		Health          string `json:"health"`
+		StartTime       int64  `json:"start_time"`
+		ServerPubFailed int64  `json:"server_pub_failed"`
+	}{version.Binary, health, startTime.Unix(), pubFailed}, nil
 }
 
 func (s *httpServer) doStats(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {

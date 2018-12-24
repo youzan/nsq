@@ -354,6 +354,10 @@ func (self *NsqdEtcdMgr) GetTopicLeaderSession(topic string, partition int) (*To
 	return &topicLeaderSession, nil
 }
 
+func (self *NsqdEtcdMgr) IsTopicRealDeleted(topic string) (bool, error) {
+	return true, nil
+}
+
 func (self *NsqdEtcdMgr) createNsqdNodePath(nodeData *NsqdNodeInfo) string {
 	return path.Join("/", NSQ_ROOT_DIR, self.clusterID, NSQ_NODE_DIR, "Node-"+nodeData.ID)
 }

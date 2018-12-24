@@ -716,6 +716,7 @@ type RpcConfirmedDelayedCursor struct {
 	KeyList        [][]byte
 	ChannelCntList map[string]uint64
 	OtherCntList   map[int]uint64
+	Timestamp      int64
 }
 
 type RpcNodeInfoReq struct {
@@ -817,7 +818,8 @@ func (self *NsqdCoordRpcServer) UpdateDelayedQueueState(info *RpcConfirmedDelaye
 		return &ret
 	}
 	// update local channel offset
-	err = self.nsqdCoord.updateDelayedQueueStateOnSlave(tc.GetData(), info.UpdatedChannel, info.KeyList,
+	err = self.nsqdCoord.updateDelayedQueueStateOnSlave(tc.GetData(), info.UpdatedChannel,
+		info.Timestamp, info.KeyList,
 		info.OtherCntList, info.ChannelCntList)
 	if err != nil {
 		ret = *err

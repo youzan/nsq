@@ -642,6 +642,28 @@ func (self *NsqdCoordinator) loadLocalTopicData() error {
 		return nil
 	}
 	topicMap := self.localNsqd.GetTopicMapCopy()
+	// first we check if all topic info is missing, this can avoid clear all topics if etcd is cleared by accident.
+	etcdOK := false
+	for topicName, topicParts := range topicMap {
+		for _, topic := range topicParts {
+			partition := topic.GetTopicPart()
+			_, err := self.leadership.GetTopicInfo(topicName, partition)
+			if err == nil {
+				// found one success topic means etcd is ok
+				etcdOK = true
+				break
+			}
+		}
+		if etcdOK {
+			break
+		}
+	}
+	if !etcdOK {
+		if len(topicMap) > 0 {
+			coordLog.Infof("local topic number %v, but no etcd info found", len(topicMap))
+		}
+		return nil
+	}
 
 	for topicName, topicParts := range topicMap {
 		for _, topic := range topicParts {
@@ -683,11 +705,24 @@ func (self *NsqdCoordinator) loadLocalTopicData() error {
 			if commonErr != nil {
 				coordLog.Infof("failed to get topic info:%v-%v, err:%v", topicName, partition, commonErr)
 				if commonErr == ErrKeyNotFound {
-					self.forceCleanTopicData(topicName, partition)
+					rd, err := self.leadership.IsTopicRealDeleted(topicName)
+					if err != nil {
+						coordLog.Infof("failed to check the deleted state of topic :%v-%v, err:%v", topicName, partition, err)
+						continue
+					}
+					if rd {
+						self.forceCleanTopicData(topicName, partition)
+					} else {
+						coordLog.Infof("the deleted state of topic not found, can not delete:%v-%v", topicName, partition)
+					}
 				}
 				continue
 			}
 
+			if topicInfo.Replica < 1 {
+				coordLog.Errorf("topic replica is invalid:%v-%v, err:%v", topicName, partition, topicInfo.Replica)
+				continue
+			}
 			checkErr := self.checkLocalTopicMagicCode(topicInfo, topicInfo.Leader != self.myNode.GetID())
 			if checkErr != nil {
 				coordLog.Errorf("failed to check topic :%v-%v, err:%v", topicName, partition, checkErr)
@@ -997,6 +1032,9 @@ func (self *NsqdCoordinator) checkForUnsyncedTopics() {
 			for pid := range info {
 				topicMeta, err := self.leadership.GetTopicInfo(topic, pid)
 				if err != nil {
+					continue
+				}
+				if topicMeta.Replica < 1 {
 					continue
 				}
 				if FindSlice(topicMeta.CatchupList, self.myNode.GetID()) != -1 {
@@ -2421,7 +2459,7 @@ func (self *NsqdCoordinator) trySyncTopicChannels(tcData *coordData, syncDelayed
 		}
 
 		if syncDelayedQueue {
-			keyList, cntList, channelCntList := localTopic.GetDelayedQueueConsumedState()
+			ts, keyList, cntList, channelCntList := localTopic.GetDelayedQueueConsumedState()
 			if keyList == nil && cntList == nil && channelCntList == nil {
 				// no delayed queue
 			} else {
@@ -2434,7 +2472,7 @@ func (self *NsqdCoordinator) trySyncTopicChannels(tcData *coordData, syncDelayed
 						continue
 					}
 					rpcErr = c.UpdateDelayedQueueState(&tcData.topicLeaderSession, &tcData.topicInfo,
-						"", keyList, cntList, channelCntList, true)
+						"", ts, keyList, cntList, channelCntList, true)
 					if rpcErr != nil {
 						coordLog.Infof("node %v update delayed queue state %v failed %v.", nodeID,
 							tcData.topicInfo.GetTopicDesp(), rpcErr)

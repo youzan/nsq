@@ -48,14 +48,15 @@ type Options struct {
 	QueueScanDirtyPercent    float64       `flag:"queue-scan-dirty-percent"`
 
 	// msg and command options
-	MsgTimeout        time.Duration `flag:"msg-timeout" arg:"60s"`
-	MaxMsgTimeout     time.Duration `flag:"max-msg-timeout"`
-	MaxMsgSize        int64         `flag:"max-msg-size" deprecated:"max-message-size" cfg:"max_msg_size"`
-	MaxBodySize       int64         `flag:"max-body-size"`
-	MaxReqTimeout     time.Duration `flag:"max-req-timeout"`
-	MaxConfirmWin     int64         `flag:"max-confirm-win"`
-	ClientTimeout     time.Duration
-	ReqToEndThreshold time.Duration `flag:"req-to-end-threshold"`
+	MsgTimeout            time.Duration `flag:"msg-timeout" arg:"60s"`
+	MaxMsgTimeout         time.Duration `flag:"max-msg-timeout"`
+	MaxMsgSize            int64         `flag:"max-msg-size" deprecated:"max-message-size" cfg:"max_msg_size"`
+	MaxBodySize           int64         `flag:"max-body-size"`
+	MaxReqTimeout         time.Duration `flag:"max-req-timeout"`
+	MaxConfirmWin         int64         `flag:"max-confirm-win"`
+	MaxChannelDelayedQNum int64         `flag:"max-channel-delayed-qnum"`
+	ClientTimeout         time.Duration
+	ReqToEndThreshold     time.Duration `flag:"req-to-end-threshold"`
 
 	// client overridable configuration options
 	MaxHeartbeatInterval   time.Duration `flag:"max-heartbeat-interval"`
@@ -151,6 +152,7 @@ func NewOptions() *Options {
 		MaxOutputBufferSize:    64 * 1024,
 		MaxOutputBufferTimeout: 1 * time.Second,
 		MaxConfirmWin:          500,
+		MaxChannelDelayedQNum:  DefaultMaxChDelayedQNum,
 
 		StatsdPrefix:   "nsq.%s",
 		StatsdProtocol: "udp",

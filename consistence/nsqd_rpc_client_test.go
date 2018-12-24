@@ -47,6 +47,10 @@ func (self *fakeNsqdLeadership) UnregisterNsqd(nodeData *NsqdNodeInfo) error {
 	return nil
 }
 
+func (self *fakeNsqdLeadership) IsTopicRealDeleted(topics string) (bool, error) {
+	return true, nil
+}
+
 func (self *fakeNsqdLeadership) IsNodeTopicLeader(topic string, partition int, nodeData *NsqdNodeInfo) bool {
 	self.Lock()
 	defer self.Unlock()
