@@ -1278,14 +1278,21 @@ func (c *Channel) RequeueMessage(clientID int64, clientAddr string, id MessageID
 		nsqLog.Logf("ch %v too long timeout %v, %v, %v, should req message: %v to delayed queue", c.GetName(),
 			newTimeout, msg.deliveryTS, timeout, id)
 	}
+	reqWaiting := len(c.requeuedMsgChan)
 	deCnt := atomic.LoadInt64(&c.deferredCount)
 	if c.isTooMuchDeferredInMem(deCnt) {
-		nsqLog.Logf("failed to requeue msg %v, since too much delayed in memory: %v", id, deCnt)
-		return ErrMsgDeferredTooMuch
+		if newTimeout.UnixNano() >= msg.pri {
+			nsqLog.Logf("failed to requeue msg %v, since too much delayed in memory: %v", id, deCnt)
+			return ErrMsgDeferredTooMuch
+		}
 	}
 	if int64(atomic.LoadInt32(&c.waitingConfirm)) > c.option.MaxConfirmWin {
-		nsqLog.Logf("failed to requeue msg %v, since too much waiting confirmed: %v", id, atomic.LoadInt32(&c.waitingConfirm))
-		return ErrMsgDeferredTooMuch
+		// too much req, we only allow early req than timeout to speed up retry
+		if newTimeout.UnixNano() >= msg.pri {
+			nsqLog.Logf("%v-%v failed to requeue msg %v, %v since too much waiting confirmed: %v, req waiting: %v",
+				c.GetTopicName(), c.GetName(), id, msg.Attempts, atomic.LoadInt32(&c.waitingConfirm), reqWaiting)
+			return ErrMsgDeferredTooMuch
+		}
 	}
 
 	atomic.AddInt64(&c.deferredCount, 1)
@@ -2157,7 +2164,8 @@ func (c *Channel) processInFlightQueue(tnow int64) (bool, bool) {
 				nsqLog.LogDebugf("channel %v no timeout, inflight %v, waiting confirm: %v, confirmed: %v",
 					c.GetName(), flightCnt, atomic.LoadInt32(&c.waitingConfirm),
 					c.GetConfirmed())
-				if !c.IsOrdered() && atomic.LoadInt32(&c.waitingConfirm) >= int32(c.option.MaxConfirmWin) {
+				canReqEnd := tnow-atomic.LoadInt64(&c.lastDelayedReqToEndTs) > delayedReqToEndMinInterval.Nanoseconds()
+				if !c.IsOrdered() && atomic.LoadInt32(&c.waitingConfirm) >= int32(c.option.MaxConfirmWin) && canReqEnd {
 					confirmed := c.GetConfirmed().Offset()
 					var blockingMsg *Message
 					for _, m := range c.inFlightMessages {
@@ -2168,10 +2176,15 @@ func (c *Channel) processInFlightQueue(tnow int64) (bool, bool) {
 						if c.option.ReqToEndThreshold >= time.Millisecond {
 							threshold = c.option.ReqToEndThreshold
 						}
-						// if the blocking message still need waiting too long,
-						// we requeue to end or just timeout it immediately
-						if m.pri > time.Now().Add(threshold/2).UnixNano() {
-							blockingMsg = m
+						if m.Attempts >= MaxMemReqTimes {
+							// if the blocking message still need waiting too long,
+							// we requeue to end or just timeout it immediately
+							if m.pri > time.Now().Add(threshold/2).UnixNano() {
+								blockingMsg = m
+							} else if tnow-c.DepthTimestamp() > 2*int64(threshold) {
+								// check if blocking too long time
+								blockingMsg = m
+							}
 						}
 						break
 					}
