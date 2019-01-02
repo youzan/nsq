@@ -9,9 +9,8 @@ env:
   - GOARCH=386 TEST_RACE=true
 sudo: false
 script:
-  - curl -s https://raw.githubusercontent.com/pote/gpm/v1.4.0/bin/gpm > gpm
-  - chmod +x gpm
-  - ./gpm install
+  - curl https://raw.githubusercontent.com/golang/dep/master/install.sh | sh
+  - dep ensure
   - travis_wait ./test.sh
 notifications:
   email: false

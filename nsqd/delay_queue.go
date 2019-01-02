@@ -1395,6 +1395,7 @@ func (q *DelayQueue) compactStore(force bool) error {
 	q.dbLock.Lock()
 	defer q.dbLock.Unlock()
 	q.kvStore.Close()
+	// TODO: speed up , first rename old to tmp, if failed rename back, if success , delete in background
 	err = os.Rename(tmpPath, origPath)
 	openErr := q.reOpenStore()
 	if openErr != nil {
