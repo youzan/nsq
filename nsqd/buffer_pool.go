@@ -8,10 +8,14 @@ import (
 )
 
 var bp sync.Pool
+var peekPool sync.Pool
 
 func init() {
 	bp.New = func() interface{} {
 		return &bytes.Buffer{}
+	}
+	peekPool.New = func() interface{} {
+		return make([]Message, MaxWaitingDelayed)
 	}
 }
 
@@ -21,6 +25,14 @@ func bufferPoolGet() *bytes.Buffer {
 
 func bufferPoolPut(b *bytes.Buffer) {
 	bp.Put(b)
+}
+
+func peekBufPoolGet() []Message {
+	return peekPool.Get().([]Message)
+}
+
+func peekBufPoolPut(b []Message) {
+	peekPool.Put(b)
 }
 
 var (

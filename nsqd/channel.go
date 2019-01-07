@@ -152,7 +152,6 @@ type Channel struct {
 	delayedLock            sync.RWMutex
 	delayedQueue           *DelayQueue
 	delayedConfirmedMsgs   map[MessageID]Message
-	peekedMsgs             []Message
 
 	//channel msg stats
 	channelStatsInfo      *ChannelStatsInfo
@@ -203,7 +202,6 @@ func NewChannel(topicName string, part int, topicOrdered bool, channelName strin
 		c.waitingRequeueMsgs = make(map[MessageID]*Message, 100)
 		c.delayedConfirmedMsgs = make(map[MessageID]Message, MaxWaitingDelayed)
 	}
-	c.peekedMsgs = make([]Message, memSizeForSmall)
 
 	if len(opt.E2EProcessingLatencyPercentiles) > 0 {
 		c.e2eProcessingLatencyStream = quantile.New(
@@ -2296,94 +2294,8 @@ exit:
 
 	if !c.IsConsumeDisabled() && !c.IsOrdered() && delayedQueue != nil &&
 		needPeekDelay && clientNum > 0 {
-		peekStart := time.Now()
-		newAdded := 0
-		if len(c.peekedMsgs) != MaxWaitingDelayed {
-			c.peekedMsgs = make([]Message, MaxWaitingDelayed)
-		}
-		cnt, err := delayedQueue.PeekRecentChannelTimeout(tnow, c.peekedMsgs, c.GetName())
+		newAdded, cnt, err := c.peekAndReqDelayedMessages(tnow, delayedQueue)
 		if err == nil {
-			for _, tmpMsg := range c.peekedMsgs[:cnt] {
-				m := tmpMsg
-				c.inFlightMutex.Lock()
-				c.confirmMutex.Lock()
-				oldMsg, cok := c.delayedConfirmedMsgs[m.DelayedOrigID]
-				c.confirmMutex.Unlock()
-				if cok {
-					// avoid to pop some recently confirmed delayed messages, avoid possible duplicate
-
-					// the delayed confirmed message may be requeue to end again
-					// so we check if the delayed ts is the same.
-					if m.DelayedTs != oldMsg.DelayedTs {
-						nsqLog.LogDebugf("delayed message already confirmed with different ts %v, %v ", PrintMessageNoBody(&m), oldMsg.DelayedTs)
-					} else {
-						nsqLog.Logf("delayed message already confirmed %v ", m)
-					}
-				} else {
-					oldMsg2, ok2 := c.inFlightMessages[m.DelayedOrigID]
-					_, ok3 := c.waitingRequeueChanMsgs[m.DelayedOrigID]
-					_, ok4 := c.waitingRequeueMsgs[m.DelayedOrigID]
-					// it may happen the delayed message is synced to slave but the
-					// consume offset is not synced yet (since it is async), and then
-					// the leader changed to the slave. The new leader will read the
-					// old message from disk queue and put into the inflight queue.
-					// The inflight may be conflicted with the delayed and the attempts will be
-					// lost. we need handle this.
-					if ok2 {
-						// the delayed orig message id in delayed message is the actual id in the topic queue
-						if oldMsg2.ID != m.DelayedOrigID || oldMsg2.DelayedTs != m.DelayedTs {
-							nsqLog.Logf("old msg %v in flight mismatch peek from delayed queue, new %v ",
-								oldMsg2, m)
-							if oldMsg2.ID == m.DelayedOrigID &&
-								oldMsg2.DelayedChannel == "" &&
-								oldMsg2.DelayedOrigID == 0 && oldMsg2.DelayedTs == 0 &&
-								oldMsg2.DelayedType == 0 {
-								// this inflight message is caused by leader changed, and the
-								// new leader read from disk queue (which will be treated as non delayed message)
-								if bytes.Equal(oldMsg2.Body, m.Body) {
-									// just fin it
-									nsqLog.Logf("old msg %v in flight confirmed since in delayed queue",
-										PrintMessage(oldMsg2))
-									c.ConfirmBackendQueue(oldMsg2)
-								}
-							}
-						}
-					} else if ok3 || ok4 {
-						// already waiting requeue
-						nsqLog.LogDebugf("delayed waiting in requeued %v ", m)
-					} else {
-						tmpID := m.ID
-						m.ID = m.DelayedOrigID
-						m.DelayedOrigID = tmpID
-
-						if tnow > m.DelayedTs+int64(c.option.QueueScanInterval*2) {
-							nsqLog.LogDebugf("channel %v delayed is too late now %v for message: %v, peeking time: %v",
-								c.GetName(), tnow, m, peekStart)
-						}
-						if tnow < m.DelayedTs {
-							nsqLog.LogDebugf("channel %v delayed is too early now %v for message: %v, peeking time: %v",
-								c.GetName(), tnow, m, peekStart)
-						}
-
-						nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "DELAY_QUEUE_TIMEOUT", m.TraceID, &m, "", 0)
-
-						newAdded++
-						if m.belongedConsumer != nil {
-							m.belongedConsumer.RequeuedMessage()
-							m.belongedConsumer = nil
-						}
-
-						atomic.AddInt64(&c.deferredFromDelay, 1)
-
-						atomic.StoreInt32(&m.deferredCnt, 0)
-						c.doRequeue(&m, "")
-					}
-				}
-				c.inFlightMutex.Unlock()
-			}
-			c.confirmMutex.Lock()
-			c.delayedConfirmedMsgs = make(map[MessageID]Message, MaxWaitingDelayed)
-			c.confirmMutex.Unlock()
 			if newAdded > 0 && nsqLog.Level() >= levellogger.LOG_DEBUG {
 				nsqLog.LogDebugf("channel %v delayed waiting peeked %v added %v new : %v",
 					c.GetName(), cnt, newAdded, waitingDelayCnt)
@@ -2439,6 +2351,97 @@ exit:
 	}
 
 	return dirty, checkFast
+}
+
+func (c *Channel) peekAndReqDelayedMessages(tnow int64, delayedQueue *DelayQueue) (int, int, error) {
+	newAdded := 0
+	peekedMsgs := peekBufPoolGet()
+	defer peekBufPoolPut(peekedMsgs)
+	cnt, err := delayedQueue.PeekRecentChannelTimeout(tnow, peekedMsgs, c.GetName())
+	if err != nil {
+		return newAdded, 0, err
+	}
+	for _, tmpMsg := range peekedMsgs[:cnt] {
+		m := tmpMsg
+		c.inFlightMutex.Lock()
+		c.confirmMutex.Lock()
+		oldMsg, cok := c.delayedConfirmedMsgs[m.DelayedOrigID]
+		c.confirmMutex.Unlock()
+		if cok {
+			// avoid to pop some recently confirmed delayed messages, avoid possible duplicate
+			// the delayed confirmed message may be requeue to end again
+			// so we check if the delayed ts is the same.
+			if m.DelayedTs != oldMsg.DelayedTs {
+				nsqLog.LogDebugf("delayed message already confirmed with different ts %v, %v ", PrintMessageNoBody(&m), oldMsg.DelayedTs)
+			} else {
+				nsqLog.Logf("delayed message already confirmed %v ", m)
+			}
+		} else {
+			oldMsg2, ok2 := c.inFlightMessages[m.DelayedOrigID]
+			_, ok3 := c.waitingRequeueChanMsgs[m.DelayedOrigID]
+			_, ok4 := c.waitingRequeueMsgs[m.DelayedOrigID]
+			// it may happen the delayed message is synced to slave but the
+			// consume offset is not synced yet (since it is async), and then
+			// the leader changed to the slave. The new leader will read the
+			// old message from disk queue and put into the inflight queue.
+			// The inflight may be conflicted with the delayed and the attempts will be
+			// lost. we need handle this.
+			if ok2 {
+				// the delayed orig message id in delayed message is the actual id in the topic queue
+				if oldMsg2.ID != m.DelayedOrigID || oldMsg2.DelayedTs != m.DelayedTs {
+					nsqLog.Logf("old msg %v in flight mismatch peek from delayed queue, new %v ",
+						oldMsg2, m)
+					if oldMsg2.ID == m.DelayedOrigID &&
+						oldMsg2.DelayedChannel == "" &&
+						oldMsg2.DelayedOrigID == 0 && oldMsg2.DelayedTs == 0 &&
+						oldMsg2.DelayedType == 0 {
+						// this inflight message is caused by leader changed, and the
+						// new leader read from disk queue (which will be treated as non delayed message)
+						if bytes.Equal(oldMsg2.Body, m.Body) {
+							// just fin it
+							nsqLog.Logf("old msg %v in flight confirmed since in delayed queue",
+								PrintMessage(oldMsg2))
+							c.ConfirmBackendQueue(oldMsg2)
+						}
+					}
+				}
+			} else if ok3 || ok4 {
+				// already waiting requeue
+				nsqLog.LogDebugf("delayed waiting in requeued %v ", m)
+			} else {
+				tmpID := m.ID
+				m.ID = m.DelayedOrigID
+				m.DelayedOrigID = tmpID
+
+				if tnow > m.DelayedTs+int64(c.option.QueueScanInterval*2) {
+					nsqLog.LogDebugf("channel %v delayed is too late now %v for message: %v",
+						c.GetName(), tnow, m)
+				}
+				if tnow < m.DelayedTs {
+					nsqLog.LogDebugf("channel %v delayed is too early now %v for message: %v",
+						c.GetName(), tnow, m)
+				}
+
+				nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "DELAY_QUEUE_TIMEOUT", m.TraceID, &m, "", 0)
+
+				newAdded++
+				if m.belongedConsumer != nil {
+					m.belongedConsumer.RequeuedMessage()
+					m.belongedConsumer = nil
+				}
+
+				atomic.AddInt64(&c.deferredFromDelay, 1)
+
+				atomic.StoreInt32(&m.deferredCnt, 0)
+				c.doRequeue(&m, "")
+			}
+		}
+		c.inFlightMutex.Unlock()
+	}
+	c.confirmMutex.Lock()
+	c.delayedConfirmedMsgs = make(map[MessageID]Message, MaxWaitingDelayed)
+	c.confirmMutex.Unlock()
+	return newAdded, cnt, nil
 }
 
 func (c *Channel) GetDelayedQueueConsumedDetails() (int64, RecentKeyList, map[int]uint64, map[string]uint64) {
