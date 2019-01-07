@@ -237,23 +237,16 @@ func (n *NSQD) GetTopicPartitions(topicName string) map[int]*Topic {
 	return tmpMap
 }
 
-func (n *NSQD) GetTopicMapCopy() map[string]map[int]*Topic {
-	tmpMap := make(map[string]map[int]*Topic)
+func (n *NSQD) GetTopicMapCopy() []*Topic {
 	n.RLock()
-	for k, topics := range n.topicMap {
-		var tmpTopics map[int]*Topic
-		var ok bool
-		tmpTopics, ok = tmpMap[k]
-		if !ok {
-			tmpTopics = make(map[int]*Topic, len(topics))
-			tmpMap[k] = tmpTopics
-		}
-		for p, t := range topics {
-			tmpTopics[p] = t
+	tmpList := make([]*Topic, 0, len(n.topicMap)*2)
+	for _, topics := range n.topicMap {
+		for _, t := range topics {
+			tmpList = append(tmpList, t)
 		}
 	}
 	n.RUnlock()
-	return tmpMap
+	return tmpList
 }
 
 func (n *NSQD) Start() {
@@ -376,7 +369,7 @@ func (n *NSQD) NotifyPersistMetadata() {
 	}
 }
 
-func (n *NSQD) persistMetadata(currentTopicMap map[string]map[int]*Topic) error {
+func (n *NSQD) persistMetadata(currentTopics []*Topic) error {
 	// persist metadata about what topics/channels we have
 	// so that upon restart we can get back to the same state
 	fileName := fmt.Sprintf(path.Join(n.GetOpts().DataPath, "nsqd.%d.dat"), n.GetOpts().ID)
@@ -385,25 +378,23 @@ func (n *NSQD) persistMetadata(currentTopicMap map[string]map[int]*Topic) error 
 
 	js := make(map[string]interface{})
 	topics := []interface{}{}
-	for _, topicParts := range currentTopicMap {
-		for _, topic := range topicParts {
-			if topic.ephemeral {
-				continue
-			}
-			topicData := make(map[string]interface{})
-			topicData["name"] = topic.GetTopicName()
-			topicData["partition"] = topic.GetTopicPart()
-			topicData["ext"] = topic.IsExt()
-			topicData["ordered"] = topic.IsOrdered()
-			// we save the channels to topic, but for compatible we need save empty channels to json
-			channels := []interface{}{}
-			err := topic.SaveChannelMeta()
-			if err != nil {
-				nsqLog.Warningf("save topic %v channel meta failed: %v", topic.GetFullName(), err)
-			}
-			topicData["channels"] = channels
-			topics = append(topics, topicData)
+	for _, topic := range currentTopics {
+		if topic.ephemeral {
+			continue
 		}
+		topicData := make(map[string]interface{})
+		topicData["name"] = topic.GetTopicName()
+		topicData["partition"] = topic.GetTopicPart()
+		topicData["ext"] = topic.IsExt()
+		topicData["ordered"] = topic.IsOrdered()
+		// we save the channels to topic, but for compatible we need save empty channels to json
+		channels := []interface{}{}
+		err := topic.SaveChannelMeta()
+		if err != nil {
+			nsqLog.Warningf("save topic %v channel meta failed: %v", topic.GetFullName(), err)
+		}
+		topicData["channels"] = channels
+		topics = append(topics, topicData)
 	}
 	js["version"] = version.Binary
 	js["enabled_delayedqueue"] = atomic.LoadInt32(&EnableDelayedQueue)
@@ -447,12 +438,10 @@ func (n *NSQD) Exit() {
 
 	close(n.persistClosed)
 	n.persistWaitGroup.Wait()
-	tmpMap := n.GetTopicMapCopy()
+	topics := n.GetTopicMapCopy()
 	nsqLog.Logf("NSQ: closing topics")
-	for _, topics := range tmpMap {
-		for _, topic := range topics {
-			topic.Close()
-		}
+	for _, topic := range topics {
+		topic.Close()
 	}
 
 	// we want to do this last as it closes the idPump (if closed first it
@@ -689,27 +678,23 @@ func (n *NSQD) DeleteExistingTopic(topicName string, part int) error {
 }
 
 func (n *NSQD) CleanClientPubStats(remote string, protocol string) {
-	tmpMap := n.GetTopicMapCopy()
-	for _, topics := range tmpMap {
-		for _, t := range topics {
-			t.detailStats.RemovePubStats(remote, protocol)
-		}
+	topics := n.GetTopicMapCopy()
+	for _, t := range topics {
+		t.detailStats.RemovePubStats(remote, protocol)
 	}
 }
 
 func (n *NSQD) flushAll(all bool, flushCnt int) {
 	match := flushCnt % FLUSH_DISTANCE
-	tmpMap := n.GetTopicMapCopy()
-	for _, topics := range tmpMap {
-		for _, t := range topics {
-			if !all && t.IsWriteDisabled() {
-				continue
-			}
-			if !all && (((t.GetTopicPart() + 1) % FLUSH_DISTANCE) != match) {
-				continue
-			}
-			t.ForceFlush()
+	topics := n.GetTopicMapCopy()
+	for _, t := range topics {
+		if !all && t.IsWriteDisabled() {
+			continue
 		}
+		if !all && (((t.GetTopicPart() + 1) % FLUSH_DISTANCE) != match) {
+			continue
+		}
+		t.ForceFlush()
 	}
 }
 
@@ -751,15 +736,13 @@ func (n *NSQD) NotifyStateChanged(v interface{}, needPersist bool) {
 // channels returns a flat slice of all channels in all topics
 func (n *NSQD) channels() []*Channel {
 	var channels []*Channel
-	tmpMap := n.GetTopicMapCopy()
-	for _, topics := range tmpMap {
-		for _, t := range topics {
-			t.channelLock.RLock()
-			for _, c := range t.channelMap {
-				channels = append(channels, c)
-			}
-			t.channelLock.RUnlock()
+	topics := n.GetTopicMapCopy()
+	for _, t := range topics {
+		t.channelLock.RLock()
+		for _, c := range t.channelMap {
+			channels = append(channels, c)
 		}
+		t.channelLock.RUnlock()
 	}
 	return channels
 }

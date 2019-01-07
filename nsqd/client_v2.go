@@ -148,6 +148,8 @@ func NewClientV2(id int64, conn net.Conn, opts *Options, tls *tls.Config) *Clien
 
 		Conn: conn,
 
+		// TODO: use small to reduce memory by default, and
+		// increase it if really consume or publish happened
 		Reader: NewBufioReader(conn),
 		Writer: newBufioWriterSize(conn, defaultBufferSize),
 

@@ -224,21 +224,19 @@ func (n *NsqdServer) lookupLoop(pingInterval time.Duration, metaNotifyChan chan 
 			nsqd.NsqLogger().Logf("do full sync with lookup: %v", lp)
 			var commands []*nsq.Command
 			// build all the commands first so we exit the lock(s) as fast as possible
-			topicMap := n.ctx.nsqd.GetTopicMapCopy()
-			for _, topicParts := range topicMap {
-				for _, topic := range topicParts {
-					if topic.IsWriteDisabled() {
-						continue
-					}
-					channelMap := topic.GetChannelMapCopy()
+			topicParts := n.ctx.nsqd.GetTopicMapCopy()
+			for _, topic := range topicParts {
+				if topic.IsWriteDisabled() {
+					continue
+				}
+				channelMap := topic.GetChannelMapCopy()
+				commands = append(commands,
+					nsq.Register(topic.GetTopicName(),
+						strconv.Itoa(topic.GetTopicPart()), ""))
+				for _, channel := range channelMap {
 					commands = append(commands,
-						nsq.Register(topic.GetTopicName(),
-							strconv.Itoa(topic.GetTopicPart()), ""))
-					for _, channel := range channelMap {
-						commands = append(commands,
-							nsq.Register(channel.GetTopicName(),
-								strconv.Itoa(channel.GetTopicPart()), channel.GetName()))
-					}
+						nsq.Register(channel.GetTopicName(),
+							strconv.Itoa(channel.GetTopicPart()), channel.GetName()))
 				}
 			}
 

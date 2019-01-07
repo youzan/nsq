@@ -197,14 +197,13 @@ func NewChannel(topicName string, part int, topicOrdered bool, channelName strin
 		c.waitingRequeueChanMsgs = make(map[MessageID]*Message, memSizeForSmall)
 		c.waitingRequeueMsgs = make(map[MessageID]*Message, memSizeForSmall)
 		c.delayedConfirmedMsgs = make(map[MessageID]Message, memSizeForSmall)
-		c.peekedMsgs = make([]Message, memSizeForSmall)
 	} else {
-		c.requeuedMsgChan = make(chan *Message, opt.MaxRdyCount+1)
+		c.requeuedMsgChan = make(chan *Message, opt.MaxRdyCount/2+1)
 		c.waitingRequeueChanMsgs = make(map[MessageID]*Message, 100)
 		c.waitingRequeueMsgs = make(map[MessageID]*Message, 100)
 		c.delayedConfirmedMsgs = make(map[MessageID]Message, MaxWaitingDelayed)
-		c.peekedMsgs = make([]Message, MaxWaitingDelayed)
 	}
+	c.peekedMsgs = make([]Message, memSizeForSmall)
 
 	if len(opt.E2EProcessingLatencyPercentiles) > 0 {
 		c.e2eProcessingLatencyStream = quantile.New(
@@ -2299,6 +2298,9 @@ exit:
 		needPeekDelay && clientNum > 0 {
 		peekStart := time.Now()
 		newAdded := 0
+		if len(c.peekedMsgs) != MaxWaitingDelayed {
+			c.peekedMsgs = make([]Message, MaxWaitingDelayed)
+		}
 		cnt, err := delayedQueue.PeekRecentChannelTimeout(tnow, c.peekedMsgs, c.GetName())
 		if err == nil {
 			for _, tmpMsg := range c.peekedMsgs[:cnt] {
