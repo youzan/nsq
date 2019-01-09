@@ -37,14 +37,17 @@ func peekBufPoolPut(b []Message) {
 }
 
 var (
-	bufioReaderPool   sync.Pool
-	bufioWriter2kPool sync.Pool
-	bufioWriter4kPool sync.Pool
-	bufioWriter8kPool sync.Pool
+	bufioReaderPool      sync.Pool
+	bufioWriter2kPool    sync.Pool
+	bufioWriter4kPool    sync.Pool
+	bufioWriter8kPool    sync.Pool
+	bufioSmallWriterPool sync.Pool
 )
 
 func bufioWriterPool(size int) *sync.Pool {
 	switch size {
+	case 100:
+		return &bufioSmallWriterPool
 	case 2 << 10:
 		return &bufioWriter2kPool
 	case 4 << 10:

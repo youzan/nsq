@@ -527,6 +527,10 @@ func (p *protocolV2) messagePump(client *nsqd.ClientV2, startedChan chan bool,
 			if tag != "" {
 				client.SetTagMsgChannel(subChannel.GetOrCreateClientMsgChannel(tag))
 			}
+			err = client.SwitchToConsumer()
+			if err != nil {
+				goto exit
+			}
 		case identifyData := <-identifyEventChan:
 			// you can't IDENTIFY anymore
 			identifyEventChan = nil

@@ -4870,6 +4870,9 @@ func TestSnappy(t *testing.T) {
 	opts.Logger = newTestLogger(t)
 	opts.LogLevel = 2
 	opts.SnappyEnabled = true
+	if testing.Verbose() {
+		nsqdNs.SetLogger(opts.Logger)
+	}
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqdServer.Exit()
@@ -4912,6 +4915,7 @@ func TestSnappy(t *testing.T) {
 	topic.PutMessage(msg)
 	resp, _ = nsq.ReadResponse(compressConn)
 	frameType, data, _ = nsq.UnpackResponse(resp)
+	t.Logf("frameType: %d, data: %s, %v", frameType, data, resp)
 	msgOut, _ := nsq.DecodeMessageWithExt(data, topic.IsExt())
 	test.Equal(t, frameType, frameTypeMessage)
 	msgOutID := uint64(nsq.GetNewMessageID(msgOut.ID[:]))

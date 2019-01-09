@@ -16,7 +16,10 @@ import (
 	"github.com/youzan/nsq/internal/levellogger"
 )
 
-const defaultBufferSize = 4 * 1024
+// default is used for producer
+const defaultWriteBufferSize = 100
+const defaultConsumerWriteBufferSize = 4 * 1024
+
 const slowDownThreshold = 5
 
 const (
@@ -148,12 +151,11 @@ func NewClientV2(id int64, conn net.Conn, opts *Options, tls *tls.Config) *Clien
 
 		Conn: conn,
 
-		// TODO: use small to reduce memory by default, and
-		// increase it if really consume or publish happened
 		Reader: NewBufioReader(conn),
-		Writer: newBufioWriterSize(conn, defaultBufferSize),
+		// use small write buffer to reduce memory by default, and
+		// increase it if really consume happened
+		Writer: newBufioWriterSize(conn, defaultWriteBufferSize),
 
-		outputBufferSize:    int64(defaultBufferSize),
 		outputBufferTimeout: int64(50 * time.Millisecond),
 
 		msgTimeout: int64(opts.MsgTimeout),
@@ -535,6 +537,30 @@ func (c *ClientV2) GetHeartbeatInterval() time.Duration {
 	return time.Duration(atomic.LoadInt64(&c.heartbeatInterval))
 }
 
+func (c *ClientV2) SwitchToConsumer() error {
+	// client default is optimized for producer (use more reader buffer and less writer buffer)
+	// consumer optimize for write, use more writer buffer by default if not changed by client
+	s := atomic.LoadInt64(&c.outputBufferSize)
+	if s <= 0 {
+		// change default
+		c.writeLock.Lock()
+		defer c.writeLock.Unlock()
+		if c.tlsConn != nil {
+			return nil
+		}
+		if atomic.LoadInt32(&c.Deflate) == 1 || atomic.LoadInt32(&c.Snappy) == 1 {
+			return nil
+		}
+		atomic.StoreInt64(&c.outputBufferSize, int64(defaultConsumerWriteBufferSize))
+		err := c.Writer.Flush()
+		if err != nil {
+			return err
+		}
+		c.Writer = newBufioWriterSize(c.Conn, defaultConsumerWriteBufferSize)
+	}
+	return nil
+}
+
 func (c *ClientV2) SetHeartbeatInterval(desiredInterval int) error {
 	switch {
 	case desiredInterval == -1:
@@ -552,7 +578,11 @@ func (c *ClientV2) SetHeartbeatInterval(desiredInterval int) error {
 }
 
 func (c *ClientV2) GetOutputBufferSize() int64 {
-	return atomic.LoadInt64(&c.outputBufferSize)
+	s := atomic.LoadInt64(&c.outputBufferSize)
+	if s <= 0 {
+		return defaultWriteBufferSize
+	}
+	return s
 }
 
 func (c *ClientV2) SetOutputBufferSize(desiredSize int) error {
@@ -697,7 +727,7 @@ func (c *ClientV2) UpgradeTLS() error {
 	c.tlsConn = tlsConn
 
 	c.Reader = NewBufioReader(c.tlsConn)
-	c.Writer = newBufioWriterSize(c.tlsConn, int(atomic.LoadInt64(&c.outputBufferSize)))
+	c.Writer = newBufioWriterSize(c.tlsConn, int(c.GetOutputBufferSize()))
 
 	atomic.StoreInt32(&c.TLS, 1)
 
@@ -717,7 +747,7 @@ func (c *ClientV2) UpgradeDeflate(level int) error {
 
 	fw, _ := flate.NewWriter(conn, level)
 	c.flateWriter = fw
-	c.Writer = newBufioWriterSize(fw, int(atomic.LoadInt64(&c.outputBufferSize)))
+	c.Writer = newBufioWriterSize(fw, int(c.GetOutputBufferSize()))
 
 	atomic.StoreInt32(&c.Deflate, 1)
 
@@ -734,7 +764,7 @@ func (c *ClientV2) UpgradeSnappy() error {
 	}
 
 	c.Reader = NewBufioReader(snappy.NewReader(conn))
-	c.Writer = newBufioWriterSize(snappy.NewWriter(conn), int(atomic.LoadInt64(&c.outputBufferSize)))
+	c.Writer = newBufioWriterSize(snappy.NewWriter(conn), int(c.GetOutputBufferSize()))
 
 	atomic.StoreInt32(&c.Snappy, 1)
 
