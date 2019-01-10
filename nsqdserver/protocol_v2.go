@@ -527,7 +527,7 @@ func (p *protocolV2) messagePump(client *nsqd.ClientV2, startedChan chan bool,
 			if tag != "" {
 				client.SetTagMsgChannel(subChannel.GetOrCreateClientMsgChannel(tag))
 			}
-			err = client.SwitchToConsumer()
+			err = client.SwitchToConsumer(subChannel.IsEphemeral())
 			if err != nil {
 				goto exit
 			}

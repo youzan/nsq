@@ -537,27 +537,32 @@ func (c *ClientV2) GetHeartbeatInterval() time.Duration {
 	return time.Duration(atomic.LoadInt64(&c.heartbeatInterval))
 }
 
-func (c *ClientV2) SwitchToConsumer() error {
+func (c *ClientV2) SwitchToConsumer(isEphemeral bool) error {
 	// client default is optimized for producer (use more reader buffer and less writer buffer)
 	// consumer optimize for write, use more writer buffer by default if not changed by client
-	s := atomic.LoadInt64(&c.outputBufferSize)
-	if s <= 0 {
-		// change default
-		c.writeLock.Lock()
-		defer c.writeLock.Unlock()
-		if c.tlsConn != nil {
-			return nil
-		}
-		if atomic.LoadInt32(&c.Deflate) == 1 || atomic.LoadInt32(&c.Snappy) == 1 {
-			return nil
-		}
-		atomic.StoreInt64(&c.outputBufferSize, int64(defaultConsumerWriteBufferSize))
-		err := c.Writer.Flush()
-		if err != nil {
-			return err
-		}
-		c.Writer = newBufioWriterSize(c.Conn, defaultConsumerWriteBufferSize)
+	// for ephemeral channel client we keep use small buffer
+	if isEphemeral {
+		return nil
 	}
+	s := atomic.LoadInt64(&c.outputBufferSize)
+	if s > 0 {
+		return nil
+	}
+	// change default
+	c.writeLock.Lock()
+	defer c.writeLock.Unlock()
+	if c.tlsConn != nil {
+		return nil
+	}
+	if atomic.LoadInt32(&c.Deflate) == 1 || atomic.LoadInt32(&c.Snappy) == 1 {
+		return nil
+	}
+	atomic.StoreInt64(&c.outputBufferSize, int64(defaultConsumerWriteBufferSize))
+	err := c.Writer.Flush()
+	if err != nil {
+		return err
+	}
+	c.Writer = newBufioWriterSize(c.Conn, defaultConsumerWriteBufferSize)
 	return nil
 }
 

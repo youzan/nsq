@@ -906,7 +906,7 @@ func (c *Channel) ConfirmBackendQueue(msg *Message) (BackendOffset, int64, bool)
 }
 
 func (c *Channel) ShouldWaitDelayed(msg *Message) bool {
-	if c.IsOrdered() {
+	if c.IsOrdered() || c.IsEphemeral() {
 		return false
 	}
 	// while there are some waiting confirmed messages and some disk delayed messages, if we
@@ -1072,7 +1072,7 @@ func (c *Channel) ShouldRequeueToEnd(clientID int64, clientAddr string, id Messa
 	if !byClient {
 		return nil, false
 	}
-	if c.IsOrdered() {
+	if c.IsOrdered() || c.IsEphemeral() {
 		return nil, false
 	}
 	threshold := time.Minute
@@ -1680,7 +1680,7 @@ func (c *Channel) TryWakeupRead() {
 	if c.IsConsumeDisabled() {
 		return
 	}
-	if c.IsOrdered() {
+	if c.IsOrdered() || c.IsEphemeral() {
 		return
 	}
 	select {
@@ -2162,7 +2162,7 @@ func (c *Channel) processInFlightQueue(tnow int64) (bool, bool) {
 					c.GetName(), flightCnt, atomic.LoadInt32(&c.waitingConfirm),
 					c.GetConfirmed())
 				canReqEnd := tnow-atomic.LoadInt64(&c.lastDelayedReqToEndTs) > delayedReqToEndMinInterval.Nanoseconds()
-				if !c.IsOrdered() && atomic.LoadInt32(&c.waitingConfirm) >= int32(c.option.MaxConfirmWin) && canReqEnd {
+				if !c.IsEphemeral() && !c.IsOrdered() && atomic.LoadInt32(&c.waitingConfirm) >= int32(c.option.MaxConfirmWin) && canReqEnd {
 					confirmed := c.GetConfirmed().Offset()
 					var blockingMsg *Message
 					for _, m := range c.inFlightMessages {
@@ -2354,6 +2354,9 @@ exit:
 }
 
 func (c *Channel) peekAndReqDelayedMessages(tnow int64, delayedQueue *DelayQueue) (int, int, error) {
+	if c.IsEphemeral() {
+		return 0, 0, nil
+	}
 	newAdded := 0
 	peekedMsgs := peekBufPoolGet()
 	defer peekBufPoolPut(peekedMsgs)
