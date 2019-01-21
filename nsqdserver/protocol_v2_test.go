@@ -4493,6 +4493,60 @@ func TestFatalError(t *testing.T) {
 	test.NotNil(t, err)
 }
 
+func TestOutputBufferingNoWait(t *testing.T) {
+	// TODO: shorter buffer testing if used
+	return
+	opts := nsqdNs.NewOptions()
+	opts.Logger = newTestLogger(t)
+	opts.LogLevel = 1
+	opts.MaxOutputBufferSize = 512 * 1024
+	opts.MaxOutputBufferTimeout = time.Second
+	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
+	defer os.RemoveAll(opts.DataPath)
+	defer nsqdServer.Exit()
+
+	topicName := "test_output_buffering" + strconv.Itoa(int(time.Now().Unix()))
+
+	conn, err := mustConnectNSQD(tcpAddr)
+	test.Equal(t, err, nil)
+	defer conn.Close()
+
+	outputBufferSize := 256 * 1024
+	outputBufferTimeout := 500
+
+	topic := nsqd.GetTopicIgnPart(topicName)
+	topic.GetChannel("ch")
+	msg := nsqdNs.NewMessage(0, make([]byte, outputBufferSize-1024))
+	topic.PutMessage(msg)
+
+	start := time.Now()
+	data := identify(t, conn, map[string]interface{}{
+		"output_buffer_size":    outputBufferSize,
+		"output_buffer_timeout": outputBufferTimeout,
+	}, frameTypeResponse)
+	var decoded map[string]interface{}
+	json.Unmarshal(data, &decoded)
+	v, ok := decoded["output_buffer_size"]
+	test.Equal(t, ok, true)
+	test.Equal(t, int(v.(float64)), outputBufferSize)
+	v, _ = decoded["output_buffer_timeout"]
+	test.Equal(t, int(v.(float64)), outputBufferTimeout)
+	sub(t, conn, topicName, "ch")
+
+	_, err = nsq.Ready(10).WriteTo(conn)
+	test.Equal(t, err, nil)
+
+	msgOut := recvNextMsgAndCheck(t, conn, len(msg.Body), msg.TraceID, false)
+	end := time.Now()
+	t.Logf("recv cost : %v", end.Sub(start))
+
+	test.Equal(t, int(end.Sub(start)/time.Millisecond) < outputBufferTimeout, true)
+	test.Equal(t, int(end.Sub(start)/time.Millisecond) > 1, true)
+
+	msgOutID := uint64(nsq.GetNewMessageID(msgOut.ID[:]))
+	test.Equal(t, msgOutID, uint64(msg.ID))
+}
+
 func TestOutputBuffering(t *testing.T) {
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
@@ -4536,6 +4590,7 @@ func TestOutputBuffering(t *testing.T) {
 
 	msgOut := recvNextMsgAndCheck(t, conn, len(msg.Body), msg.TraceID, false)
 	end := time.Now()
+	t.Logf("recv cost : %v", end.Sub(start))
 
 	test.Equal(t, int(end.Sub(start)/time.Millisecond) >= outputBufferTimeout, true)
 

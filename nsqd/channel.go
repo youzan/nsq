@@ -514,6 +514,9 @@ func (c *Channel) Close() error {
 // waiting in memory inflight
 // waiting in delayed inflight
 // waiting requeued
+
+// waiting read more data from disk, this means the reader has reached end of queue.
+// However, there may be some other messages in memory waiting confirm.
 func (c *Channel) IsWaitingMoreDiskData() bool {
 	if c.IsPaused() || c.IsConsumeDisabled() || c.IsSkipped() {
 		return false
@@ -525,7 +528,7 @@ func (c *Channel) IsWaitingMoreDiskData() bool {
 	return false
 }
 
-// waiting more data is indicated all msgs are consumed
+// waiting more data is indicated all msgs are consumed and confirmed
 // if some delayed message in channel, waiting more data is not true
 func (c *Channel) IsWaitingMoreData() bool {
 	if c.IsPaused() || c.IsConsumeDisabled() || c.IsSkipped() {
