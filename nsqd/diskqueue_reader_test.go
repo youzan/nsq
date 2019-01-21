@@ -27,7 +27,7 @@ func TestDiskQueueReaderResetConfirmed(t *testing.T) {
 	for i := 0; i < msgNum; i++ {
 		dqWriter.Put(msg)
 	}
-	dqWriter.Flush()
+	dqWriter.Flush(false)
 	end := dqWriter.GetQueueWriteEnd()
 	test.Nil(t, err)
 
@@ -96,7 +96,7 @@ func TestDiskQueueReaderResetRead(t *testing.T) {
 	for i := 0; i < msgNum; i++ {
 		dqWriter.Put(msg)
 	}
-	dqWriter.Flush()
+	dqWriter.Flush(false)
 	end := dqWriter.GetQueueWriteEnd()
 	test.Nil(t, err)
 
@@ -193,7 +193,7 @@ func TestDiskQueueReaderSkip(t *testing.T) {
 	for i := 0; i < msgNum; i++ {
 		dqWriter.Put(msg)
 	}
-	dqWriter.Flush()
+	dqWriter.Flush(false)
 	end := dqWriter.GetQueueWriteEnd()
 	test.Nil(t, err)
 
@@ -289,7 +289,7 @@ func TestDiskQueueReaderUpdateEnd(t *testing.T) {
 			midEnd = dqWriter.GetQueueWriteEnd()
 		}
 	}
-	dqWriter.Flush()
+	dqWriter.Flush(false)
 	end := dqWriter.GetQueueWriteEnd()
 	test.Nil(t, err)
 
@@ -359,7 +359,7 @@ func TestDiskQueueSnapshotReader(t *testing.T) {
 			midEnd2 = dqWriter.GetQueueWriteEnd()
 		}
 	}
-	dqWriter.Flush()
+	dqWriter.Flush(false)
 	end := dqWriter.GetQueueWriteEnd()
 	test.Nil(t, err)
 

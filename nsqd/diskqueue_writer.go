@@ -69,6 +69,7 @@ type diskQueueWriter struct {
 
 	writeFile    *os.File
 	bufferWriter *bufio.Writer
+	bufSize      int64
 }
 
 type extraMeta struct {
@@ -121,6 +122,10 @@ func newDiskQueueWriter(name string, dataPath string, maxBytesPerFile int64,
 	}
 
 	return &d, nil
+}
+
+func (d *diskQueueWriter) SetBufSize(s int64) {
+	atomic.StoreInt64(&d.bufSize, s)
 }
 
 func (d *diskQueueWriter) PutV2(data []byte) (BackendOffset, int32, diskQueueEndInfo, error) {
@@ -186,7 +191,7 @@ func (d *diskQueueWriter) RollbackWriteV2(offset BackendOffset, diffCnt uint64) 
 	}
 
 	if d.needSync {
-		d.sync()
+		d.sync(true)
 	}
 
 	if offset > d.diskWriteEnd.Offset() {
@@ -425,7 +430,7 @@ func (d *diskQueueWriter) ResetWriteEndV2(offset BackendOffset, totalCnt int64) 
 		return d.diskWriteEnd, ErrInvalidOffset
 	}
 	if d.needSync {
-		d.sync()
+		d.sync(true)
 	}
 	nsqLog.Logf("reset write end from %v to %v, reset to totalCnt: %v", d.diskWriteEnd.Offset(), offset, totalCnt)
 	if offset == 0 {
@@ -480,7 +485,7 @@ func (d *diskQueueWriter) RemoveTo(destPath string) error {
 	defer d.Unlock()
 	d.exitFlag = 1
 	nsqLog.Logf("DISKQUEUE(%s): removing to %v", d.name, destPath)
-	d.sync()
+	d.sync(true)
 	d.closeCurrentFile()
 	d.saveFileOffsetMeta()
 	for i := int64(0); i <= d.diskWriteEnd.EndOffset.FileNum; i++ {
@@ -525,7 +530,7 @@ func (d *diskQueueWriter) exit(deleted bool) error {
 		nsqLog.Logf("DISKQUEUE(%s): closing", d.name)
 	}
 
-	d.sync()
+	d.sync(true)
 	if deleted {
 		return d.deleteAllFiles(deleted)
 	}
@@ -671,6 +676,7 @@ func (d *diskQueueWriter) writeOne(data []byte, isRaw bool, msgCnt int32) (Backe
 			}
 		}
 		if d.bufferWriter == nil {
+			// TODO: maybe we can avoid use large buffer if sync count is small
 			d.bufferWriter = bufio.NewWriterSize(d.writeFile, writeBufSize)
 		} else {
 			d.bufferWriter.Reset(d.writeFile)
@@ -685,7 +691,7 @@ func (d *diskQueueWriter) writeOne(data []byte, isRaw bool, msgCnt int32) (Backe
 
 		err = binary.Write(d.bufferWriter, binary.BigEndian, dataLen)
 		if err != nil {
-			d.sync()
+			d.sync(true)
 			if d.writeFile != nil {
 				d.writeFile.Close()
 				d.writeFile = nil
@@ -696,7 +702,7 @@ func (d *diskQueueWriter) writeOne(data []byte, isRaw bool, msgCnt int32) (Backe
 	}
 	_, err = d.bufferWriter.Write(data)
 	if err != nil {
-		d.sync()
+		d.sync(true)
 		if d.writeFile != nil {
 			d.writeFile.Close()
 			d.writeFile = nil
@@ -720,7 +726,7 @@ func (d *diskQueueWriter) writeOne(data []byte, isRaw bool, msgCnt int32) (Backe
 
 	if d.diskWriteEnd.EndOffset.Pos >= d.maxBytesPerFile {
 		// sync every time we start writing to a new file
-		err = d.sync()
+		err = d.sync(false)
 		if err != nil {
 			nsqLog.LogErrorf("diskqueue(%s) failed to sync - %s", d.name, err)
 		}
@@ -740,7 +746,7 @@ func (d *diskQueueWriter) writeOne(data []byte, isRaw bool, msgCnt int32) (Backe
 	return writeOffset, int32(totalBytes), &d.diskWriteEnd, err
 }
 
-func (d *diskQueueWriter) Flush() error {
+func (d *diskQueueWriter) Flush(fsync bool) error {
 	d.Lock()
 	defer d.Unlock()
 
@@ -749,7 +755,7 @@ func (d *diskQueueWriter) Flush() error {
 	}
 	s := time.Now()
 	if d.needSync {
-		return d.sync()
+		return d.sync(fsync)
 	}
 	cost := time.Now().Sub(s)
 	if cost > time.Second {
@@ -776,11 +782,11 @@ func (d *diskQueueWriter) FlushBuffer() bool {
 }
 
 // sync fsyncs the current writeFile and persists metadata
-func (d *diskQueueWriter) sync() error {
+func (d *diskQueueWriter) sync(fsync bool) error {
 	if d.bufferWriter != nil {
 		d.bufferWriter.Flush()
 	}
-	if d.writeFile != nil {
+	if d.writeFile != nil && fsync {
 		err := d.writeFile.Sync()
 		if err != nil {
 			d.writeFile.Close()

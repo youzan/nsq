@@ -29,7 +29,7 @@ type BackendQueueWriter interface {
 	Close() error
 	Delete() error
 	Empty() error
-	Flush() error
+	Flush(bool) error
 	GetQueueWriteEnd() BackendQueueEnd
 	GetQueueReadStart() BackendQueueEnd
 	GetQueueReadEnd() BackendQueueEnd
