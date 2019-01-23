@@ -444,6 +444,8 @@ func (p *protocolV2) messagePump(client *nsqd.ClientV2, startedChan chan bool,
 	// NOTE: `flusherChan` is used to bound message latency for
 	// the pathological case of a channel on a low volume topic
 	// with >1 clients having >1 RDY counts
+	//var shortflusherChan <-chan time.Time
+	//shortFlushTimer := time.NewTimer(time.Millisecond)
 	var flusherChan <-chan time.Time
 	var sampleRate int32
 
@@ -476,6 +478,7 @@ func (p *protocolV2) messagePump(client *nsqd.ClientV2, startedChan chan bool,
 			// the client is not ready to receive messages...
 			clientMsgChan = nil
 			flusherChan = nil
+			//shortflusherChan = nil
 			// force flush
 			client.LockWrite()
 			err = client.Flush()
@@ -492,6 +495,7 @@ func (p *protocolV2) messagePump(client *nsqd.ClientV2, startedChan chan bool,
 				clientMsgChan = subChannel.GetClientMsgChan()
 			}
 			flusherChan = nil
+			//shortflusherChan = nil
 		} else {
 			// we're buffered (if there isn't any more data we should flush)...
 			// select on the flusher ticker channel, too
@@ -500,11 +504,28 @@ func (p *protocolV2) messagePump(client *nsqd.ClientV2, startedChan chan bool,
 				clientMsgChan = subChannel.GetClientMsgChan()
 			}
 			flusherChan = outputBufferTicker.C
+			// Outputbuffer timeout is enough for most clients who want to reduce latency.
+			// Throughput is more important than latency in most case so we no need use shorter flush ticker here.
+
+			//shortflusherChan = nil
+			//if subChannel.IsWaitingMoreDiskData() {
+			//	// no more data in channel, we should flush unflushed soon to reduce latency in low volume topic
+			//	shortFlushTimer.Reset(time.Millisecond)
+			//	shortflusherChan = shortFlushTimer.C
+			//}
 		}
 
 		select {
 		case <-client.ExitChan:
 			goto exit
+		//case <-shortflusherChan:
+		//	client.LockWrite()
+		//	err = client.Flush()
+		//	client.UnlockWrite()
+		//	if err != nil {
+		//		goto exit
+		//	}
+		//	flushed = true
 		case <-flusherChan:
 			// if this case wins, we're either starved
 			// or we won the race between other channels...
@@ -526,6 +547,10 @@ func (p *protocolV2) messagePump(client *nsqd.ClientV2, startedChan chan bool,
 			tag := client.GetDesiredTag()
 			if tag != "" {
 				client.SetTagMsgChannel(subChannel.GetOrCreateClientMsgChannel(tag))
+			}
+			err = client.SwitchToConsumer(subChannel.IsEphemeral())
+			if err != nil {
+				goto exit
 			}
 		case identifyData := <-identifyEventChan:
 			// you can't IDENTIFY anymore

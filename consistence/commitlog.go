@@ -39,6 +39,22 @@ var (
 var LOGROTATE_NUM = 2000000
 var MIN_KEEP_LOG_ITEM = 1000
 
+var bp sync.Pool
+
+func init() {
+	bp.New = func() interface{} {
+		return &bytes.Buffer{}
+	}
+}
+
+func bufferPoolGet() *bytes.Buffer {
+	return bp.Get().(*bytes.Buffer)
+}
+func bufferPoolPut(b *bytes.Buffer) {
+	b.Reset()
+	bp.Put(b)
+}
+
 type CommitLogData struct {
 	LogID int64
 	// epoch for the topic leader
@@ -266,7 +282,6 @@ type TopicCommitLogMgr struct {
 	pLogID        int64
 	path          string
 	committedLogs []CommitLogData
-	buffer        []byte
 	bufSize       int
 	appender      *os.File
 	currentStart  int64
@@ -296,7 +311,6 @@ func InitTopicCommitLogMgrWithFixMode(t string, p int, basepath string, commitBu
 		path:          fullpath,
 		bufSize:       commitBufSize,
 		committedLogs: make([]CommitLogData, 0, commitBufSize),
-		buffer:        make([]byte, 0, (commitBufSize+1)*GetLogDataSize()),
 	}
 	// load check point index. read sizeof(CommitLogData) until EOF.
 	var err error
@@ -1149,7 +1163,8 @@ func (self *TopicCommitLogMgr) flushCommitLogsNoLock() {
 		return
 	}
 	// write buffered commit logs to file.
-	tmpBuf := bytes.NewBuffer(self.buffer[:0])
+	tmpBuf := bufferPoolGet()
+	defer bufferPoolPut(tmpBuf)
 	for _, v := range self.committedLogs {
 		err := binary.Write(tmpBuf, binary.BigEndian, v)
 		if err != nil {

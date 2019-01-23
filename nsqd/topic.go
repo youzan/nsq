@@ -1263,6 +1263,10 @@ func (t *Topic) ForceFlush() {
 }
 
 func (t *Topic) flush(notifyChan bool) error {
+	syncEvery := atomic.LoadInt64(&t.dynamicConf.SyncEvery)
+	// TODO: if replication is 1 we may need fsync
+	useFsync := syncEvery == 1 || t.option.UseFsync
+
 	if t.GetDelayedQueue() != nil {
 		t.GetDelayedQueue().ForceFlush()
 	}
@@ -1275,7 +1279,7 @@ func (t *Topic) flush(notifyChan bool) error {
 		return nil
 	}
 	atomic.StoreInt64(&t.lastSyncCnt, t.backend.GetQueueWriteEnd().TotalMsgCnt())
-	err := t.backend.Flush()
+	err := t.backend.Flush(useFsync)
 	if err != nil {
 		nsqLog.LogErrorf("failed flush: %v", err)
 		return err

@@ -641,189 +641,183 @@ func (self *NsqdCoordinator) loadLocalTopicData() error {
 	if self.localNsqd == nil {
 		return nil
 	}
-	topicMap := self.localNsqd.GetTopicMapCopy()
+	topicParts := self.localNsqd.GetTopicMapCopy()
 	// first we check if all topic info is missing, this can avoid clear all topics if etcd is cleared by accident.
 	etcdOK := false
-	for topicName, topicParts := range topicMap {
-		for _, topic := range topicParts {
-			partition := topic.GetTopicPart()
-			_, err := self.leadership.GetTopicInfo(topicName, partition)
-			if err == nil {
-				// found one success topic means etcd is ok
-				etcdOK = true
-				break
-			}
-		}
-		if etcdOK {
+	for _, topic := range topicParts {
+		partition := topic.GetTopicPart()
+		_, err := self.leadership.GetTopicInfo(topic.GetTopicName(), partition)
+		if err == nil {
+			// found one success topic means etcd is ok
+			etcdOK = true
 			break
 		}
 	}
 	if !etcdOK {
-		if len(topicMap) > 0 {
-			coordLog.Infof("local topic number %v, but no etcd info found", len(topicMap))
+		if len(topicParts) > 0 {
+			coordLog.Infof("local topic number %v, but no etcd info found", len(topicParts))
 		}
 		return nil
 	}
 
-	for topicName, topicParts := range topicMap {
-		for _, topic := range topicParts {
-			partition := topic.GetTopicPart()
-			if tc, err := self.getTopicCoordData(topicName, partition); err == nil && tc != nil {
-				// already loaded
-				if tc.topicLeaderSession.LeaderNode == nil || tc.topicLeaderSession.Session == "" {
-					if tc.topicInfo.Leader == self.myNode.GetID() {
-						err := self.acquireTopicLeader(&tc.topicInfo)
-						if err != nil {
-							coordLog.Infof("failed to acquire leader : %v", err)
-						}
+	for _, topic := range topicParts {
+		topicName := topic.GetTopicName()
+		partition := topic.GetTopicPart()
+		if tc, err := self.getTopicCoordData(topicName, partition); err == nil && tc != nil {
+			// already loaded
+			if tc.topicLeaderSession.LeaderNode == nil || tc.topicLeaderSession.Session == "" {
+				if tc.topicInfo.Leader == self.myNode.GetID() {
+					err := self.acquireTopicLeader(&tc.topicInfo)
+					if err != nil {
+						coordLog.Infof("failed to acquire leader : %v", err)
 					}
-					if FindSlice(tc.topicInfo.ISR, self.myNode.GetID()) != -1 {
-						topicLeaderSession, err := self.leadership.GetTopicLeaderSession(topicName, partition)
-						if err != nil {
-							coordLog.Infof("failed to get topic leader info:%v-%v, err:%v", topicName, partition, err)
-						} else {
-							coord, err := self.getTopicCoord(topicName, partition)
-							if err == nil {
-								if topicLeaderSession.LeaderEpoch >= tc.topicLeaderSession.LeaderEpoch {
-									coord.dataMutex.Lock()
-									newCoordData := coord.coordData.GetCopy()
-									newCoordData.topicLeaderSession = *topicLeaderSession
-									coord.coordData = newCoordData
-									coord.dataMutex.Unlock()
-								}
+				}
+				if FindSlice(tc.topicInfo.ISR, self.myNode.GetID()) != -1 {
+					topicLeaderSession, err := self.leadership.GetTopicLeaderSession(topicName, partition)
+					if err != nil {
+						coordLog.Infof("failed to get topic leader info:%v-%v, err:%v", topicName, partition, err)
+					} else {
+						coord, err := self.getTopicCoord(topicName, partition)
+						if err == nil {
+							if topicLeaderSession.LeaderEpoch >= tc.topicLeaderSession.LeaderEpoch {
+								coord.dataMutex.Lock()
+								newCoordData := coord.coordData.GetCopy()
+								newCoordData.topicLeaderSession = *topicLeaderSession
+								coord.coordData = newCoordData
+								coord.dataMutex.Unlock()
 							}
 						}
 					}
 				}
-				continue
 			}
-			coordLog.Infof("loading topic: %v-%v", topicName, partition)
-			if topicName == "" {
-				continue
-			}
-			topicInfo, commonErr := self.leadership.GetTopicInfo(topicName, partition)
-			if commonErr != nil {
-				coordLog.Infof("failed to get topic info:%v-%v, err:%v", topicName, partition, commonErr)
-				if commonErr == ErrKeyNotFound {
-					rd, err := self.leadership.IsTopicRealDeleted(topicName)
-					if err != nil {
-						coordLog.Infof("failed to check the deleted state of topic :%v-%v, err:%v", topicName, partition, err)
-						continue
-					}
-					if rd {
-						self.forceCleanTopicData(topicName, partition)
-					} else {
-						coordLog.Infof("the deleted state of topic not found, can not delete:%v-%v", topicName, partition)
-					}
-				}
-				continue
-			}
-
-			if topicInfo.Replica < 1 {
-				coordLog.Errorf("topic replica is invalid:%v-%v, err:%v", topicName, partition, topicInfo.Replica)
-				continue
-			}
-			checkErr := self.checkLocalTopicMagicCode(topicInfo, topicInfo.Leader != self.myNode.GetID())
-			if checkErr != nil {
-				coordLog.Errorf("failed to check topic :%v-%v, err:%v", topicName, partition, checkErr)
-				go self.requestLeaveFromISR(topicInfo.Name, topicInfo.Partition)
-				continue
-			}
-
-			// while load topic from cluster, we need check the current state of replica.
-			// If we are one of ISR, that means we still have the newest data for this topic, we just check
-			// the data with leader.
-			// Otherwise we need catchup from leader.
-			// In some case, we still keep leader (maybe only one replica), We need check local data and try to get the leader session again.
-			// If we are removed from both ISR and catchups, we can safely remove local topic data
-			shouldLoad := FindSlice(topicInfo.ISR, self.myNode.GetID()) != -1 || FindSlice(topicInfo.CatchupList, self.myNode.GetID()) != -1
-			// here we will check the last commit log data logid is equal with the disk queue message
-			// this can avoid data corrupt, if not equal we need rollback and find backward for the right data.
-			// and check the first log commit log is valid on the disk queue, so that we can fix the wrong start of the commit log
-			forceFixLeader := false
-			if ForceFixLeaderData && self.GetMyID() == topicInfo.Leader && len(topicInfo.ISR) <= 1 {
-				forceFixLeader = true
-			}
-			if shouldLoad {
-				basepath := GetTopicPartitionBasePath(self.dataRootPath, topicInfo.Name, topicInfo.Partition)
-				topicLeaderSession, err := self.leadership.GetTopicLeaderSession(topicName, partition)
+			continue
+		}
+		coordLog.Infof("loading topic: %v-%v", topicName, partition)
+		if topicName == "" {
+			continue
+		}
+		topicInfo, commonErr := self.leadership.GetTopicInfo(topicName, partition)
+		if commonErr != nil {
+			coordLog.Infof("failed to get topic info:%v-%v, err:%v", topicName, partition, commonErr)
+			if commonErr == ErrKeyNotFound {
+				rd, err := self.leadership.IsTopicRealDeleted(topicName)
 				if err != nil {
-					coordLog.Infof("failed to get topic leader info:%v-%v, err:%v", topicName, partition, err)
-				}
-				_, _, loadErr := self.initLocalTopicCoord(topicInfo, topicLeaderSession, basepath, forceFixLeader)
-				if loadErr != nil {
-					coordLog.Infof("topic %v coord init error: %v", topicInfo.GetTopicDesp(), loadErr.Error())
+					coordLog.Infof("failed to check the deleted state of topic :%v-%v, err:%v", topicName, partition, err)
 					continue
 				}
-			} else {
-				coordLog.Infof("topic %v starting as not relevant", topicInfo.GetTopicDesp())
-				if len(topicInfo.ISR) >= topicInfo.Replica {
-					coordLog.Infof("no need load the local topic since the replica is enough: %v", topicInfo.GetTopicDesp())
-					self.forceCleanTopicData(topicInfo.Name, topicInfo.Partition)
-				} else if len(topicInfo.ISR)+len(topicInfo.CatchupList) < topicInfo.Replica {
-					go self.requestJoinCatchup(topicName, partition)
+				if rd {
+					self.forceCleanTopicData(topicName, partition)
 				} else {
-					// never hold any coordinator lock while close or delete local topic
-					self.localNsqd.CloseExistingTopic(topicName, partition)
+					coordLog.Infof("the deleted state of topic not found, can not delete:%v-%v", topicName, partition)
 				}
-				continue
 			}
+			continue
+		}
 
-			tc, err := self.getTopicCoord(topicInfo.Name, topicInfo.Partition)
+		if topicInfo.Replica < 1 {
+			coordLog.Errorf("topic replica is invalid:%v-%v, err:%v", topicName, partition, topicInfo.Replica)
+			continue
+		}
+		checkErr := self.checkLocalTopicMagicCode(topicInfo, topicInfo.Leader != self.myNode.GetID())
+		if checkErr != nil {
+			coordLog.Errorf("failed to check topic :%v-%v, err:%v", topicName, partition, checkErr)
+			go self.requestLeaveFromISR(topicInfo.Name, topicInfo.Partition)
+			continue
+		}
+
+		// while load topic from cluster, we need check the current state of replica.
+		// If we are one of ISR, that means we still have the newest data for this topic, we just check
+		// the data with leader.
+		// Otherwise we need catchup from leader.
+		// In some case, we still keep leader (maybe only one replica), We need check local data and try to get the leader session again.
+		// If we are removed from both ISR and catchups, we can safely remove local topic data
+		shouldLoad := FindSlice(topicInfo.ISR, self.myNode.GetID()) != -1 || FindSlice(topicInfo.CatchupList, self.myNode.GetID()) != -1
+		// here we will check the last commit log data logid is equal with the disk queue message
+		// this can avoid data corrupt, if not equal we need rollback and find backward for the right data.
+		// and check the first log commit log is valid on the disk queue, so that we can fix the wrong start of the commit log
+		forceFixLeader := false
+		if ForceFixLeaderData && self.GetMyID() == topicInfo.Leader && len(topicInfo.ISR) <= 1 {
+			forceFixLeader = true
+		}
+		if shouldLoad {
+			basepath := GetTopicPartitionBasePath(self.dataRootPath, topicInfo.Name, topicInfo.Partition)
+			topicLeaderSession, err := self.leadership.GetTopicLeaderSession(topicName, partition)
 			if err != nil {
-				coordLog.Errorf("no coordinator for topic: %v", topicInfo.GetTopicDesp())
+				coordLog.Infof("failed to get topic leader info:%v-%v, err:%v", topicName, partition, err)
+			}
+			_, _, loadErr := self.initLocalTopicCoord(topicInfo, topicLeaderSession, basepath, forceFixLeader)
+			if loadErr != nil {
+				coordLog.Infof("topic %v coord init error: %v", topicInfo.GetTopicDesp(), loadErr.Error())
 				continue
 			}
-			dyConf := &nsqd.TopicDynamicConf{SyncEvery: int64(topicInfo.SyncEvery),
-				AutoCommit:   0,
-				RetentionDay: topicInfo.RetentionDay,
-				OrderedMulti: topicInfo.OrderedMulti,
-				Ext:          topicInfo.Ext,
+		} else {
+			coordLog.Infof("topic %v starting as not relevant", topicInfo.GetTopicDesp())
+			if len(topicInfo.ISR) >= topicInfo.Replica {
+				coordLog.Infof("no need load the local topic since the replica is enough: %v", topicInfo.GetTopicDesp())
+				self.forceCleanTopicData(topicInfo.Name, topicInfo.Partition)
+			} else if len(topicInfo.ISR)+len(topicInfo.CatchupList) < topicInfo.Replica {
+				go self.requestJoinCatchup(topicName, partition)
+			} else {
+				// never hold any coordinator lock while close or delete local topic
+				self.localNsqd.CloseExistingTopic(topicName, partition)
 			}
-			tc.GetData().updateBufferSize(int(dyConf.SyncEvery - 1))
-			maybeInitDelayedQ(tc.GetData(), topic)
-			topic.SetDynamicInfo(*dyConf, tc.GetData().logMgr)
+			continue
+		}
 
-			localErr := checkAndFixLocalLogQueueData(tc.GetData(), topic, tc.GetData().logMgr, forceFixLeader)
+		tc, err := self.getTopicCoord(topicInfo.Name, topicInfo.Partition)
+		if err != nil {
+			coordLog.Errorf("no coordinator for topic: %v", topicInfo.GetTopicDesp())
+			continue
+		}
+		dyConf := &nsqd.TopicDynamicConf{SyncEvery: int64(topicInfo.SyncEvery),
+			AutoCommit:   0,
+			RetentionDay: topicInfo.RetentionDay,
+			OrderedMulti: topicInfo.OrderedMulti,
+			Ext:          topicInfo.Ext,
+		}
+		tc.GetData().updateBufferSize(int(dyConf.SyncEvery - 1))
+		maybeInitDelayedQ(tc.GetData(), topic)
+		topic.SetDynamicInfo(*dyConf, tc.GetData().logMgr)
+
+		localErr := checkAndFixLocalLogQueueData(tc.GetData(), topic, tc.GetData().logMgr, forceFixLeader)
+		if localErr != nil {
+			coordLog.Errorf("check local topic %v data need to be fixed:%v", topicInfo.GetTopicDesp(), localErr)
+			topic.SetDataFixState(true)
+			go self.requestLeaveFromISR(topicInfo.Name, topicInfo.Partition)
+		} else if !topicInfo.OrderedMulti {
+			delayQ := topic.GetDelayedQueue()
+			localErr = checkAndFixLocalLogQueueData(tc.GetData(), delayQ, tc.GetData().delayedLogMgr, forceFixLeader)
 			if localErr != nil {
-				coordLog.Errorf("check local topic %v data need to be fixed:%v", topicInfo.GetTopicDesp(), localErr)
-				topic.SetDataFixState(true)
+				coordLog.Errorf("check local topic %v delayed queue data need to be fixed:%v", topicInfo.GetTopicDesp(), localErr)
+				delayQ.SetDataFixState(true)
 				go self.requestLeaveFromISR(topicInfo.Name, topicInfo.Partition)
-			} else if !topicInfo.OrderedMulti {
-				delayQ := topic.GetDelayedQueue()
-				localErr = checkAndFixLocalLogQueueData(tc.GetData(), delayQ, tc.GetData().delayedLogMgr, forceFixLeader)
+			}
+			if delayQ != nil {
+				localErr = delayQ.CheckConsistence()
 				if localErr != nil {
 					coordLog.Errorf("check local topic %v delayed queue data need to be fixed:%v", topicInfo.GetTopicDesp(), localErr)
 					delayQ.SetDataFixState(true)
 					go self.requestLeaveFromISR(topicInfo.Name, topicInfo.Partition)
 				}
-				if delayQ != nil {
-					localErr = delayQ.CheckConsistence()
-					if localErr != nil {
-						coordLog.Errorf("check local topic %v delayed queue data need to be fixed:%v", topicInfo.GetTopicDesp(), localErr)
-						delayQ.SetDataFixState(true)
-						go self.requestLeaveFromISR(topicInfo.Name, topicInfo.Partition)
-					}
-				}
 			}
-			if topicInfo.Leader == self.myNode.GetID() {
-				coordLog.Infof("topic %v starting as leader.", topicInfo.GetTopicDesp())
-				tc.DisableWrite(true)
-				err := self.acquireTopicLeader(topicInfo)
-				if err != nil {
-					coordLog.Infof("failed to acquire leader while start as leader: %v", err)
-				}
+		}
+		if topicInfo.Leader == self.myNode.GetID() {
+			coordLog.Infof("topic %v starting as leader.", topicInfo.GetTopicDesp())
+			tc.DisableWrite(true)
+			err := self.acquireTopicLeader(topicInfo)
+			if err != nil {
+				coordLog.Infof("failed to acquire leader while start as leader: %v", err)
 			}
-			if FindSlice(topicInfo.ISR, self.myNode.GetID()) != -1 {
-				// restart node should rejoin the isr
-				coordLog.Infof("topic starting as isr .")
-				if len(topicInfo.ISR) > 1 && topicInfo.Leader != self.myNode.GetID() {
-					go self.requestLeaveFromISR(topicInfo.Name, topicInfo.Partition)
-				}
-			} else if FindSlice(topicInfo.CatchupList, self.myNode.GetID()) != -1 {
-				coordLog.Infof("topic %v starting as catchup", topicInfo.GetTopicDesp())
-				go self.catchupFromLeader(*topicInfo, "")
+		}
+		if FindSlice(topicInfo.ISR, self.myNode.GetID()) != -1 {
+			// restart node should rejoin the isr
+			coordLog.Infof("topic starting as isr .")
+			if len(topicInfo.ISR) > 1 && topicInfo.Leader != self.myNode.GetID() {
+				go self.requestLeaveFromISR(topicInfo.Name, topicInfo.Partition)
 			}
+		} else if FindSlice(topicInfo.CatchupList, self.myNode.GetID()) != -1 {
+			coordLog.Infof("topic %v starting as catchup", topicInfo.GetTopicDesp())
+			go self.catchupFromLeader(*topicInfo, "")
 		}
 	}
 	return nil

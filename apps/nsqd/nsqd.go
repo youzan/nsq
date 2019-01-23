@@ -168,6 +168,7 @@ func nsqdFlagSet(opts *nsqd.Options) *flag.FlagSet {
 	flagSet.Bool("allow-zan-test-skip", opts.AllowZanTestSkip, "allow zan test message filter in new created channel & channels under newly upgraded topic")
 	flagSet.Int("default-commit-buf", int(opts.DefaultCommitBuf), "the default commit buffer for topic data")
 	flagSet.Int("max-commit-buf", int(opts.MaxCommitBuf), "the max commit buffer for topic data")
+	flagSet.Bool("use-fsync", opts.UseFsync, "use fsync while flush data")
 	return flagSet
 }
 

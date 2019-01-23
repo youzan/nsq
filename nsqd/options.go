@@ -101,6 +101,7 @@ type Options struct {
 	AllowZanTestSkip      bool  `flag:"allow-zan-test-skip"`
 	DefaultCommitBuf      int32 `flag:"default-commit-buf" cfg:"default_commit_buf"`
 	MaxCommitBuf          int32 `flag:"max-commit-buf" cfg:"max_commit_buf"`
+	UseFsync              bool  `flag:"use-fsync"`
 }
 
 func NewOptions() *Options {

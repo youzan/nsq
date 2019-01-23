@@ -8,10 +8,14 @@ import (
 )
 
 var bp sync.Pool
+var peekPool sync.Pool
 
 func init() {
 	bp.New = func() interface{} {
 		return &bytes.Buffer{}
+	}
+	peekPool.New = func() interface{} {
+		return make([]Message, MaxWaitingDelayed)
 	}
 }
 
@@ -20,18 +24,30 @@ func bufferPoolGet() *bytes.Buffer {
 }
 
 func bufferPoolPut(b *bytes.Buffer) {
+	b.Reset()
 	bp.Put(b)
 }
 
+func peekBufPoolGet() []Message {
+	return peekPool.Get().([]Message)
+}
+
+func peekBufPoolPut(b []Message) {
+	peekPool.Put(b)
+}
+
 var (
-	bufioReaderPool   sync.Pool
-	bufioWriter2kPool sync.Pool
-	bufioWriter4kPool sync.Pool
-	bufioWriter8kPool sync.Pool
+	bufioReaderPool      sync.Pool
+	bufioWriter2kPool    sync.Pool
+	bufioWriter4kPool    sync.Pool
+	bufioWriter8kPool    sync.Pool
+	bufioSmallWriterPool sync.Pool
 )
 
 func bufioWriterPool(size int) *sync.Pool {
 	switch size {
+	case 100:
+		return &bufioSmallWriterPool
 	case 2 << 10:
 		return &bufioWriter2kPool
 	case 4 << 10:

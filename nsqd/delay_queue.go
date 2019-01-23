@@ -762,7 +762,7 @@ func (q *DelayQueue) put(m *Message, rawData []byte, trace bool, checkSize int64
 	syncEvery := atomic.LoadInt64(&q.SyncEvery)
 	if syncEvery == 1 ||
 		dend.TotalMsgCnt()-atomic.LoadInt64(&q.lastSyncCnt) >= syncEvery {
-		q.flush()
+		q.flush(true)
 	}
 
 	return m.ID, offset, writeBytes, dend, nil
@@ -788,23 +788,23 @@ func (q *DelayQueue) exit(deleted bool) error {
 	}
 
 	// write anything leftover to disk
-	q.flush()
+	q.flush(true)
 	q.getStore().Close()
 	return q.backend.Close()
 }
 
 func (q *DelayQueue) ForceFlush() {
-	q.flush()
+	q.flush(false)
 }
 
-func (q *DelayQueue) flush() error {
+func (q *DelayQueue) flush(fsync bool) error {
 	ok := atomic.CompareAndSwapInt32(&q.needFlush, 1, 0)
 	if !ok {
 		return nil
 	}
 	s := time.Now()
 	atomic.StoreInt64(&q.lastSyncCnt, q.backend.GetQueueWriteEnd().TotalMsgCnt())
-	err := q.backend.Flush()
+	err := q.backend.Flush(fsync)
 	if err != nil {
 		nsqLog.LogErrorf("failed flush: %v", err)
 		return err
@@ -1143,13 +1143,15 @@ func (q *DelayQueue) IsChannelMessageDelayed(msgID MessageID, ch string) bool {
 func (q *DelayQueue) GetOldestConsumedState(chList []string, includeOthers bool) (RecentKeyList, map[int]uint64, map[string]uint64) {
 	db := q.getStore()
 	prefixList := make([][]byte, 0, len(chList)+2)
-	cntList := make(map[int]uint64)
-	channelCntList := make(map[string]uint64)
+	var cntList map[int]uint64
 	var err error
 	if includeOthers {
 		for filterType := MinDelayedType; filterType < MaxDelayedType; filterType++ {
 			if filterType == ChannelDelayed {
 				continue
+			}
+			if cntList == nil {
+				cntList = make(map[int]uint64)
 			}
 			prefixList = append(prefixList, getDelayedMsgDBPrefixKey(filterType, ""))
 			cntList[filterType], err = q.GetCurrentDelayedCnt(filterType, "")
@@ -1159,6 +1161,10 @@ func (q *DelayQueue) GetOldestConsumedState(chList []string, includeOthers bool)
 		}
 	}
 	chIndex := len(prefixList)
+	var channelCntList map[string]uint64
+	if len(chList) > 0 {
+		channelCntList = make(map[string]uint64)
+	}
 	for _, ch := range chList {
 		prefixList = append(prefixList, getDelayedMsgDBPrefixKey(ChannelDelayed, ch))
 		channelCntList[ch], err = q.GetCurrentDelayedCnt(ChannelDelayed, ch)
