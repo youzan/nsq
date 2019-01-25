@@ -834,6 +834,14 @@ func (self *NsqLookupCoordinator) doCheckTopics(monitorChan chan struct{}, faile
 		}
 
 		if needMigrate {
+			for _, replica := range t.CatchupList {
+				if _, ok := currentNodes[replica]; ok {
+					// alive catchup, just notify node to catchup again
+					coordLog.Infof("topic %v has alive catchup node %v, notify catchup now", t.GetTopicDesp(), replica)
+					self.notifyCatchupTopicMetaInfo(&topicInfo)
+					break
+				}
+			}
 			if _, ok := partitions[t.Partition]; !ok {
 				partitions[t.Partition] = time.Now()
 			}
@@ -855,7 +863,10 @@ func (self *NsqLookupCoordinator) doCheckTopics(monitorChan chan struct{}, faile
 					continue
 				}
 				self.handleTopicMigrate(&topicInfo, aliveNodes, aliveEpoch)
-				delete(partitions, t.Partition)
+				// TODO: migrate may slow, we should keep the migrate failed time to allow
+				// next start early. Otherwise we may need wait another more migrate interval
+				// add test case for a topic with many ordered partitions
+				// delete(partitions, t.Partition)
 			} else {
 				coordLog.Infof("waiting migrate the topic :%v since time: %v", t.GetTopicDesp(), partitions[t.Partition])
 			}
@@ -1506,11 +1517,13 @@ func (self *NsqLookupCoordinator) handleRequestJoinISR(topic string, partition i
 		state.Lock()
 		defer state.Unlock()
 		if state.waitingJoin {
-			coordLog.Infof("failed request join isr because another is joining. :%v", state)
+			coordLog.Infof("%v failed request join isr because another is joining. :%v", topicInfo.GetTopicDesp(), state)
+			self.triggerCheckTopics(topic, partition, time.Millisecond*10)
 			return
 		}
 		if time.Since(start) > time.Second*10 {
-			coordLog.Warningf("failed since waiting too long for lock")
+			coordLog.Warningf("%v failed since waiting too long for lock", topicInfo.GetTopicDesp())
+			self.triggerCheckTopics(topic, partition, time.Millisecond*10)
 			return
 		}
 		if state.doneChan != nil {
