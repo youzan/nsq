@@ -2,6 +2,7 @@ package consistence
 
 import (
 	"errors"
+	"math/rand"
 	"net"
 	"runtime"
 	"strconv"
@@ -591,6 +592,11 @@ func (self *NsqLookupCoordinator) handleRemovingNodes(monitorChan chan struct{})
 			}
 		}
 	}
+}
+
+func (self *NsqLookupCoordinator) triggerCheckTopicsRandom(topic string, part int, delay time.Duration) {
+	d := rand.Int63n(time.Second.Nanoseconds())
+	self.triggerCheckTopics(topic, part, delay+time.Duration(d))
 }
 
 func (self *NsqLookupCoordinator) triggerCheckTopics(topic string, part int, delay time.Duration) {
@@ -1518,12 +1524,12 @@ func (self *NsqLookupCoordinator) handleRequestJoinISR(topic string, partition i
 		defer state.Unlock()
 		if state.waitingJoin {
 			coordLog.Infof("%v failed request join isr because another is joining. :%v", topicInfo.GetTopicDesp(), state)
-			self.triggerCheckTopics(topic, partition, time.Millisecond*10)
+			self.triggerCheckTopicsRandom(topic, partition, time.Millisecond*100)
 			return
 		}
 		if time.Since(start) > time.Second*10 {
 			coordLog.Warningf("%v failed since waiting too long for lock", topicInfo.GetTopicDesp())
-			self.triggerCheckTopics(topic, partition, time.Millisecond*10)
+			self.triggerCheckTopicsRandom(topic, partition, time.Millisecond*100)
 			return
 		}
 		if state.doneChan != nil {
@@ -1536,12 +1542,12 @@ func (self *NsqLookupCoordinator) handleRequestJoinISR(topic string, partition i
 		rpcErr := self.notifyLeaderDisableTopicWrite(topicInfo)
 		if rpcErr != nil {
 			coordLog.Warningf("try disable write for topic %v failed: %v", topicInfo.GetTopicDesp(), rpcErr)
-			go self.triggerCheckTopics(topicInfo.Name, topicInfo.Partition, time.Second)
+			go self.triggerCheckTopicsRandom(topicInfo.Name, topicInfo.Partition, time.Second)
 			return
 		}
 		if rpcErr = self.notifyISRDisableTopicWrite(topicInfo); rpcErr != nil {
 			coordLog.Infof("try disable isr write for topic %v failed: %v", topicInfo, rpcErr)
-			go self.triggerCheckTopics(topicInfo.Name, topicInfo.Partition, time.Second*3)
+			go self.triggerCheckTopicsRandom(topicInfo.Name, topicInfo.Partition, time.Second*3)
 			return
 		}
 
@@ -1560,7 +1566,7 @@ func (self *NsqLookupCoordinator) handleRequestJoinISR(topic string, partition i
 		// new node should disable write also.
 		if rpcErr = self.notifyISRDisableTopicWrite(topicInfo); rpcErr != nil {
 			coordLog.Infof("try disable isr write for topic %v failed: %v", topicInfo, rpcErr)
-			go self.triggerCheckTopics(topicInfo.Name, topicInfo.Partition, time.Second*3)
+			go self.triggerCheckTopicsRandom(topicInfo.Name, topicInfo.Partition, time.Second*3)
 			return
 		}
 		if !self.dpm.checkTopicNodeConflict(topicInfo) {
@@ -1607,7 +1613,8 @@ func (self *NsqLookupCoordinator) handleReadyForISR(topic string, partition int,
 		state.Lock()
 		defer state.Unlock()
 		if !state.waitingJoin || state.waitingSession != joinISRSession {
-			coordLog.Infof("state mismatch: %v, request join session: %v", state, joinISRSession)
+			go self.triggerCheckTopicsRandom(topicInfo.Name, topicInfo.Partition, time.Second)
+			coordLog.Infof("%v state mismatch: %v, request join session: %v", topicInfo.GetTopicDesp(), state, joinISRSession)
 			return
 		}
 
@@ -1637,7 +1644,7 @@ func (self *NsqLookupCoordinator) handleReadyForISR(topic string, partition int,
 				coordLog.Warningf("failed to enable write for topic: %v, %v ", topicInfo.GetTopicDesp(), rpcErr)
 			}
 			// recheck after all ok to check if any other partitions need enable
-			go self.triggerCheckTopics(topicInfo.Name, -1, time.Second*3)
+			go self.triggerCheckTopicsRandom(topicInfo.Name, -1, time.Second*3)
 		} else {
 			coordLog.Infof("leaving the topic %v without enable write since not enough replicas.", topicInfo)
 		}
