@@ -595,7 +595,7 @@ func (self *NsqdCoordinator) forceCleanTopicData(topicName string, partition int
 
 func (self *NsqdCoordinator) initLocalTopicCoord(topicInfo *TopicPartitionMetaInfo,
 	topicLeaderSession *TopicLeaderSession,
-	basepath string, forceFixLeader bool) (*TopicCoordinator, *nsqd.Topic, error) {
+	basepath string, forceFixCommitLog bool) (*TopicCoordinator, *nsqd.Topic, error) {
 	self.coordMutex.Lock()
 	defer self.coordMutex.Unlock()
 	coords, ok := self.topicCoords[topicInfo.Name]
@@ -612,7 +612,7 @@ func (self *NsqdCoordinator) initLocalTopicCoord(topicInfo *TopicPartitionMetaIn
 	topicName := topicInfo.Name
 	partition := topicInfo.Partition
 	tc, err = NewTopicCoordinatorWithFixMode(topicInfo.Name, topicInfo.Partition, basepath,
-		topicInfo.SyncEvery, topicInfo.OrderedMulti, forceFixLeader)
+		topicInfo.SyncEvery, topicInfo.OrderedMulti, forceFixCommitLog)
 	if err != nil {
 		coordLog.Infof("failed to get topic coordinator:%v-%v, err:%v", topicName, partition, err)
 		return nil, nil, err
@@ -745,7 +745,8 @@ func (self *NsqdCoordinator) loadLocalTopicData() error {
 			if err != nil {
 				coordLog.Infof("failed to get topic leader info:%v-%v, err:%v", topicName, partition, err)
 			}
-			_, _, loadErr := self.initLocalTopicCoord(topicInfo, topicLeaderSession, basepath, forceFixLeader)
+			fixCommitLog := ForceFixLeaderData
+			_, _, loadErr := self.initLocalTopicCoord(topicInfo, topicLeaderSession, basepath, fixCommitLog)
 			if loadErr != nil {
 				coordLog.Infof("topic %v coord init error: %v", topicInfo.GetTopicDesp(), loadErr.Error())
 				continue

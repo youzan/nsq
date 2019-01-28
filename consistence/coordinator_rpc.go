@@ -357,10 +357,11 @@ func (self *NsqdCoordRpcServer) UpdateTopicInfo(rpcTopicReq *RpcAdminTopicInfo) 
 		self.nsqdCoord.checkLocalTopicMagicCode(&rpcTopicReq.TopicPartitionMetaInfo, true)
 
 		// TODO: need handle fix mode here
+		tryFix := ForceFixLeaderData
 		var localErr error
-		tpCoord, localErr = NewTopicCoordinator(rpcTopicReq.Name, rpcTopicReq.Partition,
+		tpCoord, localErr = NewTopicCoordinatorWithFixMode(rpcTopicReq.Name, rpcTopicReq.Partition,
 			GetTopicPartitionBasePath(self.dataRootPath, rpcTopicReq.Name, rpcTopicReq.Partition),
-			rpcTopicReq.SyncEvery, rpcTopicReq.OrderedMulti)
+			rpcTopicReq.SyncEvery, rpcTopicReq.OrderedMulti, tryFix)
 		if localErr != nil || tpCoord == nil {
 			self.nsqdCoord.coordMutex.Unlock()
 			ret = *ErrLocalInitTopicCoordFailed
