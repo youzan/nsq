@@ -460,14 +460,18 @@ func (c *Channel) SetOrdered(enable bool) {
 		default:
 		}
 	} else {
-		if c.GetClientsCount() == 0 {
-			atomic.StoreInt32(&c.requireOrder, 0)
-			select {
-			case c.tryReadBackend <- true:
-			default:
-			}
-		} else {
-			nsqLog.Logf("can not set ordered to false while the channel is still consuming by client")
+		c.RLock()
+		defer c.RUnlock()
+		if !c.IsOrdered() {
+			return
+		}
+		for _, c := range c.clients {
+			c.Exit()
+		}
+		atomic.StoreInt32(&c.requireOrder, 0)
+		select {
+		case c.tryReadBackend <- true:
+		default:
 		}
 	}
 }

@@ -38,6 +38,7 @@ var (
 	pubPoolSize     = flagSet.Int("pub-pool", 1, "producer pool size")
 	benchCase       = flagSet.String("bench-case", "simple", "which bench should run (simple/benchpub/benchsub/benchdelaysub/checkdata/benchlookup/benchreg/consumeoffset/checkdata2)")
 	channelNum      = flagSet.Int("ch_num", 1, "the channel number under each topic")
+	ephemeral       = flagSet.Bool("ephemeral", false, "use ephemeral channel for test")
 	trace           = flagSet.Bool("trace", false, "enable the trace of pub and sub")
 	ordered         = flagSet.Bool("ordered", false, "enable ordered sub")
 	retryBackground = flagSet.Bool("retry-background", false, "retry pub in background")
@@ -224,7 +225,11 @@ func startBenchSub() {
 		for chIndex := 0; chIndex < *channelNum; chIndex++ {
 			wg.Add(1)
 			go func(id int, topic string, chSuffix string) {
-				subWorker(quitChan, *runfor, *lookupAddress, topic, topic+"_ch"+chSuffix, rdyChan, goChan, id)
+				chName := topic + "_ch" + chSuffix
+				if *ephemeral {
+					chName = chName + "#ephemeral"
+				}
+				subWorker(quitChan, *runfor, *lookupAddress, topic, chName, rdyChan, goChan, id)
 				wg.Done()
 			}(j, topics[j%len(topics)], strconv.Itoa(chIndex))
 			<-rdyChan
@@ -1002,7 +1007,7 @@ func main() {
 }
 
 func pubWorker(td time.Duration, globalPubMgr *nsq.TopicProducerMgr, topicName string, batchSize int,
-batch [][]byte, rdyChan chan int, goChan chan int, testDelay bool) {
+	batch [][]byte, rdyChan chan int, goChan chan int, testDelay bool) {
 	var pubMgr *nsq.TopicProducerMgr
 	var err error
 	if *useSinglePubMgr {
@@ -1193,7 +1198,7 @@ func (c *consumeHandler) HandleMessage(message *nsq.Message) error {
 }
 
 func subWorker(quitChan chan int, td time.Duration, lookupAddr string, topic string, channel string,
-rdyChan chan int, goChan chan int, id int) {
+	rdyChan chan int, goChan chan int, id int) {
 	consumer, err := nsq.NewConsumer(topic, channel, config)
 	if err != nil {
 		panic(err.Error())
@@ -1271,7 +1276,7 @@ func (c *consumeTraceIDHandler) HandleMessage(message *nsq.Message) error {
 }
 
 func subWorker2(quitChan chan int, td time.Duration, lookupAddr string, topic string, channel string,
-subIDCounter *int64, subTraceWaiting map[uint64]*nsq.Message, locker *sync.Mutex, rdyChan chan int, goChan chan int, id int) {
+	subIDCounter *int64, subTraceWaiting map[uint64]*nsq.Message, locker *sync.Mutex, rdyChan chan int, goChan chan int, id int) {
 	consumer, err := nsq.NewConsumer(topic, channel, config)
 	if err != nil {
 		panic(err.Error())
