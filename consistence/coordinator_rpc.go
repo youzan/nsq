@@ -356,7 +356,6 @@ func (self *NsqdCoordRpcServer) UpdateTopicInfo(rpcTopicReq *RpcAdminTopicInfo) 
 	if !ok {
 		self.nsqdCoord.checkLocalTopicMagicCode(&rpcTopicReq.TopicPartitionMetaInfo, true)
 
-		// TODO: need handle fix mode here
 		tryFix := ForceFixLeaderData
 		var localErr error
 		tpCoord, localErr = NewTopicCoordinatorWithFixMode(rpcTopicReq.Name, rpcTopicReq.Partition,

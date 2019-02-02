@@ -36,7 +36,7 @@ var (
 	ErrCommitLogCleanKeepMin         = errors.New("commit log clean should keep some data")
 )
 
-var LOGROTATE_NUM = 2000000
+var LOGROTATE_NUM = 500000
 var MIN_KEEP_LOG_ITEM = 1000
 
 var bp sync.Pool

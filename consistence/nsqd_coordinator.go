@@ -826,64 +826,68 @@ func (self *NsqdCoordinator) loadLocalTopicData() error {
 
 func checkAndFixLocalLogQueueEnd(tc *coordData,
 	localLogQ ILocalLogQueue, logMgr *TopicCommitLogMgr, tryFixEnd bool, forceFix bool) error {
+	if logMgr == nil || localLogQ == nil {
+		return nil
+	}
 	tname := tc.topicInfo.GetTopicDesp()
-	if logMgr != nil && localLogQ != nil {
-		logIndex, logOffset, logData, err := logMgr.GetLastCommitLogOffsetV2()
-		if err != nil {
-			if err != ErrCommitLogEOF {
-				coordLog.Errorf("commit log is corrupted: %v", err)
-				return err
+	logIndex, logOffset, logData, err := logMgr.GetLastCommitLogOffsetV2()
+	if err != nil {
+		if err != ErrCommitLogEOF {
+			coordLog.Errorf("commit log is corrupted: %v", err)
+			return err
+		}
+
+		coordLog.Infof("no commit last log data : %v", err)
+		return nil
+	}
+	coordLog.Infof("current topic %v log: %v:%v, %v",
+		tname, logIndex, logOffset, logData)
+
+	if !forceFix && !tryFixEnd {
+		return nil
+	}
+	localErr := localLogQ.ResetBackendEndNoLock(nsqd.BackendOffset(logData.MsgOffset+int64(logData.MsgSize)),
+		logData.MsgCnt+int64(logData.MsgNum)-1)
+	if localErr == nil {
+		return nil
+	}
+	coordLog.Errorf("topic %v reset local queue backend failed: %v", tname, localErr)
+	if !forceFix {
+		return localErr
+	}
+	realEnd := localLogQ.TotalDataSize()
+	cntNum, _ := logMgr.ConvertToCountIndex(logIndex, logOffset)
+	for {
+		cntNum--
+		logIndex, logOffset, localErr = logMgr.ConvertToOffsetIndex(cntNum)
+		if localErr != nil {
+			coordLog.Errorf("topic %v try fix failed: %v , %v", tname, localErr, cntNum)
+			break
+		}
+		logData, localErr = logMgr.GetCommitLogFromOffsetV2(logIndex, logOffset)
+		if localErr != nil {
+			coordLog.Errorf("topic %v try fix failed: %v , %v:%v", tname, localErr, logIndex, logOffset)
+			break
+		}
+		if logData.MsgOffset+int64(logData.MsgSize) <= realEnd {
+			localErr = localLogQ.ResetBackendEndNoLock(nsqd.BackendOffset(logData.MsgOffset+int64(logData.MsgSize)),
+				logData.MsgCnt+int64(logData.MsgNum)-1)
+			if localErr != nil {
+				coordLog.Infof("topic %v reset local queue failed: %v at %v:%v", tname, localErr, logIndex, logOffset)
 			} else {
-				coordLog.Infof("no commit last log data : %v", err)
-			}
-		} else {
-			coordLog.Infof("current topic %v log: %v:%v, %v",
-				tname, logIndex, logOffset, logData)
-			if tryFixEnd || forceFix {
-				localErr := localLogQ.ResetBackendEndNoLock(nsqd.BackendOffset(logData.MsgOffset+int64(logData.MsgSize)),
-					logData.MsgCnt+int64(logData.MsgNum)-1)
+				coordLog.Warningf("topic %v fix local queue to: %v, %v, commit log: %v:%v:%v", tname,
+					logData, realEnd, logIndex, logOffset, cntNum)
+				_, localErr = logMgr.TruncateToOffsetV2(logIndex, logOffset+int64(GetLogDataSize()))
 				if localErr != nil {
-					coordLog.Errorf("topic %v reset local queue backend failed: %v", tname, localErr)
-					if forceFix {
-						realEnd := localLogQ.TotalDataSize()
-						cntNum, _ := logMgr.ConvertToCountIndex(logIndex, logOffset)
-						for {
-							cntNum--
-							logIndex, logOffset, localErr = logMgr.ConvertToOffsetIndex(cntNum)
-							if localErr != nil {
-								coordLog.Errorf("topic %v try fix failed: %v , %v", tname, localErr, cntNum)
-								panic(localErr)
-							}
-							logData, localErr = logMgr.GetCommitLogFromOffsetV2(logIndex, logOffset)
-							if localErr != nil {
-								coordLog.Errorf("topic %v try fix failed: %v , %v:%v", tname, localErr, logIndex, logOffset)
-								panic(localErr)
-							}
-							if logData.MsgOffset+int64(logData.MsgSize) <= realEnd {
-								localErr = localLogQ.ResetBackendEndNoLock(nsqd.BackendOffset(logData.MsgOffset+int64(logData.MsgSize)),
-									logData.MsgCnt+int64(logData.MsgNum)-1)
-								if localErr != nil {
-									coordLog.Infof("topic %v reset local queue failed: %v at %v:%v", tname, localErr, logIndex, logOffset)
-								} else {
-									coordLog.Warningf("topic %v fix local queue to: %v, %v, commit log: %v:%v:%v", tname,
-										logData, realEnd, logIndex, logOffset, cntNum)
-									_, localErr = logMgr.TruncateToOffsetV2(logIndex, logOffset+int64(GetLogDataSize()))
-									if localErr != nil {
-										coordLog.Errorf("topic %v reset local queue failed: %v, at %v:%v", tname,
-											localErr, logIndex, logOffset)
-									} else {
-										return nil
-									}
-								}
-							}
-						}
-					}
-					return localErr
+					coordLog.Errorf("topic %v reset local queue failed: %v, at %v:%v", tname,
+						localErr, logIndex, logOffset)
+				} else {
+					return nil
 				}
 			}
 		}
 	}
-	return nil
+	return localErr
 }
 
 func checkAndFixLocalLogQueueData(tc *coordData,
@@ -904,39 +908,38 @@ func checkAndFixLocalLogQueueData(tc *coordData,
 	snap := localLogQ.GetDiskQueueSnapshot()
 	for {
 		err = snap.SeekTo(nsqd.BackendOffset(log.MsgOffset))
-		if err != nil {
-			coordLog.Warningf("topic %v log start %v should be fixed: %v, %v", tc.topicInfo.GetTopicDesp(), logStart, log, err)
-			// try fix start
-			if err == nsqd.ErrReadQueueAlreadyCleaned {
-				start := snap.GetQueueReadStart()
-				logStart.SegmentStartOffset = GetNextLogOffset(logStart.SegmentStartOffset)
-				if log.MsgOffset+int64(log.MsgSize) < int64(start.Offset()) {
-					matchIndex, matchOffset, _, err := logMgr.SearchLogDataByMsgOffset(int64(start.Offset()))
-					if err != nil {
-						coordLog.Infof("search log failed: %v", err)
-					} else if matchIndex > logStart.SegmentStartIndex ||
-						(matchIndex == logStart.SegmentStartIndex && matchOffset > logStart.SegmentStartOffset) {
-						logStart.SegmentStartIndex = matchIndex
-						logStart.SegmentStartOffset = matchOffset
-					}
-				}
-				err = logMgr.CleanOldData(logStart.SegmentStartIndex, logStart.SegmentStartOffset)
+		if err == nil {
+			break
+		}
+		coordLog.Warningf("topic %v log start %v should be fixed: %v, %v", tc.topicInfo.GetTopicDesp(), logStart, log, err)
+		// try fix start
+		if err == nsqd.ErrReadQueueAlreadyCleaned {
+			start := snap.GetQueueReadStart()
+			logStart.SegmentStartOffset = GetNextLogOffset(logStart.SegmentStartOffset)
+			if log.MsgOffset+int64(log.MsgSize) < int64(start.Offset()) {
+				matchIndex, matchOffset, _, err := logMgr.SearchLogDataByMsgOffset(int64(start.Offset()))
 				if err != nil {
-					// maybe the diskqueue data corrupt, we need sync from leader
-					coordLog.Errorf("clean log failed : %v, %v", logStart, err)
-					return err
+					coordLog.Infof("search log failed: %v", err)
+				} else if matchIndex > logStart.SegmentStartIndex ||
+					(matchIndex == logStart.SegmentStartIndex && matchOffset > logStart.SegmentStartOffset) {
+					logStart.SegmentStartIndex = matchIndex
+					logStart.SegmentStartOffset = matchOffset
 				}
-				logStart, log, err = logMgr.GetLogStartInfo()
-				if err != nil {
-					return err
-				}
-				coordLog.Warningf("topic %v log start fixed to: %v, %v", tc.topicInfo.GetTopicDesp(), logStart, log)
-			} else {
-				coordLog.Errorf("read disk failed at log start: %v, %v, %v", logStart, log, err)
+			}
+			err = logMgr.CleanOldData(logStart.SegmentStartIndex, logStart.SegmentStartOffset)
+			if err != nil {
+				// maybe the diskqueue data corrupt, we need sync from leader
+				coordLog.Errorf("clean log failed : %v, %v", logStart, err)
 				return err
 			}
+			logStart, log, err = logMgr.GetLogStartInfo()
+			if err != nil {
+				return err
+			}
+			coordLog.Warningf("topic %v log start fixed to: %v, %v", tc.topicInfo.GetTopicDesp(), logStart, log)
 		} else {
-			break
+			coordLog.Errorf("read disk failed at log start: %v, %v, %v", logStart, log, err)
+			return err
 		}
 	}
 	if endFixErr != nil {
