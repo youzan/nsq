@@ -119,6 +119,10 @@ func newDiskQueueWriter(name string, dataPath string, maxBytesPerFile int64,
 
 	if !readOnly {
 		d.saveExtraMeta()
+		if d.diskQueueStart.EndOffset.GreatThan(&d.diskWriteEnd.EndOffset) ||
+			d.diskQueueStart.Offset() > d.diskWriteEnd.Offset() {
+			return nil, ErrNeedFixQueueStart
+		}
 	}
 
 	return &d, nil
@@ -140,7 +144,6 @@ func (d *diskQueueWriter) PutV2(data []byte) (BackendOffset, int32, diskQueueEnd
 	if dend != nil {
 		e = *dend
 	}
-	d.needSync = true
 	d.Unlock()
 	return offset, writeBytes, e, werr
 }
@@ -157,7 +160,6 @@ func (d *diskQueueWriter) PutRawV2(data []byte, msgCnt int32) (BackendOffset, in
 	if dend != nil {
 		e = *dend
 	}
-	d.needSync = true
 	d.Unlock()
 	return offset, writeBytes, e, werr
 }
@@ -175,7 +177,6 @@ func (d *diskQueueWriter) Put(data []byte) (BackendOffset, int32, int64, error) 
 	if dend != nil {
 		e = *dend
 	}
-	d.needSync = true
 	d.Unlock()
 	return offset, writeBytes, e.TotalMsgCnt(), werr
 }
@@ -230,8 +231,13 @@ func (d *diskQueueWriter) ResetWriteWithQueueStart(queueStart BackendQueueEnd) e
 	defer d.Unlock()
 	nsqLog.Warningf("DISKQUEUE %v reset the queue start from %v:%v to new queue start: %v", d.name,
 		d.diskQueueStart, d.diskWriteEnd, queueStart)
+
 	d.cleanOldData()
 
+	if queueStart.Offset() == 0 && d.diskQueueStart.Offset() == 0 {
+		d.diskWriteEnd.EndOffset.FileNum = 0
+		d.diskWriteEnd.EndOffset.Pos = 0
+	}
 	d.diskQueueStart = d.diskWriteEnd
 	d.diskQueueStart.virtualEnd = queueStart.Offset()
 	d.diskQueueStart.totalMsgCnt = queueStart.TotalMsgCnt()
@@ -239,6 +245,7 @@ func (d *diskQueueWriter) ResetWriteWithQueueStart(queueStart BackendQueueEnd) e
 	d.diskReadEnd = d.diskWriteEnd
 	nsqLog.Warningf("DISKQUEUE %v new queue start : %v:%v", d.name,
 		d.diskQueueStart, d.diskWriteEnd)
+	d.persistMetaData()
 	d.saveExtraMeta()
 	return nil
 }
@@ -379,7 +386,7 @@ func (d *diskQueueWriter) closeCurrentFile() {
 		d.bufferWriter.Flush()
 	}
 	if d.diskReadEnd.EndOffset.GreatThan(&d.diskWriteEnd.EndOffset) {
-		nsqLog.LogWarningf("DISKQUEUE(%s): old read is greater: %v, %v", d.name,
+		nsqLog.Logf("DISKQUEUE(%s): old read is greater: %v, %v", d.name,
 			d.diskReadEnd, d.diskWriteEnd)
 	}
 	d.diskReadEnd = d.diskWriteEnd
@@ -404,6 +411,7 @@ func (d *diskQueueWriter) truncateDiskQueueToWriteEnd() {
 			tmpFile.Close()
 		}
 	}
+	d.persistMetaData()
 	cleanNum := d.diskWriteEnd.EndOffset.FileNum + 1
 	for {
 		fileName := d.fileName(cleanNum)
@@ -553,6 +561,8 @@ func (d *diskQueueWriter) Empty() error {
 
 func (d *diskQueueWriter) deleteAllFiles(deleted bool) error {
 	d.cleanOldData()
+	d.persistMetaData()
+	d.saveExtraMeta()
 
 	if deleted {
 		nsqLog.Logf("DISKQUEUE(%s): deleting meta file", d.name)
@@ -561,29 +571,14 @@ func (d *diskQueueWriter) deleteAllFiles(deleted bool) error {
 			nsqLog.LogErrorf("diskqueue(%s) failed to remove metadata file - %s", d.name, innerErr)
 			return innerErr
 		}
-		cleanStartFileNum := d.diskQueueStart.EndOffset.FileNum - MAX_QUEUE_OFFSET_META_DATA_KEEP - 1
-		if cleanStartFileNum < 0 {
-			cleanStartFileNum = 0
-		}
 		os.Remove(d.extraMetaFileName())
-		for i := cleanStartFileNum; i <= d.diskWriteEnd.EndOffset.FileNum; i++ {
-			fName := d.fileName(i) + ".offsetmeta.dat"
-			innerErr := os.Remove(fName)
-			nsqLog.Logf("DISKQUEUE(%s): removed offset meta file: %v", d.name, fName)
-			if innerErr != nil && !os.IsNotExist(innerErr) {
-				nsqLog.LogErrorf("diskqueue(%s) failed to remove offset meta file %v - %s", d.name, fName, innerErr)
-			}
-		}
 	}
 	return nil
 }
 
 func (d *diskQueueWriter) cleanOldData() error {
-
 	d.closeCurrentFile()
-
 	d.saveFileOffsetMeta()
-
 	cleanStartFileNum := d.diskQueueStart.EndOffset.FileNum - MAX_QUEUE_OFFSET_META_DATA_KEEP - 1
 	if cleanStartFileNum < 0 {
 		cleanStartFileNum = 0
@@ -594,6 +589,13 @@ func (d *diskQueueWriter) cleanOldData() error {
 		nsqLog.Logf("DISKQUEUE(%s): removed data file: %v", d.name, fn)
 		if innerErr != nil && !os.IsNotExist(innerErr) {
 			nsqLog.LogErrorf("diskqueue(%s) failed to remove data file - %s", d.name, innerErr)
+		} else {
+			fName := d.fileName(i) + ".offsetmeta.dat"
+			innerErr := os.Remove(fName)
+			nsqLog.Logf("DISKQUEUE(%s): removed offset meta file: %v", d.name, fName)
+			if innerErr != nil && !os.IsNotExist(innerErr) {
+				nsqLog.LogErrorf("diskqueue(%s) failed to remove offset meta file %v - %s", d.name, fName, innerErr)
+			}
 		}
 	}
 
@@ -601,7 +603,6 @@ func (d *diskQueueWriter) cleanOldData() error {
 	d.diskWriteEnd.EndOffset.Pos = 0
 	d.diskReadEnd = d.diskWriteEnd
 	d.diskQueueStart = d.diskWriteEnd
-	d.saveExtraMeta()
 	return nil
 }
 
@@ -683,6 +684,7 @@ func (d *diskQueueWriter) writeOne(data []byte, isRaw bool, msgCnt int32) (Backe
 		}
 	}
 
+	d.needSync = true
 	dataLen := int32(len(data))
 	if !isRaw {
 		if dataLen < d.minMsgSize || dataLen > d.maxMsgSize {
@@ -741,6 +743,7 @@ func (d *diskQueueWriter) writeOne(data []byte, isRaw bool, msgCnt int32) (Backe
 		d.diskWriteEnd.EndOffset.FileNum++
 		d.diskWriteEnd.EndOffset.Pos = 0
 		d.diskReadEnd = d.diskWriteEnd
+		d.needSync = true
 	}
 
 	return writeOffset, int32(totalBytes), &d.diskWriteEnd, err

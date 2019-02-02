@@ -489,6 +489,12 @@ func TestDiskQueueWriterRollbackAndResetEnd(t *testing.T) {
 	leftPos := int64(end.Offset()) - 1024*dqWriter.diskWriteEnd.EndOffset.FileNum
 	equal(t, end.(*diskQueueEndInfo).EndOffset.Pos, leftPos)
 	equal(t, end.(*diskQueueEndInfo).EndOffset.Pos, dqWriter.diskWriteEnd.EndOffset.Pos)
+	// test reopen
+	dqWriter.Close()
+	queue, _ = NewDiskQueueWriter(dqName, tmpDir, 1024, 4, 1<<10, 1)
+	dqWriter = queue.(*diskQueueWriter)
+	newEnd := dqWriter.GetQueueWriteEnd()
+	test.Equal(t, true, newEnd.IsSame(end))
 
 	resetOffset := int64((len(msg) + 4) * totalCnt / 2)
 	err = dqWriter.ResetWriteEnd(BackendOffset(resetOffset), int64(totalCnt/2))
@@ -559,7 +565,7 @@ func TestDiskQueueWriterInitWithQueueStart(t *testing.T) {
 	test.Equal(t, int64(0), oldStart.EndOffset.FileNum)
 	dqWriter.Close()
 
-	queue, err = NewDiskQueueWriter(dqName, tmpDir, 1024, 4, 1<<10, 1)
+	queue, err = NewDiskQueueWriter(dqName, tmpDir, int64(fileMaxSize), 4, 1<<10, 1)
 	test.Nil(t, err)
 	dqWriter = queue.(*diskQueueWriter)
 	test.Equal(t, oldStart, dqWriter.diskQueueStart)
@@ -572,15 +578,17 @@ func TestDiskQueueWriterInitWithQueueStart(t *testing.T) {
 	test.Equal(t, oldStart.EndOffset.FileNum*int64(cntInFile), newStart.TotalMsgCnt())
 	dqWriter.Close()
 
-	queue, err = NewDiskQueueWriter(dqName, tmpDir, 1024, 4, 1<<10, 1)
+	queue, err = NewDiskQueueWriter(dqName, tmpDir, int64(fileMaxSize), 4, 1<<10, 1)
 	test.Nil(t, err)
 	dqWriter = queue.(*diskQueueWriter)
 	test.Equal(t, newStart, dqWriter.GetQueueReadStart())
 	dqWriter.cleanOldData()
+	dqWriter.persistMetaData()
+	dqWriter.saveExtraMeta()
 	test.Equal(t, dqWriter.GetQueueReadStart(), dqWriter.GetQueueWriteEnd())
 	newStart = dqWriter.GetQueueReadStart()
 	dqWriter.Close()
-	queue, err = NewDiskQueueWriter(dqName, tmpDir, 1024, 4, 1<<10, 1)
+	queue, err = NewDiskQueueWriter(dqName, tmpDir, int64(fileMaxSize), 4, 1<<10, 1)
 	test.Nil(t, err)
 	dqWriter = queue.(*diskQueueWriter)
 	test.Equal(t, newStart, dqWriter.GetQueueReadStart())

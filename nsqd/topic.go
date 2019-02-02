@@ -1292,7 +1292,7 @@ func (t *Topic) flush(notifyChan bool) error {
 }
 
 func (t *Topic) PrintCurrentStats() {
-	nsqLog.Logf("topic(%s) status: write end %v", t.GetFullName(), t.backend.GetQueueWriteEnd())
+	nsqLog.Logf("topic(%s) status: start: %v, write end %v", t.GetFullName(), t.backend.GetQueueReadStart(), t.backend.GetQueueWriteEnd())
 	t.channelLock.RLock()
 	for _, ch := range t.channelMap {
 		nsqLog.Logf("channel(%s) depth: %v, confirmed: %v, debug: %v", ch.GetName(), ch.Depth(),
