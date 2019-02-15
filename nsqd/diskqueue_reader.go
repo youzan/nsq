@@ -20,6 +20,7 @@ import (
 const (
 	MAX_POSSIBLE_MSG_SIZE = 1 << 28
 	readBufferSize        = 1024 * 4
+	magicCode             = 0xae83
 )
 
 var (
@@ -236,7 +237,7 @@ func (d *diskQueueReader) exit(deleted bool) error {
 		d.readFile.Close()
 		d.readFile = nil
 	}
-	d.sync()
+	d.sync(true)
 	if deleted {
 		d.skipToEndofQueue()
 		err := os.Remove(d.metaDataFileName(false))
@@ -265,19 +266,21 @@ func (d *diskQueueReader) ConfirmRead(offset BackendOffset, cnt int64) error {
 	if oldConfirm != d.confirmedQueueInfo.Offset() {
 		d.needSync = true
 		if d.syncEvery == 1 {
-			d.sync()
+			d.sync(false)
 		}
 	}
 	return err
 }
 
-func (d *diskQueueReader) Flush() {
+func (d *diskQueueReader) Flush(fsync bool) {
 	d.Lock()
 	defer d.Unlock()
 	if d.exitFlag == 1 {
 		return
 	}
-	d.internalUpdateEnd(nil, false)
+	if d.needSync {
+		d.sync(fsync)
+	}
 }
 
 func (d *diskQueueReader) ResetReadToConfirmed() (BackendQueueEnd, error) {
@@ -292,7 +295,7 @@ func (d *diskQueueReader) ResetReadToConfirmed() (BackendQueueEnd, error) {
 		if old != d.confirmedQueueInfo.Offset() {
 			d.needSync = true
 			if d.syncEvery == 1 {
-				d.sync()
+				d.sync(false)
 			}
 		}
 	}
@@ -320,7 +323,7 @@ func (d *diskQueueReader) ResetReadToOffset(offset BackendOffset, cnt int64) (Ba
 	if err == nil {
 		if old != d.confirmedQueueInfo.Offset() {
 			d.needSync = true
-			d.sync()
+			d.sync(false)
 		}
 	}
 
@@ -359,7 +362,7 @@ func (d *diskQueueReader) SkipReadToOffset(offset BackendOffset, cnt int64) (Bac
 		if old != d.confirmedQueueInfo.Offset() {
 			d.needSync = true
 			if d.syncEvery == 1 {
-				d.sync()
+				d.sync(false)
 			}
 		}
 	}
@@ -385,7 +388,7 @@ func (d *diskQueueReader) SkipReadToEnd() (BackendQueueEnd, error) {
 		if old != d.confirmedQueueInfo.Offset() {
 			d.needSync = true
 			if d.syncEvery == 1 {
-				d.sync()
+				d.sync(false)
 			}
 		}
 	}
@@ -1017,8 +1020,8 @@ CheckFileOpen:
 }
 
 // sync fsyncs the current writeFile and persists metadata
-func (d *diskQueueReader) sync() error {
-	err := d.persistMetaData()
+func (d *diskQueueReader) sync(fsync bool) error {
+	err := d.persistMetaData(fsync)
 	if err != nil {
 		return err
 	}
@@ -1068,7 +1071,7 @@ func (d *diskQueueReader) retrieveMetaData() error {
 			d.confirmedQueueInfo.totalMsgCnt = d.queueEndInfo.totalMsgCnt
 		}
 
-		d.persistMetaData()
+		d.persistMetaData(false)
 	}
 	if d.confirmedQueueInfo.TotalMsgCnt() == 0 && d.confirmedQueueInfo.Offset() != BackendOffset(0) {
 		nsqLog.Warningf("reader (%v) count is missing, need fix: %v", d.readerMetaName, d.confirmedQueueInfo)
@@ -1089,7 +1092,7 @@ func (d *diskQueueReader) retrieveMetaData() error {
 }
 
 // persistMetaData atomically writes state to the filesystem
-func (d *diskQueueReader) persistMetaData() error {
+func (d *diskQueueReader) persistMetaData(fsync bool) error {
 	var f *os.File
 	var err error
 
@@ -1111,7 +1114,9 @@ func (d *diskQueueReader) persistMetaData() error {
 		f.Close()
 		return err
 	}
-	f.Sync()
+	if fsync {
+		f.Sync()
+	}
 	f.Close()
 
 	// atomically rename
@@ -1167,9 +1172,6 @@ func (d *diskQueueReader) handleReadError() {
 
 func (d *diskQueueReader) internalUpdateEnd(endPos *diskQueueEndInfo, forceReload bool) (bool, error) {
 	if endPos == nil {
-		if d.needSync {
-			d.sync()
-		}
 		return false, nil
 	}
 	if forceReload {

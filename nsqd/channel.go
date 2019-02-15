@@ -575,7 +575,7 @@ func (c *Channel) exit(deleted bool) error {
 	<-c.exitSyncChan
 
 	// write anything leftover to disk
-	c.Flush()
+	c.Flush(true)
 	if deleted {
 		// empty the queue (deletes the backend files, too)
 		if c.GetDelayedQueue() != nil {
@@ -601,13 +601,13 @@ func (c *Channel) skipChannelToEnd() (BackendQueueEnd, error) {
 	return e, nil
 }
 
-func (c *Channel) Flush() error {
+func (c *Channel) Flush(fsync bool) error {
 	if c.ephemeral {
 		return nil
 	}
 	d, ok := c.backend.(*diskQueueReader)
 	if ok {
-		d.Flush()
+		d.Flush(fsync)
 	}
 	return nil
 }

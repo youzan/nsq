@@ -1193,9 +1193,12 @@ func (t *Topic) IsWriteDisabled() bool {
 }
 
 func (t *Topic) DisableForSlave() {
-	atomic.StoreInt32(&t.writeDisabled, 1)
-	nsqLog.Logf("[TRACE_DATA] while disable topic %v end: %v, cnt: %v, queue start: %v", t.GetFullName(),
-		t.TotalDataSize(), t.TotalMessageCnt(), t.backend.GetQueueReadStart())
+	changed := false
+	if atomic.CompareAndSwapInt32(&t.writeDisabled, 0, 1) {
+		changed = true
+		nsqLog.Logf("[TRACE_DATA] while disable topic %v end: %v, cnt: %v, queue start: %v", t.GetFullName(),
+			t.TotalDataSize(), t.TotalMessageCnt(), t.backend.GetQueueReadStart())
+	}
 	t.channelLock.RLock()
 	for _, c := range t.channelMap {
 		c.DisableConsume(true)
@@ -1209,12 +1212,18 @@ func (t *Topic) DisableForSlave() {
 			c.GetConfirmed(), c.Depth(), c.backend.GetQueueReadEnd(), curRead)
 	}
 	t.channelLock.RUnlock()
-	// notify de-register from lookup
-	t.nsqdNotify.NotifyStateChanged(t, false)
+	if changed {
+		// notify de-register from lookup
+		t.nsqdNotify.NotifyStateChanged(t, false)
+	}
 }
 
 func (t *Topic) EnableForMaster() {
-	nsqLog.Logf("[TRACE_DATA] while enable topic %v end: %v, cnt: %v", t.GetFullName(), t.TotalDataSize(), t.TotalMessageCnt())
+	changed := false
+	if atomic.CompareAndSwapInt32(&t.writeDisabled, 1, 0) {
+		nsqLog.Logf("[TRACE_DATA] while enable topic %v end: %v, cnt: %v", t.GetFullName(), t.TotalDataSize(), t.TotalMessageCnt())
+		changed = true
+	}
 	t.channelLock.RLock()
 	for _, c := range t.channelMap {
 		c.DisableConsume(false)
@@ -1227,9 +1236,10 @@ func (t *Topic) EnableForMaster() {
 			c.GetConfirmed(), c.Depth(), c.backend.GetQueueReadEnd(), curRead)
 	}
 	t.channelLock.RUnlock()
-	atomic.StoreInt32(&t.writeDisabled, 0)
-	// notify re-register to lookup
-	t.nsqdNotify.NotifyStateChanged(t, false)
+	if changed {
+		// notify re-register to lookup
+		t.nsqdNotify.NotifyStateChanged(t, false)
+	}
 }
 
 func (t *Topic) Empty() error {
@@ -1251,9 +1261,10 @@ func (t *Topic) ForceFlush() {
 		nsqLog.LogWarningf("topic(%s): flush cost: %v", t.GetFullName(), cost)
 	}
 	s = time.Now()
+	useFsync := t.option.UseFsync
 	t.channelLock.RLock()
 	for _, channel := range t.channelMap {
-		channel.Flush()
+		channel.Flush(useFsync)
 	}
 	t.channelLock.RUnlock()
 	cost = time.Now().Sub(s)
@@ -1478,4 +1489,10 @@ func (t *Topic) UpdateDelayedQueueConsumedState(ts int64, keyList RecentKeyList,
 	}
 
 	return dq.UpdateConsumedState(ts, keyList, cntList, channelCntList)
+}
+
+func (t *Topic) TryFixData() error {
+	// first try fix to reload meta from file
+	// second try fix memory data
+	return t.backend.tryFixData()
 }

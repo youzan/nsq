@@ -128,6 +128,10 @@ func newDiskQueueWriter(name string, dataPath string, maxBytesPerFile int64,
 	return &d, nil
 }
 
+func (d *diskQueueWriter) tryFixData() error {
+	return nil
+}
+
 func (d *diskQueueWriter) SetBufSize(s int64) {
 	atomic.StoreInt64(&d.bufSize, s)
 }
@@ -245,7 +249,7 @@ func (d *diskQueueWriter) ResetWriteWithQueueStart(queueStart BackendQueueEnd) e
 	d.diskReadEnd = d.diskWriteEnd
 	nsqLog.Warningf("DISKQUEUE %v new queue start : %v:%v", d.name,
 		d.diskQueueStart, d.diskWriteEnd)
-	d.persistMetaData()
+	d.persistMetaData(true)
 	d.saveExtraMeta()
 	return nil
 }
@@ -411,7 +415,7 @@ func (d *diskQueueWriter) truncateDiskQueueToWriteEnd() {
 			tmpFile.Close()
 		}
 	}
-	d.persistMetaData()
+	d.persistMetaData(true)
 	cleanNum := d.diskWriteEnd.EndOffset.FileNum + 1
 	for {
 		fileName := d.fileName(cleanNum)
@@ -561,7 +565,7 @@ func (d *diskQueueWriter) Empty() error {
 
 func (d *diskQueueWriter) deleteAllFiles(deleted bool) error {
 	d.cleanOldData()
-	d.persistMetaData()
+	d.persistMetaData(true)
 	d.saveExtraMeta()
 
 	if deleted {
@@ -805,7 +809,7 @@ func (d *diskQueueWriter) sync(fsync bool) error {
 
 	d.diskReadEnd = d.diskWriteEnd
 
-	err := d.persistMetaData()
+	err := d.persistMetaData(fsync)
 	if err != nil {
 		return err
 	}
@@ -947,7 +951,7 @@ func (d *diskQueueWriter) retrieveMetaData() error {
 }
 
 // persistMetaData atomically writes state to the filesystem
-func (d *diskQueueWriter) persistMetaData() error {
+func (d *diskQueueWriter) persistMetaData(fsync bool) error {
 	var f *os.File
 	var err error
 
@@ -967,7 +971,9 @@ func (d *diskQueueWriter) persistMetaData() error {
 		f.Close()
 		return err
 	}
-	f.Sync()
+	if fsync {
+		f.Sync()
+	}
 	f.Close()
 
 	// atomically rename

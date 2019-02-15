@@ -583,7 +583,7 @@ func TestDiskQueueWriterInitWithQueueStart(t *testing.T) {
 	dqWriter = queue.(*diskQueueWriter)
 	test.Equal(t, newStart, dqWriter.GetQueueReadStart())
 	dqWriter.cleanOldData()
-	dqWriter.persistMetaData()
+	dqWriter.persistMetaData(false)
 	dqWriter.saveExtraMeta()
 	test.Equal(t, dqWriter.GetQueueReadStart(), dqWriter.GetQueueWriteEnd())
 	newStart = dqWriter.GetQueueReadStart()
