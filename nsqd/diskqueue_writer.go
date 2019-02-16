@@ -107,7 +107,7 @@ func newDiskQueueWriter(name string, dataPath string, maxBytesPerFile int64,
 	}
 
 	// no need to lock here, nothing else could possibly be touching this instance
-	err := d.retrieveMetaData()
+	err := d.retrieveMetaData(!readOnly)
 	if err != nil && !os.IsNotExist(err) {
 		nsqLog.LogErrorf("diskqueue(%s) failed to retrieveMetaData - %s", d.name, err)
 		return &d, err
@@ -122,7 +122,7 @@ func newDiskQueueWriter(name string, dataPath string, maxBytesPerFile int64,
 		if d.diskQueueStart.EndOffset.GreatThan(&d.diskWriteEnd.EndOffset) ||
 			d.diskQueueStart.Offset() > d.diskWriteEnd.Offset() {
 			nsqLog.LogErrorf("diskqueue(%s) queue start invalid: %v", d.name, d.diskQueueStart)
-			return nil, ErrNeedFixQueueStart
+			return &d, ErrNeedFixQueueStart
 		}
 		d.saveExtraMeta()
 	}
@@ -936,7 +936,7 @@ func (d *diskQueueWriter) saveExtraMeta() error {
 }
 
 // retrieveMetaData initializes state from the filesystem
-func (d *diskQueueWriter) retrieveMetaData() error {
+func (d *diskQueueWriter) retrieveMetaData(fix bool) error {
 	var f *os.File
 	var err error
 
@@ -957,6 +957,38 @@ func (d *diskQueueWriter) retrieveMetaData() error {
 	atomic.StoreInt64(&d.diskWriteEnd.totalMsgCnt, totalCnt)
 	d.diskReadEnd = d.diskWriteEnd
 	err = checkMetaFileEnd(f)
+	if err != nil && fix {
+		// recovery from tmp meta file
+		tmpFileName := fmt.Sprintf("%s.tmp", fileName)
+		badFileName := fmt.Sprintf("%s.%d.corrupt", fileName, rand.Int())
+		nsqLog.Errorf("meta file corrupt to %v, try recover meta from file %v ", badFileName, tmpFileName)
+		err2 := util.AtomicRename(fileName, badFileName)
+		if err2 != nil {
+			nsqLog.Warningf("%v failed rename to %v : %v", fileName, badFileName, err2.Error())
+		} else {
+			err2 = util.AtomicRename(tmpFileName, fileName)
+			if err2 != nil {
+				nsqLog.Errorf("%v failed recover to %v : %v", tmpFileName, fileName, err2.Error())
+				util.AtomicRename(badFileName, fileName)
+			}
+		}
+	}
+	return err
+}
+
+// used for recovery if the normal meta data file corrupt.
+func (d *diskQueueWriter) persistTmpMetaData() error {
+	fileName := d.metaDataFileName()
+	tmpFileName := fmt.Sprintf("%s.tmp", fileName)
+	f, err := os.OpenFile(tmpFileName, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(f, "%d\n%d,%d,%d\n",
+		atomic.LoadInt64(&d.diskWriteEnd.totalMsgCnt),
+		d.diskWriteEnd.EndOffset.FileNum, d.diskWriteEnd.EndOffset.Pos, d.diskWriteEnd.Offset())
+
+	f.Close()
 	return err
 }
 
@@ -966,6 +998,10 @@ func (d *diskQueueWriter) persistMetaData(fsync bool) error {
 	var err error
 	var n int
 	pos := 0
+	err = d.persistTmpMetaData()
+	if err != nil {
+		return err
+	}
 
 	fileName := d.metaDataFileName()
 	f, err = os.OpenFile(fileName, os.O_RDWR|os.O_CREATE, 0644)
