@@ -384,3 +384,80 @@ func TestDiskQueueSnapshotReader(t *testing.T) {
 	test.Equal(t, 100, len(data))
 	// remove some begin of queue, and test queue start
 }
+
+func TestDiskQueueReaderMetaInvalid(t *testing.T) {
+	nsqLog.Logger = newTestLogger(t)
+	dqName := "test_disk_queue" + strconv.Itoa(int(time.Now().Unix()))
+	tmpDir, err := ioutil.TempDir("", fmt.Sprintf("nsq-test-%d", time.Now().UnixNano()))
+	test.Nil(t, err)
+	defer os.RemoveAll(tmpDir)
+	queue, _ := NewDiskQueueWriter(dqName, tmpDir, 1024, 4, 1<<10, 1)
+	dqWriter := queue.(*diskQueueWriter)
+	defer dqWriter.Close()
+	test.NotNil(t, dqWriter)
+
+	msg := []byte("test")
+	msgNum := 1000
+	for i := 0; i < msgNum; i++ {
+		dqWriter.Put(msg)
+	}
+	dqWriter.Flush(false)
+	end := dqWriter.GetQueueWriteEnd()
+	test.Nil(t, err)
+
+	dqReader := newDiskQueueReader(dqName, dqName, tmpDir, 1024, 4, 1<<10, 1, 2*time.Second, nil, true)
+	dqReader.UpdateQueueEnd(end, false)
+	msgOut, _ := dqReader.TryReadOne()
+	equal(t, msgOut.Data, msg)
+	test.Equal(t, msgOut.Offset+BackendOffset(msgOut.MovedSize), dqReader.(*diskQueueReader).readQueueInfo.Offset())
+	test.Equal(t, msgOut.CurCnt, dqReader.(*diskQueueReader).readQueueInfo.TotalMsgCnt())
+	dqReader.(*diskQueueReader).sync(false)
+	fname := dqReader.(*diskQueueReader).metaDataFileName(true)
+	t.Log(fname)
+	dqReader.Close()
+
+	tmpf, err := os.OpenFile(fname, os.O_RDWR, 0644)
+	test.Nil(t, err)
+	fs, _ := tmpf.Stat()
+	t.Log(fs.Size())
+	magic := make([]byte, len(diskMagicEndBytes))
+	n, err := tmpf.Read(magic)
+	test.Equal(t, n, len(diskMagicEndBytes))
+	t.Log(magic)
+	noff, err := tmpf.Seek(-1*int64(len(diskMagicEndBytes)), 2)
+	test.Nil(t, err)
+	t.Log(noff)
+	magic = make([]byte, len(diskMagicEndBytes))
+	n, err = tmpf.Read(magic)
+	t.Log(magic)
+	test.Equal(t, n, len(diskMagicEndBytes))
+	test.Equal(t, diskMagicEndBytes, magic)
+
+	dqReader = newDiskQueueReader(dqName, dqName, tmpDir, 1024, 4, 1<<10, 1, 2*time.Second, nil, true)
+	err = dqReader.(*diskQueueReader).retrieveMetaData()
+	test.Nil(t, err)
+
+	tmpf.Truncate(fs.Size() - 1)
+	err = dqReader.(*diskQueueReader).retrieveMetaData()
+	test.NotNil(t, err)
+	tmpf.Seek(-1*int64(len(diskMagicEndBytes))+1, 2)
+	tmpf.Write([]byte("01"))
+	err = dqReader.(*diskQueueReader).retrieveMetaData()
+	test.NotNil(t, err)
+	tmpf.Seek(-1*int64(len(diskMagicEndBytes)), 2)
+	tmpf.Write(diskMagicEndBytes)
+	err = dqReader.(*diskQueueReader).retrieveMetaData()
+	test.Nil(t, err)
+
+	testCrash = true
+	err = dqReader.(*diskQueueReader).persistMetaData(false)
+	test.NotNil(t, err)
+	testCrash = false
+	err = dqReader.(*diskQueueReader).retrieveMetaData()
+	test.NotNil(t, err)
+
+	err = dqReader.(*diskQueueReader).persistMetaData(false)
+	test.Nil(t, err)
+	err = dqReader.(*diskQueueReader).retrieveMetaData()
+	test.Nil(t, err)
+}

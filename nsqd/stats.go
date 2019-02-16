@@ -545,7 +545,6 @@ func (self *DetailStatsInfo) SaveHistory(fileName string) error {
 		nsqLog.LogWarningf("failed to save history stats: %v", err)
 		return err
 	}
-	f.Sync()
 	f.Close()
 
 	err = util.AtomicRename(tmpFileName, fileName)

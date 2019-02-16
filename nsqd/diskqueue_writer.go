@@ -110,6 +110,7 @@ func newDiskQueueWriter(name string, dataPath string, maxBytesPerFile int64,
 	err := d.retrieveMetaData()
 	if err != nil && !os.IsNotExist(err) {
 		nsqLog.LogErrorf("diskqueue(%s) failed to retrieveMetaData - %s", d.name, err)
+		return &d, err
 	}
 	err = d.initQueueReadStart()
 	if err != nil && !os.IsNotExist(err) {
@@ -118,17 +119,26 @@ func newDiskQueueWriter(name string, dataPath string, maxBytesPerFile int64,
 	}
 
 	if !readOnly {
-		d.saveExtraMeta()
 		if d.diskQueueStart.EndOffset.GreatThan(&d.diskWriteEnd.EndOffset) ||
 			d.diskQueueStart.Offset() > d.diskWriteEnd.Offset() {
+			nsqLog.LogErrorf("diskqueue(%s) queue start invalid: %v", d.name, d.diskQueueStart)
 			return nil, ErrNeedFixQueueStart
 		}
+		d.saveExtraMeta()
 	}
 
 	return &d, nil
 }
 
 func (d *diskQueueWriter) tryFixData() error {
+	d.Lock()
+	defer d.Unlock()
+	// queue start may be invalid after crash, so we can fix by manual to delete meta and reload it
+	err := d.initQueueReadStart()
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	d.saveExtraMeta()
 	return nil
 }
 
@@ -946,38 +956,36 @@ func (d *diskQueueWriter) retrieveMetaData() error {
 	}
 	atomic.StoreInt64(&d.diskWriteEnd.totalMsgCnt, totalCnt)
 	d.diskReadEnd = d.diskWriteEnd
-
-	return nil
+	err = checkMetaFileEnd(f)
+	return err
 }
 
 // persistMetaData atomically writes state to the filesystem
 func (d *diskQueueWriter) persistMetaData(fsync bool) error {
 	var f *os.File
 	var err error
+	var n int
+	pos := 0
 
 	fileName := d.metaDataFileName()
-	tmpFileName := fmt.Sprintf("%s.%d.tmp", fileName, rand.Int())
-
-	// write to tmp file
-	f, err = os.OpenFile(tmpFileName, os.O_RDWR|os.O_CREATE, 0644)
+	f, err = os.OpenFile(fileName, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
 		return err
 	}
+	err = preWriteMetaEnd(f)
 
-	_, err = fmt.Fprintf(f, "%d\n%d,%d,%d\n",
+	n, err = fmt.Fprintf(f, "%d\n%d,%d,%d\n",
 		atomic.LoadInt64(&d.diskWriteEnd.totalMsgCnt),
 		d.diskWriteEnd.EndOffset.FileNum, d.diskWriteEnd.EndOffset.Pos, d.diskWriteEnd.Offset())
-	if err != nil {
-		f.Close()
-		return err
-	}
-	if fsync {
+	pos += n
+
+	_, err = writeMetaEnd(f, err, pos)
+	if fsync && err == nil {
 		f.Sync()
 	}
-	f.Close()
 
-	// atomically rename
-	return util.AtomicRename(tmpFileName, fileName)
+	f.Close()
+	return err
 }
 
 func (d *diskQueueWriter) metaDataFileName() string {

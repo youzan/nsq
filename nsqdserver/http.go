@@ -90,6 +90,7 @@ func newHTTPServer(ctx *context, tlsEnabled bool, tlsRequired bool) *httpServer 
 	router.Handle("GET", "/delayqueue/backupto", http_api.Decorate(s.doDelayedQueueBackupTo, log, http_api.V1Stream))
 
 	router.Handle("POST", "/topic/greedyclean", http_api.Decorate(s.doGreedyCleanTopic, log, http_api.V1))
+	router.Handle("POST", "/topic/fixdata", http_api.Decorate(s.doFixTopicData, log, http_api.V1))
 	//router.Handle("POST", "/topic/delete", http_api.Decorate(s.doDeleteTopic, http_api.DeprecatedAPI, log, http_api.V1))
 	router.Handle("POST", "/disable/write", http_api.Decorate(s.doDisableClusterWrite, log, http_api.V1))
 
@@ -240,6 +241,15 @@ func (s *httpServer) getExistingTopicFromQuery(req *http.Request) (url.Values, *
 	}
 
 	return reqParams, topic, nil
+}
+
+func (s *httpServer) doFixTopicData(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {
+	_, localTopic, err := s.getExistingTopicFromQuery(req)
+	if err != nil {
+		return nil, err
+	}
+	localTopic.TryFixData()
+	return nil, nil
 }
 
 func (s *httpServer) doGreedyCleanTopic(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {

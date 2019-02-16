@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math/rand"
 	"os"
 	"path"
 	"sync"
@@ -14,14 +13,16 @@ import (
 	"time"
 
 	"github.com/youzan/nsq/internal/levellogger"
-	"github.com/youzan/nsq/internal/util"
 )
 
 const (
 	MAX_POSSIBLE_MSG_SIZE = 1 << 28
 	readBufferSize        = 1024 * 4
-	magicCode             = 0xae83
 )
+
+var errInvalidMetaFileData = errors.New("invalid meta file data")
+var diskMagicEndBytes = []byte{0xae, 0x83}
+var testCrash = false
 
 var (
 	ErrReadQueueAlreadyCleaned = errors.New("the queue position has been cleaned")
@@ -1030,6 +1031,23 @@ func (d *diskQueueReader) sync(fsync bool) error {
 	return nil
 }
 
+func checkMetaFileEnd(f *os.File) error {
+	endFlag := make([]byte, len(diskMagicEndBytes))
+	n, err := f.Read(endFlag)
+	if err != nil {
+		if err == io.EOF {
+			// old meta file
+		} else {
+			nsqLog.Errorf("reader meta end error, need fix: %v", err.Error())
+			return errInvalidMetaFileData
+		}
+	} else if !bytes.Equal(endFlag[:n], diskMagicEndBytes) {
+		nsqLog.Errorf("reader meta end data invalid: %v need fix: %v", n, endFlag)
+		return errInvalidMetaFileData
+	}
+	return nil
+}
+
 // retrieveMetaData initializes state from the filesystem
 func (d *diskQueueReader) retrieveMetaData() error {
 	var f *os.File
@@ -1050,6 +1068,10 @@ func (d *diskQueueReader) retrieveMetaData() error {
 			nsqLog.Infof("fscanf new meta file err : %v", errV2)
 			return errV2
 		}
+		err = checkMetaFileEnd(fV2)
+		if err != nil {
+			nsqLog.Errorf("reader (%v) meta invalid, need fix: %v", d.readerMetaName, err.Error())
+		}
 	} else {
 		nsqLog.Infof("new meta file err : %v", errV2)
 
@@ -1063,10 +1085,16 @@ func (d *diskQueueReader) retrieveMetaData() error {
 		_, err = fmt.Fscanf(f, "%d\n%d,%d,%d\n%d,%d,%d\n",
 			&d.queueEndInfo.totalMsgCnt,
 			&d.confirmedQueueInfo.EndOffset.FileNum, &d.confirmedQueueInfo.EndOffset.Pos, &d.confirmedQueueInfo.virtualEnd,
-			&d.queueEndInfo.EndOffset.FileNum, &d.queueEndInfo.EndOffset.Pos, &d.queueEndInfo.virtualEnd)
+			&d.queueEndInfo.EndOffset.FileNum, &d.queueEndInfo.EndOffset.Pos, &d.queueEndInfo.virtualEnd,
+		)
 		if err != nil {
 			return err
 		}
+		err = checkMetaFileEnd(f)
+		if err != nil {
+			nsqLog.Errorf("reader (%v) meta invalid, need fix: %v", d.readerMetaName, err.Error())
+		}
+
 		if d.confirmedQueueInfo.virtualEnd == d.queueEndInfo.virtualEnd {
 			d.confirmedQueueInfo.totalMsgCnt = d.queueEndInfo.totalMsgCnt
 		}
@@ -1088,39 +1116,82 @@ func (d *diskQueueReader) retrieveMetaData() error {
 	d.readQueueInfo = d.confirmedQueueInfo
 	d.updateDepth()
 
-	return nil
+	return err
+}
+
+func preWriteMetaEnd(f *os.File) error {
+	// error can be ignored since we just make sure end with non-magic
+	f.Seek(-1*int64(len(diskMagicEndBytes)), os.SEEK_END)
+	_, err := f.Write(make([]byte, len(diskMagicEndBytes)))
+	if err != nil {
+		return err
+	}
+	_, err = f.Seek(0, os.SEEK_SET)
+	return err
+}
+
+func (d *diskQueueReader) writeMeta(f *os.File, perr error) (int, error) {
+	if perr != nil {
+		return 0, perr
+	}
+	n, err := fmt.Fprintf(f, "%d\n%d\n%d,%d,%d\n%d,%d,%d\n",
+		d.confirmedQueueInfo.TotalMsgCnt(),
+		d.queueEndInfo.totalMsgCnt,
+		d.confirmedQueueInfo.EndOffset.FileNum, d.confirmedQueueInfo.EndOffset.Pos, d.confirmedQueueInfo.Offset(),
+		d.queueEndInfo.EndOffset.FileNum, d.queueEndInfo.EndOffset.Pos, d.queueEndInfo.Offset())
+	return n, err
+}
+
+func writeMetaEnd(f *os.File, perr error, pos int) (int, error) {
+	if perr != nil {
+		return 0, perr
+	}
+	// write magic end
+	n, err := f.Write(diskMagicEndBytes)
+	pos += n
+	f.Truncate(int64(pos))
+	return n, err
 }
 
 // persistMetaData atomically writes state to the filesystem
 func (d *diskQueueReader) persistMetaData(fsync bool) error {
 	var f *os.File
 	var err error
+	var n int
+	pos := 0
 
 	fileName := d.metaDataFileName(true)
-	tmpFileName := fmt.Sprintf("%s.%d.tmp", fileName, rand.Int())
 
-	// write to tmp file
-	f, err = os.OpenFile(tmpFileName, os.O_RDWR|os.O_CREATE, 0644)
+	s := time.Now()
+	f, err = os.OpenFile(fileName, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
 		return err
 	}
 
-	_, err = fmt.Fprintf(f, "%d\n%d\n%d,%d,%d\n%d,%d,%d\n",
-		d.confirmedQueueInfo.TotalMsgCnt(),
-		d.queueEndInfo.totalMsgCnt,
-		d.confirmedQueueInfo.EndOffset.FileNum, d.confirmedQueueInfo.EndOffset.Pos, d.confirmedQueueInfo.Offset(),
-		d.queueEndInfo.EndOffset.FileNum, d.queueEndInfo.EndOffset.Pos, d.queueEndInfo.Offset())
-	if err != nil {
-		f.Close()
-		return err
+	err = preWriteMetaEnd(f)
+	cost1 := time.Since(s)
+
+	if testCrash {
+		return errors.New("test crash")
 	}
-	if fsync {
+	n, err = d.writeMeta(f, err)
+	pos += n
+	_, err = writeMetaEnd(f, err, pos)
+	cost2 := time.Since(s)
+
+	if err != nil {
+		nsqLog.Errorf("reader (%v) meta write failed, need fix: %v", d.readerMetaName, err.Error())
+	} else if fsync {
 		f.Sync()
 	}
 	f.Close()
-
+	cost3 := time.Since(s)
+	if cost3 >= time.Second/10 {
+		nsqLog.Logf("reader (%v) meta perist slow : %v,%v,%v", d.readerMetaName, cost1, cost2, cost3)
+	}
+	return err
 	// atomically rename
-	return util.AtomicRename(tmpFileName, fileName)
+	//return util.AtomicRename(tmpFileName, fileName)
 }
 
 func (d *diskQueueReader) metaDataFileName(newVer bool) string {

@@ -214,7 +214,6 @@ func NewTopicWithExt(topicName string, part int, ext bool, ordered bool, opt *Op
 		if err == ErrNeedFixQueueStart {
 			t.SetDataFixState(true)
 		} else {
-			t.MarkAsRemoved()
 			return nil
 		}
 	}
@@ -1491,8 +1490,9 @@ func (t *Topic) UpdateDelayedQueueConsumedState(ts int64, keyList RecentKeyList,
 	return dq.UpdateConsumedState(ts, keyList, cntList, channelCntList)
 }
 
+// after crash, some topic meta need to be fixed by manual
 func (t *Topic) TryFixData() error {
-	// first try fix to reload meta from file
-	// second try fix memory data
-	return t.backend.tryFixData()
+	t.backend.tryFixData()
+	// TODO: fix channel meta
+	return nil
 }
