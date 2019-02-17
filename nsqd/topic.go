@@ -1192,9 +1192,7 @@ func (t *Topic) IsWriteDisabled() bool {
 }
 
 func (t *Topic) DisableForSlave() {
-	changed := false
 	if atomic.CompareAndSwapInt32(&t.writeDisabled, 0, 1) {
-		changed = true
 		nsqLog.Logf("[TRACE_DATA] while disable topic %v end: %v, cnt: %v, queue start: %v", t.GetFullName(),
 			t.TotalDataSize(), t.TotalMessageCnt(), t.backend.GetQueueReadStart())
 	}
@@ -1211,17 +1209,13 @@ func (t *Topic) DisableForSlave() {
 			c.GetConfirmed(), c.Depth(), c.backend.GetQueueReadEnd(), curRead)
 	}
 	t.channelLock.RUnlock()
-	if changed {
-		// notify de-register from lookup
-		t.nsqdNotify.NotifyStateChanged(t, false)
-	}
+	// notify de-register from lookup
+	t.nsqdNotify.NotifyStateChanged(t, false)
 }
 
 func (t *Topic) EnableForMaster() {
-	changed := false
 	if atomic.CompareAndSwapInt32(&t.writeDisabled, 1, 0) {
 		nsqLog.Logf("[TRACE_DATA] while enable topic %v end: %v, cnt: %v", t.GetFullName(), t.TotalDataSize(), t.TotalMessageCnt())
-		changed = true
 	}
 	t.channelLock.RLock()
 	for _, c := range t.channelMap {
@@ -1235,10 +1229,8 @@ func (t *Topic) EnableForMaster() {
 			c.GetConfirmed(), c.Depth(), c.backend.GetQueueReadEnd(), curRead)
 	}
 	t.channelLock.RUnlock()
-	if changed {
-		// notify re-register to lookup
-		t.nsqdNotify.NotifyStateChanged(t, false)
-	}
+	// notify re-register to lookup
+	t.nsqdNotify.NotifyStateChanged(t, false)
 }
 
 func (t *Topic) Empty() error {

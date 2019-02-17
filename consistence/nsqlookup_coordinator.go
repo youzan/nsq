@@ -339,6 +339,7 @@ func (self *NsqLookupCoordinator) notifyTopicsToSingleNsqdForReload(topics []Top
 }
 
 func (self *NsqLookupCoordinator) notifyTopicsToAllNsqdForReload(topics []TopicPartitionMetaInfo) {
+	coordLog.Infof("notify all topics %v for all nodes ", len(topics))
 	for _, v := range topics {
 		select {
 		case <-self.stopChan:
@@ -1416,7 +1417,6 @@ func (self *NsqLookupCoordinator) notifySingleNsqdForTopicReload(topicInfo Topic
 }
 
 func (self *NsqLookupCoordinator) notifyAllNsqdsForTopicReload(topicInfo TopicPartitionMetaInfo) *CoordErr {
-	coordLog.Infof("reload topic %v for all nodes ", topicInfo.GetTopicDesp())
 	rpcErr := self.notifyISRTopicMetaInfo(&topicInfo)
 	if rpcErr != nil {
 		coordLog.Infof("failed to notify topic %v info : %v", topicInfo.GetTopicDesp(), rpcErr)
