@@ -269,6 +269,8 @@ func TestTopicPutChannelWait(t *testing.T) {
 	test.Equal(t, topic.backend.GetQueueReadEnd(), channel.GetChannelEnd())
 	msg.ID = 0
 	topic.PutMessage(msg)
+	// wait channel end notify done
+	time.Sleep(time.Millisecond)
 	test.Equal(t, false, channel.IsWaitingMoreData())
 	test.Equal(t, topic.backend.GetQueueReadEnd(), topic.backend.GetQueueWriteEnd())
 	test.Equal(t, topic.backend.GetQueueReadEnd(), channel.GetChannelEnd())
@@ -282,11 +284,13 @@ func TestTopicPutChannelWait(t *testing.T) {
 	test.Equal(t, true, channel.IsWaitingMoreData())
 	msg.ID = 0
 	topic.PutMessage(msg)
+	time.Sleep(time.Millisecond)
 	test.Equal(t, false, channel.IsWaitingMoreData())
 	test.Equal(t, topic.backend.GetQueueReadEnd(), topic.backend.GetQueueWriteEnd())
 	test.Equal(t, topic.backend.GetQueueReadEnd(), channel.GetChannelEnd())
 	msg.ID = 0
 	topic.PutMessage(msg)
+	time.Sleep(time.Millisecond)
 	test.NotEqual(t, topic.backend.GetQueueReadEnd(), topic.backend.GetQueueWriteEnd())
 	test.Equal(t, topic.backend.GetQueueReadEnd(), channel.GetChannelEnd())
 }

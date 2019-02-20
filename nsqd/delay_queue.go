@@ -762,7 +762,7 @@ func (q *DelayQueue) put(m *Message, rawData []byte, trace bool, checkSize int64
 	syncEvery := atomic.LoadInt64(&q.SyncEvery)
 	if syncEvery == 1 ||
 		dend.TotalMsgCnt()-atomic.LoadInt64(&q.lastSyncCnt) >= syncEvery {
-		q.flush(true)
+		q.flush(false)
 	}
 
 	return m.ID, offset, writeBytes, dend, nil

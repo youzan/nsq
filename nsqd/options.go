@@ -41,11 +41,12 @@ type Options struct {
 	SyncEvery       int64         `flag:"sync-every"`
 	SyncTimeout     time.Duration `flag:"sync-timeout"`
 
-	QueueScanInterval        time.Duration `flag:"queue-scan-interval"`
-	QueueScanRefreshInterval time.Duration `flag:"queue-scan-refresh-interval"`
-	QueueScanSelectionCount  int           `flag:"queue-scan-selection-count"`
-	QueueScanWorkerPoolMax   int           `flag:"queue-scan-worker-pool-max"`
-	QueueScanDirtyPercent    float64       `flag:"queue-scan-dirty-percent"`
+	QueueScanInterval          time.Duration `flag:"queue-scan-interval"`
+	QueueScanRefreshInterval   time.Duration `flag:"queue-scan-refresh-interval"`
+	QueueScanSelectionCount    int           `flag:"queue-scan-selection-count"`
+	QueueScanWorkerPoolMax     int           `flag:"queue-scan-worker-pool-max"`
+	QueueTopicJobWorkerPoolMax int           `flag:"queue-topic-job-worker-pool-max"`
+	QueueScanDirtyPercent      float64       `flag:"queue-scan-dirty-percent"`
 
 	// msg and command options
 	MsgTimeout            time.Duration `flag:"msg-timeout" arg:"60s"`
@@ -134,11 +135,12 @@ func NewOptions() *Options {
 		SyncEvery:       2500,
 		SyncTimeout:     2 * time.Second,
 
-		QueueScanInterval:        500 * time.Millisecond,
-		QueueScanRefreshInterval: 5 * time.Second,
-		QueueScanSelectionCount:  20,
-		QueueScanWorkerPoolMax:   4,
-		QueueScanDirtyPercent:    0.25,
+		QueueScanInterval:          500 * time.Millisecond,
+		QueueScanRefreshInterval:   5 * time.Second,
+		QueueScanSelectionCount:    20,
+		QueueScanWorkerPoolMax:     16,
+		QueueTopicJobWorkerPoolMax: 100,
+		QueueScanDirtyPercent:      0.25,
 
 		MsgTimeout:        60 * time.Second,
 		MaxMsgTimeout:     15 * time.Minute,

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/bitly/go-simplejson"
+	"github.com/spaolacci/murmur3"
 	"github.com/youzan/nsq/internal/clusterinfo"
 	"github.com/youzan/nsq/internal/dirlock"
 	"github.com/youzan/nsq/internal/http_api"
@@ -29,6 +30,10 @@ const (
 	TLSNotRequired = iota
 	TLSRequiredExceptHTTP
 	TLSRequired
+)
+
+const (
+	jobQueueChLen = 100
 )
 
 type errStore struct {
@@ -53,6 +58,7 @@ type INsqdNotify interface {
 	NotifyStateChanged(v interface{}, needPersist bool)
 	ReqToEnd(*Channel, *Message, time.Duration) error
 	NotifyScanDelayed(*Channel)
+	PushTopicJob(*Topic, func())
 }
 
 type ReqToEndFunc func(*Channel, *Message, time.Duration) error
@@ -70,7 +76,9 @@ type NSQD struct {
 	topicMap       map[string]map[int]*Topic
 	magicCodeMutex sync.Mutex
 
-	poolSize int
+	poolSize         int
+	topicJobPoolSize int
+	topicJobChList   [16]chan func()
 
 	MetaNotifyChan       chan interface{}
 	OptsNotificationChan chan struct{}
@@ -114,6 +122,9 @@ func New(opts *Options) *NSQD {
 		scanTriggerChan:      make(chan *Channel, 1),
 		persistNotifyCh:      make(chan struct{}, 2),
 		persistClosed:        make(chan struct{}),
+	}
+	for i := 0; i < len(n.topicJobChList); i++ {
+		n.topicJobChList[i] = make(chan func(), jobQueueChLen)
 	}
 	n.SwapOpts(opts)
 
@@ -251,6 +262,7 @@ func (n *NSQD) GetTopicMapCopy() []*Topic {
 
 func (n *NSQD) Start() {
 	n.waitGroup.Wrap(func() { n.queueScanLoop() })
+	n.waitGroup.Wrap(func() { n.queueTopicJobLoop() })
 	n.persistWaitGroup.Wrap(func() { n.persistLoop() })
 }
 
@@ -758,26 +770,12 @@ type responseData struct {
 //
 func (n *NSQD) resizePool(num int, workCh chan *Channel, responseCh chan responseData, closeCh chan int) {
 	idealPoolSize := int(float64(num) * 0.25)
-	if idealPoolSize < 1 {
-		idealPoolSize = 1
-	} else if idealPoolSize > n.GetOpts().QueueScanWorkerPoolMax {
+	if idealPoolSize > n.GetOpts().QueueScanWorkerPoolMax {
 		idealPoolSize = n.GetOpts().QueueScanWorkerPoolMax
 	}
-	for {
-		if idealPoolSize == n.poolSize {
-			break
-		} else if idealPoolSize < n.poolSize {
-			// contract
-			closeCh <- 1
-			n.poolSize--
-		} else {
-			// expand
-			n.waitGroup.Wrap(func() {
-				n.queueScanWorker(workCh, responseCh, closeCh)
-			})
-			n.poolSize++
-		}
-	}
+	n.poolSize = n.resizeWorkerPool(idealPoolSize, n.poolSize, closeCh, func(cc chan int) {
+		n.queueScanWorker(workCh, responseCh, cc)
+	})
 }
 
 // queueScanWorker receives work (in the form of a channel) from queueScanLoop
@@ -917,6 +915,98 @@ exit:
 	workTicker.Stop()
 	refreshTicker.Stop()
 	fastTimer.Stop()
+}
+
+func (n *NSQD) resizeWorkerPool(idealPoolSize int, actualSize int, closeCh chan int, workerFunc func(chan int)) int {
+	if idealPoolSize < 1 {
+		idealPoolSize = 1
+	}
+	for {
+		if idealPoolSize == actualSize {
+			break
+		} else if idealPoolSize < actualSize {
+			// contract
+			closeCh <- 1
+			actualSize--
+		} else {
+			// expand
+			n.waitGroup.Wrap(func() {
+				workerFunc(closeCh)
+			})
+			actualSize++
+		}
+	}
+	return actualSize
+}
+
+func (n *NSQD) resizeTopicJobPool(tnum int, jobCh chan func(), closeCh chan int) {
+	idealPoolSize := int(float64(tnum) * 0.1)
+	if idealPoolSize > n.GetOpts().QueueTopicJobWorkerPoolMax {
+		idealPoolSize = n.GetOpts().QueueTopicJobWorkerPoolMax
+	}
+	n.topicJobPoolSize = n.resizeWorkerPool(idealPoolSize, n.topicJobPoolSize, closeCh, func(cc chan int) {
+		n.topicJobLoop(jobCh, cc)
+	})
+}
+
+func (n *NSQD) PushTopicJob(t *Topic, job func()) {
+	h := int(murmur3.Sum32([]byte(t.GetFullName())))
+	index := h % len(n.topicJobChList)
+	for i := 0; i < len(n.topicJobChList); i++ {
+		ch := n.topicJobChList[index+i]
+		select {
+		case ch <- job:
+			return
+		default:
+		}
+	}
+	nsqLog.Logf("%v topic job push ignored: %v", t.GetFullName(), job)
+}
+
+func (n *NSQD) topicJobLoop(jobCh chan func(), closeCh chan int) {
+	for {
+		select {
+		case job := <-jobCh:
+			job()
+		case <-closeCh:
+			return
+		}
+	}
+}
+
+func (n *NSQD) queueTopicJobLoop() {
+	closeCh := make(chan int)
+	topics := n.GetTopicMapCopy()
+	refreshTicker := time.NewTicker(n.GetOpts().QueueScanRefreshInterval)
+	aggJobCh := make(chan func(), len(n.topicJobChList)*jobQueueChLen+1)
+	for i := 0; i < len(n.topicJobChList); i++ {
+		go func(c chan func()) {
+			for {
+				select {
+				case job := <-c:
+					aggJobCh <- job
+				case <-n.exitChan:
+					return
+				}
+			}
+		}(n.topicJobChList[i])
+	}
+	n.resizeTopicJobPool(len(topics), aggJobCh, closeCh)
+	for {
+		select {
+		case <-refreshTicker.C:
+			topics := n.GetTopicMapCopy()
+			n.resizeTopicJobPool(len(topics), aggJobCh, closeCh)
+			continue
+		case <-n.exitChan:
+			goto exit
+		}
+	}
+
+exit:
+	nsqLog.Logf("QUEUE topic job loop: closing")
+	close(closeCh)
+	refreshTicker.Stop()
 }
 
 func (n *NSQD) IsAuthEnabled() bool {

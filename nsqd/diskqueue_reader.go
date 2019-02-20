@@ -408,9 +408,9 @@ func (d *diskQueueReader) isReadToEnd() bool {
 	if d.IsWaitingMoreData() {
 		return true
 	}
-	d.Lock()
+	d.RLock()
 	hasDiskData := d.queueEndInfo.EndOffset.GreatThan(&d.readQueueInfo.EndOffset)
-	d.Unlock()
+	d.RUnlock()
 	return !hasDiskData
 }
 

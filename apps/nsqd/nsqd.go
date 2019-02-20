@@ -164,6 +164,7 @@ func nsqdFlagSet(opts *nsqd.Options) *flag.FlagSet {
 	flagSet.Duration("queue-scan-refresh-interval", opts.QueueScanRefreshInterval, "scan refresh interval for new channels")
 	flagSet.Int("queue-scan-selection-count", opts.QueueScanSelectionCount, "select count for each scan")
 	flagSet.Int("queue-scan-worker-pool-max", opts.QueueScanWorkerPoolMax, "the max scan worker pool")
+	flagSet.Int("queue-topic-job-worker-pool-max", opts.QueueTopicJobWorkerPoolMax, "the max scan worker pool")
 	flagSet.Float64("queue-scan-dirty-percent", opts.QueueScanDirtyPercent, "retry scan immediately if dirty percent happened in last scan")
 	flagSet.Bool("allow-zan-test-skip", opts.AllowZanTestSkip, "allow zan test message filter in new created channel & channels under newly upgraded topic")
 	flagSet.Int("default-commit-buf", int(opts.DefaultCommitBuf), "the default commit buffer for topic data")

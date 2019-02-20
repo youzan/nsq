@@ -574,10 +574,10 @@ func (t *Topic) UpdateCommittedOffset(offset BackendQueueEnd) {
 	if syncEvery == 1 ||
 		offset.TotalMsgCnt()-atomic.LoadInt64(&t.lastSyncCnt) >= syncEvery {
 		if !t.IsWriteDisabled() {
-			t.flush(true)
+			t.flushBuffer(true)
 		}
 	} else {
-		t.flushForChannels()
+		t.notifyChEndChanged(false)
 	}
 }
 
@@ -871,20 +871,8 @@ func (t *Topic) flushForChannelMoreData(c *Channel) {
 	}
 	hasData := t.backend.FlushBuffer()
 	if hasData {
-		e := t.backend.GetQueueReadEnd()
-		curCommit := t.GetCommitted()
-		// if not committed, we need wait to notify channel.
-		if curCommit != nil && e.Offset() > curCommit.Offset() {
-			e = curCommit
-		}
-		err := c.UpdateQueueEnd(e, false)
-		if err != nil {
-			if err != ErrExiting {
-				nsqLog.Logf(
-					"failed to update topic end to channel(%s) - %s",
-					c.name, err)
-			}
-		}
+		e := t.getCommittedEnd()
+		updateChannelEnd(false, e, c)
 	}
 }
 
@@ -897,7 +885,11 @@ func (t *Topic) ForceFlushForChannels() {
 	}
 }
 
-func (t *Topic) flushForChannels() {
+func (t *Topic) notifyChEndChanged(force bool) {
+	t.nsqdNotify.PushTopicJob(t, func() { t.flushForChannels(force) })
+}
+
+func (t *Topic) flushForChannels(forceUpdate bool) {
 	if t.IsWriteDisabled() {
 		return
 	}
@@ -910,8 +902,12 @@ func (t *Topic) flushForChannels() {
 		}
 	}
 	t.channelLock.RUnlock()
+	hasData := false
 	if needFlush {
-		t.ForceFlushForChannels()
+		hasData = t.backend.FlushBuffer()
+	}
+	if hasData || forceUpdate {
+		t.updateChannelsEnd(false, forceUpdate)
 	}
 }
 
@@ -1171,7 +1167,8 @@ func (t *Topic) exit(deleted bool) error {
 	}
 
 	// write anything leftover to disk
-	t.flush(true)
+	t.flushData()
+	t.updateChannelsEnd(false, true)
 	nsqLog.Logf("[TRACE_DATA] exiting topic end: %v, cnt: %v", t.TotalDataSize(), t.TotalMessageCnt())
 	t.SaveChannelMeta()
 	t.channelLock.RLock()
@@ -1271,20 +1268,16 @@ func (t *Topic) ForceFlush() {
 	}
 }
 
-func (t *Topic) flush(notifyCh bool) error {
-	err := t.flushData()
-	if err != nil {
-		return err
-	}
-	if notifyCh {
-		t.updateChannelsEnd(false, true)
+func (t *Topic) flushBuffer(notifyCh bool) error {
+	hasData := t.backend.FlushBuffer()
+	if notifyCh && hasData {
+		t.notifyChEndChanged(true)
 	}
 	return nil
 }
 
-func (t *Topic) flushData() error {
+func (t *Topic) flushData() (error, bool) {
 	syncEvery := atomic.LoadInt64(&t.dynamicConf.SyncEvery)
-	// TODO: if replication is 1 we may need fsync
 	useFsync := syncEvery == 1 || t.option.UseFsync
 
 	if t.GetDelayedQueue() != nil {
@@ -1293,16 +1286,16 @@ func (t *Topic) flushData() error {
 
 	ok := atomic.CompareAndSwapInt32(&t.needFlush, 1, 0)
 	if !ok {
-		return nil
+		return nil, false
 	}
 	atomic.StoreInt64(&t.lastSyncCnt, t.backend.GetQueueWriteEnd().TotalMsgCnt())
 	err := t.backend.Flush(useFsync)
 	if err != nil {
 		nsqLog.LogErrorf("failed flush: %v", err)
-		return err
+		return err, false
 	}
 
-	return err
+	return err, true
 }
 
 func (t *Topic) PrintCurrentStats() {
