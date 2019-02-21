@@ -11,7 +11,7 @@ sudo: false
 script:
   - curl https://raw.githubusercontent.com/golang/dep/master/install.sh | sh
   - dep ensure
-  - travis_wait ./test.sh
+  - travis_wait 25 ./test.sh
 notifications:
   email: false
 

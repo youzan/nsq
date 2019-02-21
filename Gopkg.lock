@@ -266,12 +266,12 @@
   revision = "7f31f4b264ec95ca86f90649fe4dca4a2a690f4a"
 
 [[projects]]
-  digest = "1:871f13c531ddcd27db330b10c1fc44051aa20ac81b5aeefe1900473382740444"
+  digest = "1:678f62e1137708588ffc59ed8b5eda4228e4696638da6ec97119b0070515766e"
   name = "github.com/youzan/go-nsq"
   packages = ["."]
   pruneopts = "UT"
-  revision = "04069106044ab415a8327a45404e1238de03fa89"
-  version = "v1.3.1"
+  revision = "4b00af35f37f4c6b137ba055c45419f97e3a1536"
+  version = "v1.3.2-HA"
 
 [[projects]]
   branch = "master"

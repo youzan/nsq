@@ -145,6 +145,18 @@ func readValidate(t *testing.T, conn io.ReadWriter, f int32, d string) []byte {
 	}
 }
 
+func closeConnAfterTimeout(conn net.Conn, to time.Duration, stop chan int) {
+	go func() {
+		select {
+		case <-time.After(to):
+			conn.Close()
+		case <-stop:
+			return
+		}
+
+	}()
+}
+
 func recvNextMsgAndCheckClientMsg(t *testing.T, conn io.ReadWriter, expLen int, expTraceID uint64, autoFin bool) *nsq.Message {
 	for {
 		resp, err := nsq.ReadResponse(conn)
@@ -264,6 +276,7 @@ func recvNextMsgAndCheckExt(t *testing.T, conn io.ReadWriter,
 		test.Nil(t, err)
 		if expLen > 0 {
 			test.Equal(t, expLen, len(msgOut.Body))
+			t.Logf("msg body: %v", string(msgOut.Body))
 		}
 		if expTraceID > 0 {
 			traceID := binary.BigEndian.Uint64(msgOut.ID[8:])
@@ -4369,8 +4382,10 @@ func TestSubOrderedWithFilter(t *testing.T) {
 	_, err = nsq.Ready(1).WriteTo(conn)
 	test.Equal(t, err, nil)
 	defer conn.Close()
+	closeConnAfterTimeout(conn, time.Second*10, nil)
 	for i := 0; i < 10; i++ {
 		msgOut := recvNextMsgAndCheckExt(t, conn, 0, msg.TraceID, true, true)
+		test.NotNil(t, msgOut)
 		msgOut.Body = msgOut.Body[12:]
 		test.Equal(t, msgOut.Body, []byte("second"))
 	}
