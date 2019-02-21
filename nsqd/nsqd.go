@@ -953,7 +953,7 @@ func (n *NSQD) PushTopicJob(t *Topic, job func()) {
 	h := int(murmur3.Sum32([]byte(t.GetFullName())))
 	index := h % len(n.topicJobChList)
 	for i := 0; i < len(n.topicJobChList); i++ {
-		ch := n.topicJobChList[index+i]
+		ch := n.topicJobChList[(index+i)%len(n.topicJobChList)]
 		select {
 		case ch <- job:
 			return

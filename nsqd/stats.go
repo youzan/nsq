@@ -145,6 +145,14 @@ type ClientPubStats struct {
 	LastPubTs     int64  `json:"last_pub_ts"`
 }
 
+func (cps *ClientPubStats) IncrCounter(count int64, hasErr bool) {
+	if hasErr {
+		atomic.AddInt64(&cps.ErrCount, count)
+	} else {
+		atomic.AddInt64(&cps.PubCount, count)
+	}
+}
+
 type ClientStats struct {
 	// TODO: deprecated, remove in 1.0
 	Name string `json:"name"`
@@ -438,33 +446,29 @@ func (self *DetailStatsInfo) UpdateTopicMsgStats(msgSize int64, latency int64) {
 	}
 }
 
-func (self *DetailStatsInfo) UpdatePubClientStats(remote string, agent string, protocol string, count int64, hasErr bool) {
+func (self *DetailStatsInfo) InitPubClientStats(remote string, agent string, protocol string) *ClientPubStats {
 	self.Lock()
 	defer self.Unlock()
 	s, ok := self.clientPubStats[remote]
-	if !ok {
-		// too much clients pub to this topic
-		// we just ignore stats
-		if len(self.clientPubStats) > maxPubClientStats {
-			nsqLog.Debugf("too much pub client : %v", len(self.clientPubStats))
-			return
-		}
-		s = &ClientPubStats{
-			RemoteAddress: remote,
-			UserAgent:     agent,
-			Protocol:      protocol,
-		}
-		// only update ts for new client connection, to avoid too much time.Now() call
-		//
-		s.LastPubTs = time.Now().Unix()
-		self.clientPubStats[remote] = s
+	if ok {
+		return s
 	}
-
-	if hasErr {
-		s.ErrCount++
-	} else {
-		s.PubCount += count
+	// too much clients pub to this topic
+	// we just ignore stats
+	if len(self.clientPubStats) > maxPubClientStats {
+		nsqLog.Debugf("too much pub client : %v", len(self.clientPubStats))
+		return nil
 	}
+	s = &ClientPubStats{
+		RemoteAddress: remote,
+		UserAgent:     agent,
+		Protocol:      protocol,
+	}
+	// only update ts for new client connection, to avoid too much time.Now() call
+	//
+	s.LastPubTs = time.Now().Unix()
+	self.clientPubStats[remote] = s
+	return s
 }
 
 func (self *DetailStatsInfo) RemovePubStats(remote string, protocol string) {

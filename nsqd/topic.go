@@ -1022,8 +1022,8 @@ func (t *Topic) PutMessagesNoLock(msgs []*Message) (MessageID, BackendOffset, in
 // PutMessages writes multiple Messages to the queue
 func (t *Topic) PutMessages(msgs []*Message) (MessageID, BackendOffset, int32, int64, BackendQueueEnd, error) {
 	t.Lock()
+	defer t.Unlock()
 	firstMsgID, firstOffset, batchBytes, totalCnt, dend, err := t.PutMessagesNoLock(msgs)
-	t.Unlock()
 	return firstMsgID, firstOffset, batchBytes, totalCnt, dend, err
 }
 

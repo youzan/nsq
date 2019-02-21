@@ -134,6 +134,7 @@ type ClientV2 struct {
 	isExtendSupport int32
 	TagMsgChannel   chan *Message
 	extFilter       ExtFilterData
+	PubStats        *ClientPubStats
 }
 
 func NewClientV2(id int64, conn net.Conn, opts *Options, tls *tls.Config) *ClientV2 {
