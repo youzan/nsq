@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"flag"
+	"fmt"
 	"log"
 	"math/rand"
 	"os"
@@ -80,6 +81,81 @@ var traceIDWaitingList map[string]map[uint64]*nsq.Message
 var pubTraceFailedList map[string]map[uint64]int64
 var maxDelayTs int64
 var myRand = rand.New(rand.NewSource(time.Now().Unix()))
+
+var latencyDistribute []int64
+
+func addLatencyCounter(cost int64) {
+	index := cost / 1000 / 1000
+	if index < 100 {
+		index = index / 10
+	} else if index < 1000 {
+		index = 9 + index/100
+	} else if index < 10000 {
+		index = 19 + index/1000
+	} else {
+		index = 29
+	}
+	atomic.AddInt64(&latencyDistribute[index], 1)
+}
+
+func printLatencyStats() {
+	for i, v := range latencyDistribute {
+		if i == 0 {
+			fmt.Printf("latency below 100ms\n")
+		} else if i == 10 {
+			fmt.Printf("latency between 100ms ~ 999ms\n")
+		} else if i == 20 {
+			fmt.Printf("latency above 1s\n")
+		}
+		fmt.Printf("%d: %v, ", i, v)
+	}
+}
+
+func printTotalQPSAndLatencyStats(start time.Time, latency bool) {
+	end := time.Now()
+	duration := end.Sub(start)
+	tmc := atomic.LoadInt64(&totalMsgCount)
+	log.Printf("duration: %s - %.03fmb/s - %.03fops/s - %.03fus/op\n",
+		duration,
+		float64(tmc*int64(*size))/duration.Seconds()/1024/1024,
+		float64(tmc)/duration.Seconds(),
+		float64(duration/time.Microsecond)/(float64(tmc)+0.01))
+
+	log.Printf("total count: %v, total error : %v\n", tmc, atomic.LoadInt64(&totalErrCount))
+	if latency {
+		printLatencyStats()
+	}
+}
+
+func printPeriodQPSAndLatencyStats(start time.Time, latency bool, done chan int) {
+	go func() {
+		prevMsgCount := int64(0)
+		prevStart := start
+		for {
+			select {
+			case <-done:
+				return
+			default:
+			}
+			time.Sleep(time.Second * 5)
+			end := time.Now()
+			duration := end.Sub(prevStart)
+			currentTmc := atomic.LoadInt64(&currentMsgCount)
+			tmc := currentTmc - prevMsgCount
+			prevMsgCount = currentTmc
+			prevStart = time.Now()
+			log.Printf("duration: %s - %.03fmb/s - %.03fops/s - %.03fus/op\n",
+				duration,
+				float64(tmc*int64(*size))/duration.Seconds()/1024/1024,
+				float64(tmc)/duration.Seconds(),
+				float64(duration/time.Microsecond)/(float64(tmc)+0.01))
+
+			if latency {
+				printLatencyStats()
+			}
+		}
+	}()
+}
 
 type ByMsgOffset []*nsq.Message
 
@@ -175,7 +251,11 @@ func startBenchPub(msg []byte, batch [][]byte) {
 			curTopic := topics[index%len(topics)]
 			counter := pubIDList[curTopic]
 			mutex.Unlock()
-			pubWorker(*runfor, pubMgr, topics[j%len(topics)], counter, batch, rdyChan, goChan, false)
+			if *pipelineSize > 1 {
+				pubPipelineWorker(*runfor, pubMgr, topics[j%len(topics)], counter, rdyChan, goChan)
+			} else {
+				pubWorker(*runfor, pubMgr, topics[j%len(topics)], counter, batch, rdyChan, goChan, false)
+			}
 		}(j)
 		<-rdyChan
 	}
@@ -192,37 +272,12 @@ func startBenchPub(msg []byte, batch [][]byte) {
 
 	start := time.Now()
 	close(goChan)
-	go func() {
-		prevMsgCount := int64(0)
-		prevStart := start
-		for {
-			time.Sleep(time.Second * 5)
-			end := time.Now()
-			duration := end.Sub(prevStart)
-			currentTmc := atomic.LoadInt64(&currentMsgCount)
-			tmc := currentTmc - prevMsgCount
-			prevMsgCount = currentTmc
-			prevStart = time.Now()
-			log.Printf("duration: %s - %.03fmb/s - %.03fops/s - %.03fus/op\n",
-				duration,
-				float64(tmc*int64(*size))/duration.Seconds()/1024/1024,
-				float64(tmc)/duration.Seconds(),
-				float64(duration/time.Microsecond)/(float64(tmc)+0.01))
-
-		}
-
-	}()
+	done := make(chan int)
+	printPeriodQPSAndLatencyStats(start, true, done)
 	wg.Wait()
-	end := time.Now()
-	duration := end.Sub(start)
-	tmc := atomic.LoadInt64(&totalMsgCount)
-	log.Printf("duration: %s - %.03fmb/s - %.03fops/s - %.03fus/op\n",
-		duration,
-		float64(tmc*int64(*size))/duration.Seconds()/1024/1024,
-		float64(tmc)/duration.Seconds(),
-		float64(duration/time.Microsecond)/(float64(tmc)+0.01))
 
-	log.Printf("total count: %v, total error : %v\n", tmc, atomic.LoadInt64(&totalErrCount))
+	close(done)
+	printTotalQPSAndLatencyStats(start, true)
 }
 
 func startBenchSub() {
@@ -265,38 +320,14 @@ func startBenchSub() {
 	start := time.Now()
 	close(goChan)
 	close(quitChan)
-	go func() {
-		prevMsgCount := int64(0)
-		prevStart := start
-		for {
-			time.Sleep(time.Second * 5)
-			end := time.Now()
-			duration := end.Sub(prevStart)
-			currentTmc := atomic.LoadInt64(&totalSubMsgCount)
-			tmc := currentTmc - prevMsgCount
-			prevMsgCount = currentTmc
-			prevStart = time.Now()
-			log.Printf("duration: %s - %.03fmb/s - %.03fops/s - %.03fus/op\n",
-				duration,
-				float64(tmc*int64(*size))/duration.Seconds()/1024/1024,
-				float64(tmc)/duration.Seconds(),
-				float64(duration/time.Microsecond)/(float64(tmc)+0.01))
 
-		}
-
-	}()
+	done := make(chan int)
+	printPeriodQPSAndLatencyStats(start, false, done)
 
 	wg.Wait()
-	end := time.Now()
-	duration := end.Sub(start)
-	tmc := atomic.LoadInt64(&totalSubMsgCount)
-	log.Printf("duration: %s - %.03fmb/s - %.03fops/s - %.03fus/op",
-		duration,
-		float64(tmc*int64(*size))/duration.Seconds()/1024/1024,
-		float64(tmc)/duration.Seconds(),
-		float64(duration/time.Microsecond)/(float64(tmc)+0.01))
 
-	log.Printf("total count: %v\n", tmc)
+	close(done)
+	printTotalQPSAndLatencyStats(start, false)
 }
 
 func startSimpleTest(msg []byte, batch [][]byte) {
@@ -1099,7 +1130,8 @@ func pubPipelineWorker(td time.Duration, globalPubMgr *nsq.TopicProducerMgr, top
 		}
 	}()
 	for {
-		if time.Now().After(endTime) {
+		s := time.Now()
+		if s.After(endTime) {
 			break
 		}
 		if (*sleepfor).Nanoseconds() > int64(10000) {
@@ -1122,6 +1154,12 @@ func pubPipelineWorker(td time.Duration, globalPubMgr *nsq.TopicProducerMgr, top
 			break
 		}
 		waitCh <- 1
+
+		cost := time.Since(s).Nanoseconds()
+		if cost > time.Millisecond.Nanoseconds()*100 {
+			log.Printf("pub id : %v slow:%v\n", traceID, cost)
+		}
+		addLatencyCounter(cost)
 	}
 	atomic.AddInt64(&totalMsgCount, msgCount)
 }
@@ -1151,7 +1189,8 @@ func pubWorker(td time.Duration, globalPubMgr *nsq.TopicProducerMgr, topicName s
 	traceIDs := make([]uint64, len(batch))
 
 	for {
-		if time.Now().After(endTime) {
+		s := time.Now()
+		if s.After(endTime) {
 			break
 		}
 		if (*sleepfor).Nanoseconds() > int64(10000) {
@@ -1166,7 +1205,7 @@ func pubWorker(td time.Duration, globalPubMgr *nsq.TopicProducerMgr, topicName s
 		}
 		if testDelay && atomic.LoadInt64(&currentMsgCount)%int64(*delayPercent) == 0 {
 			delayDuration := time.Second * time.Duration(1+myRand.Intn(*maxDelaySecs))
-			delayTs := int(time.Now().Add(delayDuration).Unix())
+			delayTs := int(s.Add(delayDuration).Unix())
 			if int64(delayTs) > atomic.LoadInt64(&maxDelayTs) {
 				atomic.StoreInt64(&maxDelayTs, int64(delayTs))
 			}
@@ -1212,6 +1251,8 @@ func pubWorker(td time.Duration, globalPubMgr *nsq.TopicProducerMgr, topicName s
 				continue
 			}
 		}
+		cost := time.Since(s).Nanoseconds()
+		addLatencyCounter(cost)
 		msgCount += int64(len(batch))
 		atomic.AddInt64(&currentMsgCount, int64(len(batch)))
 		if time.Now().After(endTime) {
