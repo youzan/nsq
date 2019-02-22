@@ -82,7 +82,7 @@ var pubTraceFailedList map[string]map[uint64]int64
 var maxDelayTs int64
 var myRand = rand.New(rand.NewSource(time.Now().Unix()))
 
-var latencyDistribute []int64
+var latencyDistribute [32]int64
 
 func addLatencyCounter(cost int64) {
 	index := cost / 1000 / 1000
@@ -101,14 +101,15 @@ func addLatencyCounter(cost int64) {
 func printLatencyStats() {
 	for i, v := range latencyDistribute {
 		if i == 0 {
-			fmt.Printf("latency below 100ms\n")
+			fmt.Printf("latency <100ms:")
 		} else if i == 10 {
-			fmt.Printf("latency between 100ms ~ 999ms\n")
+			fmt.Printf("\nlatency 100ms ~ 999ms:")
 		} else if i == 20 {
-			fmt.Printf("latency above 1s\n")
+			fmt.Printf("\nlatency > 1s:")
 		}
 		fmt.Printf("%d: %v, ", i, v)
 	}
+	fmt.Printf("\n")
 }
 
 func printTotalQPSAndLatencyStats(start time.Time, latency bool) {
