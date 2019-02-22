@@ -1157,8 +1157,8 @@ func pubPipelineWorker(td time.Duration, globalPubMgr *nsq.TopicProducerMgr, top
 		waitCh <- 1
 
 		cost := time.Since(s).Nanoseconds()
-		if cost > time.Millisecond.Nanoseconds()*100 {
-			log.Printf("pub id : %v slow:%v\n", traceID, cost)
+		if cost > time.Millisecond.Nanoseconds()*80 {
+			log.Printf("pub id : %v slow:%v, %v\n", traceID, cost, len(waitCh))
 		}
 		addLatencyCounter(cost)
 	}

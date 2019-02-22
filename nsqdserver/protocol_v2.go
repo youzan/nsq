@@ -637,6 +637,9 @@ func (p *protocolV2) messagePump(client *nsqd.ClientV2, startedChan chan bool,
 					matched = !matched
 				}
 				if !matched {
+					if nsqd.NsqLogger().Level() >= levellogger.LOG_DETAIL {
+						nsqd.NsqLogger().Debugf("channel %v filtered message %v", subChannel.GetName(), nsqd.PrintMessageNoBody(msg))
+					}
 					subChannel.ConfirmBackendQueue(msg)
 					subChannel.CleanWaitingRequeueChan(msg)
 					subChannel.TryRefreshChannelEnd()

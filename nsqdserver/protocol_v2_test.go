@@ -4332,7 +4332,7 @@ func TestSubOrderedWithFilter(t *testing.T) {
 
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
-	opts.LogLevel = 1
+	opts.LogLevel = 2
 	opts.SyncTimeout = time.Minute
 	if testing.Verbose() {
 		opts.LogLevel = 4
@@ -4351,7 +4351,7 @@ func TestSubOrderedWithFilter(t *testing.T) {
 		Ext:        true,
 	}
 	topic.SetDynamicInfo(topicDynConf, nil)
-	topic.GetChannel("ordered_ch")
+	channel := topic.GetChannel("ordered_ch")
 
 	clientParams := make(map[string]interface{})
 	clientParams["client_id"] = "client_b"
@@ -4371,8 +4371,15 @@ func TestSubOrderedWithFilter(t *testing.T) {
 	}
 
 	// since no match, will recv no message
-	time.Sleep(time.Second)
+	for {
+		time.Sleep(time.Second)
+		if channel.Depth() == 0 {
+			break
+		}
+	}
 	conn.Close()
+	// wait old connection exit
+	time.Sleep(time.Second)
 	for i := 0; i < 10; i++ {
 		topic.PutMessage(nsqdNs.NewMessage(0, []byte("second")))
 	}
