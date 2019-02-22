@@ -122,7 +122,13 @@ func newDiskQueueWriter(name string, dataPath string, maxBytesPerFile int64,
 		if d.diskQueueStart.EndOffset.GreatThan(&d.diskWriteEnd.EndOffset) ||
 			d.diskQueueStart.Offset() > d.diskWriteEnd.Offset() {
 			nsqLog.LogErrorf("diskqueue(%s) queue start invalid: %v", d.name, d.diskQueueStart)
-			return &d, ErrNeedFixQueueStart
+			if d.diskWriteEnd.EndOffset.FileNum == 0 &&
+				d.diskWriteEnd.EndOffset.Pos == 0 {
+				// auto fix this case
+				d.diskQueueStart.EndOffset = d.diskWriteEnd.EndOffset
+			} else {
+				return &d, ErrNeedFixQueueStart
+			}
 		}
 		d.saveExtraMeta()
 	}
