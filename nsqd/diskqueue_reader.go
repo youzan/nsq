@@ -901,6 +901,7 @@ CheckFileOpen:
 	if d.readQueueInfo.EndOffset.FileNum == d.queueEndInfo.EndOffset.FileNum {
 		currentFileEnd = d.queueEndInfo.EndOffset.Pos
 	} else if d.readQueueInfo.EndOffset.FileNum < d.queueEndInfo.EndOffset.FileNum {
+		// TODO: maybe cache stats if filenum unchanged to speed up next readOne
 		stat, result.Err = d.readFile.Stat()
 		if result.Err == nil {
 			currentFileEnd = stat.Size()

@@ -508,17 +508,23 @@ func TestChannelUpdateEndWhenNeed(t *testing.T) {
 			t.Fatalf("timeout consume new messages")
 		}
 	}
-	var id MessageID
-	msg := NewMessage(id, []byte("test"))
-	topic.PutMessage(msg)
-	select {
-	case msgOutput := <-channel.clientMsgChan:
-		channel.StartInFlightTimeout(msgOutput, NewFakeConsumer(0), "", opts.MsgTimeout)
-		channel.ConfirmBackendQueue(msgOutput)
-		t.Logf("consume %v", string(msgOutput.Body))
-	case <-time.After(time.Second):
-		t.Fatalf("timeout consume new messages")
+	for i := 0; i < 5; i++ {
+		var id MessageID
+		msg := NewMessage(id, []byte("test"))
+		topic.PutMessage(msg)
+		time.Sleep(time.Millisecond)
 	}
+	for i := 0; i < 5; i++ {
+		select {
+		case msgOutput := <-channel.clientMsgChan:
+			channel.StartInFlightTimeout(msgOutput, NewFakeConsumer(0), "", opts.MsgTimeout)
+			channel.ConfirmBackendQueue(msgOutput)
+			t.Logf("consume %v", string(msgOutput.Body))
+		case <-time.After(time.Second):
+			t.Fatalf("timeout consume new messages")
+		}
+	}
+	// test new conn consume start from end queue before new message puts
 }
 
 func TestRangeTree(t *testing.T) {

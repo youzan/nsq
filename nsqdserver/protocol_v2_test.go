@@ -4333,6 +4333,11 @@ func TestSubOrderedWithFilter(t *testing.T) {
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
 	opts.LogLevel = 1
+	opts.SyncTimeout = time.Minute
+	if testing.Verbose() {
+		opts.LogLevel = 4
+		nsqdNs.SetLogger(opts.Logger)
+	}
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqdServer.Exit()
@@ -4342,7 +4347,7 @@ func TestSubOrderedWithFilter(t *testing.T) {
 	topic := nsqd.GetTopicIgnPart(topicName)
 	topicDynConf := nsqdNs.TopicDynamicConf{
 		AutoCommit: 1,
-		SyncEvery:  1,
+		SyncEvery:  100,
 		Ext:        true,
 	}
 	topic.SetDynamicInfo(topicDynConf, nil)

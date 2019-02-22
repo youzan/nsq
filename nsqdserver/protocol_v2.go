@@ -625,6 +625,7 @@ func (p *protocolV2) messagePump(client *nsqd.ClientV2, startedChan chan bool,
 				// and the reader keep moving forward.
 				offset, confirmedCnt, changed := subChannel.ConfirmBackendQueue(msg)
 				subChannel.CleanWaitingRequeueChan(msg)
+				subChannel.TryRefreshChannelEnd()
 				if changed && p.ctx.nsqdCoord != nil {
 					p.ctx.nsqdCoord.SetChannelConsumeOffsetToCluster(subChannel, int64(offset), confirmedCnt, true)
 				}
@@ -638,6 +639,7 @@ func (p *protocolV2) messagePump(client *nsqd.ClientV2, startedChan chan bool,
 				if !matched {
 					subChannel.ConfirmBackendQueue(msg)
 					subChannel.CleanWaitingRequeueChan(msg)
+					subChannel.TryRefreshChannelEnd()
 					subChannel.ContinueConsumeForOrder()
 					continue
 				}

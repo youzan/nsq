@@ -711,6 +711,7 @@ func (c *Channel) doSkip(skipped bool) error {
 		}
 	} else {
 		atomic.StoreInt32(&c.skipped, 0)
+		c.TryRefreshChannelEnd()
 	}
 	return nil
 }
@@ -1051,6 +1052,14 @@ func (c *Channel) internalFinishMessage(clientID int64, clientAddr string,
 		c.moreDataCallback(c)
 	}
 	return offset, cnt, changed, msg, nil
+}
+
+// if some message is skipped, we should try refresh channel end
+// to get more possible new messages, since the end will only be updated when new message come in first time
+func (c *Channel) TryRefreshChannelEnd() {
+	if c.IsWaitingMoreDiskData() {
+		c.moreDataCallback(c)
+	}
 }
 
 func (c *Channel) ContinueConsumeForOrder() {
@@ -1983,11 +1992,20 @@ LOOP:
 		}
 
 		//let timer sync to update backend in replicas' channels
-		if c.IsSkipped() || c.shouldSkipZanTest(msg) {
+		needSkip := c.IsSkipped()
+		isZanTestSkip := false
+		if !needSkip {
+			isZanTestSkip = c.shouldSkipZanTest(msg)
+			needSkip = isZanTestSkip
+		}
+		if needSkip {
 			if msg.DelayedType == ChannelDelayed {
 				c.ConfirmDelayedMessage(msg)
 			} else {
 				c.ConfirmBackendQueue(msg)
+				if isZanTestSkip {
+					c.TryRefreshChannelEnd()
+				}
 			}
 			c.CleanWaitingRequeueChan(msg)
 			continue LOOP
