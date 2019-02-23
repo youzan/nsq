@@ -625,6 +625,7 @@ func (p *protocolV2) messagePump(client *nsqd.ClientV2, startedChan chan bool,
 				// and the reader keep moving forward.
 				offset, confirmedCnt, changed := subChannel.ConfirmBackendQueue(msg)
 				subChannel.CleanWaitingRequeueChan(msg)
+				subChannel.TryRefreshChannelEnd()
 				if changed && p.ctx.nsqdCoord != nil {
 					p.ctx.nsqdCoord.SetChannelConsumeOffsetToCluster(subChannel, int64(offset), confirmedCnt, true)
 				}
@@ -636,8 +637,12 @@ func (p *protocolV2) messagePump(client *nsqd.ClientV2, startedChan chan bool,
 					matched = !matched
 				}
 				if !matched {
+					if nsqd.NsqLogger().Level() >= levellogger.LOG_DETAIL {
+						nsqd.NsqLogger().Debugf("channel %v filtered message %v", subChannel.GetName(), nsqd.PrintMessageNoBody(msg))
+					}
 					subChannel.ConfirmBackendQueue(msg)
 					subChannel.CleanWaitingRequeueChan(msg)
+					subChannel.TryRefreshChannelEnd()
 					subChannel.ContinueConsumeForOrder()
 					continue
 				}
@@ -1391,7 +1396,9 @@ func (p *protocolV2) preparePub(client *nsqd.ClientV2, params [][]byte, maxBody 
 	if err := p.CheckAuth(client, "PUB", topicName, ""); err != nil {
 		return bodyLen, nil, err
 	}
-	// mpub
+	if client.PubStats == nil {
+		client.PubStats = topic.GetDetailStats().InitPubClientStats(client.String(), client.UserAgent, "tcp")
+	}
 	return bodyLen, topic, nil
 }
 
@@ -1451,14 +1458,15 @@ func internalPubAsync(clientTimer *time.Timer, msgBody *bytes.Buffer, topic *nsq
 		ExtContent: extContent,
 		StartPub:   time.Now(),
 	}
-	if clientTimer == nil {
-		clientTimer = time.NewTimer(time.Second * 5)
-	} else {
-		clientTimer.Reset(time.Second * 5)
-	}
+
 	select {
 	case topic.GetWaitChan() <- info:
 	default:
+		if clientTimer == nil {
+			clientTimer = time.NewTimer(time.Second * 5)
+		} else {
+			clientTimer.Reset(time.Second * 5)
+		}
 		select {
 		case topic.GetWaitChan() <- info:
 		case <-topic.QuitChan():
@@ -1566,59 +1574,58 @@ func (p *protocolV2) internalPubExtAndTrace(client *nsqd.ClientV2, params [][]by
 	if needTraceRsp || atomic.LoadInt32(&topic.EnableTrace) == 1 {
 		asyncAction = false
 	}
-	if p.ctx.checkForMasterWrite(topicName, partition) {
-		if !topic.IsExt() && extContent.ExtVersion() != ext.NO_EXT_VER {
-			if p.ctx.getOpts().AllowExtCompatible {
-				filterIllegalZanTestHeader(topicName, jsonHeader)
-			}
-			canIgnoreExt := canIgnoreJsonHeader(topicName, jsonHeader)
-			if p.ctx.getOpts().AllowExtCompatible && canIgnoreExt {
-				extContent = ext.NewNoExt()
-				nsqd.NsqLogger().Debugf("ext content ignored in topic: %v", topicName)
-			} else {
-				nsqd.NsqLogger().Infof("ext content not supported in topic: %v", topicName)
-				return nil, protocol.NewClientErr(nil, ext.E_EXT_NOT_SUPPORT,
-					fmt.Sprintf("ext content not supported in topic %v", topicName))
-			}
+	if !topic.IsExt() && extContent.ExtVersion() != ext.NO_EXT_VER {
+		if p.ctx.getOpts().AllowExtCompatible {
+			filterIllegalZanTestHeader(topicName, jsonHeader)
 		}
-		id := nsqd.MessageID(0)
-		offset := nsqd.BackendOffset(0)
-		rawSize := int32(0)
-		if asyncAction {
-			err = internalPubAsync(client.PubTimeout, messageBodyBuffer, topic, extContent)
+		canIgnoreExt := canIgnoreJsonHeader(topicName, jsonHeader)
+		if p.ctx.getOpts().AllowExtCompatible && canIgnoreExt {
+			extContent = ext.NewNoExt()
+			nsqd.NsqLogger().Debugf("ext content ignored in topic: %v", topicName)
 		} else {
-			id, offset, rawSize, _, err = p.ctx.PutMessage(topic, realBody, extContent, traceID)
+			nsqd.NsqLogger().Infof("ext content not supported in topic: %v", topicName)
+			return nil, protocol.NewClientErr(nil, ext.E_EXT_NOT_SUPPORT,
+				fmt.Sprintf("ext content not supported in topic %v", topicName))
 		}
-		//p.ctx.setHealth(err)
-		if err != nil {
-			topic.GetDetailStats().UpdatePubClientStats(client.String(), client.UserAgent, "tcp", 1, true)
-			nsqd.NsqLogger().LogErrorf("topic %v put message failed: %v", topic.GetFullName(), err)
-			if clusterErr, ok := err.(*consistence.CommonCoordErr); ok {
-				if !clusterErr.IsLocalErr() {
-					return nil, protocol.NewClientErr(err, FailedOnNotWritable, "")
-				}
-			}
-			return nil, protocol.NewClientErr(err, "E_PUB_FAILED", err.Error())
-		}
-		topic.GetDetailStats().UpdatePubClientStats(client.String(), client.UserAgent, "tcp", 1, false)
-		cost := time.Now().UnixNano() - startPub
-		topic.GetDetailStats().UpdateTopicMsgStats(int64(len(realBody)), cost/1000)
-
-		if traceID != 0 || atomic.LoadInt32(&topic.EnableTrace) == 1 || nsqd.NsqLogger().Level() >= levellogger.LOG_DETAIL {
-			nsqd.GetMsgTracer().TracePubClient(topic.GetTopicName(), topic.GetTopicPart(), traceID, id, offset, client.String())
-		}
-		if needTraceRsp {
-			return getTracedReponse(id, traceID, offset, rawSize)
-		}
-		return okBytes, nil
-	} else {
-		topic.GetDetailStats().UpdatePubClientStats(client.String(), client.UserAgent, "tcp", 1, true)
-		//forward to master of topic
-		nsqd.NsqLogger().LogDebugf("should put to master: %v, from %v",
-			topic.GetFullName(), client.String())
-		topic.DisableForSlave()
-		return nil, protocol.NewClientErr(err, FailedOnNotLeader, "")
 	}
+	id := nsqd.MessageID(0)
+	offset := nsqd.BackendOffset(0)
+	rawSize := int32(0)
+	if asyncAction {
+		err = internalPubAsync(client.PubTimeout, messageBodyBuffer, topic, extContent)
+	} else {
+		id, offset, rawSize, _, err = p.ctx.PutMessage(topic, realBody, extContent, traceID)
+	}
+	//p.ctx.setHealth(err)
+	if err != nil {
+		if client.PubStats != nil {
+			client.PubStats.IncrCounter(1, true)
+		}
+		nsqd.NsqLogger().LogErrorf("topic %v put message failed: %v, from: %v", topic.GetFullName(), err, client.String())
+		if !p.ctx.checkForMasterWrite(topicName, partition) {
+			topic.DisableForSlave()
+			return nil, protocol.NewClientErr(err, FailedOnNotLeader, "")
+		}
+		if clusterErr, ok := err.(*consistence.CommonCoordErr); ok {
+			if !clusterErr.IsLocalErr() {
+				return nil, protocol.NewClientErr(err, FailedOnNotWritable, "")
+			}
+		}
+		return nil, protocol.NewClientErr(err, "E_PUB_FAILED", err.Error())
+	}
+	if client.PubStats != nil {
+		client.PubStats.IncrCounter(1, false)
+	}
+	cost := time.Now().UnixNano() - startPub
+	topic.GetDetailStats().UpdateTopicMsgStats(int64(len(realBody)), cost/1000)
+
+	if traceID != 0 || atomic.LoadInt32(&topic.EnableTrace) == 1 || nsqd.NsqLogger().Level() >= levellogger.LOG_DETAIL {
+		nsqd.GetMsgTracer().TracePubClient(topic.GetTopicName(), topic.GetTopicPart(), traceID, id, offset, client.String())
+	}
+	if needTraceRsp {
+		return getTracedReponse(id, traceID, offset, rawSize)
+	}
+	return okBytes, nil
 }
 
 func (p *protocolV2) internalMPUBEXTAndTrace(client *nsqd.ClientV2, params [][]byte, mpubExt bool, traceEnable bool) ([]byte, error) {
@@ -1648,7 +1655,9 @@ func (p *protocolV2) internalMPUBEXTAndTrace(client *nsqd.ClientV2, params [][]b
 		if err != nil {
 			topic.IncrPubFailed()
 			incrServerPubFailed()
-			topic.GetDetailStats().UpdatePubClientStats(client.String(), client.UserAgent, "tcp", int64(len(messages)), true)
+			if client.PubStats != nil {
+				client.PubStats.IncrCounter(int64(len(messages)), true)
+			}
 			nsqd.NsqLogger().LogErrorf("topic %v put message failed: %v", topic.GetFullName(), err)
 
 			if clusterErr, ok := err.(*consistence.CommonCoordErr); ok {
@@ -1658,7 +1667,9 @@ func (p *protocolV2) internalMPUBEXTAndTrace(client *nsqd.ClientV2, params [][]b
 			}
 			return nil, protocol.NewFatalClientErr(err, "E_MPUB_FAILED", err.Error())
 		}
-		topic.GetDetailStats().UpdatePubClientStats(client.String(), client.UserAgent, "tcp", int64(len(messages)), false)
+		if client.PubStats != nil {
+			client.PubStats.IncrCounter(int64(len(messages)), false)
+		}
 		cost := time.Now().UnixNano() - startPub
 		topic.GetDetailStats().BatchUpdateTopicLatencyStats(cost/int64(time.Microsecond), int64(len(messages)))
 		if !traceEnable {
@@ -1668,7 +1679,9 @@ func (p *protocolV2) internalMPUBEXTAndTrace(client *nsqd.ClientV2, params [][]b
 	} else {
 		topic.IncrPubFailed()
 		incrServerPubFailed()
-		topic.GetDetailStats().UpdatePubClientStats(client.String(), client.UserAgent, "tcp", int64(len(messages)), true)
+		if client.PubStats != nil {
+			client.PubStats.IncrCounter(int64(len(messages)), true)
+		}
 		//forward to master of topic
 		nsqd.NsqLogger().LogDebugf("should put to master: %v, from %v",
 			topic.GetFullName(), client.String())

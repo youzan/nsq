@@ -269,6 +269,8 @@ func TestTopicPutChannelWait(t *testing.T) {
 	test.Equal(t, topic.backend.GetQueueReadEnd(), channel.GetChannelEnd())
 	msg.ID = 0
 	topic.PutMessage(msg)
+	// wait channel end notify done
+	time.Sleep(time.Millisecond)
 	test.Equal(t, false, channel.IsWaitingMoreData())
 	test.Equal(t, topic.backend.GetQueueReadEnd(), topic.backend.GetQueueWriteEnd())
 	test.Equal(t, topic.backend.GetQueueReadEnd(), channel.GetChannelEnd())
@@ -282,11 +284,13 @@ func TestTopicPutChannelWait(t *testing.T) {
 	test.Equal(t, true, channel.IsWaitingMoreData())
 	msg.ID = 0
 	topic.PutMessage(msg)
+	time.Sleep(time.Millisecond)
 	test.Equal(t, false, channel.IsWaitingMoreData())
 	test.Equal(t, topic.backend.GetQueueReadEnd(), topic.backend.GetQueueWriteEnd())
 	test.Equal(t, topic.backend.GetQueueReadEnd(), channel.GetChannelEnd())
 	msg.ID = 0
 	topic.PutMessage(msg)
+	time.Sleep(time.Millisecond)
 	test.NotEqual(t, topic.backend.GetQueueReadEnd(), topic.backend.GetQueueWriteEnd())
 	test.Equal(t, topic.backend.GetQueueReadEnd(), channel.GetChannelEnd())
 }
@@ -465,12 +469,31 @@ func TestTopicCleanOldDataByRetentionDayWithResetStart(t *testing.T) {
 	topic.DisableForSlave()
 	err := topic.ResetBackendWithQueueStartNoLock(0, 0)
 	test.Nil(t, err)
+	writeEnd := topic.backend.GetQueueWriteEnd()
+	test.Equal(t, BackendOffset(0), writeEnd.Offset())
+	test.Equal(t, int64(0), writeEnd.TotalMsgCnt())
 	readStart = *(topic.backend.GetQueueReadStart().(*diskQueueEndInfo))
-	test.Equal(t, int64(1), readStart.EndOffset.FileNum)
+	test.Equal(t, BackendOffset(0), readStart.Offset())
+	test.Equal(t, int64(0), readStart.TotalMsgCnt())
 	err = topic.ResetBackendWithQueueStartNoLock(0, 0)
 	test.Nil(t, err)
+	writeEnd = topic.backend.GetQueueWriteEnd()
 	readStart = *(topic.backend.GetQueueReadStart().(*diskQueueEndInfo))
-	test.Equal(t, int64(2), readStart.EndOffset.FileNum)
+	test.Equal(t, BackendOffset(0), readStart.Offset())
+	test.Equal(t, int64(0), readStart.TotalMsgCnt())
+	test.Equal(t, BackendOffset(0), writeEnd.Offset())
+	test.Equal(t, int64(0), writeEnd.TotalMsgCnt())
+
+	nsqd.CloseExistingTopic("test", 0)
+	topic = nsqd.GetTopic("test", 0, false)
+	topic.dynamicConf.AutoCommit = 1
+	topic.dynamicConf.SyncEvery = 10
+
+	writeEnd2 := topic.backend.GetQueueWriteEnd()
+	readStart2 := topic.backend.GetQueueReadStart().(*diskQueueEndInfo)
+	test.Equal(t, true, writeEnd2.IsSame(writeEnd))
+	test.Equal(t, true, readStart2.IsSame(&readStart))
+
 	topic.EnableForMaster()
 	msgNum := 1000
 	channel := topic.GetChannel("ch")
@@ -481,7 +504,8 @@ func TestTopicCleanOldDataByRetentionDayWithResetStart(t *testing.T) {
 	var dend BackendQueueEnd
 	for i := 0; i < msgNum; i++ {
 		msg.ID = 0
-		_, _, msgSize, dend, _ = topic.PutMessage(msg)
+		_, _, msgSize, dend, err = topic.PutMessage(msg)
+		test.Nil(t, err)
 		msg.Timestamp = time.Now().Add(-1 * time.Hour * 24 * time.Duration(4-dend.(*diskQueueEndInfo).EndOffset.FileNum)).UnixNano()
 	}
 	topic.ForceFlush()
@@ -489,7 +513,6 @@ func TestTopicCleanOldDataByRetentionDayWithResetStart(t *testing.T) {
 	fileNum := topic.backend.diskWriteEnd.EndOffset.FileNum
 	test.Equal(t, int64(readStart.EndOffset.FileNum), topic.backend.GetQueueReadStart().(*diskQueueEndInfo).EndOffset.FileNum)
 
-	test.Equal(t, true, fileNum == 2)
 	for i := 0; i < msgNum; i++ {
 		msg := <-channel.clientMsgChan
 		channel.ConfirmBackendQueue(msg)
@@ -578,6 +601,23 @@ func TestTopicResetWithQueueStart(t *testing.T) {
 	test.Equal(t, int64(0), newEnd.EndOffset.Pos)
 	test.Equal(t, resetStart.Offset(), channel.GetConfirmed().Offset())
 	test.Equal(t, resetStart.TotalMsgCnt(), channel.GetChannelEnd().TotalMsgCnt())
+	newReadStart := topic.backend.GetQueueReadStart().(*diskQueueEndInfo)
+	test.Equal(t, resetStart.Offset(), newReadStart.Offset())
+	test.Equal(t, resetStart.TotalMsgCnt(), newReadStart.TotalMsgCnt())
+
+	test.Equal(t, true, newEnd.IsSame(newReadStart))
+
+	// test reopen
+	nsqd.CloseExistingTopic("test", 0)
+	topic = nsqd.GetTopic("test", 0, false)
+	topic.dynamicConf.AutoCommit = 1
+	topic.dynamicConf.SyncEvery = 10
+	channel = topic.GetChannel("ch")
+	test.NotNil(t, channel)
+	newEnd2 := topic.backend.GetQueueWriteEnd().(*diskQueueEndInfo)
+	newReadStart2 := topic.backend.GetQueueReadStart().(*diskQueueEndInfo)
+	test.Equal(t, true, newEnd.IsSame(newEnd2))
+	test.Equal(t, true, newReadStart.IsSame(newReadStart2))
 
 	for i := 0; i < msgNum; i++ {
 		msg.ID = 0
@@ -606,6 +646,24 @@ func TestTopicResetWithQueueStart(t *testing.T) {
 	test.Equal(t, int64(0), newEnd.EndOffset.Pos)
 	test.Equal(t, resetStart.Offset(), channel.GetConfirmed().Offset())
 	test.Equal(t, resetStart.TotalMsgCnt(), channel.GetChannelEnd().TotalMsgCnt())
+
+	newReadStart = topic.backend.GetQueueReadStart().(*diskQueueEndInfo)
+	test.Equal(t, resetStart.Offset(), newReadStart.Offset())
+	test.Equal(t, resetStart.TotalMsgCnt(), newReadStart.TotalMsgCnt())
+	test.Equal(t, true, newEnd.IsSame(newReadStart))
+
+	// test reopen
+	nsqd.CloseExistingTopic("test", 0)
+	topic = nsqd.GetTopic("test", 0, false)
+	topic.dynamicConf.AutoCommit = 1
+	topic.dynamicConf.SyncEvery = 10
+	channel = topic.GetChannel("ch")
+	test.NotNil(t, channel)
+	newEnd2 = topic.backend.GetQueueWriteEnd().(*diskQueueEndInfo)
+	newReadStart2 = topic.backend.GetQueueReadStart().(*diskQueueEndInfo)
+	test.Equal(t, true, newEnd.IsSame(newEnd2))
+	test.Equal(t, true, newReadStart.IsSame(newReadStart2))
+
 	for i := 0; i < msgNum; i++ {
 		msg.ID = 0
 		_, _, _, dend, _ = topic.PutMessage(msg)

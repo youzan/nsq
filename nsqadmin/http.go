@@ -861,21 +861,17 @@ func (s *httpServer) searchMessageTrace(w http.ResponseWriter, req *http.Request
 	for index, m := range resultList.LogDataDtos {
 		idx := index
 		items := make([]TraceLogItemInfo, 0)
-		extraJsonStr, _ := strconv.Unquote(m.Extra)
-		err := json.Unmarshal([]byte(extraJsonStr), &items)
+		err = json.Unmarshal([]byte(m.Extra), &items)
+		// try compatible
 		if err != nil || len(items) == 0 {
-			s.ctx.nsqadmin.logf("msg extra invalid: %v: %v, %v", m.Extra, m.Extra1, err)
-			err = json.Unmarshal([]byte(m.Extra), &items)
-			// try compatible
+			err = json.Unmarshal([]byte(m.Extra1), &items)
 			if err != nil || len(items) == 0 {
+				s.ctx.nsqadmin.logf("msg extra invalid: %v: %v, %v", m.Extra, m.Extra1, err)
 				extraJsonStr, _ := strconv.Unquote(m.Extra1)
 				err = json.Unmarshal([]byte(extraJsonStr), &items)
 				if err != nil || len(items) == 0 {
 					s.ctx.nsqadmin.logf("msg extra1 invalid: %v, %v", m.Extra1, err)
-					err = json.Unmarshal([]byte(m.Extra1), &items)
-					if err != nil || len(items) == 0 {
-						continue
-					}
+					continue
 				}
 			}
 		}
@@ -954,6 +950,9 @@ func (s *httpServer) searchMessageTrace(w http.ResponseWriter, req *http.Request
 		jsv.DC = v.DC
 		logDataForJs = append(logDataForJs, jsv)
 	}
+	if len(warnMessages) > 0 && requestMsgID > 0 {
+		needGetRequestMsg = true
+	}
 	//s.ctx.nsqadmin.logf("sorted msg trace data : %v", logDataFilterEmpty)
 	var requestMsg string
 	requestMsgDC := make(map[string]string)
@@ -973,8 +972,9 @@ func (s *httpServer) searchMessageTrace(w http.ResponseWriter, req *http.Request
 				msgBody, _, err := s.ci.GetNSQDMessageByID(*producer, topicName, strconv.Itoa(pid), requestMsgID)
 				if err != nil {
 					s.ctx.nsqadmin.logf("get msg %v data failed : %v", requestMsgID, err)
-					warnMessages = append(warnMessages, err.Error())
+					//warnMessages = append(warnMessages, err.Error())
 				} else {
+					s.ctx.nsqadmin.logf("get msg %v data : %v", requestMsgID, msgBody)
 					if hasMultiDC {
 						requestMsgDC[producer.DC] = msgBody
 						var buf bytes.Buffer

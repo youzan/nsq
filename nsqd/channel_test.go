@@ -65,7 +65,7 @@ func TestPutMessage(t *testing.T) {
 	var id MessageID
 	msg := NewMessage(id, []byte("test"))
 	topic.PutMessage(msg)
-	topic.flush(true)
+	topic.ForceFlush()
 
 	outputMsg := <-channel1.clientMsgChan
 	equal(t, msg.ID, outputMsg.ID)
@@ -89,7 +89,7 @@ func TestPutMessage2Chan(t *testing.T) {
 	var id MessageID
 	msg := NewMessage(id, []byte("test"))
 	topic.PutMessage(msg)
-	topic.flush(true)
+	topic.flushBuffer(true)
 
 	outputMsg1 := <-channel1.clientMsgChan
 	equal(t, msg.ID, outputMsg1.ID)
@@ -235,7 +235,7 @@ func TestChannelSkip(t *testing.T) {
 	msgBytes := []byte(strconv.Itoa(10))
 	msg := NewMessage(msgId, msgBytes)
 	_, backendOffsetMid, _, _, _ := topic.PutMessage(msg)
-	topic.flush(true)
+	topic.ForceFlush()
 	equal(t, channel.Depth(), int64(11))
 
 	msgs = make([]*Message, 0, 9)
@@ -247,7 +247,8 @@ func TestChannelSkip(t *testing.T) {
 		msgs = append(msgs, msg)
 	}
 	topic.PutMessages(msgs)
-	topic.flush(true)
+	topic.flushBuffer(true)
+	time.Sleep(time.Millisecond)
 	equal(t, channel.Depth(), int64(20))
 
 	//skip forward to message 10
@@ -288,13 +289,13 @@ func TestChannelInitWithOldStart(t *testing.T) {
 		msgs = append(msgs, msg)
 	}
 	topic.PutMessages(msgs)
-	topic.flush(true)
+	topic.flushBuffer(true)
 
 	var msgId MessageID
 	msgBytes := []byte(strconv.Itoa(10))
 	msg := NewMessage(msgId, msgBytes)
 	_, backendOffsetMid, _, _, _ := topic.PutMessage(msg)
-	topic.flush(true)
+	topic.ForceFlush()
 	equal(t, channel.Depth(), int64(11))
 	channel.SetConsumeOffset(backendOffsetMid, 10, true)
 	time.Sleep(time.Second)
@@ -311,7 +312,7 @@ func TestChannelInitWithOldStart(t *testing.T) {
 		msgs = append(msgs, msg)
 	}
 	_, putOffset, _, _, putEnd, _ := topic.PutMessages(msgs)
-	topic.flush(true)
+	topic.ForceFlush()
 	t.Log(putEnd)
 	t.Log(putOffset)
 
@@ -319,7 +320,7 @@ func TestChannelInitWithOldStart(t *testing.T) {
 	msgBytes = []byte(strconv.Itoa(1001))
 	msg = NewMessage(msgId2, msgBytes)
 	topic.PutMessage(msg)
-	topic.flush(true)
+	topic.ForceFlush()
 
 	channel2.skipChannelToEnd()
 	channel3.SetConsumeOffset(putEnd.Offset(), putEnd.TotalMsgCnt(), true)
@@ -370,7 +371,7 @@ func TestChannelResetReadEnd(t *testing.T) {
 	msgBytes := []byte(strconv.Itoa(10))
 	msg := NewMessage(msgId, msgBytes)
 	_, backendOffsetMid, _, _, _ := topic.PutMessage(msg)
-	topic.flush(true)
+	topic.ForceFlush()
 	equal(t, channel.Depth(), int64(11))
 
 	msgs = make([]*Message, 0, 9)
@@ -382,7 +383,8 @@ func TestChannelResetReadEnd(t *testing.T) {
 		msgs = append(msgs, msg)
 	}
 	topic.PutMessages(msgs)
-	topic.flush(true)
+	topic.flushBuffer(true)
+	time.Sleep(time.Millisecond)
 	equal(t, channel.Depth(), int64(20))
 
 	//skip forward to message 10
@@ -430,7 +432,7 @@ func TestChannelDepthTimestamp(t *testing.T) {
 		msgs = append(msgs, msg)
 	}
 	topic.PutMessages(msgs)
-	topic.flush(true)
+	topic.ForceFlush()
 
 	lastDepthTs := int64(0)
 	for i := 0; i < 9; i++ {
@@ -444,6 +446,85 @@ func TestChannelDepthTimestamp(t *testing.T) {
 	}
 	channel.resetReaderToConfirmed()
 	equal(t, channel.DepthTimestamp(), int64(0))
+}
+
+func TestChannelUpdateEndWhenNeed(t *testing.T) {
+	// put will try update channel end if channel need more data
+	// and channel will try get newest end while need more data (no new put)
+	// consider below:
+	// 1. put 1,2,3 update channel end to 3
+	// 2. consume 1
+	// 3. put 4, no need update end
+	// 4. consume 2, 3
+	// 5. check consume 4 without topic flush
+	// 6. consume end and put 5
+	// 7. check consume 5 without flush
+	opts := NewOptions()
+	opts.SyncEvery = 100
+	opts.LogLevel = 2
+	opts.SyncTimeout = time.Second * 10
+	opts.Logger = newTestLogger(t)
+	if testing.Verbose() {
+		opts.LogLevel = 4
+		SetLogger(opts.Logger)
+	}
+	_, _, nsqd := mustStartNSQD(opts)
+	defer os.RemoveAll(opts.DataPath)
+	defer nsqd.Exit()
+
+	topicName := "test_channel_end_update" + strconv.Itoa(int(time.Now().Unix()))
+	topic := nsqd.GetTopicIgnPart(topicName)
+	channel := topic.GetChannel("channel")
+
+	msgs := make([]*Message, 0, 9)
+	for i := 0; i < 10; i++ {
+		var msgId MessageID
+		msgBytes := []byte(strconv.Itoa(i + 11))
+		msg := NewMessage(msgId, msgBytes)
+		time.Sleep(time.Millisecond)
+		msgs = append(msgs, msg)
+	}
+	topic.PutMessages(msgs)
+	topic.flushBuffer(true)
+
+	for i := 0; i < 5; i++ {
+		msgOutput := <-channel.clientMsgChan
+		channel.StartInFlightTimeout(msgOutput, NewFakeConsumer(0), "", opts.MsgTimeout)
+		channel.ConfirmBackendQueue(msgOutput)
+		t.Logf("consume %v", string(msgOutput.Body))
+	}
+	for i := 0; i < 5; i++ {
+		var id MessageID
+		msg := NewMessage(id, []byte("test"))
+		topic.PutMessage(msg)
+	}
+	for i := 0; i < 10; i++ {
+		select {
+		case msgOutput := <-channel.clientMsgChan:
+			channel.StartInFlightTimeout(msgOutput, NewFakeConsumer(0), "", opts.MsgTimeout)
+			channel.ConfirmBackendQueue(msgOutput)
+			t.Logf("consume %v", string(msgOutput.Body))
+		case <-time.After(time.Second):
+			t.Fatalf("timeout consume new messages")
+		}
+	}
+	for i := 0; i < 5; i++ {
+		var id MessageID
+		msg := NewMessage(id, []byte("test"))
+		topic.PutMessage(msg)
+		time.Sleep(time.Millisecond)
+	}
+	for i := 0; i < 5; i++ {
+		select {
+		case msgOutput := <-channel.clientMsgChan:
+			channel.StartInFlightTimeout(msgOutput, NewFakeConsumer(0), "", opts.MsgTimeout)
+			channel.ConfirmBackendQueue(msgOutput)
+			t.Logf("consume %v", string(msgOutput.Body))
+		case <-time.After(time.Second):
+			t.Fatalf("timeout consume new messages")
+		}
+	}
+	// test new conn consume start from end queue before new message puts
 }
 
 func TestRangeTree(t *testing.T) {

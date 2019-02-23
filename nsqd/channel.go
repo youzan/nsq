@@ -460,14 +460,18 @@ func (c *Channel) SetOrdered(enable bool) {
 		default:
 		}
 	} else {
-		if c.GetClientsCount() == 0 {
-			atomic.StoreInt32(&c.requireOrder, 0)
-			select {
-			case c.tryReadBackend <- true:
-			default:
-			}
-		} else {
-			nsqLog.Logf("can not set ordered to false while the channel is still consuming by client")
+		c.RLock()
+		defer c.RUnlock()
+		if !c.IsOrdered() {
+			return
+		}
+		for _, c := range c.clients {
+			c.Exit()
+		}
+		atomic.StoreInt32(&c.requireOrder, 0)
+		select {
+		case c.tryReadBackend <- true:
+		default:
 		}
 	}
 }
@@ -571,7 +575,7 @@ func (c *Channel) exit(deleted bool) error {
 	<-c.exitSyncChan
 
 	// write anything leftover to disk
-	c.Flush()
+	c.Flush(true)
 	if deleted {
 		// empty the queue (deletes the backend files, too)
 		if c.GetDelayedQueue() != nil {
@@ -597,13 +601,13 @@ func (c *Channel) skipChannelToEnd() (BackendQueueEnd, error) {
 	return e, nil
 }
 
-func (c *Channel) Flush() error {
+func (c *Channel) Flush(fsync bool) error {
 	if c.ephemeral {
 		return nil
 	}
 	d, ok := c.backend.(*diskQueueReader)
 	if ok {
-		d.Flush()
+		d.Flush(fsync)
 	}
 	return nil
 }
@@ -707,6 +711,7 @@ func (c *Channel) doSkip(skipped bool) error {
 		}
 	} else {
 		atomic.StoreInt32(&c.skipped, 0)
+		c.TryRefreshChannelEnd()
 	}
 	return nil
 }
@@ -1047,6 +1052,14 @@ func (c *Channel) internalFinishMessage(clientID int64, clientAddr string,
 		c.moreDataCallback(c)
 	}
 	return offset, cnt, changed, msg, nil
+}
+
+// if some message is skipped, we should try refresh channel end
+// to get more possible new messages, since the end will only be updated when new message come in first time
+func (c *Channel) TryRefreshChannelEnd() {
+	if c.IsWaitingMoreDiskData() {
+		c.moreDataCallback(c)
+	}
 }
 
 func (c *Channel) ContinueConsumeForOrder() {
@@ -1979,11 +1992,20 @@ LOOP:
 		}
 
 		//let timer sync to update backend in replicas' channels
-		if c.IsSkipped() || c.shouldSkipZanTest(msg) {
+		needSkip := c.IsSkipped()
+		isZanTestSkip := false
+		if !needSkip {
+			isZanTestSkip = c.shouldSkipZanTest(msg)
+			needSkip = isZanTestSkip
+		}
+		if needSkip {
 			if msg.DelayedType == ChannelDelayed {
 				c.ConfirmDelayedMessage(msg)
 			} else {
 				c.ConfirmBackendQueue(msg)
+				if isZanTestSkip {
+					c.TryRefreshChannelEnd()
+				}
 			}
 			c.CleanWaitingRequeueChan(msg)
 			continue LOOP

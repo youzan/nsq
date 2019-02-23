@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"flag"
+	"fmt"
 	"log"
 	"math/rand"
 	"os"
@@ -37,7 +38,9 @@ var (
 	concurrency     = flagSet.Int("c", 100, "concurrency of goroutine")
 	pubPoolSize     = flagSet.Int("pub-pool", 1, "producer pool size")
 	benchCase       = flagSet.String("bench-case", "simple", "which bench should run (simple/benchpub/benchsub/benchdelaysub/checkdata/benchlookup/benchreg/consumeoffset/checkdata2)")
+	pipelineSize    = flagSet.Int("pipeline", 0, "pipeline size")
 	channelNum      = flagSet.Int("ch_num", 1, "the channel number under each topic")
+	ephemeral       = flagSet.Bool("ephemeral", false, "use ephemeral channel for test")
 	trace           = flagSet.Bool("trace", false, "enable the trace of pub and sub")
 	ordered         = flagSet.Bool("ordered", false, "enable ordered sub")
 	retryBackground = flagSet.Bool("retry-background", false, "retry pub in background")
@@ -78,6 +81,82 @@ var traceIDWaitingList map[string]map[uint64]*nsq.Message
 var pubTraceFailedList map[string]map[uint64]int64
 var maxDelayTs int64
 var myRand = rand.New(rand.NewSource(time.Now().Unix()))
+
+var latencyDistribute [32]int64
+
+func addLatencyCounter(cost int64) {
+	index := cost / 1000 / 1000
+	if index < 100 {
+		index = index / 10
+	} else if index < 1000 {
+		index = 9 + index/100
+	} else if index < 10000 {
+		index = 19 + index/1000
+	} else {
+		index = 29
+	}
+	atomic.AddInt64(&latencyDistribute[index], 1)
+}
+
+func printLatencyStats() {
+	for i, v := range latencyDistribute {
+		if i == 0 {
+			fmt.Printf("latency <100ms:")
+		} else if i == 10 {
+			fmt.Printf("\nlatency 100ms ~ 999ms:")
+		} else if i == 20 {
+			fmt.Printf("\nlatency > 1s:")
+		}
+		fmt.Printf("%d: %v, ", i, v)
+	}
+	fmt.Printf("\n")
+}
+
+func printTotalQPSAndLatencyStats(start time.Time, latency bool) {
+	end := time.Now()
+	duration := end.Sub(start)
+	tmc := atomic.LoadInt64(&totalMsgCount)
+	log.Printf("duration: %s - %.03fmb/s - %.03fops/s - %.03fus/op\n",
+		duration,
+		float64(tmc*int64(*size))/duration.Seconds()/1024/1024,
+		float64(tmc)/duration.Seconds(),
+		float64(duration/time.Microsecond)/(float64(tmc)+0.01))
+
+	log.Printf("total count: %v, total error : %v\n", tmc, atomic.LoadInt64(&totalErrCount))
+	if latency {
+		printLatencyStats()
+	}
+}
+
+func printPeriodQPSAndLatencyStats(start time.Time, latency bool, done chan int) {
+	go func() {
+		prevMsgCount := int64(0)
+		prevStart := start
+		for {
+			select {
+			case <-done:
+				return
+			default:
+			}
+			time.Sleep(time.Second * 5)
+			end := time.Now()
+			duration := end.Sub(prevStart)
+			currentTmc := atomic.LoadInt64(&currentMsgCount)
+			tmc := currentTmc - prevMsgCount
+			prevMsgCount = currentTmc
+			prevStart = time.Now()
+			log.Printf("duration: %s - %.03fmb/s - %.03fops/s - %.03fus/op\n",
+				duration,
+				float64(tmc*int64(*size))/duration.Seconds()/1024/1024,
+				float64(tmc)/duration.Seconds(),
+				float64(duration/time.Microsecond)/(float64(tmc)+0.01))
+
+			if latency {
+				printLatencyStats()
+			}
+		}
+	}()
+}
 
 type ByMsgOffset []*nsq.Message
 
@@ -128,8 +207,19 @@ func startBenchPub(msg []byte, batch [][]byte) {
 		log.Printf("lookup connect error : %v", err)
 		return
 	}
-
+	pubIDList := make(map[string]*int64)
+	// received max continuous trace id
+	subReceivedMaxTraceIDList := make(map[string]*int64)
 	for _, t := range topics {
+		init := time.Now().UnixNano()
+		pubIDList[t] = &init
+		subInit := init
+		subReceivedMaxTraceIDList[t] = &subInit
+		topicMutex[t] = &sync.Mutex{}
+	}
+	for _, t := range topics {
+		v := pubIDList[t]
+		atomic.AddInt64(v, 1)
 		if *trace {
 			var id nsq.NewMessageID
 			var offset uint64
@@ -156,10 +246,18 @@ func startBenchPub(msg []byte, batch [][]byte) {
 	rdyChan := make(chan int)
 	for j := 0; j < *concurrency; j++ {
 		wg.Add(1)
-		go func() {
+		go func(index int) {
 			defer wg.Done()
-			pubWorker(*runfor, pubMgr, topics[j%len(topics)], *batchSize, batch, rdyChan, goChan, false)
-		}()
+			mutex.Lock()
+			curTopic := topics[index%len(topics)]
+			counter := pubIDList[curTopic]
+			mutex.Unlock()
+			if *pipelineSize > 1 {
+				pubPipelineWorker(*runfor, pubMgr, topics[j%len(topics)], counter, rdyChan, goChan)
+			} else {
+				pubWorker(*runfor, pubMgr, topics[j%len(topics)], counter, batch, rdyChan, goChan, false)
+			}
+		}(j)
 		<-rdyChan
 	}
 
@@ -175,37 +273,12 @@ func startBenchPub(msg []byte, batch [][]byte) {
 
 	start := time.Now()
 	close(goChan)
-	go func() {
-		prevMsgCount := int64(0)
-		prevStart := start
-		for {
-			time.Sleep(time.Second * 5)
-			end := time.Now()
-			duration := end.Sub(prevStart)
-			currentTmc := atomic.LoadInt64(&currentMsgCount)
-			tmc := currentTmc - prevMsgCount
-			prevMsgCount = currentTmc
-			prevStart = time.Now()
-			log.Printf("duration: %s - %.03fmb/s - %.03fops/s - %.03fus/op\n",
-				duration,
-				float64(tmc*int64(*size))/duration.Seconds()/1024/1024,
-				float64(tmc)/duration.Seconds(),
-				float64(duration/time.Microsecond)/(float64(tmc)+0.01))
-
-		}
-
-	}()
+	done := make(chan int)
+	printPeriodQPSAndLatencyStats(start, true, done)
 	wg.Wait()
-	end := time.Now()
-	duration := end.Sub(start)
-	tmc := atomic.LoadInt64(&totalMsgCount)
-	log.Printf("duration: %s - %.03fmb/s - %.03fops/s - %.03fus/op\n",
-		duration,
-		float64(tmc*int64(*size))/duration.Seconds()/1024/1024,
-		float64(tmc)/duration.Seconds(),
-		float64(duration/time.Microsecond)/(float64(tmc)+0.01))
 
-	log.Printf("total count: %v, total error : %v\n", tmc, atomic.LoadInt64(&totalErrCount))
+	close(done)
+	printTotalQPSAndLatencyStats(start, true)
 }
 
 func startBenchSub() {
@@ -224,7 +297,11 @@ func startBenchSub() {
 		for chIndex := 0; chIndex < *channelNum; chIndex++ {
 			wg.Add(1)
 			go func(id int, topic string, chSuffix string) {
-				subWorker(quitChan, *runfor, *lookupAddress, topic, topic+"_ch"+chSuffix, rdyChan, goChan, id)
+				chName := topic + "_ch" + chSuffix
+				if *ephemeral {
+					chName = chName + "#ephemeral"
+				}
+				subWorker(quitChan, *runfor, *lookupAddress, topic, chName, rdyChan, goChan, id)
 				wg.Done()
 			}(j, topics[j%len(topics)], strconv.Itoa(chIndex))
 			<-rdyChan
@@ -244,38 +321,14 @@ func startBenchSub() {
 	start := time.Now()
 	close(goChan)
 	close(quitChan)
-	go func() {
-		prevMsgCount := int64(0)
-		prevStart := start
-		for {
-			time.Sleep(time.Second * 5)
-			end := time.Now()
-			duration := end.Sub(prevStart)
-			currentTmc := atomic.LoadInt64(&totalSubMsgCount)
-			tmc := currentTmc - prevMsgCount
-			prevMsgCount = currentTmc
-			prevStart = time.Now()
-			log.Printf("duration: %s - %.03fmb/s - %.03fops/s - %.03fus/op\n",
-				duration,
-				float64(tmc*int64(*size))/duration.Seconds()/1024/1024,
-				float64(tmc)/duration.Seconds(),
-				float64(duration/time.Microsecond)/(float64(tmc)+0.01))
 
-		}
-
-	}()
+	done := make(chan int)
+	printPeriodQPSAndLatencyStats(start, false, done)
 
 	wg.Wait()
-	end := time.Now()
-	duration := end.Sub(start)
-	tmc := atomic.LoadInt64(&totalSubMsgCount)
-	log.Printf("duration: %s - %.03fmb/s - %.03fops/s - %.03fus/op",
-		duration,
-		float64(tmc*int64(*size))/duration.Seconds()/1024/1024,
-		float64(tmc)/duration.Seconds(),
-		float64(duration/time.Microsecond)/(float64(tmc)+0.01))
 
-	log.Printf("total count: %v\n", tmc)
+	close(done)
+	printTotalQPSAndLatencyStats(start, false)
 }
 
 func startSimpleTest(msg []byte, batch [][]byte) {
@@ -383,14 +436,14 @@ func startCheckData2() {
 	rdyChan := make(chan int)
 	for j := 0; j < *concurrency; j++ {
 		wg.Add(1)
-		go func() {
+		go func(index int) {
 			defer wg.Done()
 			mutex.Lock()
-			curTopic := topics[j%len(topics)]
+			curTopic := topics[index%len(topics)]
 			counter := pubIDList[curTopic]
 			mutex.Unlock()
-			pubWorker2(*runfor, pubMgr, curTopic, counter, rdyChan, goChan)
-		}()
+			pubWorker(*runfor, pubMgr, curTopic, counter, nil, rdyChan, goChan, false)
+		}(j)
 		<-rdyChan
 	}
 
@@ -492,8 +545,19 @@ func startCheckData(msg []byte, batch [][]byte, testDelay bool) {
 		log.Printf("lookup connect error : %v", err)
 		return
 	}
-
+	pubIDList := make(map[string]*int64)
+	// received max continuous trace id
+	subReceivedMaxTraceIDList := make(map[string]*int64)
 	for _, t := range topics {
+		init := time.Now().UnixNano()
+		pubIDList[t] = &init
+		subInit := init
+		subReceivedMaxTraceIDList[t] = &subInit
+		topicMutex[t] = &sync.Mutex{}
+	}
+	for _, t := range topics {
+		v := pubIDList[t]
+		atomic.AddInt64(v, 1)
 		if *trace {
 			var id nsq.NewMessageID
 			var offset uint64
@@ -523,10 +587,14 @@ func startCheckData(msg []byte, batch [][]byte, testDelay bool) {
 	rdyChan := make(chan int)
 	for j := 0; j < *concurrency; j++ {
 		wg.Add(1)
-		go func() {
+		go func(index int) {
 			defer wg.Done()
-			pubWorker(*runfor, pubMgr, topics[j%len(topics)], *batchSize, batch, rdyChan, goChan, testDelay)
-		}()
+			mutex.Lock()
+			curTopic := topics[index%len(topics)]
+			counter := pubIDList[curTopic]
+			mutex.Unlock()
+			pubWorker(*runfor, pubMgr, topics[j%len(topics)], counter, batch, rdyChan, goChan, testDelay)
+		}(j)
 		<-rdyChan
 	}
 
@@ -1001,8 +1069,7 @@ func main() {
 	}
 }
 
-func pubWorker(td time.Duration, globalPubMgr *nsq.TopicProducerMgr, topicName string, batchSize int,
-batch [][]byte, rdyChan chan int, goChan chan int, testDelay bool) {
+func getPubMgr(globalPubMgr *nsq.TopicProducerMgr, rdyChan chan int) *nsq.TopicProducerMgr {
 	var pubMgr *nsq.TopicProducerMgr
 	var err error
 	if *useSinglePubMgr {
@@ -1010,99 +1077,183 @@ batch [][]byte, rdyChan chan int, goChan chan int, testDelay bool) {
 	} else {
 		pubMgr, err = nsq.NewTopicProducerMgr(topics, config)
 		if err != nil {
-			log.Printf("init error : %v", err)
+			log.Printf("init pub mgr error : %v", err)
 			close(rdyChan)
-			return
+			return nil
 		}
 		pubMgr.SetLogger(log.New(os.Stderr, "", log.LstdFlags), nsq.LogLevelInfo)
 		err = pubMgr.ConnectToNSQLookupd(*lookupAddress)
 		if err != nil {
 			log.Printf("lookup connect error : %v", err)
 			close(rdyChan)
-			return
+			return nil
 		}
 	}
+	return pubMgr
+}
 
+func pubPipelineWorker(td time.Duration, globalPubMgr *nsq.TopicProducerMgr, topicName string, pubIDCounter *int64,
+	rdyChan chan int, goChan chan int) {
+	pubMgr := getPubMgr(globalPubMgr, rdyChan)
+	if pubMgr == nil {
+		return
+	}
 	rdyChan <- 1
 	<-goChan
 	var msgCount int64
 	endTime := time.Now().Add(td)
-	traceIDs := make([]uint64, len(batch))
-	var traceResp pubResp
-	pubIDCounter := int64(0)
+	responseCh := make(chan *nsq.ProducerTransaction, *pipelineSize)
+	waitCh := make(chan int, *pipelineSize)
+	stopCh := make(chan int)
+	defer close(stopCh)
+	go func() {
+		for {
+			select {
+			case rsp := <-responseCh:
+				var tid int64
+				if len(rsp.Args) > 0 {
+					tid = rsp.Args[0].(int64)
+				}
+				if rsp.Error != nil {
+					log.Printf("pub id : %v error :%v\n", tid, rsp.Error)
+				}
+				if len(rsp.ResponseData) < 2 || string(rsp.ResponseData) != "OK" {
+					log.Printf("pub id : %v invalid response :%s\n", tid, rsp.ResponseData)
+				}
+				select {
+				case <-waitCh:
+				case <-stopCh:
+					return
+				}
+			case <-stopCh:
+				return
+			}
+		}
+	}()
 	for {
+		s := time.Now()
+		if s.After(endTime) {
+			break
+		}
+		if (*sleepfor).Nanoseconds() > int64(10000) {
+			time.Sleep(*sleepfor)
+		}
+		traceID := atomic.AddInt64(pubIDCounter, 1)
+		data := make([]byte, 8)
+		binary.BigEndian.PutUint64(data, uint64(traceID))
+
+		err := pubMgr.PublishAsync(topicName, data, responseCh, traceID)
+		if err != nil {
+			log.Printf("pub id : %v error :%v\n", traceID, err)
+			atomic.AddInt64(&totalErrCount, 1)
+			time.Sleep(time.Second)
+			continue
+		}
+		msgCount += int64(1)
+		atomic.AddInt64(&currentMsgCount, int64(1))
 		if time.Now().After(endTime) {
+			break
+		}
+		waitCh <- 1
+
+		cost := time.Since(s).Nanoseconds()
+		if cost > time.Millisecond.Nanoseconds()*80 {
+			log.Printf("pub id : %v slow:%v, %v\n", traceID, cost, len(waitCh))
+		}
+		addLatencyCounter(cost)
+	}
+	atomic.AddInt64(&totalMsgCount, msgCount)
+}
+
+func pubWorker(td time.Duration, globalPubMgr *nsq.TopicProducerMgr, topicName string, pubIDCounter *int64,
+	batch [][]byte,
+	rdyChan chan int, goChan chan int, testDelay bool) {
+
+	var err error
+	pubMgr := getPubMgr(globalPubMgr, rdyChan)
+	if pubMgr == nil {
+		return
+	}
+	rdyChan <- 1
+	<-goChan
+	var msgCount int64
+	endTime := time.Now().Add(td)
+	var traceResp pubResp
+	mutex.Lock()
+	failedList, ok := pubTraceFailedList[topicName]
+	if !ok {
+		failedList = make(map[uint64]int64)
+		pubTraceFailedList[topicName] = failedList
+	}
+	failedLocker := topicMutex[topicName]
+	mutex.Unlock()
+	traceIDs := make([]uint64, len(batch))
+
+	for {
+		s := time.Now()
+		if s.After(endTime) {
 			break
 		}
 		if (*sleepfor).Nanoseconds() > int64(10000) {
 			time.Sleep(*sleepfor)
 		}
 
-		traceID := atomic.AddInt64(&pubIDCounter, 1)
-		traceData := make([]byte, 8)
-		binary.BigEndian.PutUint64(traceData, uint64(traceID))
-
-		singleMsg := batch[0]
+		traceID := atomic.AddInt64(pubIDCounter, 1)
+		data := make([]byte, 8)
+		binary.BigEndian.PutUint64(data, uint64(traceID))
+		if len(batch) > 0 {
+			data = batch[0]
+		}
 		if testDelay && atomic.LoadInt64(&currentMsgCount)%int64(*delayPercent) == 0 {
 			delayDuration := time.Second * time.Duration(1+myRand.Intn(*maxDelaySecs))
-			delayTs := int(time.Now().Add(delayDuration).Unix())
+			delayTs := int(s.Add(delayDuration).Unix())
 			if int64(delayTs) > atomic.LoadInt64(&maxDelayTs) {
 				atomic.StoreInt64(&maxDelayTs, int64(delayTs))
 			}
-			singleMsg = []byte("delay-" + strconv.Itoa(delayTs))
+			data = []byte("delay-" + strconv.Itoa(delayTs))
 		}
 		if *trace {
-			if batchSize == 1 {
+			if *batchSize == 1 {
 				if *ordered {
-					traceResp.id, traceResp.offset, traceResp.rawSize, err = pubMgr.PublishOrdered(topicName, traceData, singleMsg)
+					traceResp.id, traceResp.offset, traceResp.rawSize, err = pubMgr.PublishOrdered(topicName, data, data)
 				} else {
-					traceResp.id, traceResp.offset, traceResp.rawSize, err = pubMgr.PublishAndTrace(topicName, uint64(traceID), singleMsg)
+					traceResp.id, traceResp.offset, traceResp.rawSize, err = pubMgr.PublishAndTrace(topicName, uint64(traceID), data)
 				}
 			} else {
 				traceResp.id, traceResp.offset, traceResp.rawSize, err = pubMgr.MultiPublishAndTrace(topicName, traceIDs, batch)
 			}
+
 			if err != nil {
-				log.Println("pub error :" + err.Error())
+				log.Printf("pub id : %v error :%v\n", traceID, err)
+				failedLocker.Lock()
+				failedList[uint64(traceID)] = 1
+				failedLocker.Unlock()
 				atomic.AddInt64(&totalErrCount, 1)
 				time.Sleep(time.Second)
 				continue
 			}
-
-			pidStr := getPartitionID(traceResp.id)
-			mutex.Lock()
-			topicResp, ok := pubRespCheck[topicName+pidStr]
-			if !ok {
-				topicResp = make(map[uint64]pubResp)
-				pubRespCheck[topicName+pidStr] = topicResp
-			}
-			oldResp, ok := topicResp[uint64(traceResp.id)]
-			if ok {
-				log.Printf("got the same id with mpub: %v\n", traceResp)
-				if oldResp != traceResp {
-					log.Printf("response not the same old %v, new:%v\n", oldResp, traceResp)
-				}
-			} else {
-				topicResp[uint64(traceResp.id)] = traceResp
-			}
-			mutex.Unlock()
 		} else {
-			var err error
-			if batchSize == 1 {
+			if *batchSize == 1 {
 				if *retryBackground {
-					err = pubMgr.PublishAndRetryBackground(topicName, singleMsg)
+					err = pubMgr.PublishAndRetryBackground(topicName, data)
 				} else {
-					err = pubMgr.Publish(topicName, singleMsg)
+					err = pubMgr.Publish(topicName, data)
 				}
 			} else {
 				err = pubMgr.MultiPublish(topicName, batch)
 			}
 			if err != nil {
-				log.Println("pub error :" + err.Error())
+				log.Printf("pub id : %v error :%v\n", traceID, err)
+				failedLocker.Lock()
+				failedList[uint64(traceID)] = 1
+				failedLocker.Unlock()
 				atomic.AddInt64(&totalErrCount, 1)
 				time.Sleep(time.Second)
 				continue
 			}
 		}
+		cost := time.Since(s).Nanoseconds()
+		addLatencyCounter(cost)
 		msgCount += int64(len(batch))
 		atomic.AddInt64(&currentMsgCount, int64(len(batch)))
 		if time.Now().After(endTime) {
@@ -1193,7 +1344,7 @@ func (c *consumeHandler) HandleMessage(message *nsq.Message) error {
 }
 
 func subWorker(quitChan chan int, td time.Duration, lookupAddr string, topic string, channel string,
-rdyChan chan int, goChan chan int, id int) {
+	rdyChan chan int, goChan chan int, id int) {
 	consumer, err := nsq.NewConsumer(topic, channel, config)
 	if err != nil {
 		panic(err.Error())
@@ -1271,7 +1422,7 @@ func (c *consumeTraceIDHandler) HandleMessage(message *nsq.Message) error {
 }
 
 func subWorker2(quitChan chan int, td time.Duration, lookupAddr string, topic string, channel string,
-subIDCounter *int64, subTraceWaiting map[uint64]*nsq.Message, locker *sync.Mutex, rdyChan chan int, goChan chan int, id int) {
+	subIDCounter *int64, subTraceWaiting map[uint64]*nsq.Message, locker *sync.Mutex, rdyChan chan int, goChan chan int, id int) {
 	consumer, err := nsq.NewConsumer(topic, channel, config)
 	if err != nil {
 		panic(err.Error())
@@ -1298,92 +1449,4 @@ subIDCounter *int64, subTraceWaiting map[uint64]*nsq.Message, locker *sync.Mutex
 	}()
 	consumer.ConnectToNSQLookupd(lookupAddr)
 	<-done
-}
-
-func pubWorker2(td time.Duration, globalPubMgr *nsq.TopicProducerMgr, topicName string, pubIDCounter *int64, rdyChan chan int, goChan chan int) {
-	var pubMgr *nsq.TopicProducerMgr
-	var err error
-	if *useSinglePubMgr {
-		pubMgr = globalPubMgr
-	} else {
-		pubMgr, err = nsq.NewTopicProducerMgr(topics, config)
-		if err != nil {
-			log.Printf("init pub mgr error : %v", err)
-			close(rdyChan)
-			return
-		}
-		pubMgr.SetLogger(log.New(os.Stderr, "", log.LstdFlags), nsq.LogLevelInfo)
-		err = pubMgr.ConnectToNSQLookupd(*lookupAddress)
-		if err != nil {
-			log.Printf("lookup connect error : %v", err)
-			close(rdyChan)
-			return
-		}
-	}
-
-	rdyChan <- 1
-	<-goChan
-	var msgCount int64
-	endTime := time.Now().Add(td)
-	var traceResp pubResp
-	mutex.Lock()
-	failedList, ok := pubTraceFailedList[topicName]
-	if !ok {
-		failedList = make(map[uint64]int64)
-		pubTraceFailedList[topicName] = failedList
-	}
-	failedLocker := topicMutex[topicName]
-	mutex.Unlock()
-
-	for {
-		if time.Now().After(endTime) {
-			break
-		}
-		if (*sleepfor).Nanoseconds() > int64(10000) {
-			time.Sleep(*sleepfor)
-		}
-
-		traceID := atomic.AddInt64(pubIDCounter, 1)
-		data := make([]byte, 8)
-		binary.BigEndian.PutUint64(data, uint64(traceID))
-		if *trace {
-			if *ordered {
-				traceResp.id, traceResp.offset, traceResp.rawSize, err = pubMgr.PublishOrdered(topicName, data, data)
-			} else {
-				traceResp.id, traceResp.offset, traceResp.rawSize, err = pubMgr.PublishAndTrace(topicName, uint64(traceID), data)
-			}
-			if err != nil {
-				log.Printf("pub id : %v error :%v\n", traceID, err)
-				failedLocker.Lock()
-				failedList[uint64(traceID)] = 1
-				failedLocker.Unlock()
-				atomic.AddInt64(&totalErrCount, 1)
-				time.Sleep(time.Second)
-				continue
-			}
-		} else {
-			var err error
-			if *retryBackground {
-				err = pubMgr.PublishAndRetryBackground(topicName, data)
-			} else {
-				err = pubMgr.Publish(topicName, data)
-			}
-			if err != nil {
-				log.Printf("pub id : %v error :%v\n", traceID, err)
-				failedLocker.Lock()
-				failedList[uint64(traceID)] = 1
-				failedLocker.Unlock()
-
-				atomic.AddInt64(&totalErrCount, 1)
-				time.Sleep(time.Second)
-				continue
-			}
-		}
-		msgCount += 1
-		atomic.AddInt64(&currentMsgCount, 1)
-		if time.Now().After(endTime) {
-			break
-		}
-	}
-	atomic.AddInt64(&totalMsgCount, msgCount)
 }

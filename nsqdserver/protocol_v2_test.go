@@ -145,6 +145,18 @@ func readValidate(t *testing.T, conn io.ReadWriter, f int32, d string) []byte {
 	}
 }
 
+func closeConnAfterTimeout(conn net.Conn, to time.Duration, stop chan int) {
+	go func() {
+		select {
+		case <-time.After(to):
+			conn.Close()
+		case <-stop:
+			return
+		}
+
+	}()
+}
+
 func recvNextMsgAndCheckClientMsg(t *testing.T, conn io.ReadWriter, expLen int, expTraceID uint64, autoFin bool) *nsq.Message {
 	for {
 		resp, err := nsq.ReadResponse(conn)
@@ -264,6 +276,7 @@ func recvNextMsgAndCheckExt(t *testing.T, conn io.ReadWriter,
 		test.Nil(t, err)
 		if expLen > 0 {
 			test.Equal(t, expLen, len(msgOut.Body))
+			t.Logf("msg body: %v", string(msgOut.Body))
 		}
 		if expTraceID > 0 {
 			traceID := binary.BigEndian.Uint64(msgOut.ID[8:])
@@ -4319,7 +4332,12 @@ func TestSubOrderedWithFilter(t *testing.T) {
 
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
-	opts.LogLevel = 1
+	opts.LogLevel = 2
+	opts.SyncTimeout = time.Minute
+	if testing.Verbose() {
+		opts.LogLevel = 4
+		nsqdNs.SetLogger(opts.Logger)
+	}
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqdServer.Exit()
@@ -4329,11 +4347,11 @@ func TestSubOrderedWithFilter(t *testing.T) {
 	topic := nsqd.GetTopicIgnPart(topicName)
 	topicDynConf := nsqdNs.TopicDynamicConf{
 		AutoCommit: 1,
-		SyncEvery:  1,
+		SyncEvery:  100,
 		Ext:        true,
 	}
 	topic.SetDynamicInfo(topicDynConf, nil)
-	topic.GetChannel("ordered_ch")
+	channel := topic.GetChannel("ordered_ch")
 
 	clientParams := make(map[string]interface{})
 	clientParams["client_id"] = "client_b"
@@ -4353,8 +4371,15 @@ func TestSubOrderedWithFilter(t *testing.T) {
 	}
 
 	// since no match, will recv no message
-	time.Sleep(time.Second)
+	for {
+		time.Sleep(time.Second)
+		if channel.Depth() == 0 {
+			break
+		}
+	}
 	conn.Close()
+	// wait old connection exit
+	time.Sleep(time.Second)
 	for i := 0; i < 10; i++ {
 		topic.PutMessage(nsqdNs.NewMessage(0, []byte("second")))
 	}
@@ -4369,8 +4394,10 @@ func TestSubOrderedWithFilter(t *testing.T) {
 	_, err = nsq.Ready(1).WriteTo(conn)
 	test.Equal(t, err, nil)
 	defer conn.Close()
+	closeConnAfterTimeout(conn, time.Second*10, nil)
 	for i := 0; i < 10; i++ {
 		msgOut := recvNextMsgAndCheckExt(t, conn, 0, msg.TraceID, true, true)
+		test.NotNil(t, msgOut)
 		msgOut.Body = msgOut.Body[12:]
 		test.Equal(t, msgOut.Body, []byte("second"))
 	}
