@@ -837,7 +837,7 @@ func (s *httpServer) searchMessageTrace(w http.ResponseWriter, req *http.Request
 					s.ctx.nsqadmin.logf("parse search respnse err: %v", err)
 					warnMessages = append(warnMessages, err.Error())
 				}
-				s.ctx.nsqadmin.logf("parse search respnse : %v", traceResp)
+				s.ctx.nsqadmin.logf("parse search response : %v", traceResp)
 			}
 		}
 	}
@@ -854,11 +854,39 @@ func (s *httpServer) searchMessageTrace(w http.ResponseWriter, req *http.Request
 
 	_, partitionProducers, _ := s.ci.GetTopicProducers(topicName, s.ctx.nsqadmin.opts.NSQLookupdHTTPAddressesDC,
 		s.ctx.nsqadmin.opts.NSQDHTTPAddresses)
+	if partitionProducers == nil {
+		return nil, http_api.Err{500, fmt.Sprintf("partition producers node for %v not found", topicName)}
+	}
+
+	//filter out trace messages which do not source from current nsqd
+	tracelogFiltered := &TraceLog{
+		LogDataDtos: make([]TraceLogData, 0),
+		TotalCount: 0,
+	}
+	for idx, m := range resultList.LogDataDtos {
+		//filter out trace messages which do not source from current nsqd
+		var found bool
+		partitionProducersLoop:
+		for _, pp := range partitionProducers {
+			for _, p := range pp {
+				if p.BroadcastAddress == m.HostIp {
+					found = true
+					break partitionProducersLoop
+				}
+			}
+		}
+		if found {
+			tracelogFiltered.LogDataDtos = append(tracelogFiltered.LogDataDtos, resultList.LogDataDtos[idx])
+		}
+	}
+	tracelogFiltered.TotalCount = len(tracelogFiltered.LogDataDtos)
+	s.ctx.nsqadmin.logf("%v trace logs found producers out of %v", tracelogFiltered.TotalCount, resultList.TotalCount)
+
 	needGetRequestMsg := true
 	maxWeight := int64(10)
 	ctx := context.TODO()
 	sem := semaphore.NewWeighted(maxWeight)
-	for index, m := range resultList.LogDataDtos {
+	for index, m := range tracelogFiltered.LogDataDtos {
 		idx := index
 		items := make([]TraceLogItemInfo, 0)
 		err = json.Unmarshal([]byte(m.Extra), &items)
@@ -879,7 +907,7 @@ func (s *httpServer) searchMessageTrace(w http.ResponseWriter, req *http.Request
 		if queryParam.Channel != "" && item.Channel != queryParam.Channel {
 			continue
 		}
-		resultList.LogDataDtos[idx].TraceLogItemInfo = item
+		tracelogFiltered.LogDataDtos[idx].TraceLogItemInfo = item
 		pid := GetPartitionFromMsgID(int64(item.MsgID))
 		if len(partitionProducers[strconv.Itoa(pid)]) == 0 {
 			s.ctx.nsqadmin.logf("partition producer not found: %v", pid)
@@ -890,7 +918,7 @@ func (s *httpServer) searchMessageTrace(w http.ResponseWriter, req *http.Request
 		dcPrefix := strings.SplitN(m.HostName, "-", 2)[0]
 		if _, exist := dcChecked[dcPrefix]; len(dcChecked) > 0 && !exist {
 			//set msg id to 0 to prevent adding to logDataFilterEmpty after current loop
-			resultList.LogDataDtos[idx].TraceLogItemInfo.MsgID = 0
+			tracelogFiltered.LogDataDtos[idx].TraceLogItemInfo.MsgID = 0
 			continue
 		}
 
@@ -903,7 +931,7 @@ func (s *httpServer) searchMessageTrace(w http.ResponseWriter, req *http.Request
 		var producersMsgBelong *clusterinfo.Producer
 		for pIdx, p := range producersDC {
 			if p.BroadcastAddress == m.HostIp {
-				resultList.LogDataDtos[idx].DC = p.DC
+				tracelogFiltered.LogDataDtos[idx].DC = p.DC
 				s.ctx.nsqadmin.logf("pass DC %v to msg: %v", p.DC, m.ID)
 				producersMsgBelong = producersDC[pIdx]
 				break
@@ -922,7 +950,7 @@ func (s *httpServer) searchMessageTrace(w http.ResponseWriter, req *http.Request
 			if err != nil {
 				s.ctx.nsqadmin.logf("get msg %v data failed : %v", item, err)
 			} else {
-				resultList.LogDataDtos[idx].RawMsgData = msgBody
+				tracelogFiltered.LogDataDtos[idx].RawMsgData = msgBody
 			}
 		}()
 	}
@@ -932,9 +960,8 @@ func (s *httpServer) searchMessageTrace(w http.ResponseWriter, req *http.Request
 		warnMessages = append(warnMessages, err.Error())
 	}
 
-	//s.ctx.nsqadmin.logf("get msg trace data : %v", resultList.LogDataDtos)
-	logDataFilterEmpty := make(TLListT, 0, len(resultList.LogDataDtos))
-	for _, v := range resultList.LogDataDtos {
+	logDataFilterEmpty := make(TLListT, 0, len(tracelogFiltered.LogDataDtos))
+	for _, v := range tracelogFiltered.LogDataDtos {
 		if v.MsgID == 0 {
 			continue
 		}
@@ -1005,7 +1032,7 @@ func (s *httpServer) searchMessageTrace(w http.ResponseWriter, req *http.Request
 		RequestMsg   string              `json:"request_msg"`
 		RequestMsgDC map[string]string   `json:"request_msg_dc"`
 		Message      string              `json:"message"`
-	}{logDataForJs, resultList.TotalCount, requestMsg, requestMsgDC, maybeWarnMsg(warnMessages)}, nil
+	}{logDataForJs, tracelogFiltered.TotalCount, requestMsg, requestMsgDC, maybeWarnMsg(warnMessages)}, nil
 }
 
 func (s *httpServer) createTopicChannelHandler(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {
