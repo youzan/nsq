@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -963,11 +964,23 @@ func (n *NSQD) PushTopicJob(t *Topic, job func()) {
 	nsqLog.Logf("%v topic job push ignored: %v", t.GetFullName(), job)
 }
 
+func doJob(job func()) {
+	defer func() {
+		if e := recover(); e != nil {
+			buf := make([]byte, 4096)
+			n := runtime.Stack(buf, false)
+			buf = buf[0:n]
+			nsqLog.Warningf("topic job panic %s:%v", buf, e)
+		}
+	}()
+	job()
+}
+
 func (n *NSQD) topicJobLoop(jobCh chan func(), closeCh chan int) {
 	for {
 		select {
 		case job := <-jobCh:
-			job()
+			doJob(job)
 		case <-closeCh:
 			return
 		}

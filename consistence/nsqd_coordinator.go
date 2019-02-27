@@ -2186,6 +2186,30 @@ func (self *NsqdCoordinator) notifyAcquireTopicLeader(coord *coordData) *CoordEr
 	return nil
 }
 
+func (self *NsqdCoordinator) TryFixLocalTopic(topic string, pid int) error {
+	topicCoord, err := self.getTopicCoord(topic, pid)
+	if err != nil {
+		coordLog.Infof("topic coord not found %v-%v.", topic, pid)
+		return err.ToErrorType()
+	}
+	tcData := topicCoord.GetData()
+	localTopic, localErr := self.localNsqd.GetExistingTopic(tcData.topicInfo.Name, tcData.topicInfo.Partition)
+	if localErr != nil {
+		coordLog.Infof("no topic on local: %v, %v", tcData.topicInfo.GetTopicDesp(), err)
+		return localErr
+	}
+	localTopic.Lock()
+	localErr = checkAndFixLocalLogQueueData(tcData, localTopic, tcData.logMgr, true)
+	if tcData.delayedLogMgr != nil && !tcData.topicInfo.OrderedMulti {
+		checkAndFixLocalLogQueueData(tcData, localTopic.GetDelayedQueue(), tcData.delayedLogMgr, true)
+	}
+	localTopic.Unlock()
+	if localErr == nil {
+		localTopic.SetDataFixState(false)
+	}
+	return nil
+}
+
 // handle all the things while leader is changed or isr is changed.
 func (self *NsqdCoordinator) switchStateForMaster(topicCoord *TopicCoordinator,
 	localTopic *nsqd.Topic, syncCommitDisk bool) *CoordErr {
@@ -2199,10 +2223,22 @@ func (self *NsqdCoordinator) switchStateForMaster(topicCoord *TopicCoordinator,
 	if master {
 		isWriteDisabled := topicCoord.IsWriteDisabled()
 		localTopic.Lock()
-		checkAndFixLocalLogQueueEnd(tcData, localTopic, tcData.logMgr, !isWriteDisabled && syncCommitDisk, false)
+		localErr := checkAndFixLocalLogQueueEnd(tcData, localTopic, tcData.logMgr, !isWriteDisabled && syncCommitDisk, ForceFixLeaderData)
+		if localErr != nil {
+			atomic.StoreInt32(&topicCoord.disableWrite, 1)
+			isWriteDisabled = true
+			localTopic.SetDataFixState(true)
+			localTopic.DisableForSlave()
+		}
 		if tcData.delayedLogMgr != nil && !tcData.topicInfo.OrderedMulti {
-			checkAndFixLocalLogQueueEnd(tcData, localTopic.GetDelayedQueue(), tcData.delayedLogMgr,
-				!isWriteDisabled && syncCommitDisk, false)
+			localErr = checkAndFixLocalLogQueueEnd(tcData, localTopic.GetDelayedQueue(), tcData.delayedLogMgr,
+				!isWriteDisabled && syncCommitDisk, ForceFixLeaderData)
+			if localErr != nil {
+				atomic.StoreInt32(&topicCoord.disableWrite, 1)
+				isWriteDisabled = true
+				localTopic.GetDelayedQueue().SetDataFixState(true)
+				localTopic.DisableForSlave()
+			}
 		}
 		localTopic.Unlock()
 
