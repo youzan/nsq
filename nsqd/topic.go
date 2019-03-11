@@ -1408,7 +1408,7 @@ func (t *Topic) TryCleanOldData(retentionSize int64, noRealClean bool, maxCleanO
 		readInfo = snapReader.GetCurrentReadQueueOffset()
 		data = snapReader.ReadOne()
 		if data.Err != nil {
-			nsqLog.LogErrorf("failed to read - %s ", data.Err)
+			nsqLog.Logf("failed to read - %s ", data.Err)
 			break
 		}
 	}

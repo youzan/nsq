@@ -249,7 +249,11 @@ func (s *httpServer) doFixTopicData(w http.ResponseWriter, req *http.Request, ps
 		return nil, err
 	}
 	localTopic.TryFixData()
-	return nil, nil
+
+	if s.ctx.nsqdCoord != nil {
+		err = s.ctx.nsqdCoord.TryFixLocalTopic(localTopic.GetTopicName(), localTopic.GetTopicPart())
+	}
+	return nil, err
 }
 
 func (s *httpServer) doGreedyCleanTopic(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {
