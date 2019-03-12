@@ -452,10 +452,10 @@ func (t *Topic) LoadChannelMeta() error {
 		if ch.Skipped {
 			channel.Skip()
 		}
-		//skip zan test message according to meta file
-		if ch.IsZanTestSkipepd() {
-			channel.SkipZanTest()
-		} //else nothing maybe unskip
+		//unskip zan test message according to meta file
+		if !ch.IsZanTestSkipepd() {
+			channel.UnskipZanTest()
+		}
 	}
 	return nil
 }

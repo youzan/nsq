@@ -351,8 +351,8 @@ func (n *NSQD) LoadMetadata(disabled int32) {
 			}
 
 			zanTestSkipped, _ := channelJs.Get("zanTestSkipped").Bool()
-			if zanTestSkipped {
-				channel.SkipZanTest()
+			if !zanTestSkipped {
+				channel.UnskipZanTest()
 			}
 
 		}
