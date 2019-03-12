@@ -859,6 +859,7 @@ func (s *httpServer) searchMessageTrace(w http.ResponseWriter, req *http.Request
 	}
 
 	//filter out trace messages which do not source from current nsqd
+	var tracelogFilteredLock sync.Mutex
 	tracelogFiltered := &TraceLog{
 		LogDataDtos: make([]TraceLogData, 0),
 		TotalCount: 0,
@@ -918,36 +919,36 @@ func (s *httpServer) searchMessageTrace(w http.ResponseWriter, req *http.Request
 			break
 		}
 
-		go func() {
-			defer sem.Release(int64(1))
-			//loop in nsqd node in all DC
-			for _, producer := range producers {
-				//skip producer ip or DC does not match
-				if dcPrefix != producer.DC ||  producer.BroadcastAddress != m.HostIp {
-					continue
-				}
-				msgBody, _, err := s.ci.GetNSQDMessageByID(*producer, item.Topic, strconv.Itoa(pid), int64(item.MsgID))
-				if err != nil {
-					s.ctx.nsqadmin.logf("get msg %v data failed : %v", item, err)
-				} else {
-					resultList.LogDataDtos[idx].RawMsgData = msgBody
-					break;
-				}
+		for _, producer := range producers {
+			//skip producer ip or DC does not match
+			if (producer.DC != "" && dcPrefix != producer.DC) || producer.BroadcastAddress != m.HostIp {
+				continue
+			} else {
+				go func() {
+					defer sem.Release(int64(1))
+					//loop in nsqd node in all DC
+					msgBody, _, err := s.ci.GetNSQDMessageByID(*producer, item.Topic, strconv.Itoa(pid), int64(item.MsgID))
+					if err != nil {
+						s.ctx.nsqadmin.logf("get msg %v data failed : %v", item, err)
+					} else {
+						resultList.LogDataDtos[idx].RawMsgData = msgBody
+						tracelogFilteredLock.Lock()
+						//append messages to new filtered log list
+						tracelogFiltered.LogDataDtos = append(tracelogFiltered.LogDataDtos, resultList.LogDataDtos[idx])
+						tracelogFilteredLock.Unlock()
+					}
+				}()
 			}
-
-		}()
-
-		//append messages to new filtered log list
-		tracelogFiltered.LogDataDtos = append(tracelogFiltered.LogDataDtos, resultList.LogDataDtos[idx])
+		}
 	}
-	//update total count of tracelogFiltered
-	tracelogFiltered.TotalCount = len(tracelogFiltered.LogDataDtos)
 
 	if err := sem.Acquire(ctx, maxWeight); err != nil {
 		s.ctx.nsqadmin.logf("ERROR: fail to acquire signal - %v", err)
 		warnMessages = append(warnMessages, err.Error())
 	}
 
+	//update total count of tracelogFiltered
+	tracelogFiltered.TotalCount = len(tracelogFiltered.LogDataDtos)
 	logDataFilterEmpty := make(TLListT, 0, len(tracelogFiltered.LogDataDtos))
 	for _, v := range tracelogFiltered.LogDataDtos {
 		if v.MsgID == 0 {
