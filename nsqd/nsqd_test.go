@@ -303,6 +303,42 @@ func TestPauseMetadata(t *testing.T) {
 	equal(t, b, false)
 }
 
+func TestZantestSkipMetaData(t *testing.T) {
+	opts := NewOptions()
+	opts.AllowZanTestSkip = true
+	opts.Logger = newTestLogger(t)
+	_, _, nsqd := mustStartNSQD(opts)
+	defer os.RemoveAll(opts.DataPath)
+	defer nsqd.Exit()
+
+	// avoid concurrency issue of async persistMetadata() calls
+	atomic.StoreInt32(&nsqd.isLoading, 1)
+	topicName := "zantestskip_metadata" + strconv.Itoa(int(time.Now().Unix()))
+	topic := nsqd.GetTopicWithExt(topicName, 0, false)
+	channel := topic.GetChannel("ch")
+	atomic.StoreInt32(&nsqd.isLoading, 0)
+	nsqd.persistMetadata(nsqd.GetTopicMapCopy())
+
+	b, _ := metadataForChannel(nsqd, topic, 0).Get("zanTestSkipped").Bool()
+	equal(t, b, true)
+
+	channel.UnskipZanTest()
+	b, _ = metadataForChannel(nsqd, topic, 0).Get("zanTestSkipped").Bool()
+	equal(t, b, true)
+
+	nsqd.persistMetadata(nsqd.GetTopicMapCopy())
+	b, _ = metadataForChannel(nsqd, topic, 0).Get("zanTestSkipped").Bool()
+	equal(t, b, false)
+
+	channel.SkipZanTest()
+	b, _ = metadataForChannel(nsqd, topic, 0).Get("zanTestSkipped").Bool()
+	equal(t, b, false)
+
+	nsqd.persistMetadata(nsqd.GetTopicMapCopy())
+	b, _ = metadataForChannel(nsqd, topic, 0).Get("zanTestSkipped").Bool()
+	equal(t, b, true)
+}
+
 func TestSkipMetaData(t *testing.T) {
 	opts := NewOptions()
 	opts.Logger = newTestLogger(t)
