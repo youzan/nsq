@@ -246,14 +246,17 @@ func (s *httpServer) getExistingTopicFromQuery(req *http.Request) (url.Values, *
 func (s *httpServer) doFixTopicData(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {
 	_, localTopic, err := s.getExistingTopicFromQuery(req)
 	if err != nil {
-		return nil, err
+		return nil, http_api.Err{http.StatusInternalServerError, err.Error()}
 	}
 	localTopic.TryFixData()
 
 	if s.ctx.nsqdCoord != nil {
 		err = s.ctx.nsqdCoord.TryFixLocalTopic(localTopic.GetTopicName(), localTopic.GetTopicPart())
+		if err != nil {
+			return nil, http_api.Err{http.StatusInternalServerError, err.Error()}
+		}
 	}
-	return nil, err
+	return nil, nil
 }
 
 func (s *httpServer) doGreedyCleanTopic(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {

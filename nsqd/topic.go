@@ -1490,6 +1490,10 @@ func (t *Topic) UpdateDelayedQueueConsumedState(ts int64, keyList RecentKeyList,
 // after crash, some topic meta need to be fixed by manual
 func (t *Topic) TryFixData() error {
 	t.backend.tryFixData()
+	dq := t.GetDelayedQueue()
+	if dq != nil {
+		dq.backend.tryFixData()
+	}
 	// TODO: fix channel meta
 	return nil
 }

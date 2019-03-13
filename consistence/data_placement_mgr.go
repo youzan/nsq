@@ -66,6 +66,7 @@ const (
 	HIGHEST_PUB_QPS_LEVEL         = 100
 	HIGHEST_LEFT_CONSUME_MB_SIZE  = 50 * 1024
 	HIGHEST_LEFT_DATA_MB_SIZE     = 200 * 1024
+	busyTopicLevel                = 13
 )
 
 type balanceOpLevel int
@@ -767,7 +768,7 @@ func (self *DataPlacement) balanceTopicLeaderBetweenNodes(monitorChan chan struc
 	var err error
 	// avoid move the too busy topic to reduce the impaction of the online service.
 	// if the busiest topic is not so busy, we try move this topic to avoid move too much idle topics
-	if busyTopic != "" && busyLevel < 10 && (busyLevel*2 < maxLF-minLF) {
+	if busyTopic != "" && busyLevel < busyTopicLevel && (busyLevel*2 < maxLF-minLF) {
 		topicName, partitionID, err = splitTopicPartitionID(busyTopic)
 		if err != nil {
 			coordLog.Warningf("split topic name and partition failed: %v", err)
@@ -777,6 +778,10 @@ func (self *DataPlacement) balanceTopicLeaderBetweenNodes(monitorChan chan struc
 				sortedNodeTopicStats, moveToMinLF, moveLeader)
 		}
 	}
+	// TODO: handle the node which has more than two busy topics.
+	// make sure all nodes have the average busy topics.
+	// check top10 topics and make sure all partitions of them is crossed multi different nodes.
+
 	if !checkMoveOK && idleTopic != "" {
 		topicName, partitionID, err = splitTopicPartitionID(idleTopic)
 		if err != nil {
@@ -802,7 +807,7 @@ func (self *DataPlacement) balanceTopicLeaderBetweenNodes(monitorChan chan struc
 				break
 			}
 			// do not move the topic with very busy load
-			if t.loadFactor > 10 || t.loadFactor > maxLF-minLF {
+			if t.loadFactor > busyTopicLevel || t.loadFactor > maxLF-minLF {
 				coordLog.Infof("check topic for moving , all busy : %v, %v", t, sortedTopics)
 				break
 			}

@@ -24,6 +24,8 @@
                  :db         db
                  :client     (queue-client)
                  :nemesis    (nemesis/partition-random-halves)
+                 ;:nemesis    (nemesis/partition-random-node)
+                 ;:nemesis    (nemesis/partition-majorities-ring)
                  :model      (model/unordered-queue)
                  :checker    (checker/compose
                                {:total-queue checker/total-queue})

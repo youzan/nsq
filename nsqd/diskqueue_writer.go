@@ -141,10 +141,14 @@ func (d *diskQueueWriter) tryFixData() error {
 	defer d.Unlock()
 	// queue start may be invalid after crash, so we can fix by manual to delete meta and reload it
 	err := d.initQueueReadStart()
+	// save anyway since already wrong, if err is ErrNeedFixQueueStart we should save
+	if err == ErrNeedFixQueueStart {
+		d.diskQueueStart = diskQueueEndInfo{}
+	}
+	d.saveExtraMeta()
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	d.saveExtraMeta()
 	return nil
 }
 
