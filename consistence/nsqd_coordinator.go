@@ -1995,11 +1995,17 @@ func (self *NsqdCoordinator) syncChannelsFromOther(c *NsqdRpcClient, topicInfo T
 				if meta, ok := metaMaps[chName]; ok {
 					if meta.Paused {
 						ch.Pause()
+					} else {
+						ch.UnPause()
 					}
 					if meta.Skipped {
 						ch.Skip()
+					} else {
+						ch.UnSkip()
 					}
-					if meta.IsZanTestSkipepd() {
+					if !meta.IsZanTestSkipepd() {
+						ch.UnskipZanTest()
+					} else {
 						ch.SkipZanTest()
 					}
 				}
