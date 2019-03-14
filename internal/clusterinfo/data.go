@@ -382,7 +382,7 @@ func (c *ClusterInfo) GetLookupdTopicProducers(topic string, lookupdHTTPAddrs []
 				}
 				p.DC = lookupd.DC
 				producers = append(producers, p)
-				skip:
+			skip:
 			}
 			for pid, p := range resp.PartitionProducers {
 				version, err := semver.Parse(p.Version)
@@ -401,7 +401,7 @@ func (c *ClusterInfo) GetLookupdTopicProducers(topic string, lookupdHTTPAddrs []
 				p.DC = lookupd.DC
 				partproducers = append(partproducers, p)
 				partitionProducers[pid] = partproducers
-				skip2:
+			skip2:
 			}
 		}(lookupd)
 	}
@@ -835,7 +835,9 @@ func (c *ClusterInfo) GetNSQDCoordStats(producers Producers, selectedTopic strin
 			lock.Lock()
 			defer lock.Unlock()
 			c.logf("CI: querying nsqd %s resp: %v", endpoint, resp)
-			topicCoordStats.RpcStats = resp.RpcStats.Snapshot()
+			if resp.RpcStats != nil {
+				topicCoordStats.RpcStats = resp.RpcStats.Snapshot()
+			}
 			for _, topicStat := range resp.TopicCoordStats {
 				topicStat.DC = p.DC
 				topicStat.Node = addr
@@ -979,14 +981,14 @@ func (c *ClusterInfo) GetNSQDStats(producers Producers, selectedTopic string, so
 					channelStats, ok := channelStatsMap[key]
 					if !ok {
 						channelStats = &ChannelStats{
-							DC:		p.DC,
+							DC:             p.DC,
 							Node:           addr,
 							TopicName:      topic.TopicName,
 							TopicPartition: topic.TopicPartition,
 							StatsdName:     topic.StatsdName,
 							ChannelName:    channel.ChannelName,
 							IsMultiOrdered: topic.IsMultiOrdered,
-							IsExt:		topic.IsExt,
+							IsExt:          topic.IsExt,
 							ZanTestSkipped: channel.ZanTestSkipped,
 						}
 						channelStatsMap[key] = channelStats
@@ -1153,7 +1155,7 @@ func (c *ClusterInfo) CreateTopicChannel(topicName string, channelName string, l
 }
 
 func (c *ClusterInfo) CreateTopic(topicName string, partitionNum int, replica int, syncDisk int,
-retentionDays string, orderedmulti string, ext string, lookupdHTTPAddrs []LookupdAddressDC) error {
+	retentionDays string, orderedmulti string, ext string, lookupdHTTPAddrs []LookupdAddressDC) error {
 	var errs []error
 
 	// TODO: found the master lookup node first
@@ -1227,7 +1229,7 @@ func (c *ClusterInfo) DeleteChannel(topicName string, channelName string, lookup
 		errs = append(errs, pe.Errors()...)
 	}
 
-	channelDelete:
+channelDelete:
 	if len(partitionProducers) == 0 {
 		qs := fmt.Sprintf("topic=%s&channel=%s", url.QueryEscape(topicName), url.QueryEscape(channelName))
 		// remove the channel from all the nsqd that produce this topic
