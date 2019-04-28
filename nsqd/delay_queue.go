@@ -812,7 +812,7 @@ func (q *DelayQueue) flush(fsync bool) error {
 	q.getStore().Sync()
 
 	cost := time.Now().Sub(s)
-	if cost > time.Second {
+	if cost > time.Second/2 {
 		nsqLog.Logf("topic(%s): flush cost: %v", q.GetFullName(), cost)
 	}
 

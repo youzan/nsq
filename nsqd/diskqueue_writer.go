@@ -787,15 +787,15 @@ func (d *diskQueueWriter) Flush(fsync bool) error {
 		return errors.New("exiting")
 	}
 	s := time.Now()
+	var err error
 	if d.needSync {
-		return d.sync(fsync)
+		err = d.sync(fsync)
 	}
 	cost := time.Now().Sub(s)
-	if cost > time.Second {
+	if cost > time.Second/2 {
 		nsqLog.Logf("disk writer(%s): flush cost: %v", d.name, cost)
 	}
-
-	return nil
+	return err
 }
 
 func (d *diskQueueWriter) FlushBuffer() bool {
@@ -1014,18 +1014,22 @@ func (d *diskQueueWriter) persistMetaData(fsync bool) error {
 	var err error
 	var n int
 	pos := 0
+	s := time.Now()
 	err = d.persistTmpMetaData()
 	if err != nil {
 		return err
 	}
 
+	cost1 := time.Since(s)
 	fileName := d.metaDataFileName()
 	f, err = os.OpenFile(fileName, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
 		return err
 	}
+	cost2 := time.Since(s)
 	err = preWriteMetaEnd(f)
 
+	cost3 := time.Since(s)
 	n, err = fmt.Fprintf(f, "%d\n%d,%d,%d\n",
 		atomic.LoadInt64(&d.diskWriteEnd.totalMsgCnt),
 		d.diskWriteEnd.EndOffset.FileNum, d.diskWriteEnd.EndOffset.Pos, d.diskWriteEnd.Offset())
@@ -1037,6 +1041,10 @@ func (d *diskQueueWriter) persistMetaData(fsync bool) error {
 	}
 
 	f.Close()
+	cost4 := time.Since(s)
+	if cost4 >= time.Second/10 {
+		nsqLog.Logf("writer (%v) meta perist slow : %v,%v,%v", fileName, cost1, cost2, cost3, cost4)
+	}
 	return err
 }
 

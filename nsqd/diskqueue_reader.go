@@ -1169,16 +1169,16 @@ func (d *diskQueueReader) persistMetaData(fsync bool) error {
 		return err
 	}
 
-	err = preWriteMetaEnd(f)
 	cost1 := time.Since(s)
+	err = preWriteMetaEnd(f)
 
 	if testCrash {
 		return errors.New("test crash")
 	}
+	cost2 := time.Since(s)
 	n, err = d.writeMeta(f, err)
 	pos += n
 	_, err = writeMetaEnd(f, err, pos)
-	cost2 := time.Since(s)
 
 	if err != nil {
 		nsqLog.Errorf("reader (%v) meta write failed, need fix: %v", d.readerMetaName, err.Error())

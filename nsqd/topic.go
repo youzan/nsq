@@ -1247,14 +1247,10 @@ func (t *Topic) ForceFlush() {
 		nsqLog.Logf("topic %v, end to commit: %v, read end: %v", t.fullName, curCommit, e)
 	}
 
-	s := time.Now()
 	t.flushData()
+
+	s := time.Now()
 	e := t.getCommittedEnd()
-	cost := time.Now().Sub(s)
-	if cost > time.Second {
-		nsqLog.LogWarningf("topic(%s): flush cost: %v", t.GetFullName(), cost)
-	}
-	s = time.Now()
 	useFsync := t.option.UseFsync
 	t.channelLock.RLock()
 	for _, channel := range t.channelMap {
@@ -1262,7 +1258,7 @@ func (t *Topic) ForceFlush() {
 		channel.Flush(useFsync)
 	}
 	t.channelLock.RUnlock()
-	cost = time.Now().Sub(s)
+	cost := time.Now().Sub(s)
 	if cost > time.Second {
 		nsqLog.Logf("topic(%s): flush channel cost: %v", t.GetFullName(), cost)
 	}
@@ -1280,6 +1276,7 @@ func (t *Topic) flushData() (error, bool) {
 	syncEvery := atomic.LoadInt64(&t.dynamicConf.SyncEvery)
 	useFsync := syncEvery == 1 || t.option.UseFsync
 
+	s := time.Now()
 	if t.GetDelayedQueue() != nil {
 		t.GetDelayedQueue().ForceFlush()
 	}
@@ -1288,13 +1285,17 @@ func (t *Topic) flushData() (error, bool) {
 	if !ok {
 		return nil, false
 	}
+	cost1 := time.Since(s)
 	atomic.StoreInt64(&t.lastSyncCnt, t.backend.GetQueueWriteEnd().TotalMsgCnt())
 	err := t.backend.Flush(useFsync)
 	if err != nil {
 		nsqLog.LogErrorf("failed flush: %v", err)
 		return err, false
 	}
-
+	cost2 := time.Since(s)
+	if cost2 > time.Second {
+		nsqLog.LogWarningf("topic(%s): flush cost: %v, %v", t.GetFullName(), cost1, cost2)
+	}
 	return err, true
 }
 
