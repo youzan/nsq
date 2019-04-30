@@ -173,6 +173,7 @@ func NewNsqdCoordinator(cluster, ip, tcpport, rpcport, httpport, extraID string,
 		tryCheckUnsynced:       make(chan bool, 1),
 		lookupRemoteCreateFunc: NewNsqLookupRpcClient,
 		lookupRemoteClients:    make(map[string]INsqlookupRemoteProxy),
+		enableBenchCost:        true,
 	}
 
 	if nsqdCoord.leadership != nil {

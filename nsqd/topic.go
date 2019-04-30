@@ -1021,9 +1021,15 @@ func (t *Topic) PutMessagesNoLock(msgs []*Message) (MessageID, BackendOffset, in
 
 // PutMessages writes multiple Messages to the queue
 func (t *Topic) PutMessages(msgs []*Message) (MessageID, BackendOffset, int32, int64, BackendQueueEnd, error) {
+	s := time.Now()
 	t.Lock()
 	defer t.Unlock()
+	cost := time.Since(s)
 	firstMsgID, firstOffset, batchBytes, totalCnt, dend, err := t.PutMessagesNoLock(msgs)
+	cost2 := time.Since(s)
+	if cost2 >= time.Millisecond*5 {
+		nsqLog.Infof("topic %v put batch local cost: %v", t.GetFullName(), cost, cost2)
+	}
 	return firstMsgID, firstOffset, batchBytes, totalCnt, dend, err
 }
 
@@ -1031,6 +1037,7 @@ func (t *Topic) put(m *Message, trace bool, checkSize int64) (MessageID, Backend
 	if m.ID <= 0 {
 		m.ID = t.nextMsgID()
 	}
+	s := time.Now()
 	offset, writeBytes, dend, err := writeMessageToBackendWithCheck(t.IsExt(), &t.putBuffer, m, checkSize, t.backend)
 	atomic.StoreInt32(&t.needFlush, 1)
 	if err != nil {
@@ -1048,6 +1055,10 @@ func (t *Topic) put(m *Message, trace bool, checkSize int64) (MessageID, Backend
 		if m.TraceID != 0 || atomic.LoadInt32(&t.EnableTrace) == 1 || nsqLog.Level() >= levellogger.LOG_DETAIL {
 			nsqMsgTracer.TracePub(t.GetTopicName(), t.GetTopicPart(), "PUB", m.TraceID, m, offset, dend.TotalMsgCnt())
 		}
+	}
+	cost := time.Since(s)
+	if cost >= time.Millisecond*5 {
+		nsqLog.Infof("topic %v put local cost: %v", t.GetFullName(), cost)
 	}
 	// TODO: handle delayed type for dpub and transaction message
 	// should remove from delayed queue after written on disk file
@@ -1293,7 +1304,7 @@ func (t *Topic) flushData() (error, bool) {
 		return err, false
 	}
 	cost2 := time.Since(s)
-	if cost2 > time.Second {
+	if cost2 >= time.Millisecond*50 {
 		nsqLog.LogWarningf("topic(%s): flush cost: %v, %v", t.GetFullName(), cost1, cost2)
 	}
 	return err, true

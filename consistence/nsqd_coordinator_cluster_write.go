@@ -208,9 +208,24 @@ func (self *NsqdCoordinator) PutMessagesToCluster(topic *nsqd.Topic,
 
 	var queueEnd nsqd.BackendQueueEnd
 	var logMgr *TopicCommitLogMgr
+	checkCost := false
+	if self.enableBenchCost {
+		checkCost = true
+	}
 
 	doLocalWrite := func(d *coordData) *CoordErr {
+		var s time.Time
+
+		if checkCost {
+			s = time.Now()
+		}
 		topic.Lock()
+		if checkCost {
+			cost := time.Since(s)
+			if cost > time.Millisecond {
+				coordLog.Infof("local put cost long: %v", cost)
+			}
+		}
 		logMgr = d.logMgr
 		id, offset, writeBytes, totalCnt, qe, localErr := topic.PutMessagesNoLock(msgs)
 		queueEnd = qe
@@ -218,6 +233,12 @@ func (self *NsqdCoordinator) PutMessagesToCluster(topic *nsqd.Topic,
 		if localErr != nil {
 			coordLog.Warningf("put batch messages to local failed: %v", localErr)
 			return &CoordErr{localErr.Error(), RpcNoErr, CoordLocalErr}
+		}
+		if checkCost {
+			cost := time.Since(s)
+			if cost > time.Millisecond*5 {
+				coordLog.Infof("local put cost long: %v", cost)
+			}
 		}
 		commitLog.LogID = int64(id)
 		// epoch should not be changed.
@@ -762,7 +783,7 @@ func (self *NsqdCoordinator) putMessagesOnSlave(coord *TopicCoordinator, logData
 			nsqd.BackendOffset(logData.MsgOffset), int64(logData.MsgSize))
 		if checkCost {
 			cost2 := time.Now().Sub(start)
-			if cost2 > time.Millisecond {
+			if cost2 > time.Millisecond*5 {
 				coordLog.Infof("write local on slave cost :%v, %v", cost, cost2)
 			}
 		}

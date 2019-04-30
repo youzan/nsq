@@ -802,7 +802,7 @@ func (d *diskQueueWriter) Flush(fsync bool) error {
 		d.persistMetaData(fsync, we)
 	}
 	cost2 := time.Now().Sub(s)
-	if cost2 > time.Second/2 {
+	if cost2 > time.Second/2 || cost1 > time.Millisecond*10 {
 		nsqLog.Logf("disk writer(%s): flush cost: %v", d.name, cost1, cost2)
 	}
 	return err
