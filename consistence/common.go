@@ -4,11 +4,16 @@ import (
 	"bytes"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
 	ErrFailedOnNotLeader   = "E_FAILED_ON_NOT_LEADER"
 	ErrFailedOnNotWritable = "E_FAILED_ON_NOT_WRITABLE"
+)
+
+const (
+	slowCost = time.Millisecond * 50
 )
 
 type CoordErrType int

@@ -1187,7 +1187,7 @@ func (d *diskQueueReader) persistMetaData(fsync bool) error {
 	}
 	f.Close()
 	cost3 := time.Since(s)
-	if cost3 >= time.Second/10 {
+	if cost3 >= slowCost {
 		nsqLog.Logf("reader (%v) meta perist slow : %v,%v,%v", d.readerMetaName, cost1, cost2, cost3)
 	}
 	return err

@@ -1115,8 +1115,6 @@ func (self *TopicCommitLogMgr) AppendCommitLogWithSync(l *CommitLogData, slave b
 	var cost1 time.Duration
 	var cost2 time.Duration
 	var cost3 time.Duration
-	var cost4 time.Duration
-	var cost5 time.Duration
 
 	self.Lock()
 	defer self.Unlock()
@@ -1126,12 +1124,11 @@ func (self *TopicCommitLogMgr) AppendCommitLogWithSync(l *CommitLogData, slave b
 	fsync := !slave && useFsync
 	if self.currentCount >= int32(LOGROTATE_NUM) {
 		self.flushCommitLogsNoLock()
-		cost1 = time.Since(start)
 		if fsync {
 			self.appender.Sync()
 		}
 		self.appender.Close()
-		cost2 = time.Since(start)
+		cost1 = time.Since(start)
 		newName := getSegmentFilename(self.path, self.currentStart)
 		err := util.AtomicRename(self.path, newName)
 		if err != nil {
@@ -1140,27 +1137,26 @@ func (self *TopicCommitLogMgr) AppendCommitLogWithSync(l *CommitLogData, slave b
 		}
 		coordLog.Infof("rotate file %v to %v", self.path, newName)
 		err = self.prepareAppender(self.path)
-		cost3 = time.Since(start)
 		if err != nil {
 			coordLog.Errorf("open topic %v commit log file error: %v", self.path, err)
 			return err
 		}
 		atomic.AddInt64(&self.currentStart, 1)
 		self.currentCount = 0
+		cost2 = time.Since(start)
 		err = self.saveCurrentStart(fsync)
 		if err != nil {
 			return err
 		}
-		cost4 = time.Since(start)
 	}
 	err := binary.Write(self.getAppenderForWrite(), binary.BigEndian, *l)
 	if err != nil {
 		return err
 	}
-	cost5 = time.Since(start)
-	if cost5 > time.Millisecond*2 {
-		coordLog.Infof("append commit log file %v cost %v, %v, %v, %v, %v",
-			self.path, cost1, cost2, cost3, cost4, cost5)
+	cost3 = time.Since(start)
+	if cost3 > slowCost {
+		coordLog.Infof("append commit log file %v cost %v, %v, %v",
+			self.path, cost1, cost2, cost3)
 	}
 
 	self.currentCount++

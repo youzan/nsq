@@ -802,7 +802,7 @@ func (d *diskQueueWriter) Flush(fsync bool) error {
 		d.persistMetaData(fsync, we)
 	}
 	cost2 := time.Now().Sub(s)
-	if cost2 > time.Second/2 || cost1 > time.Millisecond*10 {
+	if cost2 > slowCost || cost1 > slowCost {
 		nsqLog.Logf("disk writer(%s): flush cost: %v", d.name, cost1, cost2)
 	}
 	return err
@@ -1060,7 +1060,7 @@ func (d *diskQueueWriter) persistMetaData(fsync bool, writeEnd diskQueueEndInfo)
 
 	f.Close()
 	cost4 := time.Since(s)
-	if cost4 >= time.Millisecond*10 {
+	if cost4 >= slowCost {
 		nsqLog.Logf("writer (%v) meta perist slow : %v,%v,%v", fileName, cost1, cost2, cost3, cost4)
 	}
 	return err
