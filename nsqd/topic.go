@@ -1283,6 +1283,12 @@ func (t *Topic) flushBuffer(notifyCh bool) error {
 	return nil
 }
 
+func (t *Topic) IsFsync() bool {
+	syncEvery := atomic.LoadInt64(&t.dynamicConf.SyncEvery)
+	useFsync := syncEvery == 1 || t.option.UseFsync
+	return useFsync
+}
+
 func (t *Topic) flushData() (error, bool) {
 	syncEvery := atomic.LoadInt64(&t.dynamicConf.SyncEvery)
 	useFsync := syncEvery == 1 || t.option.UseFsync

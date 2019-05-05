@@ -570,7 +570,7 @@ func (self *TopicCommitLogMgr) loadCurrentStart() error {
 	return nil
 }
 
-func (self *TopicCommitLogMgr) saveCurrentStart() error {
+func (self *TopicCommitLogMgr) saveCurrentStart(fsync bool) error {
 	tmpFileName := self.path + ".current.tmp"
 	file, err := os.OpenFile(tmpFileName, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
@@ -582,7 +582,9 @@ func (self *TopicCommitLogMgr) saveCurrentStart() error {
 	if err != nil {
 		return err
 	}
-	file.Sync()
+	if fsync {
+		file.Sync()
+	}
 
 	return util.AtomicRename(tmpFileName, self.path+".current")
 }
@@ -615,7 +617,7 @@ func (self *TopicCommitLogMgr) ResetLogWithStart(newStart LogStartInfo) error {
 		coordLog.Infof("open topic commit log file error: %v", err)
 		return err
 	}
-	err = self.saveCurrentStart()
+	err = self.saveCurrentStart(true)
 	if err != nil {
 		return err
 	}
@@ -663,7 +665,7 @@ func (self *TopicCommitLogMgr) Close() {
 	self.flushCommitLogsNoLock()
 	self.appender.Sync()
 	self.appender.Close()
-	self.saveCurrentStart()
+	self.saveCurrentStart(true)
 	self.saveLogSegStartInfo()
 	self.Unlock()
 }
@@ -847,7 +849,7 @@ func (self *TopicCommitLogMgr) TruncateToOffsetV2(startIndex int64, offset int64
 		oldStart := self.currentStart
 		self.currentStart = startIndex
 		self.currentCount = int32(offset / int64(GetLogDataSize()))
-		self.saveCurrentStart()
+		self.saveCurrentStart(true)
 
 		self.appender.Sync()
 		self.appender.Close()
@@ -1073,6 +1075,10 @@ func (self *TopicCommitLogMgr) IsCommitted(id int64) bool {
 }
 
 func (self *TopicCommitLogMgr) AppendCommitLog(l *CommitLogData, slave bool) error {
+	return self.AppendCommitLogWithSync(l, slave, false)
+}
+
+func (self *TopicCommitLogMgr) AppendCommitLogWithSync(l *CommitLogData, slave bool, useFsync bool) error {
 	if l.LogID <= atomic.LoadInt64(&self.pLogID) {
 		coordLog.Errorf("commit id %v less than prev id: %v, %v", l, atomic.LoadInt64(&self.pLogID), atomic.LoadInt64(&self.nLogID))
 		return ErrCommitLogWrongID
@@ -1086,9 +1092,12 @@ func (self *TopicCommitLogMgr) AppendCommitLog(l *CommitLogData, slave bool) err
 	if slave {
 		atomic.StoreInt64(&self.nLogID, l.LastMsgLogID+1)
 	}
+	fsync := !slave && useFsync
 	if self.currentCount >= int32(LOGROTATE_NUM) {
 		self.flushCommitLogsNoLock()
-		self.appender.Sync()
+		if fsync {
+			self.appender.Sync()
+		}
 		self.appender.Close()
 		newName := getSegmentFilename(self.path, self.currentStart)
 		err := util.AtomicRename(self.path, newName)
@@ -1104,7 +1113,7 @@ func (self *TopicCommitLogMgr) AppendCommitLog(l *CommitLogData, slave bool) err
 		}
 		atomic.AddInt64(&self.currentStart, 1)
 		self.currentCount = 0
-		err = self.saveCurrentStart()
+		err = self.saveCurrentStart(fsync)
 		if err != nil {
 			return err
 		}

@@ -112,7 +112,7 @@ func (self *NsqdCoordinator) internalPutMessageToCluster(topic *nsqd.Topic,
 		}
 	}
 	doLocalCommit := func() error {
-		localErr := logMgr.AppendCommitLog(&commitLog, false)
+		localErr := logMgr.AppendCommitLogWithSync(&commitLog, false, topic.IsFsync())
 		if localErr != nil {
 			coordLog.Errorf("topic : %v failed write commit log : %v, logmgr: %v, %v",
 				topic.GetFullName(), localErr, logMgr.pLogID, logMgr.nLogID)
@@ -263,7 +263,7 @@ func (self *NsqdCoordinator) PutMessagesToCluster(topic *nsqd.Topic,
 		}
 	}
 	doLocalCommit := func() error {
-		localErr := logMgr.AppendCommitLog(&commitLog, false)
+		localErr := logMgr.AppendCommitLogWithSync(&commitLog, false, topic.IsFsync())
 		if localErr != nil {
 			coordLog.Errorf("topic : %v failed write commit log : %v, logMgr: %v, %v",
 				topic.GetFullName(), localErr, logMgr.pLogID, logMgr.nLogID)
