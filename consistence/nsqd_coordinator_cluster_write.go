@@ -437,10 +437,7 @@ retrysync:
 		if checkCost {
 			cost := time.Since(start)
 			if cost > time.Millisecond*3 {
-				coordLog.Infof("slave(%v) sync cost long: %v", nodeID, cost)
-			}
-			if self.enableBenchCost {
-				coordLog.Warningf("slave(%v) sync cost: %v, start: %v, end: %v", nodeID, cost, start, time.Now())
+				coordLog.Infof("slave(%v) sync cost long: %v, start %v, end: %v", nodeID, cost, start, time.Now())
 			}
 		}
 		if rpcErr == nil {
@@ -897,10 +894,7 @@ exitpubslave:
 	if checkCost {
 		cost3 := time.Now().Sub(start)
 		if cost3 > time.Millisecond {
-			coordLog.Infof("write local on slave cost :%v, %v, %v", cost, cost2, cost3)
-		}
-		if self.enableBenchCost {
-			coordLog.Warningf("write local on slave cost :%v, start: %v, end: %v", cost3, start, time.Now())
+			coordLog.Infof("write local on slave cost :%v, %v, %v, start: %v, end: %v", cost, cost2, cost3, start, time.Now())
 		}
 	}
 
