@@ -95,6 +95,9 @@ func addLatencyCounter(cost int64) {
 	} else {
 		index = 29
 	}
+	if index > 5 {
+		log.Printf("latency slow: %v\n", cost)
+	}
 	atomic.AddInt64(&latencyDistribute[index], 1)
 }
 
