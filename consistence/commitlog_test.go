@@ -1564,3 +1564,49 @@ func TestCommitLogMoveToAndDelete(t *testing.T) {
 	test.Nil(t, err)
 
 }
+
+func BenchmarkCommitLogWrite(b *testing.B) {
+	oldRotate := LOGROTATE_NUM
+	LOGROTATE_NUM = 10000
+	defer func() {
+		LOGROTATE_NUM = oldRotate
+	}()
+	logName := "test_log" + strconv.Itoa(int(time.Now().Unix()))
+	tmpDir, err := ioutil.TempDir("", fmt.Sprintf("nsq-test-%d", time.Now().UnixNano()))
+	if err != nil {
+		panic(err)
+	}
+	b.Logf("benchmark path: %v", tmpDir)
+	defer os.RemoveAll(tmpDir)
+	logMgr, err := InitTopicCommitLogMgr(logName, 0, tmpDir, 64)
+	msgRawSize := 10
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N/2; i++ {
+		var logData CommitLogData
+		logData.LogID = int64(logMgr.NextID())
+		logData.LastMsgLogID = logData.LogID
+		logData.Epoch = 1
+		logData.MsgOffset = int64(i * msgRawSize)
+		logData.MsgCnt = int64(i + 1)
+		logData.MsgNum = 1
+		err = logMgr.AppendCommitLog(&logData, false)
+		if err != nil {
+			b.Fatalf("append failed: %v", err)
+		}
+	}
+
+	for i := b.N / 2; i < b.N; i++ {
+		var logData CommitLogData
+		logData.LogID = int64(logMgr.NextID())
+		logData.LastMsgLogID = logData.LogID
+		logData.Epoch = 1
+		logData.MsgOffset = int64(i * msgRawSize)
+		logData.MsgCnt = int64(i + 1)
+		logData.MsgNum = 1
+		err = logMgr.AppendCommitLog(&logData, true)
+		if err != nil {
+			b.Fatalf("append failed: %v", err)
+		}
+	}
+}

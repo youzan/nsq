@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/youzan/nsq/internal/util"
 )
@@ -19,8 +20,8 @@ const (
 	MAX_INCR_ID_BIT = 50
 )
 
-var DEFAULT_COMMIT_BUF_SIZE = 100
-var MAX_COMMIT_BUF_SIZE = 2000
+var DEFAULT_COMMIT_BUF_SIZE = 64
+var MAX_COMMIT_BUF_SIZE = 1024
 
 var (
 	ErrCommitLogWrongID              = errors.New("commit log id is wrong")
@@ -1110,6 +1111,13 @@ func (self *TopicCommitLogMgr) AppendCommitLogWithSync(l *CommitLogData, slave b
 		coordLog.Errorf("commit id %v less than last msgid", l)
 		return ErrCommitLogWrongLastID
 	}
+	start := time.Now()
+	var cost1 time.Duration
+	var cost2 time.Duration
+	var cost3 time.Duration
+	var cost4 time.Duration
+	var cost5 time.Duration
+
 	self.Lock()
 	defer self.Unlock()
 	if slave {
@@ -1118,10 +1126,12 @@ func (self *TopicCommitLogMgr) AppendCommitLogWithSync(l *CommitLogData, slave b
 	fsync := !slave && useFsync
 	if self.currentCount >= int32(LOGROTATE_NUM) {
 		self.flushCommitLogsNoLock()
+		cost1 = time.Since(start)
 		if fsync {
 			self.appender.Sync()
 		}
 		self.appender.Close()
+		cost2 = time.Since(start)
 		newName := getSegmentFilename(self.path, self.currentStart)
 		err := util.AtomicRename(self.path, newName)
 		if err != nil {
@@ -1130,6 +1140,7 @@ func (self *TopicCommitLogMgr) AppendCommitLogWithSync(l *CommitLogData, slave b
 		}
 		coordLog.Infof("rotate file %v to %v", self.path, newName)
 		err = self.prepareAppender(self.path)
+		cost3 = time.Since(start)
 		if err != nil {
 			coordLog.Errorf("open topic %v commit log file error: %v", self.path, err)
 			return err
@@ -1140,10 +1151,16 @@ func (self *TopicCommitLogMgr) AppendCommitLogWithSync(l *CommitLogData, slave b
 		if err != nil {
 			return err
 		}
+		cost4 = time.Since(start)
 	}
 	err := binary.Write(self.getAppenderForWrite(), binary.BigEndian, *l)
 	if err != nil {
 		return err
+	}
+	cost5 = time.Since(start)
+	if cost5 > time.Millisecond*2 {
+		coordLog.Infof("append commit log file %v cost %v, %v, %v, %v, %v",
+			self.path, cost1, cost2, cost3, cost4, cost5)
 	}
 
 	self.currentCount++
