@@ -458,7 +458,17 @@ retrysync:
 	}
 
 	if handleSyncResult(success, tcData) {
+		var start time.Time
+		if checkCost {
+			start = time.Now()
+		}
 		localErr := doLocalCommit()
+		if checkCost {
+			cost := time.Since(start)
+			if cost > time.Millisecond*3 {
+				coordLog.Infof("local topic %v commit log cost long: %v, start %v, end: %v", topicFullName, cost, start, time.Now())
+			}
+		}
 		if localErr != nil {
 			coordLog.Errorf("topic : %v failed commit operation: %v", topicFullName, localErr)
 			needLeaveISR = true
@@ -796,14 +806,35 @@ func (self *NsqdCoordinator) putMessagesOnSlave(coord *TopicCoordinator, logData
 	}
 
 	doLocalCommit := func() error {
+		var start time.Time
+		checkCost := coordLog.Level() >= levellogger.LOG_DEBUG
+		if self.enableBenchCost {
+			checkCost = true
+		}
+		if checkCost {
+			start = time.Now()
+		}
 		localErr := logMgr.AppendCommitLog(&logData, true)
 		if localErr != nil {
 			coordLog.Errorf("write commit log on slave failed: %v", localErr)
 			return localErr
 		}
+		var cost time.Duration
+		if checkCost {
+			cost = time.Now().Sub(start)
+			if cost > time.Millisecond {
+				coordLog.Infof("commit on slave local cost :%v", cost)
+			}
+		}
 		topic.Lock()
 		topic.UpdateCommittedOffset(queueEnd)
 		topic.Unlock()
+		if checkCost {
+			cost2 := time.Now().Sub(start)
+			if cost2 > time.Millisecond*3 {
+				coordLog.Infof("commit on slave local cost :%v, %v", cost, cost2)
+			}
+		}
 		return nil
 	}
 
