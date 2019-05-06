@@ -256,9 +256,9 @@ func startBenchPub(msg []byte, batch [][]byte) {
 			counter := pubIDList[curTopic]
 			mutex.Unlock()
 			if *pipelineSize > 1 {
-				pubPipelineWorker(*runfor, pubMgr, topics[j%len(topics)], counter, rdyChan, goChan)
+				pubPipelineWorker(*runfor, pubMgr, curTopic, counter, rdyChan, goChan)
 			} else {
-				pubWorker(*runfor, pubMgr, topics[j%len(topics)], counter, batch, rdyChan, goChan, false)
+				pubWorker(*runfor, pubMgr, curTopic, counter, batch, rdyChan, goChan, false)
 			}
 		}(j)
 		<-rdyChan
@@ -596,7 +596,7 @@ func startCheckData(msg []byte, batch [][]byte, testDelay bool) {
 			curTopic := topics[index%len(topics)]
 			counter := pubIDList[curTopic]
 			mutex.Unlock()
-			pubWorker(*runfor, pubMgr, topics[j%len(topics)], counter, batch, rdyChan, goChan, testDelay)
+			pubWorker(*runfor, pubMgr, curTopic, counter, batch, rdyChan, goChan, testDelay)
 		}(j)
 		<-rdyChan
 	}
@@ -823,10 +823,10 @@ func startBenchLookupRegUnreg() {
 	hostname, _ := os.Hostname()
 	for i := 0; i < *concurrency; i++ {
 		wg.Add(1)
-		go func() {
+		go func(index int) {
 			defer wg.Done()
 			lookupPeer := clusterinfo.NewLookupPeer(*lookupAddress, 1024*1024*10, &levellogger.GLogger{},
-				connectCallback("bench_reg_"+strconv.Itoa(i), hostname))
+				connectCallback("bench_reg_"+strconv.Itoa(index), hostname))
 			lookupPeer.Command(nil) // start the connection
 
 			cmd := nsq.Ping()
@@ -842,22 +842,22 @@ func startBenchLookupRegUnreg() {
 				cnt--
 				for _, t := range topics {
 					cmd = nsq.UnRegister(t,
-						strconv.Itoa(i), "")
+						strconv.Itoa(index), "")
 					lookupPeer.Command(cmd)
 					cmd = nsq.Register(t,
-						strconv.Itoa(i), "")
+						strconv.Itoa(index), "")
 					lookupPeer.Command(cmd)
 					for ch := 0; ch < 10; ch++ {
 						cmd = nsq.UnRegister(t,
-							strconv.Itoa(i), "ch"+strconv.Itoa(ch))
+							strconv.Itoa(index), "ch"+strconv.Itoa(ch))
 						lookupPeer.Command(cmd)
 						cmd = nsq.Register(t,
-							strconv.Itoa(i), "ch"+strconv.Itoa(ch))
+							strconv.Itoa(index), "ch"+strconv.Itoa(ch))
 						lookupPeer.Command(cmd)
 					}
 				}
 			}
-		}()
+		}(i)
 	}
 	wg.Wait()
 	runSec := time.Now().Sub(start).Seconds() + 1
