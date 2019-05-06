@@ -1564,3 +1564,81 @@ func TestCommitLogMoveToAndDelete(t *testing.T) {
 	test.Nil(t, err)
 
 }
+
+func BenchmarkCommitLogWrite64(b *testing.B) {
+	benchmarkCommitLogWriteWithSyncN(b, false, 64)
+}
+func BenchmarkCommitLogWrite32(b *testing.B) {
+	benchmarkCommitLogWriteWithSyncN(b, false, 32)
+}
+func BenchmarkCommitLogWrite128(b *testing.B) {
+	benchmarkCommitLogWriteWithSyncN(b, false, 128)
+}
+func BenchmarkCommitLogWrite256(b *testing.B) {
+	benchmarkCommitLogWriteWithSyncN(b, false, 256)
+}
+func BenchmarkCommitLogWrite512(b *testing.B) {
+	benchmarkCommitLogWriteWithSyncN(b, false, 512)
+}
+
+func BenchmarkCommitLogWrite512Sync(b *testing.B) {
+	benchmarkCommitLogWriteWithSyncN(b, true, 512)
+}
+func BenchmarkCommitLogWrite64Sync(b *testing.B) {
+	benchmarkCommitLogWriteWithSyncN(b, true, 64)
+}
+func BenchmarkCommitLogWrite32Sync(b *testing.B) {
+	benchmarkCommitLogWriteWithSyncN(b, true, 32)
+}
+func BenchmarkCommitLogWrite128Sync(b *testing.B) {
+	benchmarkCommitLogWriteWithSyncN(b, true, 128)
+}
+func BenchmarkCommitLogWrite256Sync(b *testing.B) {
+	benchmarkCommitLogWriteWithSyncN(b, true, 256)
+}
+
+func benchmarkCommitLogWriteWithSyncN(b *testing.B, fsync bool, buf int) {
+	oldRotate := LOGROTATE_NUM
+	LOGROTATE_NUM = 10000
+	defer func() {
+		LOGROTATE_NUM = oldRotate
+	}()
+	logName := "test_log" + strconv.Itoa(int(time.Now().Unix()))
+	tmpDir, err := ioutil.TempDir("", fmt.Sprintf("nsq-test-%d", time.Now().UnixNano()))
+	if err != nil {
+		panic(err)
+	}
+	b.Logf("benchmark path: %v", tmpDir)
+	defer os.RemoveAll(tmpDir)
+	logMgr, err := InitTopicCommitLogMgr(logName, 0, tmpDir, buf)
+	msgRawSize := 10
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N/2; i++ {
+		var logData CommitLogData
+		logData.LogID = int64(logMgr.NextID())
+		logData.LastMsgLogID = logData.LogID
+		logData.Epoch = 1
+		logData.MsgOffset = int64(i * msgRawSize)
+		logData.MsgCnt = int64(i + 1)
+		logData.MsgNum = 1
+		err = logMgr.AppendCommitLogWithSync(&logData, false, fsync)
+		if err != nil {
+			b.Fatalf("append failed: %v", err)
+		}
+	}
+
+	for i := b.N / 2; i < b.N; i++ {
+		var logData CommitLogData
+		logData.LogID = int64(logMgr.NextID())
+		logData.LastMsgLogID = logData.LogID
+		logData.Epoch = 1
+		logData.MsgOffset = int64(i * msgRawSize)
+		logData.MsgCnt = int64(i + 1)
+		logData.MsgNum = 1
+		err = logMgr.AppendCommitLogWithSync(&logData, true, fsync)
+		if err != nil {
+			b.Fatalf("append failed: %v", err)
+		}
+	}
+}

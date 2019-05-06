@@ -25,6 +25,7 @@ const (
 	MAX_TOPIC_PARTITION    = 1023
 	HISTORY_STAT_FILE_NAME = ".stat.history.dat"
 	pubQueue               = 500
+	slowCost               = time.Millisecond * 50
 )
 
 var (
@@ -1021,9 +1022,14 @@ func (t *Topic) PutMessagesNoLock(msgs []*Message) (MessageID, BackendOffset, in
 
 // PutMessages writes multiple Messages to the queue
 func (t *Topic) PutMessages(msgs []*Message) (MessageID, BackendOffset, int32, int64, BackendQueueEnd, error) {
+	s := time.Now()
 	t.Lock()
 	defer t.Unlock()
 	firstMsgID, firstOffset, batchBytes, totalCnt, dend, err := t.PutMessagesNoLock(msgs)
+	cost := time.Since(s)
+	if cost >= slowCost {
+		nsqLog.Infof("topic %v put batch local cost: %v", t.GetFullName(), cost)
+	}
 	return firstMsgID, firstOffset, batchBytes, totalCnt, dend, err
 }
 
@@ -1247,14 +1253,10 @@ func (t *Topic) ForceFlush() {
 		nsqLog.Logf("topic %v, end to commit: %v, read end: %v", t.fullName, curCommit, e)
 	}
 
-	s := time.Now()
 	t.flushData()
+
+	s := time.Now()
 	e := t.getCommittedEnd()
-	cost := time.Now().Sub(s)
-	if cost > time.Second {
-		nsqLog.LogWarningf("topic(%s): flush cost: %v", t.GetFullName(), cost)
-	}
-	s = time.Now()
 	useFsync := t.option.UseFsync
 	t.channelLock.RLock()
 	for _, channel := range t.channelMap {
@@ -1262,8 +1264,8 @@ func (t *Topic) ForceFlush() {
 		channel.Flush(useFsync)
 	}
 	t.channelLock.RUnlock()
-	cost = time.Now().Sub(s)
-	if cost > time.Second {
+	cost := time.Now().Sub(s)
+	if cost > slowCost*10 {
 		nsqLog.Logf("topic(%s): flush channel cost: %v", t.GetFullName(), cost)
 	}
 }
@@ -1276,10 +1278,17 @@ func (t *Topic) flushBuffer(notifyCh bool) error {
 	return nil
 }
 
+func (t *Topic) IsFsync() bool {
+	syncEvery := atomic.LoadInt64(&t.dynamicConf.SyncEvery)
+	useFsync := syncEvery == 1 || t.option.UseFsync
+	return useFsync
+}
+
 func (t *Topic) flushData() (error, bool) {
 	syncEvery := atomic.LoadInt64(&t.dynamicConf.SyncEvery)
 	useFsync := syncEvery == 1 || t.option.UseFsync
 
+	s := time.Now()
 	if t.GetDelayedQueue() != nil {
 		t.GetDelayedQueue().ForceFlush()
 	}
@@ -1288,13 +1297,17 @@ func (t *Topic) flushData() (error, bool) {
 	if !ok {
 		return nil, false
 	}
+	cost1 := time.Since(s)
 	atomic.StoreInt64(&t.lastSyncCnt, t.backend.GetQueueWriteEnd().TotalMsgCnt())
 	err := t.backend.Flush(useFsync)
 	if err != nil {
 		nsqLog.LogErrorf("failed flush: %v", err)
 		return err, false
 	}
-
+	cost2 := time.Since(s)
+	if cost2 >= slowCost {
+		nsqLog.LogWarningf("topic(%s): flush cost: %v, %v", t.GetFullName(), cost1, cost2)
+	}
 	return err, true
 }
 

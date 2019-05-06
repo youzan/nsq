@@ -1,6 +1,7 @@
 package consistence
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/binary"
 	"errors"
@@ -10,6 +11,7 @@ import (
 	"path/filepath"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/youzan/nsq/internal/util"
 )
@@ -18,8 +20,8 @@ const (
 	MAX_INCR_ID_BIT = 50
 )
 
-var DEFAULT_COMMIT_BUF_SIZE = 100
-var MAX_COMMIT_BUF_SIZE = 2000
+var DEFAULT_COMMIT_BUF_SIZE = 64
+var MAX_COMMIT_BUF_SIZE = 1024
 
 var (
 	ErrCommitLogWrongID              = errors.New("commit log id is wrong")
@@ -276,17 +278,17 @@ type LogStartInfo struct {
 }
 
 type TopicCommitLogMgr struct {
-	topic         string
-	partition     int
-	nLogID        int64
-	pLogID        int64
-	path          string
-	committedLogs []CommitLogData
-	bufSize       int
-	appender      *os.File
-	currentStart  int64
-	currentCount  int32
-	logStartInfo  LogStartInfo
+	topic        string
+	partition    int
+	nLogID       int64
+	pLogID       int64
+	path         string
+	bufSize      int
+	appender     *os.File
+	bufAppender  *bufio.Writer
+	currentStart int64
+	currentCount int32
+	logStartInfo LogStartInfo
 	sync.Mutex
 }
 
@@ -304,19 +306,18 @@ func InitTopicCommitLogMgrWithFixMode(t string, p int, basepath string, commitBu
 	}
 	fullpath := GetTopicPartitionLogPath(basepath, t, p)
 	mgr := &TopicCommitLogMgr{
-		topic:         t,
-		partition:     p,
-		nLogID:        0,
-		pLogID:        0,
-		path:          fullpath,
-		bufSize:       commitBufSize,
-		committedLogs: make([]CommitLogData, 0, commitBufSize),
+		topic:     t,
+		partition: p,
+		nLogID:    0,
+		pLogID:    0,
+		path:      fullpath,
+		bufSize:   commitBufSize,
 	}
 	// load check point index. read sizeof(CommitLogData) until EOF.
 	var err error
 	// note: using append mode can make sure write only to end of file
 	// we can do random read without affecting the append behavior
-	mgr.appender, err = os.OpenFile(mgr.path, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0644)
+	err = mgr.prepareAppender(mgr.path)
 	if err != nil {
 		coordLog.Infof("open topic commit log file error: %v", err)
 		return nil, err
@@ -483,6 +484,30 @@ func (tcl *TopicCommitLogMgr) loadCommitLogMeta(fixMode bool) error {
 	return nil
 }
 
+func (self *TopicCommitLogMgr) prepareAppender(path string) error {
+	var err error
+	self.appender, err = os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0644)
+	if err != nil {
+		coordLog.Errorf("open topic %v commit log file error: %v", path, err)
+		return err
+	}
+	if self.bufSize > 0 {
+		if self.bufAppender == nil {
+			self.bufAppender = bufio.NewWriterSize(self.appender, self.bufSize*64)
+		} else {
+			self.bufAppender.Reset(self.appender)
+		}
+	}
+	return nil
+}
+
+func (self *TopicCommitLogMgr) getAppenderForWrite() io.Writer {
+	if self.bufSize > 0 && self.bufAppender != nil {
+		return self.bufAppender
+	}
+	return self.appender
+}
+
 func (self *TopicCommitLogMgr) MoveTo(newBase string) error {
 	self.Lock()
 	defer self.Unlock()
@@ -570,7 +595,7 @@ func (self *TopicCommitLogMgr) loadCurrentStart() error {
 	return nil
 }
 
-func (self *TopicCommitLogMgr) saveCurrentStart() error {
+func (self *TopicCommitLogMgr) saveCurrentStart(fsync bool) error {
 	tmpFileName := self.path + ".current.tmp"
 	file, err := os.OpenFile(tmpFileName, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
@@ -582,7 +607,9 @@ func (self *TopicCommitLogMgr) saveCurrentStart() error {
 	if err != nil {
 		return err
 	}
-	file.Sync()
+	if fsync {
+		file.Sync()
+	}
 
 	return util.AtomicRename(tmpFileName, self.path+".current")
 }
@@ -610,12 +637,12 @@ func (self *TopicCommitLogMgr) ResetLogWithStart(newStart LogStartInfo) error {
 	atomic.StoreInt64(&self.pLogID, 0)
 	self.currentStart = newStart.SegmentStartIndex
 	self.currentCount = 0
-	self.appender, err = os.OpenFile(self.path, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0644)
+	err = self.prepareAppender(self.path)
 	if err != nil {
 		coordLog.Infof("open topic commit log file error: %v", err)
 		return err
 	}
-	err = self.saveCurrentStart()
+	err = self.saveCurrentStart(true)
 	if err != nil {
 		return err
 	}
@@ -663,19 +690,18 @@ func (self *TopicCommitLogMgr) Close() {
 	self.flushCommitLogsNoLock()
 	self.appender.Sync()
 	self.appender.Close()
-	self.saveCurrentStart()
+	self.saveCurrentStart(true)
 	self.saveLogSegStartInfo()
 	self.Unlock()
 }
 
 func (self *TopicCommitLogMgr) Reopen() error {
 	var err error
-	self.appender, err = os.OpenFile(self.path, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0644)
+	err = self.prepareAppender(self.path)
 	if err != nil {
 		coordLog.Infof("open topic commit log file error: %v", err)
 		return err
 	}
-
 	atomic.StoreInt64(&self.pLogID, 0)
 	err = self.loadCurrentStart()
 	if err != nil {
@@ -847,7 +873,7 @@ func (self *TopicCommitLogMgr) TruncateToOffsetV2(startIndex int64, offset int64
 		oldStart := self.currentStart
 		self.currentStart = startIndex
 		self.currentCount = int32(offset / int64(GetLogDataSize()))
-		self.saveCurrentStart()
+		self.saveCurrentStart(true)
 
 		self.appender.Sync()
 		self.appender.Close()
@@ -861,7 +887,7 @@ func (self *TopicCommitLogMgr) TruncateToOffsetV2(startIndex int64, offset int64
 			coordLog.Infof("rename file failed: %v, %v", startIndex, err)
 			return nil, err
 		}
-		self.appender, err = os.OpenFile(self.path, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0644)
+		err = self.prepareAppender(self.path)
 		if err != nil {
 			coordLog.Errorf("open topic %v commit log file error: %v", self.path, err)
 			return nil, err
@@ -1073,6 +1099,10 @@ func (self *TopicCommitLogMgr) IsCommitted(id int64) bool {
 }
 
 func (self *TopicCommitLogMgr) AppendCommitLog(l *CommitLogData, slave bool) error {
+	return self.AppendCommitLogWithSync(l, slave, false)
+}
+
+func (self *TopicCommitLogMgr) AppendCommitLogWithSync(l *CommitLogData, slave bool, useFsync bool) error {
 	if l.LogID <= atomic.LoadInt64(&self.pLogID) {
 		coordLog.Errorf("commit id %v less than prev id: %v, %v", l, atomic.LoadInt64(&self.pLogID), atomic.LoadInt64(&self.nLogID))
 		return ErrCommitLogWrongID
@@ -1081,15 +1111,24 @@ func (self *TopicCommitLogMgr) AppendCommitLog(l *CommitLogData, slave bool) err
 		coordLog.Errorf("commit id %v less than last msgid", l)
 		return ErrCommitLogWrongLastID
 	}
+	start := time.Now()
+	var cost1 time.Duration
+	var cost2 time.Duration
+	var cost3 time.Duration
+
 	self.Lock()
 	defer self.Unlock()
 	if slave {
 		atomic.StoreInt64(&self.nLogID, l.LastMsgLogID+1)
 	}
+	fsync := !slave && useFsync
 	if self.currentCount >= int32(LOGROTATE_NUM) {
 		self.flushCommitLogsNoLock()
-		self.appender.Sync()
+		if fsync {
+			self.appender.Sync()
+		}
 		self.appender.Close()
+		cost1 = time.Since(start)
 		newName := getSegmentFilename(self.path, self.currentStart)
 		err := util.AtomicRename(self.path, newName)
 		if err != nil {
@@ -1097,30 +1136,29 @@ func (self *TopicCommitLogMgr) AppendCommitLog(l *CommitLogData, slave bool) err
 			return err
 		}
 		coordLog.Infof("rotate file %v to %v", self.path, newName)
-		self.appender, err = os.OpenFile(self.path, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0644)
+		err = self.prepareAppender(self.path)
 		if err != nil {
 			coordLog.Errorf("open topic %v commit log file error: %v", self.path, err)
 			return err
 		}
 		atomic.AddInt64(&self.currentStart, 1)
 		self.currentCount = 0
-		err = self.saveCurrentStart()
+		cost2 = time.Since(start)
+		err = self.saveCurrentStart(fsync)
 		if err != nil {
 			return err
 		}
 	}
-	if cap(self.committedLogs) == 0 {
-		// no buffer, write to file directly.
-		err := binary.Write(self.appender, binary.BigEndian, l)
-		if err != nil {
-			return err
-		}
-	} else {
-		if len(self.committedLogs) >= cap(self.committedLogs) {
-			self.flushCommitLogsNoLock()
-		}
-		self.committedLogs = append(self.committedLogs, *l)
+	err := binary.Write(self.getAppenderForWrite(), binary.BigEndian, *l)
+	if err != nil {
+		return err
 	}
+	cost3 = time.Since(start)
+	if cost3 > slowCost {
+		coordLog.Infof("append commit log file %v cost %v, %v, %v",
+			self.path, cost1, cost2, cost3)
+	}
+
 	self.currentCount++
 	atomic.StoreInt64(&self.pLogID, l.LogID)
 	return nil
@@ -1136,46 +1174,22 @@ func (self *TopicCommitLogMgr) updateBufferSize(bs int) {
 	}
 	self.Lock()
 	self.bufSize = bs
+	self.flushCommitLogsNoLock()
+	self.bufAppender = bufio.NewWriterSize(self.appender, self.bufSize*64)
 	self.Unlock()
 }
 
 func (self *TopicCommitLogMgr) switchForMaster(master bool) {
 	self.Lock()
 	self.flushCommitLogsNoLock()
-	if master {
-		if cap(self.committedLogs) != self.bufSize {
-			self.committedLogs = make([]CommitLogData, 0, self.bufSize)
-		}
-	} else {
-		slaveBuf := self.bufSize
-		if self.bufSize < DEFAULT_COMMIT_BUF_SIZE/4 {
-			slaveBuf = slaveBuf * 2
-		}
-		if cap(self.committedLogs) != slaveBuf {
-			self.committedLogs = make([]CommitLogData, 0, slaveBuf)
-		}
-	}
 	self.Unlock()
 }
 
 func (self *TopicCommitLogMgr) flushCommitLogsNoLock() {
-	if len(self.committedLogs) == 0 {
-		return
-	}
-	// write buffered commit logs to file.
-	tmpBuf := bufferPoolGet()
-	defer bufferPoolPut(tmpBuf)
-	for _, v := range self.committedLogs {
-		err := binary.Write(tmpBuf, binary.BigEndian, v)
-		if err != nil {
-			panic(err)
-		}
-	}
-	_, err := tmpBuf.WriteTo(self.appender)
+	err := self.bufAppender.Flush()
 	if err != nil {
-		panic(err)
+		coordLog.Errorf("topic %v commit log flush file error: %v", self.path, err)
 	}
-	self.committedLogs = self.committedLogs[0:0]
 }
 
 func (self *TopicCommitLogMgr) FlushCommitLogs() {

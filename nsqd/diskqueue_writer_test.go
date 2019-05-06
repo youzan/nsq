@@ -583,7 +583,7 @@ func TestDiskQueueWriterInitWithQueueStart(t *testing.T) {
 	dqWriter = queue.(*diskQueueWriter)
 	test.Equal(t, newStart, dqWriter.GetQueueReadStart())
 	dqWriter.cleanOldData()
-	dqWriter.persistMetaData(false)
+	dqWriter.persistMetaData(false, dqWriter.diskWriteEnd)
 	dqWriter.saveExtraMeta()
 	test.Equal(t, dqWriter.GetQueueReadStart(), dqWriter.GetQueueWriteEnd())
 	newStart = dqWriter.GetQueueReadStart()
@@ -874,7 +874,7 @@ func TestDiskQueueWriterInvalidMeta(t *testing.T) {
 		dq.Put(msg)
 	}
 	dq.Flush(true)
-	dq.(*diskQueueWriter).sync(true)
+	dq.(*diskQueueWriter).syncAll(true)
 
 	dqFn := dq.(*diskQueueWriter).metaDataFileName()
 	t.Log(dqFn)
