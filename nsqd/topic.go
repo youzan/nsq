@@ -877,12 +877,16 @@ func (t *Topic) flushForChannelMoreData(c *Channel) {
 	}
 }
 
-func (t *Topic) ForceFlushForChannels() {
+func (t *Topic) ForceFlushForChannels(wait bool) {
 	// flush buffer only to allow the channel read recent write
 	// no need sync to disk, since sync is heavy IO.
-	hasData := t.backend.FlushBuffer()
-	if hasData {
-		t.updateChannelsEnd(false, false)
+	if wait {
+		hasData := t.backend.FlushBuffer()
+		if hasData {
+			t.updateChannelsEnd(false, false)
+		}
+	} else {
+		t.notifyChEndChanged(false)
 	}
 }
 

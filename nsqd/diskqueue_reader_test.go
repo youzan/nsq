@@ -411,7 +411,7 @@ func TestDiskQueueReaderMetaInvalid(t *testing.T) {
 	equal(t, msgOut.Data, msg)
 	test.Equal(t, msgOut.Offset+BackendOffset(msgOut.MovedSize), dqReader.(*diskQueueReader).readQueueInfo.Offset())
 	test.Equal(t, msgOut.CurCnt, dqReader.(*diskQueueReader).readQueueInfo.TotalMsgCnt())
-	dqReader.(*diskQueueReader).sync(false)
+	dqReader.(*diskQueueReader).syncAll(false)
 	fname := dqReader.(*diskQueueReader).metaDataFileName(true)
 	t.Log(fname)
 	dqReader.Close()
@@ -450,13 +450,13 @@ func TestDiskQueueReaderMetaInvalid(t *testing.T) {
 	test.Nil(t, err)
 
 	testCrash = true
-	err = dqReader.(*diskQueueReader).persistMetaData(false)
+	err = dqReader.(*diskQueueReader).syncAll(false)
 	test.NotNil(t, err)
 	testCrash = false
 	err = dqReader.(*diskQueueReader).retrieveMetaData()
 	test.NotNil(t, err)
 
-	err = dqReader.(*diskQueueReader).persistMetaData(false)
+	err = dqReader.(*diskQueueReader).syncAll(false)
 	test.Nil(t, err)
 	err = dqReader.(*diskQueueReader).retrieveMetaData()
 	test.Nil(t, err)

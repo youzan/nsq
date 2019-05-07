@@ -803,7 +803,7 @@ func (d *diskQueueWriter) Flush(fsync bool) error {
 	}
 	cost2 := time.Now().Sub(s)
 	if cost2 > slowCost || cost1 > slowCost {
-		nsqLog.Logf("disk writer(%s): flush cost: %v", d.name, cost1, cost2)
+		nsqLog.Logf("disk writer(%s): flush cost: %v, %v", d.name, cost1, cost2)
 	}
 	return err
 }

@@ -1293,7 +1293,7 @@ func (self *NsqdCoordinator) updateChannelOffsetOnSlave(tc *coordData, channelNa
 		// TODO: it may always ignore the exceed end update
 		if offset.Flush || ch.IsOrdered() {
 			if offset.Flush {
-				topic.ForceFlushForChannels()
+				topic.ForceFlushForChannels(ch.IsOrdered())
 			}
 			currentEnd = ch.GetChannelEnd()
 			if nsqd.BackendOffset(offset.VOffset) > currentEnd.Offset() {
