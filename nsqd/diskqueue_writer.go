@@ -1061,7 +1061,7 @@ func (d *diskQueueWriter) persistMetaData(fsync bool, writeEnd diskQueueEndInfo)
 	f.Close()
 	cost4 := time.Since(s)
 	if cost4 >= slowCost {
-		nsqLog.Logf("writer (%v) meta perist slow : %v,%v,%v", fileName, cost1, cost2, cost3, cost4)
+		nsqLog.Logf("writer (%v) meta perist cost: %v,%v,%v,%v", fileName, cost1, cost2, cost3, cost4)
 	}
 	return err
 }
