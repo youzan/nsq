@@ -115,6 +115,7 @@ type diskQueueReader struct {
 	exitChan        chan int
 	autoSkipError   bool
 	waitingMoreData int32
+	metaLock        sync.Mutex
 }
 
 // newDiskQueue instantiates a new instance of diskQueueReader, retrieving metadata
@@ -238,7 +239,7 @@ func (d *diskQueueReader) exit(deleted bool) error {
 		d.readFile.Close()
 		d.readFile = nil
 	}
-	d.sync(true)
+	d.syncAll(true)
 	if deleted {
 		d.skipToEndofQueue()
 		err := os.Remove(d.metaDataFileName(false))
@@ -266,21 +267,23 @@ func (d *diskQueueReader) ConfirmRead(offset BackendOffset, cnt int64) error {
 	err := d.internalConfirm(offset, cnt)
 	if oldConfirm != d.confirmedQueueInfo.Offset() {
 		d.needSync = true
-		if d.syncEvery == 1 {
-			d.sync(false)
-		}
 	}
 	return err
 }
 
 func (d *diskQueueReader) Flush(fsync bool) {
 	d.Lock()
-	defer d.Unlock()
 	if d.exitFlag == 1 {
+		d.Unlock()
 		return
 	}
-	if d.needSync {
-		d.sync(fsync)
+	confirmed := d.confirmedQueueInfo
+	qe := d.queueEndInfo
+	needSync := d.needSync
+	d.needSync = false
+	d.Unlock()
+	if needSync {
+		d.persistMetaData(fsync, confirmed, qe)
 	}
 }
 
@@ -296,7 +299,7 @@ func (d *diskQueueReader) ResetReadToConfirmed() (BackendQueueEnd, error) {
 		if old != d.confirmedQueueInfo.Offset() {
 			d.needSync = true
 			if d.syncEvery == 1 {
-				d.sync(false)
+				d.syncAll(false)
 			}
 		}
 	}
@@ -324,7 +327,9 @@ func (d *diskQueueReader) ResetReadToOffset(offset BackendOffset, cnt int64) (Ba
 	if err == nil {
 		if old != d.confirmedQueueInfo.Offset() {
 			d.needSync = true
-			d.sync(false)
+			if d.syncEvery == 1 {
+				d.syncAll(false)
+			}
 		}
 	}
 
@@ -363,7 +368,7 @@ func (d *diskQueueReader) SkipReadToOffset(offset BackendOffset, cnt int64) (Bac
 		if old != d.confirmedQueueInfo.Offset() {
 			d.needSync = true
 			if d.syncEvery == 1 {
-				d.sync(false)
+				d.syncAll(false)
 			}
 		}
 	}
@@ -389,7 +394,7 @@ func (d *diskQueueReader) SkipReadToEnd() (BackendQueueEnd, error) {
 		if old != d.confirmedQueueInfo.Offset() {
 			d.needSync = true
 			if d.syncEvery == 1 {
-				d.sync(false)
+				d.syncAll(false)
 			}
 		}
 	}
@@ -1021,15 +1026,9 @@ CheckFileOpen:
 	return result
 }
 
-// sync fsyncs the current writeFile and persists metadata
-func (d *diskQueueReader) sync(fsync bool) error {
-	err := d.persistMetaData(fsync)
-	if err != nil {
-		return err
-	}
-
+func (d *diskQueueReader) syncAll(fsync bool) error {
 	d.needSync = false
-	return nil
+	return d.persistMetaData(fsync, d.confirmedQueueInfo, d.queueEndInfo)
 }
 
 func checkMetaFileEnd(f *os.File) error {
@@ -1100,7 +1099,7 @@ func (d *diskQueueReader) retrieveMetaData() error {
 			d.confirmedQueueInfo.totalMsgCnt = d.queueEndInfo.totalMsgCnt
 		}
 
-		d.persistMetaData(false)
+		d.persistMetaData(false, d.confirmedQueueInfo, d.queueEndInfo)
 	}
 	if d.confirmedQueueInfo.TotalMsgCnt() == 0 && d.confirmedQueueInfo.Offset() != BackendOffset(0) {
 		nsqLog.Warningf("reader (%v) count is missing, need fix: %v", d.readerMetaName, d.confirmedQueueInfo)
@@ -1131,15 +1130,15 @@ func preWriteMetaEnd(f *os.File) error {
 	return err
 }
 
-func (d *diskQueueReader) writeMeta(f *os.File, perr error) (int, error) {
+func writeMeta(f *os.File, perr error, confirmed diskQueueEndInfo, queueEndInfo diskQueueEndInfo) (int, error) {
 	if perr != nil {
 		return 0, perr
 	}
 	n, err := fmt.Fprintf(f, "%d\n%d\n%d,%d,%d\n%d,%d,%d\n",
-		d.confirmedQueueInfo.TotalMsgCnt(),
-		d.queueEndInfo.totalMsgCnt,
-		d.confirmedQueueInfo.EndOffset.FileNum, d.confirmedQueueInfo.EndOffset.Pos, d.confirmedQueueInfo.Offset(),
-		d.queueEndInfo.EndOffset.FileNum, d.queueEndInfo.EndOffset.Pos, d.queueEndInfo.Offset())
+		confirmed.TotalMsgCnt(),
+		queueEndInfo.totalMsgCnt,
+		confirmed.EndOffset.FileNum, confirmed.EndOffset.Pos, confirmed.Offset(),
+		queueEndInfo.EndOffset.FileNum, queueEndInfo.EndOffset.Pos, queueEndInfo.Offset())
 	return n, err
 }
 
@@ -1155,7 +1154,7 @@ func writeMetaEnd(f *os.File, perr error, pos int) (int, error) {
 }
 
 // persistMetaData atomically writes state to the filesystem
-func (d *diskQueueReader) persistMetaData(fsync bool) error {
+func (d *diskQueueReader) persistMetaData(fsync bool, confirmed diskQueueEndInfo, queueEndInfo diskQueueEndInfo) error {
 	var f *os.File
 	var err error
 	var n int
@@ -1164,6 +1163,8 @@ func (d *diskQueueReader) persistMetaData(fsync bool) error {
 	fileName := d.metaDataFileName(true)
 
 	s := time.Now()
+	d.metaLock.Lock()
+	defer d.metaLock.Unlock()
 	f, err = os.OpenFile(fileName, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
 		return err
@@ -1176,7 +1177,7 @@ func (d *diskQueueReader) persistMetaData(fsync bool) error {
 		return errors.New("test crash")
 	}
 	cost2 := time.Since(s)
-	n, err = d.writeMeta(f, err)
+	n, err = writeMeta(f, err, confirmed, queueEndInfo)
 	pos += n
 	_, err = writeMetaEnd(f, err, pos)
 
@@ -1188,7 +1189,7 @@ func (d *diskQueueReader) persistMetaData(fsync bool) error {
 	f.Close()
 	cost3 := time.Since(s)
 	if cost3 >= slowCost {
-		nsqLog.Logf("reader (%v) meta perist slow : %v,%v,%v", d.readerMetaName, cost1, cost2, cost3)
+		nsqLog.Logf("reader (%v) meta persist cost: %v,%v,%v", d.readerMetaName, cost1, cost2, cost3)
 	}
 	return err
 	// atomically rename
