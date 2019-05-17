@@ -543,9 +543,6 @@ func (n *NSQD) internalGetTopic(topicName string, part int, ext bool, ordered bo
 		topics = make(map[int]*Topic)
 		n.topicMap[topicName] = topics
 	}
-	if part < 0 {
-		part = 0
-	}
 	var t *Topic
 	t = NewTopicWithExt(topicName, part, ext, ordered, n.GetOpts(), disabled, n,
 		n.pubLoopFunc)
