@@ -466,6 +466,7 @@ func (self *NsqdCoordRpcServer) DisableTopicWrite(rpcTopicReq *RpcAdminTopicInfo
 		return &ret
 	}
 	begin := time.Now()
+
 	tp.writeHold.Lock()
 	if time.Since(begin) > time.Second*3 {
 		// timeout for waiting
@@ -481,6 +482,12 @@ func (self *NsqdCoordRpcServer) DisableTopicWrite(rpcTopicReq *RpcAdminTopicInfo
 		if localErr != nil {
 			coordLog.Infof("no topic on local: %v, %v", tcData.topicInfo.GetTopicDesp(), localErr)
 		} else {
+			// we force sync topic channels while disable write because we may transfer or lose the leader, so
+			// try sync channels anyway.
+			isMeLeader := tp.GetLeader() == self.nsqdCoord.GetMyID()
+			if isMeLeader {
+				self.nsqdCoord.trySyncTopicChannels(tcData, false, true, false)
+			}
 			self.nsqdCoord.switchStateForMaster(tp, localTopic, false)
 		}
 	}
