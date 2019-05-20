@@ -463,6 +463,7 @@ func (n *NSQD) Exit() {
 	for _, topic := range topics {
 		topic.Close()
 	}
+	n.metaStorage.Close()
 
 	// we want to do this last as it closes the idPump (if closed first it
 	// could potentially starve items in process and deadlock)
@@ -715,6 +716,9 @@ func (n *NSQD) flushAll(all bool, flushCnt int) {
 			continue
 		}
 		t.ForceFlush()
+	}
+	if all {
+		n.metaStorage.Sync()
 	}
 }
 

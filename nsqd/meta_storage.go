@@ -170,6 +170,7 @@ func (fs *fileMetaStorage) RetrieveWriter(fileName string) (diskQueueEndInfo, er
 	var queueEnd diskQueueEndInfo
 	return queueEnd, nil
 }
+
 func (fs *fileMetaStorage) PersistWriter(fileName string, fsync bool, queueEndInfo diskQueueEndInfo) error {
 	return nil
 }
