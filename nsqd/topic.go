@@ -132,6 +132,7 @@ type Topic struct {
 	isExt        int32
 	saveMutex    sync.Mutex
 	pubFailedCnt int64
+	metaStorage  IMetaStorage
 }
 
 func (t *Topic) setExt() {
@@ -155,14 +156,14 @@ func GetTopicFullName(topic string, part int) string {
 }
 
 func NewTopic(topicName string, part int, opt *Options,
-	writeDisabled int32,
+	writeDisabled int32, metaStorage IMetaStorage,
 	notify INsqdNotify, loopFunc func(v *Topic)) *Topic {
-	return NewTopicWithExt(topicName, part, false, false, opt, writeDisabled, notify, loopFunc)
+	return NewTopicWithExt(topicName, part, false, false, opt, writeDisabled, metaStorage, notify, loopFunc)
 }
 
 // Topic constructor
 func NewTopicWithExt(topicName string, part int, ext bool, ordered bool, opt *Options,
-	writeDisabled int32,
+	writeDisabled int32, metaStorage IMetaStorage,
 	notify INsqdNotify, loopFunc func(v *Topic)) *Topic {
 	if part > MAX_TOPIC_PARTITION {
 		return nil
@@ -180,6 +181,7 @@ func NewTopicWithExt(topicName string, part int, ext bool, ordered bool, opt *Op
 		pubWaitingChan: make(PubInfoChan, pubQueue),
 		quitChan:       make(chan struct{}),
 		pubLoopFunc:    loopFunc,
+		metaStorage:    metaStorage,
 	}
 	if ext {
 		t.setExt()
@@ -694,8 +696,8 @@ func (t *Topic) GetTopicPart() int {
 // for the given Topic
 func (t *Topic) GetChannel(channelName string) *Channel {
 	t.channelLock.Lock()
+	defer t.channelLock.Unlock()
 	channel, isNew := t.getOrCreateChannel(channelName)
-	t.channelLock.Unlock()
 
 	if isNew {
 		// update messagePump state
@@ -749,7 +751,7 @@ func (t *Topic) getOrCreateChannel(channelName string) (*Channel, bool) {
 		start := t.backend.GetQueueReadStart()
 		channel = NewChannel(t.GetTopicName(), t.GetTopicPart(), t.IsOrdered(), channelName, readEnd,
 			t.option, deleteCallback, t.flushForChannelMoreData, atomic.LoadInt32(&t.writeDisabled),
-			t.nsqdNotify, ext, start)
+			t.nsqdNotify, ext, start, t.metaStorage)
 
 		channel.UpdateQueueEnd(readEnd, false)
 		channel.SetDelayedQueue(t.GetDelayedQueue())

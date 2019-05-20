@@ -94,6 +94,7 @@ type NSQD struct {
 	persistNotifyCh  chan struct{}
 	persistClosed    chan struct{}
 	persistWaitGroup util.WaitGroupWrapper
+	metaStorage      IMetaStorage
 }
 
 func New(opts *Options) *NSQD {
@@ -147,6 +148,12 @@ func New(opts *Options) *NSQD {
 		os.Exit(1)
 	}
 	nsqLog.Logf("broadcast option: %s, %s", opts.BroadcastAddress, opts.BroadcastInterface)
+
+	n.metaStorage, err = NewShardedDBMetaStorage(path.Join(dataPath, "shared_meta"))
+	if err != nil {
+		nsqLog.LogErrorf("FATAL: init shared meta storage failed: %v", err.Error())
+		os.Exit(1)
+	}
 
 	if opts.StatsdPrefix != "" {
 		var port string
@@ -547,7 +554,7 @@ func (n *NSQD) internalGetTopic(topicName string, part int, ext bool, ordered bo
 		part = 0
 	}
 	var t *Topic
-	t = NewTopicWithExt(topicName, part, ext, ordered, n.GetOpts(), disabled, n,
+	t = NewTopicWithExt(topicName, part, ext, ordered, n.GetOpts(), disabled, n.metaStorage, n,
 		n.pubLoopFunc)
 	if t == nil {
 		nsqLog.Errorf("TOPIC(%s): create failed", topicName)
@@ -618,7 +625,7 @@ func (n *NSQD) ForceDeleteTopicData(name string, partition int) error {
 	if err != nil {
 		// not exist, create temp for check
 		n.Lock()
-		topic = NewTopic(name, partition, n.GetOpts(), 1, n,
+		topic = NewTopic(name, partition, n.GetOpts(), 1, n.metaStorage, n,
 			n.pubLoopFunc)
 		n.Unlock()
 		if topic == nil {
@@ -635,7 +642,7 @@ func (n *NSQD) CheckMagicCode(name string, partition int, code int64, tryFix boo
 	if err != nil {
 		// not exist, create temp for check
 		n.Lock()
-		localTopic = NewTopic(name, partition, n.GetOpts(), 1, n,
+		localTopic = NewTopic(name, partition, n.GetOpts(), 1, n.metaStorage, n,
 			n.pubLoopFunc)
 		n.Unlock()
 		if localTopic == nil {

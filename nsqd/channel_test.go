@@ -77,6 +77,8 @@ func TestPutMessage2Chan(t *testing.T) {
 	opts := NewOptions()
 	opts.SyncEvery = 1
 	opts.Logger = newTestLogger(t)
+	opts.LogLevel = 3
+	SetLogger(opts.Logger)
 	_, _, nsqd := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqd.Exit()
