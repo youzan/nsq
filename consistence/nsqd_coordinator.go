@@ -2473,6 +2473,15 @@ func (self *NsqdCoordinator) removeTopicCoord(topic string, partition int, remov
 	return topicCoord, err
 }
 
+func (self *NsqdCoordinator) SyncTopicChannels(topicName string, part int) error {
+	tcData, err := self.getTopicCoordData(topicName, part)
+	if err != nil {
+		return err.ToErrorType()
+	}
+	self.trySyncTopicChannels(tcData, false, false, false)
+	return nil
+}
+
 // sync topic channels state period.
 func (self *NsqdCoordinator) trySyncTopicChannels(tcData *coordData, syncDelayedQueue bool, syncChannelList bool, notifyOnly bool) {
 	localTopic, _ := self.localNsqd.GetExistingTopic(tcData.topicInfo.Name, tcData.topicInfo.Partition)
@@ -2523,6 +2532,8 @@ func (self *NsqdCoordinator) trySyncTopicChannels(tcData *coordData, syncDelayed
 
 		var syncOffset ChannelConsumerOffset
 		syncOffset.Flush = true
+		// always allow backward here since it may happen that slave already created the channel with end
+		syncOffset.AllowBackward = true
 		for _, ch := range channels {
 			// skipped ordered channel will not sync offset,
 			// so we need sync here

@@ -226,6 +226,13 @@ func (c *context) FinishMessage(ch *nsqd.Channel, clientID int64, clientAddr str
 	return c.nsqdCoord.FinishMessageToCluster(ch, clientID, clientAddr, msgID)
 }
 
+func (c *context) SyncChannels(topic *nsqd.Topic) error {
+	if c.nsqdCoord == nil {
+		return nil
+	}
+	return c.nsqdCoord.SyncTopicChannels(topic.GetTopicName(), topic.GetTopicPart())
+}
+
 func (c *context) DeleteExistingChannel(topic *nsqd.Topic, channelName string) error {
 	if c.nsqdCoord == nil {
 		err := topic.DeleteExistingChannel(channelName)

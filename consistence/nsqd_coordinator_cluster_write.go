@@ -1499,6 +1499,7 @@ func (self *NsqdCoordinator) updateChannelListOnSlave(tc *coordData, chList []st
 	if len(chList) > 0 {
 		coordLog.Debugf("topic %v sync channel from leader: %v", topicName, chList)
 		oldChList := topic.GetChannelMapCopy()
+		// note new channel will be synced while syncing the consume offset
 		for _, chName := range chList {
 			delete(oldChList, chName)
 		}

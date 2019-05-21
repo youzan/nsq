@@ -1898,6 +1898,108 @@ func TestNsqdCoordSyncChannelList(t *testing.T) {
 	time.Sleep(time.Second)
 	chListOnNode2 = topicData2.GetChannelMapCopy()
 	test.Equal(t, 2, len(chListOnNode2))
+
+	// re-created channel should sync
+	topicData1.GetChannel("ch3_closed")
+	nsqdCoord1.trySyncTopicChannels(tc1.GetData(), true, true, false)
+	time.Sleep(time.Second)
+	chListOnNode2 = topicData2.GetChannelMapCopy()
+	test.Equal(t, 3, len(chListOnNode2))
+}
+
+// TODO:
+func TestChannelCreateSync(t *testing.T) {
+	// test a new channel on leader and put some new data
+	// and then leader lost before the channel is synced,
+	// in this case other isr became leader and the channel is new to new leader,
+	// it may cause message lost?
+	topic := "coordTestTopicNewChannelLost"
+	partition := 1
+
+	if testing.Verbose() {
+		l := newTestLogger(t)
+		SetCoordLogger(l, levellogger.LOG_DETAIL)
+		nsqdNs.SetLogger(l)
+		glog.SetFlags(0, "", "", true, true, 1)
+		glog.StartWorker(time.Second)
+	} else {
+		SetCoordLogger(newTestLogger(t), levellogger.LOG_DEBUG)
+	}
+
+	nsqd1, randPort1, nodeInfo1, data1 := newNsqdNode(t, "id1")
+	defer os.RemoveAll(data1)
+	defer nsqd1.Exit()
+	nsqdCoord1 := startNsqdCoord(t, strconv.Itoa(randPort1), data1, "id1", nsqd1, true)
+	nsqdCoord1.Start()
+	defer nsqdCoord1.Stop()
+	time.Sleep(time.Second)
+
+	nsqd2, randPort2, _, data2 := newNsqdNode(t, "id2")
+	defer os.RemoveAll(data2)
+	defer nsqd2.Exit()
+	nsqdCoord2 := startNsqdCoord(t, strconv.Itoa(randPort2), data2, "id2", nsqd2, true)
+	nsqdCoord2.Start()
+	defer nsqdCoord2.Stop()
+
+	nsqd3, randPort3, _, data3 := newNsqdNode(t, "id3")
+	defer os.RemoveAll(data3)
+	defer nsqd3.Exit()
+	nsqdCoord3 := startNsqdCoord(t, strconv.Itoa(randPort3), data3, "id3", nsqd3, true)
+	nsqdCoord3.Start()
+	defer nsqdCoord3.Stop()
+	var topicInitInfo RpcAdminTopicInfo
+	topicInitInfo.Name = topic
+	topicInitInfo.Partition = partition
+	topicInitInfo.Epoch = 1
+	topicInitInfo.EpochForWrite = 1
+	topicInitInfo.ISR = append(topicInitInfo.ISR, nsqdCoord1.myNode.GetID())
+	topicInitInfo.ISR = append(topicInitInfo.ISR, nsqdCoord2.myNode.GetID())
+	topicInitInfo.ISR = append(topicInitInfo.ISR, nsqdCoord3.myNode.GetID())
+	topicInitInfo.Leader = nsqdCoord1.myNode.GetID()
+	topicInitInfo.Replica = 3
+	ensureTopicOnNsqdCoord(nsqdCoord1, topicInitInfo)
+	ensureTopicOnNsqdCoord(nsqdCoord2, topicInitInfo)
+	ensureTopicOnNsqdCoord(nsqdCoord3, topicInitInfo)
+	leaderSession := &TopicLeaderSession{
+		LeaderNode:  nodeInfo1,
+		LeaderEpoch: 1,
+		Session:     "fake123",
+	}
+	// normal test
+	ensureTopicLeaderSession(nsqdCoord1, topic, partition, leaderSession)
+	ensureTopicLeaderSession(nsqdCoord2, topic, partition, leaderSession)
+	ensureTopicLeaderSession(nsqdCoord3, topic, partition, leaderSession)
+	ensureTopicDisableWrite(nsqdCoord1, topic, partition, false)
+	ensureTopicDisableWrite(nsqdCoord2, topic, partition, false)
+	ensureTopicDisableWrite(nsqdCoord3, topic, partition, false)
+	topicData1 := nsqd1.GetTopic(topic, partition, false)
+	t1ch1 := topicData1.GetChannel("ch1")
+	topicData1.GetChannel("ch2")
+	for i := 0; i < 50; i++ {
+		_, _, _, _, err := nsqdCoord1.PutMessageBodyToCluster(topicData1, []byte("123"), 0)
+		test.Nil(t, err)
+	}
+	topicData1.ForceFlush()
+	c1 := t1ch1.GetConfirmed()
+	t.Log(c1)
+	time.Sleep(time.Second)
+
+	topicData2 := nsqd2.GetTopic(topic, partition, false)
+	topicData2.ForceFlush()
+
+	t2ch1 := topicData2.GetChannel("ch1")
+	t.Log(t2ch1.GetConfirmed())
+	t.Log(t2ch1.GetChannelEnd())
+	test.Assert(t, c1.Offset() < t2ch1.GetConfirmed().Offset(), "channel should init with end")
+	nsqdCoord1.SyncTopicChannels(topic, partition)
+	t.Log(t2ch1.GetConfirmed())
+	test.Equal(t, c1, t2ch1.GetConfirmed())
+
+	topicData3 := nsqd3.GetTopic(topic, partition, false)
+	t3ch1 := topicData3.GetChannel("ch1")
+	t.Log(t3ch1.GetConfirmed())
+	t.Log(t3ch1.GetChannelEnd())
+	test.Equal(t, c1, t3ch1.GetConfirmed())
 }
 
 func benchmarkNsqdCoordPubWithArg(b *testing.B, replica int, size int) {

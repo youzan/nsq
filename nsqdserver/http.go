@@ -599,7 +599,20 @@ func (s *httpServer) doCreateChannel(w http.ResponseWriter, req *http.Request, p
 	if err != nil {
 		return nil, err
 	}
-	topic.GetChannel(channelName)
+	if s.ctx.checkConsumeForMasterWrite(topic.GetTopicName(), topic.GetTopicPart()) {
+		topic.GetChannel(channelName)
+		// need sync channel after created
+		err := s.ctx.SyncChannels(topic)
+		if err != nil {
+			nsqd.NsqLogger().Logf("topic %v create channel:%v sync failed: %v ",
+				topic.GetFullName(), channelName, err.Error())
+			return nil, http_api.Err{500, err.Error()}
+		}
+	} else {
+		nsqd.NsqLogger().LogDebugf("should request to master: %v, from %v",
+			topic.GetFullName(), req.RemoteAddr)
+		return nil, http_api.Err{400, FailedOnNotLeader}
+	}
 	return nil, nil
 }
 
