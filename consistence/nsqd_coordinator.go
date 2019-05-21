@@ -2482,6 +2482,33 @@ func (self *NsqdCoordinator) SyncTopicChannels(topicName string, part int) error
 	return nil
 }
 
+func (self *NsqdCoordinator) doRpcForNodeList(nodes []string, failBreak bool, rpcFunc func(*NsqdRpcClient) *CoordErr) (*CoordErr) {
+	var lastErr *CoordErr
+	myid := self.myNode.GetID()
+	for _, nodeID := range nodes {
+		if nodeID == myid {
+			continue
+		}
+		c, rpcErr := self.acquireRpcClient(nodeID)
+		if rpcErr != nil {
+			coordLog.Infof("node %v get rpc client failed %v.", nodeID, rpcErr)
+			lastErr = rpcErr
+			if failBreak {
+				break
+			}
+			continue
+		}
+		rpcErr = rpcFunc(c)
+		if rpcErr != nil {
+			lastErr = rpcErr
+			if failBreak {
+				break
+			}
+		}
+	}
+	return lastErr
+} 
+
 // sync topic channels state period.
 func (self *NsqdCoordinator) trySyncTopicChannels(tcData *coordData, syncDelayedQueue bool, syncChannelList bool, notifyOnly bool) {
 	localTopic, _ := self.localNsqd.GetExistingTopic(tcData.topicInfo.Name, tcData.topicInfo.Partition)
@@ -2495,15 +2522,19 @@ func (self *NsqdCoordinator) trySyncTopicChannels(tcData *coordData, syncDelayed
 				}
 				chNameList = append(chNameList, ch.GetName())
 			}
-			for _, nodeID := range tcData.topicInfo.ISR {
-				if nodeID == self.myNode.GetID() {
-					continue
+			if !isSameStrList(chNameList, tcData.syncedConsumeMgr.GetSyncedChs()) {
+				tcData.syncedConsumeMgr.Clear()
+				rpcErr := self.doRpcForNodeList(tcData.topicInfo.ISR, false, func(c *NsqdRpcClient) *CoordErr {
+					if notifyOnly {
+						c.NotifyChannelList(&tcData.topicLeaderSession, &tcData.topicInfo, chNameList)
+					} else {
+						return c.UpdateChannelList(&tcData.topicLeaderSession, &tcData.topicInfo, chNameList)
+					}
+					return nil
+				})
+				if rpcErr == nil && !notifyOnly {
+					tcData.syncedConsumeMgr.UpdateSyncedChs(chNameList)
 				}
-				c, rpcErr := self.acquireRpcClient(nodeID)
-				if rpcErr != nil {
-					continue
-				}
-				c.NotifyChannelList(&tcData.topicLeaderSession, &tcData.topicInfo, chNameList)
 			}
 		}
 
@@ -2512,21 +2543,15 @@ func (self *NsqdCoordinator) trySyncTopicChannels(tcData *coordData, syncDelayed
 			if keyList == nil && cntList == nil && channelCntList == nil {
 				// no delayed queue
 			} else {
-				for _, nodeID := range tcData.topicInfo.ISR {
-					if nodeID == self.myNode.GetID() {
-						continue
-					}
-					c, rpcErr := self.acquireRpcClient(nodeID)
-					if rpcErr != nil {
-						continue
-					}
-					rpcErr = c.UpdateDelayedQueueState(&tcData.topicLeaderSession, &tcData.topicInfo,
+				self.doRpcForNodeList(tcData.topicInfo.ISR, false, func(c *NsqdRpcClient) *CoordErr {
+					rpcErr := c.UpdateDelayedQueueState(&tcData.topicLeaderSession, &tcData.topicInfo,
 						"", ts, keyList, cntList, channelCntList, true)
 					if rpcErr != nil {
-						coordLog.Infof("node %v update delayed queue state %v failed %v.", nodeID,
+						coordLog.Infof("node %v update delayed queue state %v failed %v.", c.remote,
 							tcData.topicInfo.GetTopicDesp(), rpcErr)
 					}
-				}
+					return rpcErr
+				})
 			}
 		}
 
@@ -2568,30 +2593,33 @@ func (self *NsqdCoordinator) trySyncTopicChannels(tcData *coordData, syncDelayed
 				syncOffset.NeedUpdateConfirmed = true
 			}
 
-			nids := make([]string, 0, len(tcData.topicInfo.ISR)+len(tcData.topicInfo.CatchupList))
-			// TODO: Because the new channel on slave will init consume offset to the end of topic,
+			cco, ok := tcData.syncedConsumeMgr.Get(ch.GetName())
+			if ok && cco.IsSame(&syncOffset) {
+				continue
+			}
+			// Because the new channel on slave will init consume offset to the end of topic,
 			// we should update consume offset to both isr and catchup to avoid skip some messages on the new channel on the slave
 			// if the slave became the new leader.
 			// But the catchup node may fail to connect, so we should avoid block by catchup nodes.
-			nids = append(nids, tcData.topicInfo.ISR...)
-			nids = append(nids, tcData.topicInfo.CatchupList...)
-			for _, nodeID := range nids {
-				if nodeID == self.myNode.GetID() {
-					continue
-				}
-				c, rpcErr := self.acquireRpcClient(nodeID)
-				if rpcErr != nil {
-					continue
-				}
+			rpcErr := self.doRpcForNodeList(tcData.topicInfo.ISR, false, func(c *NsqdRpcClient) *CoordErr {
 				if notifyOnly {
 					c.NotifyUpdateChannelOffset(&tcData.topicLeaderSession, &tcData.topicInfo, ch.GetName(), syncOffset)
 				} else {
-					rpcErr = c.UpdateChannelOffset(&tcData.topicLeaderSession, &tcData.topicInfo, ch.GetName(), syncOffset)
+					rpcErr := c.UpdateChannelOffset(&tcData.topicLeaderSession, &tcData.topicInfo, ch.GetName(), syncOffset)
 					if rpcErr != nil {
-						coordLog.Debugf("node %v update channel %v offset failed %v.", nodeID, ch.GetName(), rpcErr)
+						coordLog.Debugf("node %v update channel %v offset failed %v.", c.remote, ch.GetName(), rpcErr)
 					}
+					return rpcErr
 				}
+				return nil
+			})
+			if rpcErr == nil && !notifyOnly {
+				tcData.syncedConsumeMgr.Update(ch.GetName(), syncOffset)
 			}
+			self.doRpcForNodeList(tcData.topicInfo.CatchupList, false, func(c *NsqdRpcClient) *CoordErr {
+				c.NotifyUpdateChannelOffset(&tcData.topicLeaderSession, &tcData.topicInfo, ch.GetName(), syncOffset)
+				return nil
+			})
 			// only the first channel of topic should flush.
 			syncOffset.Flush = false
 		}

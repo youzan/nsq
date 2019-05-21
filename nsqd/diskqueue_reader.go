@@ -343,7 +343,9 @@ func (d *diskQueueReader) ResetReadToOffset(offset BackendOffset, cnt int64) (Ba
 	d.readBuffer.Reset()
 
 	old := d.confirmedQueueInfo.Offset()
-	nsqLog.Infof("reset from: %v, %v to: %v:%v", d.readQueueInfo, d.confirmedQueueInfo, offset, cnt)
+	if offset < d.confirmedQueueInfo.Offset() {
+		nsqLog.Debugf("reset from: %v, %v to: %v:%v", d.readQueueInfo, d.confirmedQueueInfo, offset, cnt)
+	}
 	err := d.internalSkipTo(offset, cnt, offset < old)
 	if err == nil {
 		if old != d.confirmedQueueInfo.Offset() {
@@ -354,7 +356,6 @@ func (d *diskQueueReader) ResetReadToOffset(offset BackendOffset, cnt int64) (Ba
 		}
 	}
 
-	nsqLog.Infof("reset reader to: %v, %v", d.readQueueInfo, d.confirmedQueueInfo)
 	e := d.confirmedQueueInfo
 	return &e, err
 }

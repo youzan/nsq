@@ -18,9 +18,45 @@ type ChannelConsumerOffset struct {
 	NeedUpdateConfirmed bool
 }
 
+func (cco *ChannelConsumerOffset) IsSame(other *ChannelConsumerOffset) bool {
+	if cco.VOffset != other.VOffset {
+		return false
+	}
+	if cco.VCnt != other.VCnt {
+		return false
+	}
+	if !other.NeedUpdateConfirmed && !cco.NeedUpdateConfirmed {
+		return true
+	}
+
+	if len(cco.ConfirmedInterval) != len(other.ConfirmedInterval) {
+		return false
+	}
+
+	for i, ci := range cco.ConfirmedInterval {
+		if ci != other.ConfirmedInterval[i] {
+			return false
+		}
+	}
+	return true
+}
+
 type ChannelConsumeMgr struct {
 	sync.Mutex
+	channelNames         []string
 	channelConsumeOffset map[string]ChannelConsumerOffset
+}
+
+func isSameStrList(l, r []string) bool {
+	if len(l) != len(r) {
+		return false
+	}
+	for i, v := range l {
+		if v != r[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func newChannelComsumeMgr() *ChannelConsumeMgr {
@@ -29,10 +65,44 @@ func newChannelComsumeMgr() *ChannelConsumeMgr {
 	}
 }
 
+func (cc *ChannelConsumeMgr) Clear() {
+	cc.Lock()
+	cc.channelNames = []string{}
+	cc.channelConsumeOffset = make(map[string]ChannelConsumerOffset)
+	cc.Unlock()
+}
+
+func (cc *ChannelConsumeMgr) Get(ch string) (ChannelConsumerOffset, bool) {
+	cc.Lock()
+	cco, ok := cc.channelConsumeOffset[ch]
+	cc.Unlock()
+	return cco, ok
+}
+
+func (cc *ChannelConsumeMgr) Update(ch string, cco ChannelConsumerOffset) {
+	cc.Lock()
+	cc.channelConsumeOffset[ch] = cco
+	cc.Unlock()
+}
+
+func (cc *ChannelConsumeMgr) GetSyncedChs() []string {
+	cc.Lock()
+	names := cc.channelNames
+	cc.Unlock()
+	return names
+}
+
+func (cc *ChannelConsumeMgr) UpdateSyncedChs(names []string) {
+	cc.Lock()
+	cc.channelNames = names
+	cc.Unlock()
+}
+
 type coordData struct {
 	topicInfo          TopicPartitionMetaInfo
 	topicLeaderSession TopicLeaderSession
 	consumeMgr         *ChannelConsumeMgr
+	syncedConsumeMgr   *ChannelConsumeMgr
 	logMgr             *TopicCommitLogMgr
 	delayedLogMgr      *TopicCommitLogMgr
 	forceLeave         int32
@@ -57,6 +127,7 @@ func (self *coordData) switchForMaster(master bool) {
 	if self.delayedLogMgr != nil {
 		self.delayedLogMgr.switchForMaster(master)
 	}
+	self.syncedConsumeMgr.Clear()
 }
 
 func (self *coordData) GetCopy() *coordData {
@@ -95,6 +166,7 @@ func newTopicCoordinator(name string, partition int, basepath string,
 	tc := &TopicCoordinator{}
 	tc.coordData = &coordData{}
 	tc.coordData.consumeMgr = newChannelComsumeMgr()
+	tc.coordData.syncedConsumeMgr = newChannelComsumeMgr()
 	tc.topicInfo.Name = name
 	tc.topicInfo.Partition = partition
 	tc.disableWrite = 1
