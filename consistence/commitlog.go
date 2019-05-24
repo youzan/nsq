@@ -1175,7 +1175,9 @@ func (self *TopicCommitLogMgr) updateBufferSize(bs int) {
 	self.Lock()
 	self.bufSize = bs
 	self.flushCommitLogsNoLock()
-	self.bufAppender = bufio.NewWriterSize(self.appender, self.bufSize*64)
+	if self.bufSize > 0 {
+		self.bufAppender = bufio.NewWriterSize(self.appender, self.bufSize*64)
+	}
 	self.Unlock()
 }
 
@@ -1186,6 +1188,9 @@ func (self *TopicCommitLogMgr) switchForMaster(master bool) {
 }
 
 func (self *TopicCommitLogMgr) flushCommitLogsNoLock() {
+	if self.bufAppender == nil {
+		return
+	}
 	err := self.bufAppender.Flush()
 	if err != nil {
 		coordLog.Errorf("topic %v commit log flush file error: %v", self.path, err)

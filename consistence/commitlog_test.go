@@ -33,6 +33,21 @@ func TestCommitLogGetPartitionIDFromMsgID(t *testing.T) {
 }
 
 func TestCommitLogWrite(t *testing.T) {
+	testCommitLogWriteBuf(t, 4)
+}
+func TestCommitLogWriteNoBuf(t *testing.T) {
+	testCommitLogWriteBuf(t, 0)
+}
+
+func TestCommitLogWriteBuf1(t *testing.T) {
+	testCommitLogWriteBuf(t, -1)
+}
+
+func TestCommitLogWriteBuf2(t *testing.T) {
+	testCommitLogWriteBuf(t, 1)
+}
+
+func testCommitLogWriteBuf(t *testing.T, buf int) {
 	logName := "test_log" + strconv.Itoa(int(time.Now().Unix()))
 	tmpDir, err := ioutil.TempDir("", fmt.Sprintf("nsq-test-%d", time.Now().UnixNano()))
 	if err != nil {
@@ -40,7 +55,7 @@ func TestCommitLogWrite(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 	coordLog.Logger = newTestLogger(t)
-	logMgr, err := InitTopicCommitLogMgr(logName, 0, tmpDir, 4)
+	logMgr, err := InitTopicCommitLogMgr(logName, 0, tmpDir, buf)
 
 	test.Nil(t, err)
 	test.Equal(t, logMgr.pLogID, int64(0))
@@ -151,7 +166,6 @@ func TestCommitLogWrite(t *testing.T) {
 	test.Equal(t, currentStart, logMgr.currentStart)
 	test.Equal(t, currentCount, logMgr.currentCount)
 }
-
 func TestCommitLogTruncate(t *testing.T) {
 	logName := "test_log" + strconv.Itoa(int(time.Now().Unix()))
 	tmpDir, err := ioutil.TempDir("", fmt.Sprintf("nsq-test-%d", time.Now().UnixNano()))
