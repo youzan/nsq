@@ -980,9 +980,10 @@ func (self *NsqLookupCoordinator) handleTopicLeaderElection(topicInfo *TopicPart
 		coordLog.Infof("disable write failed while elect leader: %v", coordErr)
 		// the leader maybe down, so we can ignore this error safely.
 	}
-	coordErr = self.notifyISRDisableTopicWrite(topicInfo)
+	var failedNode string
+	failedNode, coordErr = self.notifyISRDisableTopicWrite(topicInfo)
 	if coordErr != nil {
-		coordLog.Infof("failed notify disable write while election: %v", coordErr)
+		coordLog.Infof("failed notify %v disable write while election: %v", failedNode, coordErr)
 		return coordErr
 	}
 
@@ -1346,8 +1347,14 @@ func (self *NsqLookupCoordinator) revokeEnableTopicWrite(topic string, partition
 		return rpcErr
 	}
 
-	if rpcErr = self.notifyISRDisableTopicWrite(topicInfo); rpcErr != nil {
-		coordLog.Infof("try disable isr write for topic %v failed: %v", topicInfo, rpcErr)
+	failedNode, rpcErr := self.notifyISRDisableTopicWrite(topicInfo);
+	if  rpcErr != nil {
+		coordLog.Infof("try disable isr write for topic %v failed: %v, node: %v", topicInfo, rpcErr, failedNode)
+		if rpcErr.IsEqual(ErrMissingTopicCoord) {
+			failedNodes := make([]string, 0, 1)
+			failedNodes = append(failedNodes, failedNode)
+			go self.handleRemoveFailedISRNodes(failedNodes, topicInfo)
+		}
 		go self.triggerCheckTopics(topicInfo.Name, topicInfo.Partition, time.Second*3)
 		return rpcErr
 	}
@@ -1551,7 +1558,7 @@ func (self *NsqLookupCoordinator) handleRequestJoinISR(topic string, partition i
 			go self.triggerCheckTopicsRandom(topicInfo.Name, topicInfo.Partition, time.Second)
 			return
 		}
-		if rpcErr = self.notifyISRDisableTopicWrite(topicInfo); rpcErr != nil {
+		if _, rpcErr = self.notifyISRDisableTopicWrite(topicInfo); rpcErr != nil {
 			coordLog.Infof("try disable isr write for topic %v failed: %v", topicInfo, rpcErr)
 			go self.triggerCheckTopicsRandom(topicInfo.Name, topicInfo.Partition, time.Second*3)
 			return
@@ -1570,7 +1577,7 @@ func (self *NsqLookupCoordinator) handleRequestJoinISR(topic string, partition i
 		topicInfo.ISR = append(topicInfo.ISR, nodeID)
 
 		// new node should disable write also.
-		if rpcErr = self.notifyISRDisableTopicWrite(topicInfo); rpcErr != nil {
+		if _, rpcErr = self.notifyISRDisableTopicWrite(topicInfo); rpcErr != nil {
 			coordLog.Infof("try disable isr write for topic %v failed: %v", topicInfo, rpcErr)
 			go self.triggerCheckTopicsRandom(topicInfo.Name, topicInfo.Partition, time.Second*3)
 			return
