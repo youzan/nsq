@@ -552,7 +552,7 @@ func (self *NsqLookupdEtcdMgr) GetTopicInfo(topic string, partition int) (*Topic
 		if ok {
 			p, ok := parts[partition]
 			if ok {
-				rInfo = p
+				rInfo = *(p.Copy())
 				cached = true
 			}
 		}
@@ -707,6 +707,7 @@ func (self *NsqLookupdEtcdMgr) DeleteWholeTopic(topic string) error {
 	// TODO: add deleted key in etcd to make sure the deleted topic can be real
 	// to avoid all the data is cleared by accident.
 	// TODO; should remove deleted key if topic re-created.
+	atomic.StoreInt32(&self.ifTopicChanged, 1)
 	self.tmiMutex.Unlock()
 	return err
 }
@@ -718,6 +719,7 @@ func (self *NsqLookupdEtcdMgr) DeleteTopic(topic string, partition int) error {
 			return err
 		}
 	}
+	atomic.StoreInt32(&self.ifTopicChanged, 1)
 	return nil
 }
 
@@ -733,6 +735,7 @@ func (self *NsqLookupdEtcdMgr) UpdateTopicNodeInfo(topic string, partition int, 
 			return err
 		}
 		topicInfo.Epoch = EpochType(rsp.Node.ModifiedIndex)
+		atomic.StoreInt32(&self.ifTopicChanged, 1)
 		return nil
 	}
 	rsp, err := self.client.CompareAndSwap(self.createTopicReplicaInfoPath(topic, partition), string(value), 0, "", uint64(oldGen))
@@ -740,6 +743,7 @@ func (self *NsqLookupdEtcdMgr) UpdateTopicNodeInfo(topic string, partition int, 
 		return err
 	}
 	topicInfo.Epoch = EpochType(rsp.Node.ModifiedIndex)
+	atomic.StoreInt32(&self.ifTopicChanged, 1)
 	return nil
 }
 

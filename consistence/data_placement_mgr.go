@@ -1647,15 +1647,19 @@ func (self *DataPlacement) rebalanceOrderedTopic(monitorChan chan struct{}) (boo
 					nodeNameList)
 			}
 			if err != nil {
-				continue
+				return moved, false
 			} else {
-				self.lookupCoord.handleMoveTopic(nid == topicInfo.Leader,
+				coordErr := self.lookupCoord.handleMoveTopic(nid == topicInfo.Leader,
 					topicInfo.Name, topicInfo.Partition, nid)
-				moved = true
+				if coordErr != nil {
+					return moved, false
+				} else {
+					moved = true
+				}
 			}
 			newTopicInfo, err := self.lookupCoord.leadership.GetTopicInfo(topicInfo.Name, topicInfo.Partition)
 			if err != nil {
-				break
+				return moved, false
 			} else {
 				topicInfo = *newTopicInfo
 			}

@@ -95,6 +95,21 @@ type TopicPartitionReplicaInfo struct {
 	Epoch         EpochType
 }
 
+func (self *TopicPartitionReplicaInfo) Copy() *TopicPartitionReplicaInfo {
+	n := &TopicPartitionReplicaInfo{
+		Leader:        self.Leader,
+		ISR:           make([]string, len(self.ISR)),
+		CatchupList:   make([]string, len(self.CatchupList)),
+		Channels:      make([]string, len(self.Channels)),
+		EpochForWrite: self.EpochForWrite,
+		Epoch:         self.Epoch,
+	}
+	copy(n.ISR, self.ISR)
+	copy(n.CatchupList, self.CatchupList)
+	copy(n.Channels, self.Channels)
+	return n
+}
+
 type TopicPartitionMetaInfo struct {
 	Name      string
 	Partition int
@@ -104,6 +119,12 @@ type TopicPartitionMetaInfo struct {
 
 func (self *TopicPartitionMetaInfo) GetTopicDesp() string {
 	return self.Name + "-" + strconv.Itoa(self.Partition)
+}
+
+func (self *TopicPartitionMetaInfo) Copy() *TopicPartitionMetaInfo {
+	n := *self
+	n.TopicPartitionReplicaInfo = *self.TopicPartitionReplicaInfo.Copy()
+	return &n
 }
 
 type TopicLeaderSession struct {

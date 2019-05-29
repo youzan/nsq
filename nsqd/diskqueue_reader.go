@@ -55,8 +55,7 @@ func (d *diskQueueOffsetInfo) Offset() BackendOffset {
 }
 
 type diskQueueEndInfo struct {
-	EndOffset   diskQueueOffset
-	virtualEnd  BackendOffset
+	diskQueueOffsetInfo
 	totalMsgCnt int64
 }
 
