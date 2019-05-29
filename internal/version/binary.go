@@ -5,6 +5,7 @@ import (
 	"runtime"
 )
 
+
 const Binary = "0.3.7-HA.1.9.4.1"
 
 func String(app string) string {

@@ -1016,7 +1016,8 @@ func (self *NsqLookupCoordinator) handleTopicLeaderElection(topicInfo *TopicPart
 	return nil
 }
 
-func (self *NsqLookupCoordinator) handleRemoveISRNodes(failedNodes []string, topicInfo *TopicPartitionMetaInfo, leaveCatchup bool) *CoordErr {
+func (self *NsqLookupCoordinator) handleRemoveISRNodes(failedNodes []string, origTopicInfo *TopicPartitionMetaInfo, leaveCatchup bool) *CoordErr {
+	topicInfo := origTopicInfo.Copy()
 	self.joinStateMutex.Lock()
 	state, ok := self.joinISRState[topicInfo.GetTopicDesp()]
 	if !ok {
@@ -1060,7 +1061,8 @@ func (self *NsqLookupCoordinator) handleRemoveISRNodes(failedNodes []string, top
 		coordLog.Infof("update topic node isr failed: %v", err.Error())
 		return &CoordErr{err.Error(), RpcNoErr, CoordNetErr}
 	}
-	go self.notifyTopicMetaInfo(topicInfo)
+	*origTopicInfo = *topicInfo
+	go self.notifyTopicMetaInfo(topicInfo.Copy())
 	return nil
 }
 
@@ -1068,11 +1070,12 @@ func (self *NsqLookupCoordinator) handleRemoveFailedISRNodes(failedNodes []strin
 	return self.handleRemoveISRNodes(failedNodes, topicInfo, true)
 }
 
-func (self *NsqLookupCoordinator) handleTopicMigrate(topicInfo *TopicPartitionMetaInfo,
+func (self *NsqLookupCoordinator) handleTopicMigrate(origTopicInfo *TopicPartitionMetaInfo,
 	currentNodes map[string]NsqdNodeInfo, currentNodesEpoch int64) {
 	if currentNodesEpoch != atomic.LoadInt64(&self.nodesEpoch) {
 		return
 	}
+	topicInfo := origTopicInfo.Copy()
 	if _, ok := currentNodes[topicInfo.Leader]; !ok {
 		coordLog.Warningf("topic leader node is down: %v", topicInfo)
 		return
@@ -1118,13 +1121,15 @@ func (self *NsqLookupCoordinator) handleTopicMigrate(topicInfo *TopicPartitionMe
 			coordLog.Infof("update topic node info failed: %v", err.Error())
 			return
 		}
+		*origTopicInfo = *topicInfo
 		self.notifyTopicMetaInfo(topicInfo)
 	} else {
 		self.notifyCatchupTopicMetaInfo(topicInfo)
 	}
 }
 
-func (self *NsqLookupCoordinator) addCatchupNode(topicInfo *TopicPartitionMetaInfo, nid string) *CoordErr {
+func (self *NsqLookupCoordinator) addCatchupNode(origTopicInfo *TopicPartitionMetaInfo, nid string) *CoordErr {
+	topicInfo := origTopicInfo.Copy()
 	catchupChanged := false
 	if FindSlice(topicInfo.CatchupList, nid) == -1 {
 		topicInfo.CatchupList = append(topicInfo.CatchupList, nid)
@@ -1137,6 +1142,7 @@ func (self *NsqLookupCoordinator) addCatchupNode(topicInfo *TopicPartitionMetaIn
 			coordLog.Infof("update topic node info failed: %v", err.Error())
 			return &CoordErr{err.Error(), RpcNoErr, CoordCommonErr}
 		}
+		*origTopicInfo = *topicInfo
 		self.notifyTopicMetaInfo(topicInfo)
 	} else {
 		self.notifyCatchupTopicMetaInfo(topicInfo)
@@ -1880,6 +1886,7 @@ func (self *NsqLookupCoordinator) handleMoveTopic(isLeader bool, topic string, p
 	if coordErr != nil {
 		coordLog.Infof("topic %v remove node %v failed: %v", topicInfo.GetTopicDesp(),
 			nodeID, coordErr)
+		return coordErr
 	} else {
 		coordLog.Infof("topic %v remove node %v by plan", topicInfo.GetTopicDesp(),
 			nodeID)
