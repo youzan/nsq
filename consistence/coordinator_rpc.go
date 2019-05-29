@@ -852,10 +852,9 @@ func (self *NsqdCoordRpcServer) PutDelayedMessage(info *RpcPutMessage) *CoordErr
 		s := time.Now()
 		defer func() {
 			e := time.Now()
-			if e.Sub(s) > time.Second*time.Duration(RPC_TIMEOUT/2) {
+			if e.Sub(s) > time.Duration(RPC_TIMEOUT/10) {
 				coordLog.Infof("PutDelayedMessage rpc call used: %v, start: %v, end: %v", e.Sub(s), s, e)
 			}
-			coordLog.Warningf("PutDelayedMessage rpc call used: %v, start: %v, end: %v", e.Sub(s), s, e)
 		}()
 	}
 
@@ -885,7 +884,7 @@ func (self *NsqdCoordRpcServer) PutMessage(info *RpcPutMessage) *CoordErr {
 		s := time.Now()
 		defer func() {
 			e := time.Now()
-			if e.Sub(s) > time.Second*time.Duration(RPC_TIMEOUT/2) {
+			if e.Sub(s) > time.Duration(RPC_TIMEOUT/10) {
 				coordLog.Infof("PutMessage rpc call used: %v, start: %v, end: %v", e.Sub(s), s, e)
 			}
 		}()

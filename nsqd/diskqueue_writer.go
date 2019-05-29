@@ -67,9 +67,10 @@ type diskQueueWriter struct {
 	exitFlag        int32
 	needSync        bool
 
-	writeFile    *os.File
-	bufferWriter *bufio.Writer
-	bufSize      int64
+	writeFile     *os.File
+	bufferWriter  *bufio.Writer
+	bufSize       int64
+	metaFlushLock sync.RWMutex
 }
 
 type extraMeta struct {
@@ -222,7 +223,7 @@ func (d *diskQueueWriter) RollbackWriteV2(offset BackendOffset, diffCnt uint64) 
 	}
 
 	if d.needSync {
-		d.sync(true)
+		d.syncAll(true)
 	}
 
 	if offset > d.diskWriteEnd.Offset() {
@@ -275,8 +276,8 @@ func (d *diskQueueWriter) ResetWriteWithQueueStart(queueStart BackendQueueEnd) e
 	d.diskReadEnd = d.diskWriteEnd
 	nsqLog.Warningf("DISKQUEUE %v new queue start : %v:%v", d.name,
 		d.diskQueueStart, d.diskWriteEnd)
-	d.persistMetaData(true)
 	d.saveExtraMeta()
+	d.persistMetaData(true, d.diskWriteEnd)
 	return nil
 }
 
@@ -441,7 +442,7 @@ func (d *diskQueueWriter) truncateDiskQueueToWriteEnd() {
 			tmpFile.Close()
 		}
 	}
-	d.persistMetaData(true)
+	d.persistMetaData(true, d.diskWriteEnd)
 	cleanNum := d.diskWriteEnd.EndOffset.FileNum + 1
 	for {
 		fileName := d.fileName(cleanNum)
@@ -468,7 +469,7 @@ func (d *diskQueueWriter) ResetWriteEndV2(offset BackendOffset, totalCnt int64) 
 		return d.diskWriteEnd, ErrInvalidOffset
 	}
 	if d.needSync {
-		d.sync(true)
+		d.syncAll(true)
 	}
 	nsqLog.Logf("reset write end from %v to %v, reset to totalCnt: %v", d.diskWriteEnd.Offset(), offset, totalCnt)
 	if offset == 0 {
@@ -523,7 +524,7 @@ func (d *diskQueueWriter) RemoveTo(destPath string) error {
 	defer d.Unlock()
 	d.exitFlag = 1
 	nsqLog.Logf("DISKQUEUE(%s): removing to %v", d.name, destPath)
-	d.sync(true)
+	d.syncAll(true)
 	d.closeCurrentFile()
 	d.saveFileOffsetMeta()
 	for i := int64(0); i <= d.diskWriteEnd.EndOffset.FileNum; i++ {
@@ -568,7 +569,7 @@ func (d *diskQueueWriter) exit(deleted bool) error {
 		nsqLog.Logf("DISKQUEUE(%s): closing", d.name)
 	}
 
-	d.sync(true)
+	d.syncAll(true)
 	if deleted {
 		return d.deleteAllFiles(deleted)
 	}
@@ -591,7 +592,7 @@ func (d *diskQueueWriter) Empty() error {
 
 func (d *diskQueueWriter) deleteAllFiles(deleted bool) error {
 	d.cleanOldData()
-	d.persistMetaData(true)
+	d.persistMetaData(true, d.diskWriteEnd)
 	d.saveExtraMeta()
 
 	if deleted {
@@ -723,7 +724,7 @@ func (d *diskQueueWriter) writeOne(data []byte, isRaw bool, msgCnt int32) (Backe
 
 		err = binary.Write(d.bufferWriter, binary.BigEndian, dataLen)
 		if err != nil {
-			d.sync(true)
+			d.sync(true, false)
 			if d.writeFile != nil {
 				d.writeFile.Close()
 				d.writeFile = nil
@@ -734,7 +735,7 @@ func (d *diskQueueWriter) writeOne(data []byte, isRaw bool, msgCnt int32) (Backe
 	}
 	_, err = d.bufferWriter.Write(data)
 	if err != nil {
-		d.sync(true)
+		d.sync(true, false)
 		if d.writeFile != nil {
 			d.writeFile.Close()
 			d.writeFile = nil
@@ -758,7 +759,7 @@ func (d *diskQueueWriter) writeOne(data []byte, isRaw bool, msgCnt int32) (Backe
 
 	if d.diskWriteEnd.EndOffset.Pos >= d.maxBytesPerFile {
 		// sync every time we start writing to a new file
-		err = d.sync(false)
+		err = d.sync(false, false)
 		if err != nil {
 			nsqLog.LogErrorf("diskqueue(%s) failed to sync - %s", d.name, err)
 		}
@@ -780,22 +781,31 @@ func (d *diskQueueWriter) writeOne(data []byte, isRaw bool, msgCnt int32) (Backe
 }
 
 func (d *diskQueueWriter) Flush(fsync bool) error {
-	d.Lock()
-	defer d.Unlock()
-
-	if d.exitFlag == 1 {
-		return errors.New("exiting")
-	}
 	s := time.Now()
-	if d.needSync {
-		return d.sync(fsync)
-	}
-	cost := time.Now().Sub(s)
-	if cost > time.Second {
-		nsqLog.Logf("disk writer(%s): flush cost: %v", d.name, cost)
-	}
+	var err error
 
-	return nil
+	d.Lock()
+	needSync := false
+	if d.exitFlag == 1 {
+		err = errors.New("exiting")
+	} else {
+		needSync = d.needSync
+		if d.needSync {
+			err = d.sync(fsync, false)
+		}
+	}
+	we := d.diskWriteEnd
+	d.Unlock()
+	// flush persist meta out of the write lock to avoid slow down write message
+	cost1 := time.Now().Sub(s)
+	if needSync && err == nil {
+		d.persistMetaData(fsync, we)
+	}
+	cost2 := time.Now().Sub(s)
+	if cost2 > slowCost || cost1 > slowCost {
+		nsqLog.Logf("disk writer(%s): flush cost: %v, %v", d.name, cost1, cost2)
+	}
+	return err
 }
 
 func (d *diskQueueWriter) FlushBuffer() bool {
@@ -814,8 +824,8 @@ func (d *diskQueueWriter) FlushBuffer() bool {
 	return hasData
 }
 
-// sync fsyncs the current writeFile and persists metadata
-func (d *diskQueueWriter) sync(fsync bool) error {
+func (d *diskQueueWriter) sync(fsync bool, metaSync bool) error {
+	d.needSync = false
 	if d.bufferWriter != nil {
 		d.bufferWriter.Flush()
 	}
@@ -835,13 +845,19 @@ func (d *diskQueueWriter) sync(fsync bool) error {
 
 	d.diskReadEnd = d.diskWriteEnd
 
-	err := d.persistMetaData(fsync)
-	if err != nil {
-		return err
+	if metaSync {
+		err := d.persistMetaData(fsync, d.diskWriteEnd)
+		if err != nil {
+			return err
+		}
 	}
 
-	d.needSync = false
 	return nil
+}
+
+// sync fsyncs the current writeFile and persists metadata
+func (d *diskQueueWriter) syncAll(fsync bool) error {
+	return d.sync(fsync, true)
 }
 
 func (d *diskQueueWriter) initQueueReadStart() error {
@@ -993,7 +1009,7 @@ func (d *diskQueueWriter) retrieveMetaData(fix bool) error {
 }
 
 // used for recovery if the normal meta data file corrupt.
-func (d *diskQueueWriter) persistTmpMetaData() error {
+func (d *diskQueueWriter) persistTmpMetaData(writeEnd diskQueueEndInfo) error {
 	fileName := d.metaDataFileName()
 	tmpFileName := fmt.Sprintf("%s.tmp", fileName)
 	f, err := os.OpenFile(tmpFileName, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
@@ -1001,34 +1017,40 @@ func (d *diskQueueWriter) persistTmpMetaData() error {
 		return err
 	}
 	_, err = fmt.Fprintf(f, "%d\n%d,%d,%d\n",
-		atomic.LoadInt64(&d.diskWriteEnd.totalMsgCnt),
-		d.diskWriteEnd.EndOffset.FileNum, d.diskWriteEnd.EndOffset.Pos, d.diskWriteEnd.Offset())
+		atomic.LoadInt64(&writeEnd.totalMsgCnt),
+		writeEnd.EndOffset.FileNum, writeEnd.EndOffset.Pos, writeEnd.Offset())
 
 	f.Close()
 	return err
 }
 
 // persistMetaData atomically writes state to the filesystem
-func (d *diskQueueWriter) persistMetaData(fsync bool) error {
+func (d *diskQueueWriter) persistMetaData(fsync bool, writeEnd diskQueueEndInfo) error {
+	d.metaFlushLock.Lock()
+	defer d.metaFlushLock.Unlock()
 	var f *os.File
 	var err error
 	var n int
 	pos := 0
-	err = d.persistTmpMetaData()
+	s := time.Now()
+	err = d.persistTmpMetaData(writeEnd)
 	if err != nil {
 		return err
 	}
 
+	cost1 := time.Since(s)
 	fileName := d.metaDataFileName()
 	f, err = os.OpenFile(fileName, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
 		return err
 	}
+	cost2 := time.Since(s)
 	err = preWriteMetaEnd(f)
 
+	cost3 := time.Since(s)
 	n, err = fmt.Fprintf(f, "%d\n%d,%d,%d\n",
-		atomic.LoadInt64(&d.diskWriteEnd.totalMsgCnt),
-		d.diskWriteEnd.EndOffset.FileNum, d.diskWriteEnd.EndOffset.Pos, d.diskWriteEnd.Offset())
+		writeEnd.totalMsgCnt,
+		writeEnd.EndOffset.FileNum, writeEnd.EndOffset.Pos, writeEnd.Offset())
 	pos += n
 
 	_, err = writeMetaEnd(f, err, pos)
@@ -1037,6 +1059,10 @@ func (d *diskQueueWriter) persistMetaData(fsync bool) error {
 	}
 
 	f.Close()
+	cost4 := time.Since(s)
+	if cost4 >= slowCost {
+		nsqLog.Logf("writer (%v) meta perist cost: %v,%v,%v,%v", fileName, cost1, cost2, cost3, cost4)
+	}
 	return err
 }
 

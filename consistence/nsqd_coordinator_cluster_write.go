@@ -112,7 +112,7 @@ func (self *NsqdCoordinator) internalPutMessageToCluster(topic *nsqd.Topic,
 		}
 	}
 	doLocalCommit := func() error {
-		localErr := logMgr.AppendCommitLog(&commitLog, false)
+		localErr := logMgr.AppendCommitLogWithSync(&commitLog, false, topic.IsFsync())
 		if localErr != nil {
 			coordLog.Errorf("topic : %v failed write commit log : %v, logmgr: %v, %v",
 				topic.GetFullName(), localErr, logMgr.pLogID, logMgr.nLogID)
@@ -208,9 +208,24 @@ func (self *NsqdCoordinator) PutMessagesToCluster(topic *nsqd.Topic,
 
 	var queueEnd nsqd.BackendQueueEnd
 	var logMgr *TopicCommitLogMgr
+	checkCost := false
+	if self.enableBenchCost {
+		checkCost = true
+	}
 
 	doLocalWrite := func(d *coordData) *CoordErr {
+		var s time.Time
+
+		if checkCost {
+			s = time.Now()
+		}
 		topic.Lock()
+		if checkCost {
+			cost := time.Since(s)
+			if cost > time.Millisecond {
+				coordLog.Infof("local put cost long: %v", cost)
+			}
+		}
 		logMgr = d.logMgr
 		id, offset, writeBytes, totalCnt, qe, localErr := topic.PutMessagesNoLock(msgs)
 		queueEnd = qe
@@ -218,6 +233,12 @@ func (self *NsqdCoordinator) PutMessagesToCluster(topic *nsqd.Topic,
 		if localErr != nil {
 			coordLog.Warningf("put batch messages to local failed: %v", localErr)
 			return &CoordErr{localErr.Error(), RpcNoErr, CoordLocalErr}
+		}
+		if checkCost {
+			cost := time.Since(s)
+			if cost > time.Millisecond*5 {
+				coordLog.Infof("local put cost long: %v", cost)
+			}
 		}
 		commitLog.LogID = int64(id)
 		// epoch should not be changed.
@@ -242,7 +263,7 @@ func (self *NsqdCoordinator) PutMessagesToCluster(topic *nsqd.Topic,
 		}
 	}
 	doLocalCommit := func() error {
-		localErr := logMgr.AppendCommitLog(&commitLog, false)
+		localErr := logMgr.AppendCommitLogWithSync(&commitLog, false, topic.IsFsync())
 		if localErr != nil {
 			coordLog.Errorf("topic : %v failed write commit log : %v, logMgr: %v, %v",
 				topic.GetFullName(), localErr, logMgr.pLogID, logMgr.nLogID)
@@ -416,10 +437,7 @@ retrysync:
 		if checkCost {
 			cost := time.Since(start)
 			if cost > time.Millisecond*3 {
-				coordLog.Infof("slave(%v) sync cost long: %v", nodeID, cost)
-			}
-			if self.enableBenchCost {
-				coordLog.Warningf("slave(%v) sync cost: %v, start: %v, end: %v", nodeID, cost, start, time.Now())
+				coordLog.Infof("slave(%v) sync cost long: %v, start %v, end: %v", nodeID, cost, start, time.Now())
 			}
 		}
 		if rpcErr == nil {
@@ -440,7 +458,17 @@ retrysync:
 	}
 
 	if handleSyncResult(success, tcData) {
+		var start time.Time
+		if checkCost {
+			start = time.Now()
+		}
 		localErr := doLocalCommit()
+		if checkCost {
+			cost := time.Since(start)
+			if cost > time.Millisecond*3 {
+				coordLog.Infof("local topic %v commit log cost long: %v, start %v, end: %v", topicFullName, cost, start, time.Now())
+			}
+		}
 		if localErr != nil {
 			coordLog.Errorf("topic : %v failed commit operation: %v", topicFullName, localErr)
 			needLeaveISR = true
@@ -762,7 +790,7 @@ func (self *NsqdCoordinator) putMessagesOnSlave(coord *TopicCoordinator, logData
 			nsqd.BackendOffset(logData.MsgOffset), int64(logData.MsgSize))
 		if checkCost {
 			cost2 := time.Now().Sub(start)
-			if cost2 > time.Millisecond {
+			if cost2 > time.Millisecond*5 {
 				coordLog.Infof("write local on slave cost :%v, %v", cost, cost2)
 			}
 		}
@@ -778,14 +806,35 @@ func (self *NsqdCoordinator) putMessagesOnSlave(coord *TopicCoordinator, logData
 	}
 
 	doLocalCommit := func() error {
+		var start time.Time
+		checkCost := coordLog.Level() >= levellogger.LOG_DEBUG
+		if self.enableBenchCost {
+			checkCost = true
+		}
+		if checkCost {
+			start = time.Now()
+		}
 		localErr := logMgr.AppendCommitLog(&logData, true)
 		if localErr != nil {
 			coordLog.Errorf("write commit log on slave failed: %v", localErr)
 			return localErr
 		}
+		var cost time.Duration
+		if checkCost {
+			cost = time.Now().Sub(start)
+			if cost > time.Millisecond {
+				coordLog.Infof("commit on slave local cost :%v", cost)
+			}
+		}
 		topic.Lock()
 		topic.UpdateCommittedOffset(queueEnd)
 		topic.Unlock()
+		if checkCost {
+			cost2 := time.Now().Sub(start)
+			if cost2 > time.Millisecond*3 {
+				coordLog.Infof("commit on slave local cost :%v, %v", cost, cost2)
+			}
+		}
 		return nil
 	}
 
@@ -876,10 +925,7 @@ exitpubslave:
 	if checkCost {
 		cost3 := time.Now().Sub(start)
 		if cost3 > time.Millisecond {
-			coordLog.Infof("write local on slave cost :%v, %v, %v", cost, cost2, cost3)
-		}
-		if self.enableBenchCost {
-			coordLog.Warningf("write local on slave cost :%v, start: %v, end: %v", cost3, start, time.Now())
+			coordLog.Infof("write local on slave cost :%v, %v, %v, start: %v, end: %v", cost, cost2, cost3, start, time.Now())
 		}
 	}
 
@@ -1247,7 +1293,7 @@ func (self *NsqdCoordinator) updateChannelOffsetOnSlave(tc *coordData, channelNa
 		// TODO: it may always ignore the exceed end update
 		if offset.Flush || ch.IsOrdered() {
 			if offset.Flush {
-				topic.ForceFlushForChannels()
+				topic.ForceFlushForChannels(ch.IsOrdered())
 			}
 			currentEnd = ch.GetChannelEnd()
 			if nsqd.BackendOffset(offset.VOffset) > currentEnd.Offset() {
