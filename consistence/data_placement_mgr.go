@@ -11,6 +11,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/spaolacci/murmur3"
+
 	"github.com/youzan/nsq/nsqd"
 )
 
@@ -1091,7 +1093,9 @@ func (self *DataPlacement) addToCatchupAndWaitISRReadyForOrderedTopic(monitorCha
 	topicName := topicInfo.Name
 	partitionID := topicInfo.Partition
 	// since we need add new catchup, we make the replica as replica+1
-	partitionNodes, err := self.getRebalancedOrderedTopicPartitionsFromNameList(topicInfo.PartitionNum,
+	partitionNodes, err := self.getRebalancedOrderedTopicPartitionsFromNameList(
+		topicInfo.Name,
+		topicInfo.PartitionNum,
 		topicInfo.Replica+1, nodeNameList)
 	if err != nil {
 		return err.ToErrorType()
@@ -1242,7 +1246,9 @@ func (self *DataPlacement) allocNodeForOrderedTopic(topicInfo *TopicPartitionMet
 		return nil, ErrLeadershipServerUnstable
 	}
 
-	partitionNodes, err := self.getRebalancedOrderedTopicPartitions(topicInfo.PartitionNum,
+	partitionNodes, err := self.getRebalancedOrderedTopicPartitions(
+		topicInfo.Name,
+		topicInfo.PartitionNum,
 		topicInfo.Replica, currentNodes)
 	if err != nil {
 		return nil, err
@@ -1306,11 +1312,11 @@ func (self *DataPlacement) checkTopicNodeConflict(topicInfo *TopicPartitionMetaI
 }
 
 // init leader node and isr list for the empty topic
-func (self *DataPlacement) allocTopicLeaderAndISR(orderedMulti bool, currentNodes map[string]NsqdNodeInfo,
+func (self *DataPlacement) allocTopicLeaderAndISR(topicName string, orderedMulti bool, currentNodes map[string]NsqdNodeInfo,
 	replica int, partitionNum int, existPart map[int]*TopicPartitionMetaInfo) ([]string, [][]string, *CoordErr) {
 
 	if orderedMulti {
-		return self.allocOrderedTopicLeaderAndISR(currentNodes, replica, partitionNum, existPart)
+		return self.allocOrderedTopicLeaderAndISR(topicName, currentNodes, replica, partitionNum, existPart)
 	}
 
 	if len(currentNodes) < replica || len(currentNodes) < partitionNum {
@@ -1431,11 +1437,13 @@ func (self *DataPlacement) allocTopicLeaderAndISR(orderedMulti bool, currentNode
 	return leaders, isrlist, nil
 }
 
-func (self *DataPlacement) allocOrderedTopicLeaderAndISR(currentNodes map[string]NsqdNodeInfo,
+func (self *DataPlacement) allocOrderedTopicLeaderAndISR(topicName string, currentNodes map[string]NsqdNodeInfo,
 	replica int, partitionNum int, existPart map[int]*TopicPartitionMetaInfo) ([]string, [][]string, *CoordErr) {
 	leaders := make([]string, partitionNum)
 	isrlist := make([][]string, partitionNum)
-	partitionNodes, err := self.getRebalancedOrderedTopicPartitions(partitionNum,
+	partitionNodes, err := self.getRebalancedOrderedTopicPartitions(
+		topicName,
+		partitionNum,
 		replica, currentNodes)
 	if err != nil {
 		return nil, nil, err
@@ -1542,7 +1550,9 @@ func (self *DataPlacement) chooseNewLeaderFromISRForOrderedTopic(topicInfo *Topi
 	if len(newestReplicas) == 1 {
 		newLeader = newestReplicas[0]
 	} else if len(newestReplicas) > 0 {
-		partitionNodes, err := self.getRebalancedOrderedTopicPartitions(topicInfo.PartitionNum,
+		partitionNodes, err := self.getRebalancedOrderedTopicPartitions(
+			topicInfo.Name,
+			topicInfo.PartitionNum,
 			topicInfo.Replica, currentNodes)
 		if err != nil {
 			coordLog.Infof("failed to get balanced partitions for ordered topic: %v, %v", topicInfo.GetTopicDesp(), err)
@@ -1618,7 +1628,9 @@ func (self *DataPlacement) rebalanceOrderedTopic(monitorChan chan struct{}) (boo
 			nodeNameList = append(nodeNameList, n.ID)
 		}
 
-		partitionNodes, err := self.getRebalancedOrderedTopicPartitions(topicInfo.PartitionNum,
+		partitionNodes, err := self.getRebalancedOrderedTopicPartitions(
+			topicInfo.Name,
+			topicInfo.PartitionNum,
 			topicInfo.Replica, currentNodes)
 		if err != nil {
 			isAllBalanced = false
@@ -1696,6 +1708,7 @@ func (s SortableStrings) Swap(l, r int) {
 }
 
 func (self *DataPlacement) getRebalancedOrderedTopicPartitions(
+	topicName string,
 	partitionNum int, replica int,
 	currentNodes map[string]NsqdNodeInfo) ([][]string, *CoordErr) {
 	if len(currentNodes) < replica {
@@ -1739,9 +1752,10 @@ func (self *DataPlacement) getRebalancedOrderedTopicPartitions(
 	for nid := range currentNodes {
 		nodeNameList = append(nodeNameList, nid)
 	}
-	return self.getRebalancedOrderedTopicPartitionsFromNameList(partitionNum, replica, nodeNameList)
+	return self.getRebalancedOrderedTopicPartitionsFromNameList(topicName, partitionNum, replica, nodeNameList)
 }
 func (self *DataPlacement) getRebalancedOrderedTopicPartitionsFromNameList(
+	topicName string,
 	partitionNum int, replica int,
 	nodeNameList SortableStrings) ([][]string, *CoordErr) {
 	if len(nodeNameList) < replica {
@@ -1749,7 +1763,10 @@ func (self *DataPlacement) getRebalancedOrderedTopicPartitionsFromNameList(
 	}
 	sort.Sort(nodeNameList)
 	partitionNodes := make([][]string, partitionNum)
-	selectIndex := 0
+	selectIndex := int(murmur3.Sum32([]byte(topicName)))
+	if selectIndex < 0 {
+		selectIndex = 0
+	}
 	for i := 0; i < partitionNum; i++ {
 		nlist := make([]string, replica)
 		partitionNodes[i] = nlist
@@ -1787,7 +1804,9 @@ func (self *DataPlacement) decideUnwantedISRNode(topicInfo *TopicPartitionMetaIn
 			}
 		}
 	} else {
-		partitionNodes, err := self.getRebalancedOrderedTopicPartitions(topicInfo.PartitionNum,
+		partitionNodes, err := self.getRebalancedOrderedTopicPartitions(
+			topicInfo.Name,
+			topicInfo.PartitionNum,
 			topicInfo.Replica, currentNodes)
 		if err != nil {
 			return unwantedNode
