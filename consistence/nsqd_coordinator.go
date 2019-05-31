@@ -354,24 +354,28 @@ func (self *NsqdCoordinator) GreedyCleanTopicOldData(localTopic *nsqd.Topic) err
 	return nil
 }
 
+func (self *NsqdCoordinator) getAllCoords(tmpCoords map[string]map[int]*TopicCoordinator) {
+	self.coordMutex.RLock()
+	for name, tc := range self.topicCoords {
+		coords, ok := tmpCoords[name]
+		if !ok {
+			coords = make(map[int]*TopicCoordinator)
+			tmpCoords[name] = coords
+		}
+		for pid, tpc := range tc {
+			coords[pid] = tpc
+		}
+	}
+	self.coordMutex.RUnlock()
+}
+
 func (self *NsqdCoordinator) checkAndCleanOldData() {
 	defer self.wg.Done()
 	ticker := time.NewTicker(time.Minute * 10)
 
 	doCheckAndCleanOld := func(checkRetentionDay bool) {
 		tmpCoords := make(map[string]map[int]*TopicCoordinator)
-		self.coordMutex.RLock()
-		for name, tc := range self.topicCoords {
-			coords, ok := tmpCoords[name]
-			if !ok {
-				coords = make(map[int]*TopicCoordinator)
-				tmpCoords[name] = coords
-			}
-			for pid, tpc := range tc {
-				coords[pid] = tpc
-			}
-		}
-		self.coordMutex.RUnlock()
+		self.getAllCoords(tmpCoords)
 		for _, tc := range tmpCoords {
 			for _, tpc := range tc {
 				tcData := tpc.GetData()
@@ -420,18 +424,7 @@ func (self *NsqdCoordinator) periodFlushCommitLogs() {
 	flushTicker := time.NewTicker(time.Second * 2)
 	doFlush := func() {
 		syncCounter++
-		self.coordMutex.RLock()
-		for name, tc := range self.topicCoords {
-			coords, ok := tmpCoords[name]
-			if !ok {
-				coords = make(map[int]*TopicCoordinator)
-				tmpCoords[name] = coords
-			}
-			for pid, tpc := range tc {
-				coords[pid] = tpc
-			}
-		}
-		self.coordMutex.RUnlock()
+		self.getAllCoords(tmpCoords)
 		flushAll := syncCounter%30 == 0
 		matchCnt := syncCounter % FLUSH_DISTANCE
 		// to reduce the io, we just choose parts of topic to flush for each time
@@ -633,6 +626,7 @@ func (self *NsqdCoordinator) initLocalTopicCoord(topicInfo *TopicPartitionMetaIn
 		tc.topicLeaderSession = *topicLeaderSession
 	}
 	coords[topicInfo.Partition] = tc
+	coordLog.Infof("A new topic coord init on the node: %v", topicInfo.GetTopicDesp())
 	return tc, topic, nil
 }
 
@@ -2706,18 +2700,7 @@ func (self *NsqdCoordinator) updateLocalTopic(topicInfo *TopicPartitionMetaInfo,
 func (self *NsqdCoordinator) prepareLeavingCluster() {
 	coordLog.Infof("I am prepare leaving the cluster.")
 	tmpTopicCoords := make(map[string]map[int]*TopicCoordinator, len(self.topicCoords))
-	self.coordMutex.RLock()
-	for t, v := range self.topicCoords {
-		tmp, ok := tmpTopicCoords[t]
-		if !ok {
-			tmp = make(map[int]*TopicCoordinator)
-			tmpTopicCoords[t] = tmp
-		}
-		for pid, coord := range v {
-			tmp[pid] = coord
-		}
-	}
-	self.coordMutex.RUnlock()
+	self.getAllCoords(tmpTopicCoords)
 	for topicName, topicData := range tmpTopicCoords {
 		for pid, tpCoord := range topicData {
 			tcData := tpCoord.GetData()
@@ -2788,42 +2771,41 @@ func (self *NsqdCoordinator) Stats(topic string, part int) *CoordStats {
 	}
 	s.ErrStats = *coordErrStats.GetCopy()
 	s.TopicCoordStats = make([]TopicCoordStat, 0)
-	if len(topic) > 0 {
-		if part >= 0 {
-			tcData, err := self.getTopicCoordData(topic, part)
-			if err != nil {
-			} else {
-				var stat TopicCoordStat
-				stat.Name = topic
-				stat.Partition = part
-				for _, nid := range tcData.topicInfo.ISR {
-					stat.ISRStats = append(stat.ISRStats, ISRStat{HostName: "", NodeID: nid})
-				}
-				for _, nid := range tcData.topicInfo.CatchupList {
-					stat.CatchupStats = append(stat.CatchupStats, CatchupStat{HostName: "", NodeID: nid, Progress: 0})
-				}
-				s.TopicCoordStats = append(s.TopicCoordStats, stat)
-			}
+	if len(topic) == 0 {
+		return s
+	}
+	if part >= 0 {
+		tcData, err := self.getTopicCoordData(topic, part)
+		if err != nil {
 		} else {
-			self.coordMutex.RLock()
-			defer self.coordMutex.RUnlock()
-			v, ok := self.topicCoords[topic]
-			if ok {
-				for _, tc := range v {
-					var stat TopicCoordStat
-					stat.Name = topic
-					stat.Partition = tc.topicInfo.Partition
-					for _, nid := range tc.topicInfo.ISR {
-						stat.ISRStats = append(stat.ISRStats, ISRStat{HostName: "", NodeID: nid})
-					}
-					for _, nid := range tc.topicInfo.CatchupList {
-						stat.CatchupStats = append(stat.CatchupStats, CatchupStat{HostName: "", NodeID: nid, Progress: 0})
-					}
-
-					s.TopicCoordStats = append(s.TopicCoordStats, stat)
-				}
+			var stat TopicCoordStat
+			stat.Name = topic
+			stat.Partition = part
+			for _, nid := range tcData.topicInfo.ISR {
+				stat.ISRStats = append(stat.ISRStats, ISRStat{HostName: "", NodeID: nid})
 			}
+			for _, nid := range tcData.topicInfo.CatchupList {
+				stat.CatchupStats = append(stat.CatchupStats, CatchupStat{HostName: "", NodeID: nid, Progress: 0})
+			}
+			s.TopicCoordStats = append(s.TopicCoordStats, stat)
 		}
+	} else {
+		self.coordMutex.RLock()
+		v, _ := self.topicCoords[topic]
+		for _, tc := range v {
+			var stat TopicCoordStat
+			stat.Name = topic
+			stat.Partition = tc.topicInfo.Partition
+			for _, nid := range tc.topicInfo.ISR {
+				stat.ISRStats = append(stat.ISRStats, ISRStat{HostName: "", NodeID: nid})
+			}
+			for _, nid := range tc.topicInfo.CatchupList {
+				stat.CatchupStats = append(stat.CatchupStats, CatchupStat{HostName: "", NodeID: nid, Progress: 0})
+			}
+
+			s.TopicCoordStats = append(s.TopicCoordStats, stat)
+		}
+		self.coordMutex.RUnlock()
 	}
 	return s
 }
