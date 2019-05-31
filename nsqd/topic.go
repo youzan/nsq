@@ -1364,7 +1364,7 @@ func (t *Topic) TryCleanOldData(retentionSize int64, noRealClean bool, maxCleanO
 	}
 	t.channelLock.RUnlock()
 	if oldestPos == nil {
-		nsqLog.Logf("no consume position found")
+		nsqLog.Logf("no consume position found for topic: %v", t.GetFullName())
 		return nil, nil
 	}
 	cleanStart := t.backend.GetQueueReadStart()
