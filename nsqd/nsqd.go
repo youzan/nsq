@@ -463,12 +463,12 @@ func (n *NSQD) Exit() {
 	for _, topic := range topics {
 		topic.Close()
 	}
-	n.metaStorage.Close()
 
 	// we want to do this last as it closes the idPump (if closed first it
 	// could potentially starve items in process and deadlock)
 	close(n.exitChan)
 	n.waitGroup.Wait()
+	n.metaStorage.Close()
 
 	n.dl.Unlock()
 	nsqLog.Logf("NSQ: exited")
