@@ -354,24 +354,28 @@ func (self *NsqdCoordinator) GreedyCleanTopicOldData(localTopic *nsqd.Topic) err
 	return nil
 }
 
+func (self *NsqdCoordinator) getAllCoords(tmpCoords map[string]map[int]*TopicCoordinator) {
+	self.coordMutex.RLock()
+	for name, tc := range self.topicCoords {
+		coords, ok := tmpCoords[name]
+		if !ok {
+			coords = make(map[int]*TopicCoordinator)
+			tmpCoords[name] = coords
+		}
+		for pid, tpc := range tc {
+			coords[pid] = tpc
+		}
+	}
+	self.coordMutex.RUnlock()
+}
+
 func (self *NsqdCoordinator) checkAndCleanOldData() {
 	defer self.wg.Done()
 	ticker := time.NewTicker(time.Minute * 10)
 
 	doCheckAndCleanOld := func(checkRetentionDay bool) {
 		tmpCoords := make(map[string]map[int]*TopicCoordinator)
-		self.coordMutex.RLock()
-		for name, tc := range self.topicCoords {
-			coords, ok := tmpCoords[name]
-			if !ok {
-				coords = make(map[int]*TopicCoordinator)
-				tmpCoords[name] = coords
-			}
-			for pid, tpc := range tc {
-				coords[pid] = tpc
-			}
-		}
-		self.coordMutex.RUnlock()
+		self.getAllCoords(tmpCoords)
 		for _, tc := range tmpCoords {
 			for _, tpc := range tc {
 				tcData := tpc.GetData()
@@ -420,18 +424,7 @@ func (self *NsqdCoordinator) periodFlushCommitLogs() {
 	flushTicker := time.NewTicker(time.Second * 2)
 	doFlush := func() {
 		syncCounter++
-		self.coordMutex.RLock()
-		for name, tc := range self.topicCoords {
-			coords, ok := tmpCoords[name]
-			if !ok {
-				coords = make(map[int]*TopicCoordinator)
-				tmpCoords[name] = coords
-			}
-			for pid, tpc := range tc {
-				coords[pid] = tpc
-			}
-		}
-		self.coordMutex.RUnlock()
+		self.getAllCoords(tmpCoords)
 		flushAll := syncCounter%30 == 0
 		matchCnt := syncCounter % FLUSH_DISTANCE
 		// to reduce the io, we just choose parts of topic to flush for each time
@@ -633,6 +626,7 @@ func (self *NsqdCoordinator) initLocalTopicCoord(topicInfo *TopicPartitionMetaIn
 		tc.topicLeaderSession = *topicLeaderSession
 	}
 	coords[topicInfo.Partition] = tc
+	coordLog.Infof("A new topic coord init on the node: %v", topicInfo.GetTopicDesp())
 	return tc, topic, nil
 }
 
@@ -2473,6 +2467,42 @@ func (self *NsqdCoordinator) removeTopicCoord(topic string, partition int, remov
 	return topicCoord, err
 }
 
+func (self *NsqdCoordinator) SyncTopicChannels(topicName string, part int) error {
+	tcData, err := self.getTopicCoordData(topicName, part)
+	if err != nil {
+		return err.ToErrorType()
+	}
+	self.trySyncTopicChannels(tcData, false, false, false)
+	return nil
+}
+
+func (self *NsqdCoordinator) doRpcForNodeList(nodes []string, failBreak bool, rpcFunc func(*NsqdRpcClient) *CoordErr) (*CoordErr) {
+	var lastErr *CoordErr
+	myid := self.myNode.GetID()
+	for _, nodeID := range nodes {
+		if nodeID == myid {
+			continue
+		}
+		c, rpcErr := self.acquireRpcClient(nodeID)
+		if rpcErr != nil {
+			coordLog.Infof("node %v get rpc client failed %v.", nodeID, rpcErr)
+			lastErr = rpcErr
+			if failBreak {
+				break
+			}
+			continue
+		}
+		rpcErr = rpcFunc(c)
+		if rpcErr != nil {
+			lastErr = rpcErr
+			if failBreak {
+				break
+			}
+		}
+	}
+	return lastErr
+} 
+
 // sync topic channels state period.
 func (self *NsqdCoordinator) trySyncTopicChannels(tcData *coordData, syncDelayedQueue bool, syncChannelList bool, notifyOnly bool) {
 	localTopic, _ := self.localNsqd.GetExistingTopic(tcData.topicInfo.Name, tcData.topicInfo.Partition)
@@ -2486,15 +2516,19 @@ func (self *NsqdCoordinator) trySyncTopicChannels(tcData *coordData, syncDelayed
 				}
 				chNameList = append(chNameList, ch.GetName())
 			}
-			for _, nodeID := range tcData.topicInfo.ISR {
-				if nodeID == self.myNode.GetID() {
-					continue
+			if !isSameStrList(chNameList, tcData.syncedConsumeMgr.GetSyncedChs()) {
+				tcData.syncedConsumeMgr.Clear()
+				rpcErr := self.doRpcForNodeList(tcData.topicInfo.ISR, false, func(c *NsqdRpcClient) *CoordErr {
+					if notifyOnly {
+						c.NotifyChannelList(&tcData.topicLeaderSession, &tcData.topicInfo, chNameList)
+					} else {
+						return c.UpdateChannelList(&tcData.topicLeaderSession, &tcData.topicInfo, chNameList)
+					}
+					return nil
+				})
+				if rpcErr == nil && !notifyOnly {
+					tcData.syncedConsumeMgr.UpdateSyncedChs(chNameList)
 				}
-				c, rpcErr := self.acquireRpcClient(nodeID)
-				if rpcErr != nil {
-					continue
-				}
-				c.NotifyChannelList(&tcData.topicLeaderSession, &tcData.topicInfo, chNameList)
 			}
 		}
 
@@ -2503,26 +2537,22 @@ func (self *NsqdCoordinator) trySyncTopicChannels(tcData *coordData, syncDelayed
 			if keyList == nil && cntList == nil && channelCntList == nil {
 				// no delayed queue
 			} else {
-				for _, nodeID := range tcData.topicInfo.ISR {
-					if nodeID == self.myNode.GetID() {
-						continue
-					}
-					c, rpcErr := self.acquireRpcClient(nodeID)
-					if rpcErr != nil {
-						continue
-					}
-					rpcErr = c.UpdateDelayedQueueState(&tcData.topicLeaderSession, &tcData.topicInfo,
+				self.doRpcForNodeList(tcData.topicInfo.ISR, false, func(c *NsqdRpcClient) *CoordErr {
+					rpcErr := c.UpdateDelayedQueueState(&tcData.topicLeaderSession, &tcData.topicInfo,
 						"", ts, keyList, cntList, channelCntList, true)
 					if rpcErr != nil {
-						coordLog.Infof("node %v update delayed queue state %v failed %v.", nodeID,
+						coordLog.Infof("node %v update delayed queue state %v failed %v.", c.remote,
 							tcData.topicInfo.GetTopicDesp(), rpcErr)
 					}
-				}
+					return rpcErr
+				})
 			}
 		}
 
 		var syncOffset ChannelConsumerOffset
 		syncOffset.Flush = true
+		// always allow backward here since it may happen that slave already created the channel with end
+		syncOffset.AllowBackward = true
 		for _, ch := range channels {
 			// skipped ordered channel will not sync offset,
 			// so we need sync here
@@ -2557,30 +2587,33 @@ func (self *NsqdCoordinator) trySyncTopicChannels(tcData *coordData, syncDelayed
 				syncOffset.NeedUpdateConfirmed = true
 			}
 
-			nids := make([]string, 0, len(tcData.topicInfo.ISR)+len(tcData.topicInfo.CatchupList))
-			// TODO: Because the new channel on slave will init consume offset to the end of topic,
+			cco, ok := tcData.syncedConsumeMgr.Get(ch.GetName())
+			if ok && cco.IsSame(&syncOffset) {
+				continue
+			}
+			// Because the new channel on slave will init consume offset to the end of topic,
 			// we should update consume offset to both isr and catchup to avoid skip some messages on the new channel on the slave
 			// if the slave became the new leader.
 			// But the catchup node may fail to connect, so we should avoid block by catchup nodes.
-			nids = append(nids, tcData.topicInfo.ISR...)
-			nids = append(nids, tcData.topicInfo.CatchupList...)
-			for _, nodeID := range nids {
-				if nodeID == self.myNode.GetID() {
-					continue
-				}
-				c, rpcErr := self.acquireRpcClient(nodeID)
-				if rpcErr != nil {
-					continue
-				}
+			rpcErr := self.doRpcForNodeList(tcData.topicInfo.ISR, false, func(c *NsqdRpcClient) *CoordErr {
 				if notifyOnly {
 					c.NotifyUpdateChannelOffset(&tcData.topicLeaderSession, &tcData.topicInfo, ch.GetName(), syncOffset)
 				} else {
-					rpcErr = c.UpdateChannelOffset(&tcData.topicLeaderSession, &tcData.topicInfo, ch.GetName(), syncOffset)
+					rpcErr := c.UpdateChannelOffset(&tcData.topicLeaderSession, &tcData.topicInfo, ch.GetName(), syncOffset)
 					if rpcErr != nil {
-						coordLog.Debugf("node %v update channel %v offset failed %v.", nodeID, ch.GetName(), rpcErr)
+						coordLog.Debugf("node %v update channel %v offset failed %v.", c.remote, ch.GetName(), rpcErr)
 					}
+					return rpcErr
 				}
+				return nil
+			})
+			if rpcErr == nil && !notifyOnly {
+				tcData.syncedConsumeMgr.Update(ch.GetName(), syncOffset)
 			}
+			self.doRpcForNodeList(tcData.topicInfo.CatchupList, false, func(c *NsqdRpcClient) *CoordErr {
+				c.NotifyUpdateChannelOffset(&tcData.topicLeaderSession, &tcData.topicInfo, ch.GetName(), syncOffset)
+				return nil
+			})
 			// only the first channel of topic should flush.
 			syncOffset.Flush = false
 		}
@@ -2667,18 +2700,7 @@ func (self *NsqdCoordinator) updateLocalTopic(topicInfo *TopicPartitionMetaInfo,
 func (self *NsqdCoordinator) prepareLeavingCluster() {
 	coordLog.Infof("I am prepare leaving the cluster.")
 	tmpTopicCoords := make(map[string]map[int]*TopicCoordinator, len(self.topicCoords))
-	self.coordMutex.RLock()
-	for t, v := range self.topicCoords {
-		tmp, ok := tmpTopicCoords[t]
-		if !ok {
-			tmp = make(map[int]*TopicCoordinator)
-			tmpTopicCoords[t] = tmp
-		}
-		for pid, coord := range v {
-			tmp[pid] = coord
-		}
-	}
-	self.coordMutex.RUnlock()
+	self.getAllCoords(tmpTopicCoords)
 	for topicName, topicData := range tmpTopicCoords {
 		for pid, tpCoord := range topicData {
 			tcData := tpCoord.GetData()
@@ -2749,42 +2771,41 @@ func (self *NsqdCoordinator) Stats(topic string, part int) *CoordStats {
 	}
 	s.ErrStats = *coordErrStats.GetCopy()
 	s.TopicCoordStats = make([]TopicCoordStat, 0)
-	if len(topic) > 0 {
-		if part >= 0 {
-			tcData, err := self.getTopicCoordData(topic, part)
-			if err != nil {
-			} else {
-				var stat TopicCoordStat
-				stat.Name = topic
-				stat.Partition = part
-				for _, nid := range tcData.topicInfo.ISR {
-					stat.ISRStats = append(stat.ISRStats, ISRStat{HostName: "", NodeID: nid})
-				}
-				for _, nid := range tcData.topicInfo.CatchupList {
-					stat.CatchupStats = append(stat.CatchupStats, CatchupStat{HostName: "", NodeID: nid, Progress: 0})
-				}
-				s.TopicCoordStats = append(s.TopicCoordStats, stat)
-			}
+	if len(topic) == 0 {
+		return s
+	}
+	if part >= 0 {
+		tcData, err := self.getTopicCoordData(topic, part)
+		if err != nil {
 		} else {
-			self.coordMutex.RLock()
-			defer self.coordMutex.RUnlock()
-			v, ok := self.topicCoords[topic]
-			if ok {
-				for _, tc := range v {
-					var stat TopicCoordStat
-					stat.Name = topic
-					stat.Partition = tc.topicInfo.Partition
-					for _, nid := range tc.topicInfo.ISR {
-						stat.ISRStats = append(stat.ISRStats, ISRStat{HostName: "", NodeID: nid})
-					}
-					for _, nid := range tc.topicInfo.CatchupList {
-						stat.CatchupStats = append(stat.CatchupStats, CatchupStat{HostName: "", NodeID: nid, Progress: 0})
-					}
-
-					s.TopicCoordStats = append(s.TopicCoordStats, stat)
-				}
+			var stat TopicCoordStat
+			stat.Name = topic
+			stat.Partition = part
+			for _, nid := range tcData.topicInfo.ISR {
+				stat.ISRStats = append(stat.ISRStats, ISRStat{HostName: "", NodeID: nid})
 			}
+			for _, nid := range tcData.topicInfo.CatchupList {
+				stat.CatchupStats = append(stat.CatchupStats, CatchupStat{HostName: "", NodeID: nid, Progress: 0})
+			}
+			s.TopicCoordStats = append(s.TopicCoordStats, stat)
 		}
+	} else {
+		self.coordMutex.RLock()
+		v, _ := self.topicCoords[topic]
+		for _, tc := range v {
+			var stat TopicCoordStat
+			stat.Name = topic
+			stat.Partition = tc.topicInfo.Partition
+			for _, nid := range tc.topicInfo.ISR {
+				stat.ISRStats = append(stat.ISRStats, ISRStat{HostName: "", NodeID: nid})
+			}
+			for _, nid := range tc.topicInfo.CatchupList {
+				stat.CatchupStats = append(stat.CatchupStats, CatchupStat{HostName: "", NodeID: nid, Progress: 0})
+			}
+
+			s.TopicCoordStats = append(s.TopicCoordStats, stat)
+		}
+		self.coordMutex.RUnlock()
 	}
 	return s
 }

@@ -640,7 +640,7 @@ func (self *NsqLookupCoordinator) checkAndUpdateTopicPartitions(currentNodes map
 		self.triggerCheckTopics("", 0, time.Millisecond*500)
 		return nil
 	}
-	leaders, isrList, err := self.dpm.allocTopicLeaderAndISR(meta.OrderedMulti, currentNodes, meta.Replica, meta.PartitionNum, existPart)
+	leaders, isrList, err := self.dpm.allocTopicLeaderAndISR(topic, meta.OrderedMulti, currentNodes, meta.Replica, meta.PartitionNum, existPart)
 	if err != nil {
 		coordLog.Infof("failed to alloc nodes for topic: %v", err)
 		return err.ToErrorType()

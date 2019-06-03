@@ -115,10 +115,10 @@ func printLatencyStats() {
 	fmt.Printf("\n")
 }
 
-func printTotalQPSAndLatencyStats(start time.Time, latency bool) {
+func printTotalQPSAndLatencyStats(start time.Time, counter *int64, latency bool) {
 	end := time.Now()
 	duration := end.Sub(start)
-	tmc := atomic.LoadInt64(&totalMsgCount)
+	tmc := atomic.LoadInt64(counter)
 	log.Printf("duration: %s - %.03fmb/s - %.03fops/s - %.03fus/op\n",
 		duration,
 		float64(tmc*int64(*size))/duration.Seconds()/1024/1024,
@@ -131,7 +131,7 @@ func printTotalQPSAndLatencyStats(start time.Time, latency bool) {
 	}
 }
 
-func printPeriodQPSAndLatencyStats(start time.Time, latency bool, done chan int) {
+func printPeriodQPSAndLatencyStats(start time.Time, counter *int64, latency bool, done chan int) {
 	go func() {
 		prevMsgCount := int64(0)
 		prevStart := start
@@ -144,7 +144,7 @@ func printPeriodQPSAndLatencyStats(start time.Time, latency bool, done chan int)
 			time.Sleep(time.Second * 5)
 			end := time.Now()
 			duration := end.Sub(prevStart)
-			currentTmc := atomic.LoadInt64(&currentMsgCount)
+			currentTmc := atomic.LoadInt64(counter)
 			tmc := currentTmc - prevMsgCount
 			prevMsgCount = currentTmc
 			prevStart = time.Now()
@@ -277,11 +277,11 @@ func startBenchPub(msg []byte, batch [][]byte) {
 	start := time.Now()
 	close(goChan)
 	done := make(chan int)
-	printPeriodQPSAndLatencyStats(start, true, done)
+	printPeriodQPSAndLatencyStats(start, &currentMsgCount, true, done)
 	wg.Wait()
 
 	close(done)
-	printTotalQPSAndLatencyStats(start, true)
+	printTotalQPSAndLatencyStats(start, &totalMsgCount, true)
 }
 
 func startBenchSub() {
@@ -326,12 +326,12 @@ func startBenchSub() {
 	close(quitChan)
 
 	done := make(chan int)
-	printPeriodQPSAndLatencyStats(start, false, done)
+	printPeriodQPSAndLatencyStats(start, &totalSubMsgCount, false, done)
 
 	wg.Wait()
 
 	close(done)
-	printTotalQPSAndLatencyStats(start, false)
+	printTotalQPSAndLatencyStats(start, &totalSubMsgCount, false)
 }
 
 func startSimpleTest(msg []byte, batch [][]byte) {

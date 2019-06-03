@@ -312,21 +312,21 @@ func (self *NsqLookupCoordinator) notifyLeaderDisableTopicWrite(topicInfo *Topic
 	return err
 }
 
-func (self *NsqLookupCoordinator) notifyISRDisableTopicWrite(topicInfo *TopicPartitionMetaInfo) *CoordErr {
+func (self *NsqLookupCoordinator) notifyISRDisableTopicWrite(topicInfo *TopicPartitionMetaInfo) (string, *CoordErr) {
 	for _, node := range topicInfo.ISR {
 		if node == topicInfo.Leader {
 			continue
 		}
 		c, err := self.acquireRpcClient(node)
 		if err != nil {
-			return err
+			return node, err
 		}
 		err = c.DisableTopicWrite(self.leaderNode.Epoch, topicInfo)
 		if err != nil {
-			return err
+			return node, err
 		}
 	}
-	return nil
+	return "", nil
 }
 
 func (self *NsqLookupCoordinator) notifyEnableTopicWrite(topicInfo *TopicPartitionMetaInfo) *CoordErr {

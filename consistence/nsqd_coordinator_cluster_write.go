@@ -1330,6 +1330,7 @@ func (self *NsqdCoordinator) DeleteChannel(topic *nsqd.Topic, channelName string
 	if checkErr != nil {
 		return checkErr.ToErrorType()
 	}
+	coord.GetData().syncedConsumeMgr.Clear()
 
 	doLocalWrite := func(d *coordData) *CoordErr {
 		localErr := topic.DeleteExistingChannel(channelName)
@@ -1394,6 +1395,7 @@ func (self *NsqdCoordinator) deleteChannelOnSlave(tc *coordData, channelName str
 	if localErr != nil {
 		coordLog.Logf("topic %v delete channel %v on slave failed: %v ", topicName, channelName, localErr)
 	} else {
+		tc.syncedConsumeMgr.Clear()
 		topic.SaveChannelMeta()
 	}
 	return nil
@@ -1499,6 +1501,7 @@ func (self *NsqdCoordinator) updateChannelListOnSlave(tc *coordData, chList []st
 	if len(chList) > 0 {
 		coordLog.Debugf("topic %v sync channel from leader: %v", topicName, chList)
 		oldChList := topic.GetChannelMapCopy()
+		// note new channel will be synced while syncing the consume offset
 		for _, chName := range chList {
 			delete(oldChList, chName)
 		}

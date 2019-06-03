@@ -162,7 +162,7 @@ type Channel struct {
 // NewChannel creates a new instance of the Channel type and returns a pointer
 func NewChannel(topicName string, part int, topicOrdered bool, channelName string, chEnd BackendQueueEnd, opt *Options,
 	deleteCallback func(*Channel), moreDataCallback func(*Channel), consumeDisabled int32,
-	notify INsqdNotify, ext int32, queueStart BackendQueueEnd) *Channel {
+	notify INsqdNotify, ext int32, queueStart BackendQueueEnd, metaStorage IMetaStorage) *Channel {
 
 	c := &Channel{
 		topicName:          topicName,
@@ -231,7 +231,9 @@ func NewChannel(topicName string, part int, topicOrdered bool, channelName strin
 		syncEvery,
 		opt.SyncTimeout,
 		chEnd,
-		false)
+		false,
+		metaStorage,
+	)
 
 	if queueStart != nil {
 		// The old closed channel (on slave) may have the invalid read start if the

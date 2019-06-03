@@ -279,6 +279,19 @@ func (self *NsqdRpcClient) TriggerLookupChanged() error {
 	return err
 }
 
+func (self *NsqdRpcClient) UpdateChannelList(leaderSession *TopicLeaderSession, info *TopicPartitionMetaInfo, chList []string) *CoordErr {
+	var updateInfo RpcChannelListArg
+	updateInfo.TopicName = info.Name
+	updateInfo.TopicPartition = info.Partition
+	updateInfo.TopicWriteEpoch = info.EpochForWrite
+	updateInfo.Epoch = info.Epoch
+	updateInfo.TopicLeaderSessionEpoch = leaderSession.LeaderEpoch
+	updateInfo.TopicLeaderSession = leaderSession.Session
+	updateInfo.ChannelList = chList
+	retErr, err := self.CallFast("UpdateChannelList", &updateInfo)
+	return convertRpcError(err, retErr)
+}
+
 func (self *NsqdRpcClient) NotifyChannelList(leaderSession *TopicLeaderSession, info *TopicPartitionMetaInfo, chList []string) *CoordErr {
 	var updateInfo RpcChannelListArg
 	updateInfo.TopicName = info.Name

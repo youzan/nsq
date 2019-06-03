@@ -283,6 +283,55 @@ func (self *NsqdCoordRpcServer) NotifyAcquireTopicLeader(rpcTopicReq *RpcAcquire
 
 }
 
+func (self *NsqdCoordRpcServer) prepareUpdateTopicInfo(rpcTopicReq *RpcAdminTopicInfo) (bool, *CoordErr) {
+	self.nsqdCoord.coordMutex.Lock()
+	defer self.nsqdCoord.coordMutex.Unlock()
+	coords, ok := self.nsqdCoord.topicCoords[rpcTopicReq.Name]
+	myID := self.nsqdCoord.myNode.GetID()
+	// the ordered topic can have multi master partitions on the same node
+	if rpcTopicReq.Leader == myID && !rpcTopicReq.TopicMetaInfo.OrderedMulti {
+		for pid, tc := range coords {
+			if tc.GetData().GetLeader() != myID {
+				continue
+			}
+			if pid != rpcTopicReq.Partition {
+				coordLog.Infof("found local partition %v already exist master for this topic %v", pid, rpcTopicReq)
+				return false, ErrTopicCoordExistingAndMismatch
+			}
+		}
+	}
+	if rpcTopicReq.Leader != myID &&
+		FindSlice(rpcTopicReq.ISR, myID) == -1 &&
+		FindSlice(rpcTopicReq.CatchupList, myID) == -1 {
+		// a topic info not belong to me,
+		// check if we need to delete local
+		coordLog.Infof("Not a topic(%s) related to me. isr is : %v", rpcTopicReq.Name, rpcTopicReq.ISR)
+		var tc *TopicCoordinator
+		var ok2 bool
+		if ok {
+			tc, ok2 = coords[rpcTopicReq.Partition]
+			if ok2 {
+				delete(coords, rpcTopicReq.Partition)
+				coordLog.Infof("topic(%s) is removing from local node since not related", rpcTopicReq.Name)
+				tc.DeleteWithLock(false)
+				tcData := tc.GetData()
+				go func() {
+					coordLog.Infof("topic(%s) local topic data is removed from local node since not related", rpcTopicReq.Name)
+					if tcData.topicInfo.Leader == myID {
+						self.nsqdCoord.releaseTopicLeader(&tcData.topicInfo, &tc.topicLeaderSession)
+					}
+					// never hold any coordinator lock while close or delete local topic
+					self.nsqdCoord.localNsqd.CloseExistingTopic(rpcTopicReq.Name, rpcTopicReq.Partition)
+				}()
+			}
+		}
+		coordLog.Infof("topic(%s) is removed from local node since not related", rpcTopicReq.Name)
+		return false, nil
+	}
+
+	return true, nil
+}
+
 func (self *NsqdCoordRpcServer) UpdateTopicInfo(rpcTopicReq *RpcAdminTopicInfo) *CoordErr {
 	s := time.Now().Unix()
 	var ret CoordErr
@@ -303,86 +352,47 @@ func (self *NsqdCoordRpcServer) UpdateTopicInfo(rpcTopicReq *RpcAdminTopicInfo) 
 		return ErrTopicArgError
 	}
 
-	self.nsqdCoord.coordMutex.Lock()
-	coords, ok := self.nsqdCoord.topicCoords[rpcTopicReq.Name]
-	myID := self.nsqdCoord.myNode.GetID()
-	// the ordered topic can have multi master partitions on the same node
-	if rpcTopicReq.Leader == myID && !rpcTopicReq.TopicMetaInfo.OrderedMulti {
-		for pid, tc := range coords {
-			if tc.GetData().GetLeader() != myID {
-				continue
-			}
-			if pid != rpcTopicReq.Partition {
-				coordLog.Infof("found local partition %v already exist master for this topic %v", pid, rpcTopicReq)
-				ret = *ErrTopicCoordExistingAndMismatch
-				self.nsqdCoord.coordMutex.Unlock()
-				return &ret
-			}
-		}
-	}
-	if rpcTopicReq.Leader != myID &&
-		FindSlice(rpcTopicReq.ISR, myID) == -1 &&
-		FindSlice(rpcTopicReq.CatchupList, myID) == -1 {
-		// a topic info not belong to me,
-		// check if we need to delete local
-		coordLog.Infof("Not a topic(%s) related to me. isr is : %v", rpcTopicReq.Name, rpcTopicReq.ISR)
-		var tc *TopicCoordinator
-		var ok2 bool
-		if ok {
-			tc, ok2 = coords[rpcTopicReq.Partition]
-			if ok2 {
-				delete(coords, rpcTopicReq.Partition)
-				coordLog.Infof("topic(%s) is removing from local node since not related", rpcTopicReq.Name)
-				tc.DeleteWithLock(false)
-			}
-		}
-		self.nsqdCoord.coordMutex.Unlock()
-		if ok && ok2 {
-			tcData := tc.GetData()
-			if tcData.topicInfo.Leader == myID {
-				self.nsqdCoord.releaseTopicLeader(&tcData.topicInfo, &tc.topicLeaderSession)
-			}
-			// never hold any coordinator lock while close or delete local topic
-			self.nsqdCoord.localNsqd.CloseExistingTopic(rpcTopicReq.Name, rpcTopicReq.Partition)
-		}
-		coordLog.Infof("topic(%s) is removed from local node since not related", rpcTopicReq.Name)
+	needUpdate, err := self.prepareUpdateTopicInfo(rpcTopicReq)
+	if err != nil {
+		ret = *err
 		return &ret
 	}
-	if !ok {
-		coords = make(map[int]*TopicCoordinator)
-		self.nsqdCoord.topicCoords[rpcTopicReq.Name] = coords
+	if !needUpdate {
+		return &ret
 	}
-	tpCoord, ok := coords[rpcTopicReq.Partition]
+	self.nsqdCoord.coordMutex.Lock()
+	firstInit := false
+	coords, ok := self.nsqdCoord.topicCoords[rpcTopicReq.Name]
 	if !ok {
-		self.nsqdCoord.checkLocalTopicMagicCode(&rpcTopicReq.TopicPartitionMetaInfo, true)
-
-		tryFix := ForceFixLeaderData
-		var localErr error
-		tpCoord, localErr = NewTopicCoordinatorWithFixMode(rpcTopicReq.Name, rpcTopicReq.Partition,
-			GetTopicPartitionBasePath(self.dataRootPath, rpcTopicReq.Name, rpcTopicReq.Partition),
-			rpcTopicReq.SyncEvery, rpcTopicReq.OrderedMulti, tryFix)
-		if localErr != nil || tpCoord == nil {
-			self.nsqdCoord.coordMutex.Unlock()
-			ret = *ErrLocalInitTopicCoordFailed
-			return &ret
+		firstInit = true
+	} else {
+		_, ok := coords[rpcTopicReq.Partition]
+		if !ok {
+			firstInit = true
 		}
-		tpCoord.DisableWrite(true)
-
-		_, coordErr := self.nsqdCoord.updateLocalTopic(&rpcTopicReq.TopicPartitionMetaInfo, tpCoord.GetData())
-		if coordErr != nil {
-			coordLog.Warningf("init local topic failed: %v", coordErr)
-			self.nsqdCoord.coordMutex.Unlock()
-			ret = *coordErr
-			return &ret
-		}
-
-		coords[rpcTopicReq.Partition] = tpCoord
-		rpcTopicReq.DisableWrite = true
-		coordLog.Infof("A new topic coord init on the node: %v", rpcTopicReq.GetTopicDesp())
 	}
-
 	self.nsqdCoord.coordMutex.Unlock()
-	err := self.nsqdCoord.updateTopicInfo(tpCoord, rpcTopicReq.DisableWrite, &rpcTopicReq.TopicPartitionMetaInfo)
+	if firstInit {
+		// here we may close or delete local topic if magic is wrong, so we should not check in coordinator lock
+		checkErr := self.nsqdCoord.checkLocalTopicMagicCode(&rpcTopicReq.TopicPartitionMetaInfo, true)
+		if checkErr != nil {
+			ret = *ErrLocalTopicDataCorrupt
+			return &ret
+		}
+	}
+
+	tpCoord, _, _ := self.nsqdCoord.initLocalTopicCoord(&rpcTopicReq.TopicPartitionMetaInfo, nil,
+		GetTopicPartitionBasePath(self.dataRootPath, rpcTopicReq.Name, rpcTopicReq.Partition),
+		ForceFixLeaderData,
+	)
+	if tpCoord == nil {
+		ret = *ErrLocalInitTopicCoordFailed
+		return &ret
+	}
+	tpCoord.DisableWrite(true)
+	rpcTopicReq.DisableWrite = true
+
+	err = self.nsqdCoord.updateTopicInfo(tpCoord, rpcTopicReq.DisableWrite, &rpcTopicReq.TopicPartitionMetaInfo)
 	if err != nil {
 		ret = *err
 		return &ret
@@ -466,6 +476,7 @@ func (self *NsqdCoordRpcServer) DisableTopicWrite(rpcTopicReq *RpcAdminTopicInfo
 		return &ret
 	}
 	begin := time.Now()
+
 	tp.writeHold.Lock()
 	if time.Since(begin) > time.Second*3 {
 		// timeout for waiting
@@ -481,6 +492,12 @@ func (self *NsqdCoordRpcServer) DisableTopicWrite(rpcTopicReq *RpcAdminTopicInfo
 		if localErr != nil {
 			coordLog.Infof("no topic on local: %v, %v", tcData.topicInfo.GetTopicDesp(), localErr)
 		} else {
+			// we force sync topic channels while disable write because we may transfer or lose the leader, so
+			// try sync channels anyway.
+			isMeLeader := tp.GetLeader() == self.nsqdCoord.GetMyID()
+			if isMeLeader {
+				self.nsqdCoord.trySyncTopicChannels(tcData, false, true, false)
+			}
 			self.nsqdCoord.switchStateForMaster(tp, localTopic, false)
 		}
 	}
