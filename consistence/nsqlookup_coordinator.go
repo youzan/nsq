@@ -831,6 +831,7 @@ func (self *NsqLookupCoordinator) doCheckTopics(monitorChan chan struct{}, faile
 				self.notifyReleaseTopicLeader(&tmpTopicInfo, leaderSession.LeaderEpoch, leaderSession.Session)
 				err := self.waitOldLeaderRelease(&tmpTopicInfo)
 				if err != nil {
+					coordLog.Warningf("topic %v leader session release failed: %v, force release", t.GetTopicDesp(), err.Error())
 					err = self.leadership.ReleaseTopicLeader(topicInfo.Name, topicInfo.Partition, leaderSession)
 					if err != nil {
 						coordLog.Errorf("release session failed [%s] : %v", topicInfo.GetTopicDesp(), err)
