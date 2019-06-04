@@ -160,20 +160,25 @@ func (self *NsqdCoordRpcServer) NotifyReleaseTopicLeader(rpcTopicReq *RpcRelease
 		return &ret
 	}
 	coordData := topicCoord.GetData()
+	origSession := coordData.topicLeaderSession
+
 	if coordData.GetLeaderSessionID() != "" && coordData.GetLeader() != coordData.GetLeaderSessionID() {
 		// check if any old leader session acquired by mine is not released
 		if self.nsqdCoord.GetMyID() == coordData.GetLeaderSessionID() {
 			coordLog.Warningf("old leader session acquired by me is not released, my leader should release: %v", coordData)
-			origSession := coordData.topicLeaderSession
 			if origSession.LeaderEpoch  != rpcTopicReq.TopicLeaderSessionEpoch ||
 			origSession.Session != rpcTopicReq.TopicLeaderSession {
-				coordLog.Warningf("old topic %v leader session on local is not matched with newest : %v", rpcTopicReq.TopicName, rpcTopicReq)
-				if rpcTopicReq.TopicLeaderSession != "" && rpcTopicReq.TopicLeaderSessionEpoch > origSession.LeaderEpoch {
+				coordLog.Warningf("old topic %v leader old session %v on local is not matched with newest : %v", rpcTopicReq.TopicName,
+				origSession, rpcTopicReq)
+				if rpcTopicReq.TopicLeaderSession != "" {
 					origSession.LeaderEpoch = rpcTopicReq.TopicLeaderSessionEpoch
 					origSession.Session = rpcTopicReq.TopicLeaderSession
 				}
 			}
-			self.nsqdCoord.releaseTopicLeader(&coordData.topicInfo, &origSession)
+			err = self.nsqdCoord.releaseTopicLeader(&coordData.topicInfo, &origSession)
+			if err != nil {
+				ret = *err
+			}
 			return &ret
 		}
 	}
@@ -191,7 +196,10 @@ func (self *NsqdCoordRpcServer) NotifyReleaseTopicLeader(rpcTopicReq *RpcRelease
 	}
 	if coordData.GetLeader() == self.nsqdCoord.myNode.GetID() {
 		coordLog.Infof("my leader should release: %v", coordData)
-		self.nsqdCoord.releaseTopicLeader(&coordData.topicInfo, &coordData.topicLeaderSession)
+		err = self.nsqdCoord.releaseTopicLeader(&coordData.topicInfo, &origSession)
+		if err != nil {
+			ret = *err
+		}
 	} else {
 		coordLog.Infof("Leader is not me while release: %v", coordData)
 	}
