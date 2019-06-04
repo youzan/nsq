@@ -381,9 +381,10 @@ func (self *NsqdCoordRpcServer) UpdateTopicInfo(rpcTopicReq *RpcAdminTopicInfo) 
 		}
 	}
 
+	// init should not update topic coordinator topic info, since we need do some check while update topic info
 	tpCoord, _, _ := self.nsqdCoord.initLocalTopicCoord(&rpcTopicReq.TopicPartitionMetaInfo, nil,
 		GetTopicPartitionBasePath(self.dataRootPath, rpcTopicReq.Name, rpcTopicReq.Partition),
-		ForceFixLeaderData,
+		ForceFixLeaderData, false,
 	)
 	if tpCoord == nil {
 		ret = *ErrLocalInitTopicCoordFailed
