@@ -177,9 +177,10 @@ func (self *NsqLookupCoordinator) notifyAcquireTopicLeader(topicInfo *TopicParti
 	return rpcErr
 }
 
-func (self *NsqLookupCoordinator) notifyReleaseTopicLeader(topicInfo *TopicPartitionMetaInfo, leaderSessionEpoch EpochType) *CoordErr {
+func (self *NsqLookupCoordinator) notifyReleaseTopicLeader(topicInfo *TopicPartitionMetaInfo,
+	leaderSessionEpoch EpochType, leaderSession string) *CoordErr {
 	rpcErr := self.doNotifyToSingleNsqdNode(topicInfo.Leader, func(nid string) *CoordErr {
-		return self.sendReleaseTopicLeaderToNsqd(self.leaderNode.Epoch, nid, topicInfo, leaderSessionEpoch)
+		return self.sendReleaseTopicLeaderToNsqd(self.leaderNode.Epoch, nid, topicInfo, leaderSessionEpoch, leaderSession)
 	})
 	if rpcErr != nil {
 		coordLog.Infof("notify leader to acquire leader failed: %v", rpcErr)
@@ -266,12 +267,12 @@ func (self *NsqLookupCoordinator) sendAcquireTopicLeaderToNsqd(epoch EpochType, 
 }
 
 func (self *NsqLookupCoordinator) sendReleaseTopicLeaderToNsqd(epoch EpochType, nid string,
-	topicInfo *TopicPartitionMetaInfo, leaderSessionEpoch EpochType) *CoordErr {
+	topicInfo *TopicPartitionMetaInfo, leaderSessionEpoch EpochType, leaderSession string) *CoordErr {
 	c, rpcErr := self.acquireRpcClient(nid)
 	if rpcErr != nil {
 		return rpcErr
 	}
-	rpcErr = c.NotifyReleaseTopicLeader(epoch, topicInfo, leaderSessionEpoch)
+	rpcErr = c.NotifyReleaseTopicLeader(epoch, topicInfo, leaderSessionEpoch, leaderSession)
 	return rpcErr
 }
 

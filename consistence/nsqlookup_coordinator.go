@@ -824,10 +824,10 @@ func (self *NsqLookupCoordinator) doCheckTopics(monitorChan chan struct{}, faile
 			if leaderSession.LeaderNode.ID != t.Leader {
 				checkOK = false
 				lostLeaderSessions[t.GetTopicDesp()] = true
-				coordLog.Warningf("topic %v leader session mismatch: %v, %v", t.GetTopicDesp(), leaderSession, t.Leader)
+				coordLog.Warningf("topic %v leader session mismatch: %v, %v", t.GetTopicDesp(), leaderSession.LeaderNode, t.Leader)
 				tmpTopicInfo := t
 				tmpTopicInfo.Leader = leaderSession.LeaderNode.ID
-				self.notifyReleaseTopicLeader(&tmpTopicInfo, leaderSession.LeaderEpoch)
+				self.notifyReleaseTopicLeader(&tmpTopicInfo, leaderSession.LeaderEpoch, leaderSession.Session)
 				self.notifyISRTopicMetaInfo(&topicInfo)
 				self.notifyAcquireTopicLeader(&topicInfo)
 				continue
@@ -999,7 +999,7 @@ func (self *NsqLookupCoordinator) handleTopicLeaderElection(topicInfo *TopicPart
 
 	if leaderSession != nil {
 		// notify old leader node to release leader
-		self.notifyReleaseTopicLeader(topicInfo, leaderSession.LeaderEpoch)
+		self.notifyReleaseTopicLeader(topicInfo, leaderSession.LeaderEpoch, leaderSession.Session)
 	}
 
 	err = self.waitOldLeaderRelease(topicInfo)

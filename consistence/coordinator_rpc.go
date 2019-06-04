@@ -164,7 +164,16 @@ func (self *NsqdCoordRpcServer) NotifyReleaseTopicLeader(rpcTopicReq *RpcRelease
 		// check if any old leader session acquired by mine is not released
 		if self.nsqdCoord.GetMyID() == coordData.GetLeaderSessionID() {
 			coordLog.Warningf("old leader session acquired by me is not released, my leader should release: %v", coordData)
-			self.nsqdCoord.releaseTopicLeader(&coordData.topicInfo, &coordData.topicLeaderSession)
+			origSession := coordData.topicLeaderSession
+			if origSession.LeaderEpoch  != rpcTopicReq.TopicLeaderSessionEpoch ||
+			origSession.Session != rpcTopicReq.TopicLeaderSession {
+				coordLog.Warningf("old topic %v leader session on local is not matched with newest : %v", rpcTopicReq.TopicName, rpcTopicReq)
+				if rpcTopicReq.TopicLeaderSession != "" && rpcTopicReq.TopicLeaderSessionEpoch > origSession.LeaderEpoch {
+					origSession.LeaderEpoch = rpcTopicReq.TopicLeaderSessionEpoch
+					origSession.Session = rpcTopicReq.TopicLeaderSession
+				}
+			}
+			self.nsqdCoord.releaseTopicLeader(&coordData.topicInfo, &origSession)
 			return &ret
 		}
 	}

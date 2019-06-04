@@ -203,7 +203,8 @@ func (self *NsqdRpcClient) NotifyAcquireTopicLeader(epoch EpochType, topicInfo *
 	return convertRpcError(err, retErr)
 }
 
-func (self *NsqdRpcClient) NotifyReleaseTopicLeader(epoch EpochType, topicInfo *TopicPartitionMetaInfo, leaderSessionEpoch EpochType) *CoordErr {
+func (self *NsqdRpcClient) NotifyReleaseTopicLeader(epoch EpochType, topicInfo *TopicPartitionMetaInfo, 
+	leaderSessionEpoch EpochType, leaderSession string) *CoordErr {
 	var rpcInfo RpcReleaseTopicLeaderReq
 	rpcInfo.LookupdEpoch = epoch
 	rpcInfo.TopicName = topicInfo.Name
@@ -212,6 +213,7 @@ func (self *NsqdRpcClient) NotifyReleaseTopicLeader(epoch EpochType, topicInfo *
 	rpcInfo.Epoch = topicInfo.Epoch
 	rpcInfo.LeaderNodeID = topicInfo.Leader
 	rpcInfo.TopicLeaderSessionEpoch = leaderSessionEpoch
+	rpcInfo.TopicLeaderSession = leaderSession
 	retErr, err := self.CallWithRetry("NotifyReleaseTopicLeader", &rpcInfo)
 	return convertRpcError(err, retErr)
 }
