@@ -144,7 +144,7 @@ func (self *NsqLookupCoordinator) SetLeadershipMgr(l NSQLookupdLeadership) {
 
 func RetryWithTimeout(fn func() error) error {
 	bo := backoff.NewExponentialBackOff()
-	bo.MaxElapsedTime = time.Second * 30
+	bo.MaxElapsedTime = time.Second * 15
 	bo.MaxInterval = time.Second * 5
 	return backoff.Retry(fn, bo)
 }
@@ -824,10 +824,18 @@ func (self *NsqLookupCoordinator) doCheckTopics(monitorChan chan struct{}, faile
 			if leaderSession.LeaderNode.ID != t.Leader {
 				checkOK = false
 				lostLeaderSessions[t.GetTopicDesp()] = true
-				coordLog.Warningf("topic %v leader session mismatch: %v, %v", t.GetTopicDesp(), leaderSession.LeaderNode, t.Leader)
+				coordLog.Warningf("topic %v leader session %v-%v mismatch: %v", t.GetTopicDesp(), 
+				leaderSession.LeaderNode, leaderSession.Session, leaderSession.LeaderEpoch, t.Leader)
 				tmpTopicInfo := t
 				tmpTopicInfo.Leader = leaderSession.LeaderNode.ID
 				self.notifyReleaseTopicLeader(&tmpTopicInfo, leaderSession.LeaderEpoch, leaderSession.Session)
+				err := self.waitOldLeaderRelease(&tmpTopicInfo)
+				if err != nil {
+					err = self.leadership.ReleaseTopicLeader(topicInfo.Name, topicInfo.Partition, leaderSession)
+					if err != nil {
+						coordLog.Errorf("release session failed [%s] : %v", topicInfo.GetTopicDesp(), err)
+					}
+				}
 				self.notifyISRTopicMetaInfo(&topicInfo)
 				self.notifyAcquireTopicLeader(&topicInfo)
 				continue
