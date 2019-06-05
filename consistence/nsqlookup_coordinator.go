@@ -1631,6 +1631,9 @@ func (self *NsqLookupCoordinator) handleReadyForISR(topic string, partition int,
 	}
 	// we go here to allow the rpc call from client can return ok immediately
 	go func() {
+		self.nodesMutex.RLock()
+		hasRemovingNode := len(self.removingNodes) > 0
+		self.nodesMutex.RUnlock()
 		start := time.Now()
 		state.Lock()
 		defer state.Unlock()
@@ -1676,7 +1679,9 @@ func (self *NsqLookupCoordinator) handleReadyForISR(topic string, partition int,
 			close(state.doneChan)
 			state.doneChan = nil
 		}
-		if len(topicInfo.ISR) >= topicInfo.Replica && len(topicInfo.CatchupList) > 0 {
+
+		if len(topicInfo.ISR) >= topicInfo.Replica && len(topicInfo.CatchupList) > 0 && 
+			atomic.LoadInt32(&self.balanceWaiting) == 0 && !hasRemovingNode {
 			oldCatchupList := topicInfo.CatchupList
 			topicInfo.CatchupList = make([]string, 0)
 			coordErr := self.notifyOldNsqdsForTopicMetaInfo(topicInfo, oldCatchupList)
