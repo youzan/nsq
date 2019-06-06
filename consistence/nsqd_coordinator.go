@@ -330,6 +330,11 @@ func doLogQClean(tcData *coordData, localTopic *nsqd.Topic, retentionSize int64,
 		if err != nil {
 			coordLog.Infof("clean commit log err : %v", err)
 		} else {
+			// TODO: it may happen the disk queue has more old data than commit log,
+			// and it may cause the channel cursor old than commit log start but not old than disk queue
+			// start. However the slave only sync from commit log start, this may cause 
+			// the channel cursor can not be set on slave since some old disk queue data not synced.
+			retentionSize = 1024*512
 			_, err := localLogQ.TryCleanOldData(retentionSize, false, maxCleanOffset)
 			if err != nil {
 				coordLog.Infof("failed to clean disk queue: %v", err)
@@ -1911,6 +1916,9 @@ func (self *NsqdCoordinator) catchupFromLeader(topicInfo TopicPartitionMetaInfo,
 	coordErr = self.syncChannelsFromOther(c, topicInfo, localTopic)
 	if coordErr != nil {
 		coordLog.Infof("local topic %v sync channels failed: %v while joining isr", topicInfo.GetTopicDesp(), coordErr.String())
+		// TODO: if the channel cursor on leader is old than the cleaned queue start, it may failed to 
+		// sync the channel. In this case we need do full sync from leader to get the old queue files.
+		// So we should set fix state to do full sync again.
 		return coordErr
 	}
 
