@@ -107,7 +107,7 @@ func newHTTPServer(ctx *context, tlsEnabled bool, tlsRequired bool) *httpServer 
 	router.Handler("GET", "/debug/pprof/block", pprof.Handler("block"))
 	router.Handle("PUT", "/debug/setblockrate", http_api.Decorate(setBlockRateHandler, log, http_api.V1))
 	router.Handler("GET", "/debug/pprof/threadcreate", pprof.Handler("threadcreate"))
-	router.HandlerFunc("POST", "/debug/freememory", http_api.Decorate(freeOSMemory, log, http_api.V1))
+	router.Handle("POST", "/debug/freememory", http_api.Decorate(freeOSMemory, log, http_api.V1))
 
 	return s
 }
