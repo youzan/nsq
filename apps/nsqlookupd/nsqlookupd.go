@@ -33,6 +33,8 @@ var (
 	reverseProxyPort   = flagSet.String("reverse-proxy-port", "", "<port> for reverse proxy")
 
 	clusterLeadershipAddresses = flagSet.String("cluster-leadership-addresses", "", " the cluster leadership server list")
+	clusterLeadershipUsername  = flagSet.String("cluster-leadership-username", "", " the cluster leadership server username")
+	clusterLeadershipPassword  = flagSet.String("cluster-leadership-password", "", " the cluster leadership server password")
 	clusterID                  = flagSet.String("cluster-id", "nsq-test-cluster", "the cluster id used for separating different nsq cluster.")
 
 	inactiveProducerTimeout  = flagSet.Duration("inactive-producer-timeout", 60*time.Second, "duration of time a producer will remain in the active list since its last ping")

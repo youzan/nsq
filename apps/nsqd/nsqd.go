@@ -86,6 +86,8 @@ func nsqdFlagSet(opts *nsqd.Options) *flag.FlagSet {
 
 	flagSet.String("cluster-id", opts.ClusterID, "cluster id for nsq")
 	flagSet.String("cluster-leadership-addresses", opts.ClusterLeadershipAddresses, "cluster leadership server list for nsq")
+	flagSet.String("cluster-leadership-username", opts.ClusterLeadershipUsername, "cluster leadership server username for nsq")
+	flagSet.String("cluster-leadership-password", opts.ClusterLeadershipPassword, "cluster leadership server password for nsq")
 
 	flagSet.String("https-address", opts.HTTPSAddress, "<addr>:<port> to listen on for HTTPS clients")
 	flagSet.String("http-address", opts.HTTPAddress, "<addr>:<port> to listen on for HTTP clients")

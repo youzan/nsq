@@ -5,6 +5,8 @@
 cluster_id = "test-nsq-cluster-dev-1"
 ## the etcd cluster ip list
 cluster_leadership_addresses = "http://127.0.0.1:2379"
+# cluster_leadership_username = "username"
+# cluster_leadership_password = "password"
 
 ## rpc port used for node communication for cluster , ip will be the same with broadcast
 rpc_port = "4250"

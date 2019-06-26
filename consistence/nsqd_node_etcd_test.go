@@ -12,7 +12,7 @@ import (
 
 func TestNodeRe(t *testing.T) {
 	ClusterID := "test-nsq-cluster-unit-test-etcd-leadership"
-	nodeMgr, _ := NewNsqdEtcdMgr(testEtcdServers)
+	nodeMgr, _ := NewNsqdEtcdMgr(testEtcdServers, testEtcdUsername, testEtcdPassword)
 	nodeMgr.InitClusterID(ClusterID)
 	ID := "unit-test-etcd-node1"
 	nodeInfo := &NsqdNodeInfo{
@@ -29,7 +29,7 @@ func TestNodeRe(t *testing.T) {
 }
 
 func TestETCDWatch(t *testing.T) {
-	client, _ := NewEClient(testEtcdServers)
+	client, _ := NewEClient(testEtcdServers, testEtcdUsername, testEtcdPassword)
 	watcher := client.Watch("q11", 0, true)
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {

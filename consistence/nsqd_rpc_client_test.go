@@ -196,7 +196,7 @@ func startNsqdCoord(t *testing.T, rpcport string, dataPath string, extraID strin
 			return p, err
 		}
 	} else {
-		ld, _ := NewNsqdEtcdMgr(testEtcdServers)
+		ld, _ := NewNsqdEtcdMgr(testEtcdServers, testEtcdUsername, testEtcdPassword)
 		nsqdCoord.SetLeadershipMgr(ld)
 		nsqdCoord.leadership.UnregisterNsqd(&nsqdCoord.myNode)
 	}

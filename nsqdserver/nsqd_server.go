@@ -111,7 +111,7 @@ func NewNsqdServer(opts *nsqd.Options) (*nsqd.NSQD, *NsqdServer) {
 		}
 		coord := consistence.NewNsqdCoordinator(opts.ClusterID, ip, tcpPort, rpcport, httpPort,
 			strconv.FormatInt(opts.ID, 10), opts.DataPath, nsqdInstance)
-		l, err := consistence.NewNsqdEtcdMgr(opts.ClusterLeadershipAddresses)
+		l, err := consistence.NewNsqdEtcdMgr(opts.ClusterLeadershipAddresses, opts.ClusterLeadershipUsername, opts.ClusterLeadershipPassword)
 		if err != nil {
 			nsqd.NsqLogger().LogErrorf("FATAL: failed to init etcd leadership - %s", err)
 			os.Exit(1)

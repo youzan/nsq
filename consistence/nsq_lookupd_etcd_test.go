@@ -16,7 +16,7 @@ func TestLookupd(t *testing.T) {
 
 	stop := make(chan struct{})
 
-	nodeMgr, _ := NewNsqdEtcdMgr(testEtcdServers)
+	nodeMgr, _ := NewNsqdEtcdMgr(testEtcdServers, testEtcdUsername, testEtcdPassword)
 	nodeMgr.InitClusterID(ClusterID)
 	nodeInfo := &NsqdNodeInfo{
 		ID:      NsqdID,
@@ -28,7 +28,7 @@ func TestLookupd(t *testing.T) {
 	test.Nil(t, err)
 	fmt.Printf("Nsqd Node[%s] register success.\n", nodeInfo.ID)
 
-	lookupdMgr, _ := NewNsqLookupdEtcdMgr(testEtcdServers)
+	lookupdMgr, _ := NewNsqLookupdEtcdMgr(testEtcdServers, testEtcdUsername, testEtcdPassword)
 	lookupdMgr.InitClusterID(ClusterID)
 	lookupdInfo := &NsqLookupdNodeInfo{
 		ID:       LookupId1,
@@ -39,7 +39,7 @@ func TestLookupd(t *testing.T) {
 	test.Nil(t, err)
 	fmt.Printf("Nsqd Lookupd Node[%s] register success.\n", lookupdInfo.ID)
 
-	lookupdMgr2, _ := NewNsqLookupdEtcdMgr(testEtcdServers)
+	lookupdMgr2, _ := NewNsqLookupdEtcdMgr(testEtcdServers, testEtcdUsername, testEtcdPassword)
 	lookupdMgr2.InitClusterID(ClusterID)
 	lookupdInfo2 := &NsqLookupdNodeInfo{
 		ID:       LookupId2,

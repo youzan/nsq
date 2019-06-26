@@ -13,13 +13,15 @@ type EtcdClient struct {
 	kapi   client.KeysAPI
 }
 
-func NewEClient(host string) (*EtcdClient, error) {
+func NewEClient(host, userName, pwd string) (*EtcdClient, error) {
 	machines := strings.Split(host, ",")
 	initEtcdPeers(machines)
 	cfg := client.Config{
 		Endpoints:               machines,
 		Transport:               client.DefaultTransport,
 		HeaderTimeoutPerRequest: time.Second,
+		Username:                userName,
+		Password:                pwd,
 	}
 
 	c, err := client.New(cfg)

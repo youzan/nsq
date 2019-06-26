@@ -19,6 +19,8 @@ import (
 
 const (
 	testEtcdServers       = "http://127.0.0.1:2379"
+	testEtcdUsername      = "admin"
+	testEtcdPassword      = "adminPwd"
 	TEST_NSQ_CLUSTER_NAME = "test-nsq-cluster-unit-test"
 )
 
@@ -523,7 +525,7 @@ func startNsqLookupCoord(t *testing.T, useFakeLeadership bool) (*NsqLookupCoordi
 	if useFakeLeadership {
 		coord.leadership = NewFakeNsqlookupLeadership()
 	} else {
-		leadership, _ := NewNsqLookupdEtcdMgr(testEtcdServers)
+		leadership, _ := NewNsqLookupdEtcdMgr(testEtcdServers, testEtcdUsername, testEtcdPassword)
 		coord.SetLeadershipMgr(leadership)
 		coord.leadership.Unregister(&coord.myNode)
 		//panic("not test")

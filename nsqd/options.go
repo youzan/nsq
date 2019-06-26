@@ -23,6 +23,8 @@ type Options struct {
 	Verbose                    bool          `flag:"verbose"`
 	ClusterID                  string        `flag:"cluster-id"`
 	ClusterLeadershipAddresses string        `flag:"cluster-leadership-addresses" cfg:"cluster_leadership_addresses"`
+	ClusterLeadershipUsername  string        `flag:"cluster-leadership-username" cfg:"cluster_leadership_username"`
+	ClusterLeadershipPassword  string        `flag:"cluster-leadership-password" cfg:"cluster_leadership_password"`
 	TCPAddress                 string        `flag:"tcp-address"`
 	RPCPort                    string        `flag:"rpc-port"`
 	ReverseProxyPort           string        `flag:"reverse-proxy-port"`
