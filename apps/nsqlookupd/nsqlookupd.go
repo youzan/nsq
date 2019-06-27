@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/absolute8511/glog"
 	"github.com/judwhite/go-svc/svc"
 	"github.com/mreiferson/go-options"
+	"github.com/youzan/nsq/consistence"
 	"github.com/youzan/nsq/internal/app"
 	"github.com/youzan/nsq/internal/version"
 	"github.com/youzan/nsq/nsqlookupd"
@@ -35,6 +37,7 @@ var (
 	clusterLeadershipAddresses = flagSet.String("cluster-leadership-addresses", "", " the cluster leadership server list")
 	clusterLeadershipUsername  = flagSet.String("cluster-leadership-username", "", " the cluster leadership server username")
 	clusterLeadershipPassword  = flagSet.String("cluster-leadership-password", "", " the cluster leadership server password")
+	clusterLeadershipRootDir   = flagSet.String("cluster-leadership-root-dir", "", " the cluster leadership server root dir")
 	clusterID                  = flagSet.String("cluster-id", "nsq-test-cluster", "the cluster id used for separating different nsq cluster.")
 
 	inactiveProducerTimeout  = flagSet.Duration("inactive-producer-timeout", 60*time.Second, "duration of time a producer will remain in the active list since its last ping")
@@ -95,6 +98,11 @@ func (p *program) Start() error {
 	}
 	nsqlookupd.SetLogger(opts.Logger, opts.LogLevel)
 	glog.StartWorker(time.Second * 2)
+
+	if strings.TrimSpace(opts.ClusterLeadershipRootDir) != "" {
+		consistence.NSQ_ROOT_DIR = opts.ClusterLeadershipRootDir
+	}
+
 	daemon := nsqlookupd.New(opts)
 
 	daemon.Main()

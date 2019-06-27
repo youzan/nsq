@@ -7,8 +7,10 @@
 
 package consistence
 
+// this is default value
+var NSQ_ROOT_DIR = "NSQMetaData"
+
 const (
-	NSQ_ROOT_DIR               = "NSQMetaData"
 	NSQ_TOPIC_DIR              = "Topics"
 	NSQ_TOPIC_META             = "TopicMeta"
 	NSQ_TOPIC_REPLICA_INFO     = "ReplicaInfo"
