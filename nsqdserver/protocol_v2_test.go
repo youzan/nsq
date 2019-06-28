@@ -4651,11 +4651,11 @@ func TestOutputBufferingValidity(t *testing.T) {
 		"output_buffer_size":    0,
 		"output_buffer_timeout": 0,
 	}, frameTypeResponse)
+	// exceed size will be convert to max
 	data := identify(t, conn, map[string]interface{}{
 		"output_buffer_size":    512*1024 + 1,
 		"output_buffer_timeout": 0,
-	}, frameTypeError)
-	test.Equal(t, string(data), fmt.Sprintf("E_BAD_BODY IDENTIFY output buffer size (%d) is invalid", 512*1024+1))
+	}, frameTypeResponse)
 
 	conn, err = mustConnectNSQD(tcpAddr)
 	test.Equal(t, err, nil)

@@ -602,6 +602,8 @@ func (c *ClientV2) SetOutputBufferSize(desiredSize int) error {
 		// do nothing (use default)
 	case desiredSize >= 64 && desiredSize <= int(c.ctxOpts.MaxOutputBufferSize):
 		size = desiredSize
+	case desiredSize > int(c.ctxOpts.MaxOutputBufferSize):
+		size = int(c.ctxOpts.MaxOutputBufferSize)
 	default:
 		return fmt.Errorf("output buffer size (%d) is invalid", desiredSize)
 	}

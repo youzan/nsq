@@ -144,7 +144,7 @@ func (self *NsqLookupCoordinator) SetLeadershipMgr(l NSQLookupdLeadership) {
 
 func RetryWithTimeout(fn func() error) error {
 	bo := backoff.NewExponentialBackOff()
-	bo.MaxElapsedTime = time.Second * 30
+	bo.MaxElapsedTime = time.Second * 15
 	bo.MaxInterval = time.Second * 5
 	return backoff.Retry(fn, bo)
 }
@@ -824,10 +824,19 @@ func (self *NsqLookupCoordinator) doCheckTopics(monitorChan chan struct{}, faile
 			if leaderSession.LeaderNode.ID != t.Leader {
 				checkOK = false
 				lostLeaderSessions[t.GetTopicDesp()] = true
-				coordLog.Warningf("topic %v leader session mismatch: %v, %v", t.GetTopicDesp(), leaderSession.LeaderNode, t.Leader)
+				coordLog.Warningf("topic %v leader session %v-%v-%v mismatch: %v", t.GetTopicDesp(), 
+				leaderSession.LeaderNode, leaderSession.Session, leaderSession.LeaderEpoch, t.Leader)
 				tmpTopicInfo := t
 				tmpTopicInfo.Leader = leaderSession.LeaderNode.ID
 				self.notifyReleaseTopicLeader(&tmpTopicInfo, leaderSession.LeaderEpoch, leaderSession.Session)
+				err := self.waitOldLeaderRelease(&tmpTopicInfo)
+				if err != nil {
+					coordLog.Warningf("topic %v leader session release failed: %v, force release", t.GetTopicDesp(), err.Error())
+					err = self.leadership.ReleaseTopicLeader(topicInfo.Name, topicInfo.Partition, leaderSession)
+					if err != nil {
+						coordLog.Errorf("release session failed [%s] : %v", topicInfo.GetTopicDesp(), err)
+					}
+				}
 				self.notifyISRTopicMetaInfo(&topicInfo)
 				self.notifyAcquireTopicLeader(&topicInfo)
 				continue
@@ -1622,6 +1631,9 @@ func (self *NsqLookupCoordinator) handleReadyForISR(topic string, partition int,
 	}
 	// we go here to allow the rpc call from client can return ok immediately
 	go func() {
+		self.nodesMutex.RLock()
+		hasRemovingNode := len(self.removingNodes) > 0
+		self.nodesMutex.RUnlock()
 		start := time.Now()
 		state.Lock()
 		defer state.Unlock()
@@ -1667,7 +1679,9 @@ func (self *NsqLookupCoordinator) handleReadyForISR(topic string, partition int,
 			close(state.doneChan)
 			state.doneChan = nil
 		}
-		if len(topicInfo.ISR) >= topicInfo.Replica && len(topicInfo.CatchupList) > 0 {
+
+		if len(topicInfo.ISR) >= topicInfo.Replica && len(topicInfo.CatchupList) > 0 && 
+			atomic.LoadInt32(&self.balanceWaiting) == 0 && !hasRemovingNode {
 			oldCatchupList := topicInfo.CatchupList
 			topicInfo.CatchupList = make([]string, 0)
 			coordErr := self.notifyOldNsqdsForTopicMetaInfo(topicInfo, oldCatchupList)
