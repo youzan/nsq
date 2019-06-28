@@ -50,8 +50,8 @@ type NsqLookupdEtcdMgr struct {
 	topicReplicasMap map[string]map[int]TopicPartitionReplicaInfo
 }
 
-func NewNsqLookupdEtcdMgr(host string) (*NsqLookupdEtcdMgr, error) {
-	client, err := NewEClient(host)
+func NewNsqLookupdEtcdMgr(host, username, pwd string) (*NsqLookupdEtcdMgr, error) {
+	client, err := NewEClient(host, username, pwd)
 	if err != nil {
 		return nil, err
 	}

@@ -33,8 +33,8 @@ type NsqdEtcdMgr struct {
 	refreshStopCh chan bool
 }
 
-func NewNsqdEtcdMgr(host string) (*NsqdEtcdMgr, error) {
-	client, err := NewEClient(host)
+func NewNsqdEtcdMgr(host, username, pwd string) (*NsqdEtcdMgr, error) {
+	client, err := NewEClient(host, username, pwd)
 	if err != nil {
 		return nil, err
 	}
