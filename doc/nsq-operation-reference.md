@@ -197,16 +197,32 @@ Timed Out: 累计超时的消息条数.
 
 Messages: 队列中的消息总条数
 
+### NSQ多集群多机房管理
+参考技术文章:
+https://mp.weixin.qq.com/s?__biz=MzAxOTY5MDMxNA==&mid=2455759899&idx=1&sn=43bbb2c0fb17b2d3e38c900ddd6b05e1&chksm=8c686a3ebb1fe328f57f1a8db46d8ca571f87c4b13f58c25f96534a15aea0b90113dca86d6bc&mpshare=1&scene=1&srcid=&rd2werd=1#wechat_redirect
+
 ## 常见故障处理
 
 ### 网络分区不可达
 
+少于一半副本的分区会不可读写, 网络恢复后会自动重新同步数据
+
 ### 消费堆积
+
+查看是否有客户端消费超时, 或者异常req的消息一直在重试.
 
 ### 遗留消费清理
 
+从admin界面直接empty清理全部消息, 或者点击fin按钮手动ack某一条异常消息
+
 ### 手动清理一直重试的消息
+
+admin界面支持点击fin按钮手动ack某一条异常消息, 需要提供内部消息ID
 
 ### 磁盘写满
 
+下掉有问题的机子, 让副本自动迁移, 如果有单副本的topic, 需要修复模式启动
+
 ### 机器宕机
+
+下掉有问题的机子, 让副本自动迁移
