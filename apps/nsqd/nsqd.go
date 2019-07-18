@@ -17,6 +17,7 @@ import (
 	"github.com/absolute8511/glog"
 	"github.com/judwhite/go-svc/svc"
 	"github.com/mreiferson/go-options"
+	"github.com/youzan/nsq/consistence"
 	"github.com/youzan/nsq/internal/app"
 	"github.com/youzan/nsq/internal/version"
 	"github.com/youzan/nsq/nsqd"
@@ -88,6 +89,7 @@ func nsqdFlagSet(opts *nsqd.Options) *flag.FlagSet {
 	flagSet.String("cluster-leadership-addresses", opts.ClusterLeadershipAddresses, "cluster leadership server list for nsq")
 	flagSet.String("cluster-leadership-username", opts.ClusterLeadershipUsername, "cluster leadership server username for nsq")
 	flagSet.String("cluster-leadership-password", opts.ClusterLeadershipPassword, "cluster leadership server password for nsq")
+	flagSet.String("cluster-leadership-root-dir", opts.ClusterLeadershipRootDir, "cluster leadership server root dir for nsq")
 
 	flagSet.String("https-address", opts.HTTPSAddress, "<addr>:<port> to listen on for HTTPS clients")
 	flagSet.String("http-address", opts.HTTPAddress, "<addr>:<port> to listen on for HTTP clients")
@@ -256,6 +258,10 @@ func (p *program) Start() error {
 		glog.SetGLogDir(opts.LogDir)
 	}
 	glog.StartWorker(time.Second * 2)
+
+	if strings.TrimSpace(opts.ClusterLeadershipRootDir) != "" {
+		consistence.NSQ_ROOT_DIR = opts.ClusterLeadershipRootDir
+	}
 
 	// if we are using the coordinator, we should disable the topic at startup
 	initDisabled := int32(0)

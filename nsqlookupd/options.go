@@ -22,6 +22,7 @@ type Options struct {
 	ClusterLeadershipAddresses string `flag:"cluster-leadership-addresses" cfg:"cluster_leadership_addresses"`
 	ClusterLeadershipUsername  string `flag:"cluster-leadership-username" cfg:"cluster_leadership_username"`
 	ClusterLeadershipPassword  string `flag:"cluster-leadership-password" cfg:"cluster_leadership_password"`
+	ClusterLeadershipRootDir   string `flag:"cluster-leadership-root-dir" cfg:"cluster_leadership_root_dir"`
 
 	InactiveProducerTimeout  time.Duration `flag:"inactive-producer-timeout"`
 	NsqdPingTimeout          time.Duration `flag:"nsqd-ping-timeout"`
