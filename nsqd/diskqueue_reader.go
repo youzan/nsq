@@ -1033,10 +1033,10 @@ CheckFileOpen:
 		if err == nil {
 			// we compare the meta file to check if any wrong on the count of message
 			if metaEnd != int64(d.readQueueInfo.Offset()) {
-				nsqLog.Warningf("the reader offset is not equal with the meta. %v", d.readQueueInfo, metaEnd)
+				nsqLog.Warningf("the reader offset is not equal with the meta. %v %d", d.readQueueInfo, metaEnd)
 			} else {
 				if fixCnt != d.readQueueInfo.TotalMsgCnt() {
-					nsqLog.Warningf("the reader offset is not equal with the meta. %v", d.readQueueInfo, fixCnt)
+					nsqLog.Warningf("the reader offset is not equal with the meta. %v %d", d.readQueueInfo, fixCnt)
 				}
 			}
 		}
