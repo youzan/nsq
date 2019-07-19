@@ -38,7 +38,7 @@ var (
 	clusterLeadershipUsername  = flagSet.String("cluster-leadership-username", "", " the cluster leadership server username")
 	clusterLeadershipPassword  = flagSet.String("cluster-leadership-password", "", " the cluster leadership server password")
 	clusterLeadershipRootDir   = flagSet.String("cluster-leadership-root-dir", "", " the cluster leadership server root dir")
-	clusterID                  = flagSet.String("cluster-id", "nsq-test-cluster", "the cluster id used for separating different nsq cluster.")
+	clusterID                  = flagSet.String("cluster-id", "nsq-clusterid-test-only", "the cluster id used for separating different nsq cluster.")
 
 	inactiveProducerTimeout  = flagSet.Duration("inactive-producer-timeout", 60*time.Second, "duration of time a producer will remain in the active list since its last ping")
 	nsqdPingTimeout          = flagSet.Duration("nsqd-ping-timeout", 15*time.Second, "duration of nsqd ping timeout, should be at least twice as the nsqd ping interval")
