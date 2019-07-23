@@ -824,8 +824,8 @@ func (self *NsqLookupCoordinator) doCheckTopics(monitorChan chan struct{}, faile
 			if leaderSession.LeaderNode.ID != t.Leader {
 				checkOK = false
 				lostLeaderSessions[t.GetTopicDesp()] = true
-				coordLog.Warningf("topic %v leader session %v-%v-%v mismatch: %v", t.GetTopicDesp(), 
-				leaderSession.LeaderNode, leaderSession.Session, leaderSession.LeaderEpoch, t.Leader)
+				coordLog.Warningf("topic %v leader session %v-%v-%v mismatch: %v", t.GetTopicDesp(),
+					leaderSession.LeaderNode, leaderSession.Session, leaderSession.LeaderEpoch, t.Leader)
 				tmpTopicInfo := t
 				tmpTopicInfo.Leader = leaderSession.LeaderNode.ID
 				self.notifyReleaseTopicLeader(&tmpTopicInfo, leaderSession.LeaderEpoch, leaderSession.Session)
@@ -1356,8 +1356,8 @@ func (self *NsqLookupCoordinator) revokeEnableTopicWrite(topic string, partition
 		return rpcErr
 	}
 
-	failedNode, rpcErr := self.notifyISRDisableTopicWrite(topicInfo);
-	if  rpcErr != nil {
+	failedNode, rpcErr := self.notifyISRDisableTopicWrite(topicInfo)
+	if rpcErr != nil {
 		coordLog.Infof("try disable isr write for topic %v failed: %v, node: %v", topicInfo, rpcErr, failedNode)
 		if rpcErr.IsEqual(ErrMissingTopicCoord) {
 			failedNodes := make([]string, 0, 1)
@@ -1469,7 +1469,7 @@ func (self *NsqLookupCoordinator) handleRequestJoinCatchup(topic string, partiti
 		return &CoordErr{"catchup node should not in the isr", RpcCommonErr, CoordCommonErr}
 	}
 	if len(topicInfo.ISR)+len(topicInfo.CatchupList) > topicInfo.Replica {
-		coordLog.Infof("topic(%v) current isr and catchup list: %v", topicInfo.GetTopicDesp(), topicInfo.ISR, topicInfo.CatchupList)
+		coordLog.Infof("topic(%v) current isr and catchup list: %v, %v", topicInfo.GetTopicDesp(), topicInfo.ISR, topicInfo.CatchupList)
 		return ErrTopicISRCatchupEnough
 	}
 	coordLog.Infof("node %v try join catchup for topic: %v", nid, topicInfo.GetTopicDesp())
@@ -1680,7 +1680,7 @@ func (self *NsqLookupCoordinator) handleReadyForISR(topic string, partition int,
 			state.doneChan = nil
 		}
 
-		if len(topicInfo.ISR) >= topicInfo.Replica && len(topicInfo.CatchupList) > 0 && 
+		if len(topicInfo.ISR) >= topicInfo.Replica && len(topicInfo.CatchupList) > 0 &&
 			atomic.LoadInt32(&self.balanceWaiting) == 0 && !hasRemovingNode {
 			oldCatchupList := topicInfo.CatchupList
 			topicInfo.CatchupList = make([]string, 0)

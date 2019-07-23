@@ -257,7 +257,7 @@ func (self *NsqdEtcdMgr) WatchLookupdLeader(leader chan *NsqLookupdNodeInfo, sto
 						coordLog.Errorf("rewatch and get key[%s] error: %s", key, err.Error())
 						continue
 					}
-					coordLog.Warningf("rewatch key %v with newest index: %s, new data: %v", key, rsp.Index, rsp.Node.String())
+					coordLog.Warningf("rewatch key %v with newest index: %v, new data: %v", key, rsp.Index, rsp.Node.String())
 					watcher = self.client.Watch(key, rsp.Index+1, true)
 				} else {
 					time.Sleep(5 * time.Second)

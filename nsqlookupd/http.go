@@ -168,6 +168,9 @@ func (s *httpServer) doInfo(w http.ResponseWriter, req *http.Request, ps httprou
 func (s *httpServer) doClusterStats(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {
 	stable := false
 	nodeStatMap := make(map[string]*NodeStat)
+	var topTopicStats consistence.LFListT
+	n, _ := strconv.Atoi(req.FormValue("topn"))
+
 	if s.ctx.nsqlookupd.coordinator != nil {
 		if !s.ctx.nsqlookupd.coordinator.IsMineLeader() {
 			nsqlookupLog.Logf("request from remote %v should request to leader", req.RemoteAddr)
@@ -175,6 +178,9 @@ func (s *httpServer) doClusterStats(w http.ResponseWriter, req *http.Request, ps
 		}
 
 		stable = s.ctx.nsqlookupd.coordinator.IsClusterStable()
+		if n > 0 {
+			topTopicStats = s.ctx.nsqlookupd.coordinator.GetClusterTopNTopics(n)
+		}
 		leaderLFs, nodeLFs := s.ctx.nsqlookupd.coordinator.GetClusterNodeLoadFactor()
 		for nid, lf := range leaderLFs {
 			p := s.ctx.nsqlookupd.DB.SearchPeerClientByClusterID(nid)
@@ -215,12 +221,21 @@ func (s *httpServer) doClusterStats(w http.ResponseWriter, req *http.Request, ps
 	for _, v := range nodeStatMap {
 		nodeStatList = append(nodeStatList, v)
 	}
+	topNList := make([]TopNInfo, 0, len(topTopicStats))
+	for _, t := range topTopicStats {
+		topNList = append(topNList, TopNInfo{
+			Topic:      t.GetTopic(),
+			LoadFactor: t.GetLF(),
+		})
+	}
 	return struct {
 		Stable       bool        `json:"stable"`
 		NodeStatList []*NodeStat `json:"node_stat_list"`
+		TopNTopics   []TopNInfo  `json:"topn_topics"`
 	}{
 		Stable:       stable,
 		NodeStatList: nodeStatList,
+		TopNTopics:   topNList,
 	}, nil
 }
 
@@ -817,6 +832,11 @@ type NodeStat struct {
 	HTTPPort         int     `json:"http_port"`
 	LeaderLoadFactor float64 `json:"leader_load_factor"`
 	NodeLoadFactor   float64 `json:"node_load_factor"`
+}
+
+type TopNInfo struct {
+	Topic      string  `json:"topic,omitempty"`
+	LoadFactor float64 `json:"load_factor,omitempty"`
 }
 
 type node struct {

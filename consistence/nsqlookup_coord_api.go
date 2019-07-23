@@ -138,6 +138,25 @@ func (self *NsqLookupCoordinator) GetClusterNodeLoadFactor() (map[string]float64
 	return leaderFactors, nodeFactors
 }
 
+func (self *NsqLookupCoordinator) GetClusterTopNTopics(n int) LFListT {
+	currentNodes := self.getCurrentNodes()
+	nodeTopicStats := make([]NodeTopicStats, 0, len(currentNodes))
+	for nodeID, nodeInfo := range currentNodes {
+		topicStat, err := self.getNsqdTopicStat(nodeInfo)
+		if err != nil {
+			coordLog.Infof("failed to get node topic status : %v", nodeID)
+			continue
+		}
+		nodeTopicStats = append(nodeTopicStats, *topicStat)
+	}
+	topicInfoList, err := self.leadership.ScanTopics()
+	if err != nil {
+		coordLog.Infof("scan topics error: %v", err)
+		return nil
+	}
+	return getTopNTopicsStats(nodeTopicStats, topicInfoList, n, false)
+}
+
 func (self *NsqLookupCoordinator) IsTopicLeader(topic string, part int, nid string) bool {
 	t, err := self.leadership.GetTopicInfo(topic, part)
 	if err != nil {
@@ -386,7 +405,7 @@ func (self *NsqLookupCoordinator) ChangeTopicMetaParam(topic string,
 	}
 	var meta TopicMetaInfo
 	if ok, _ := self.leadership.IsExistTopic(topic); !ok {
-		coordLog.Infof("topic not exist %v :%v", topic)
+		coordLog.Infof("topic not exist %v ", topic)
 		return ErrTopicNotCreated
 	} else {
 		oldMeta, oldGen, err := self.leadership.GetTopicMetaInfo(topic)
@@ -516,7 +535,7 @@ func (self *NsqLookupCoordinator) ExpandTopicPartition(topic string, newPartitio
 	}
 	var meta TopicMetaInfo
 	if ok, _ := self.leadership.IsExistTopic(topic); !ok {
-		coordLog.Infof("topic not exist %v :%v", topic)
+		coordLog.Infof("topic not exist %v", topic)
 		return ErrTopicNotCreated
 	} else {
 		oldMeta, oldGen, err := self.leadership.GetTopicMetaInfo(topic)
