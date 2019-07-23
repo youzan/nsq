@@ -174,37 +174,37 @@ func NewNodeTopicStats(nid string, cap int, cpus int) *NodeTopicStats {
 // the larger means busier.
 // 80% recent avg load in 24hr + 10% left need to be consumed + 10% data size left
 
-func (self *NodeTopicStats) GetNodeLoadFactor() (float64, float64) {
-	leaderLF := self.GetNodeLeaderLoadFactor()
+func (nts *NodeTopicStats) GetNodeLoadFactor() (float64, float64) {
+	leaderLF := nts.GetNodeLeaderLoadFactor()
 	totalDataSize := int64(0)
-	for _, v := range self.TopicTotalDataSize {
+	for _, v := range nts.TopicTotalDataSize {
 		totalDataSize += v
 	}
-	totalDataSize += int64(len(self.TopicTotalDataSize))
+	totalDataSize += int64(len(nts.TopicTotalDataSize))
 	if totalDataSize > HIGHEST_LEFT_DATA_MB_SIZE {
 		totalDataSize = HIGHEST_LEFT_DATA_MB_SIZE
 	}
 	return leaderLF, leaderLF + float64(totalDataSize)/HIGHEST_LEFT_DATA_MB_SIZE*5
 }
 
-func (self *NodeTopicStats) GetNodeLeaderLoadFactor() float64 {
+func (nts *NodeTopicStats) GetNodeLeaderLoadFactor() float64 {
 	leftConsumed := int64(0)
-	for _, t := range self.ChannelDepthData {
+	for _, t := range nts.ChannelDepthData {
 		leftConsumed += t
 	}
-	leftConsumed += int64(len(self.ChannelDepthData))
+	leftConsumed += int64(len(nts.ChannelDepthData))
 	if leftConsumed > HIGHEST_LEFT_CONSUME_MB_SIZE {
 		leftConsumed = HIGHEST_LEFT_CONSUME_MB_SIZE
 	}
 	totalLeaderDataSize := int64(0)
-	for _, v := range self.TopicLeaderDataSize {
+	for _, v := range nts.TopicLeaderDataSize {
 		totalLeaderDataSize += v
 	}
-	totalLeaderDataSize += int64(len(self.TopicLeaderDataSize))
+	totalLeaderDataSize += int64(len(nts.TopicLeaderDataSize))
 	if totalLeaderDataSize > HIGHEST_LEFT_DATA_MB_SIZE {
 		totalLeaderDataSize = HIGHEST_LEFT_DATA_MB_SIZE
 	}
-	avgWrite := self.GetNodeAvgWriteLevel()
+	avgWrite := nts.GetNodeAvgWriteLevel()
 	if avgWrite > HIGHEST_PUB_QPS_LEVEL {
 		avgWrite = HIGHEST_PUB_QPS_LEVEL
 	}
@@ -212,9 +212,9 @@ func (self *NodeTopicStats) GetNodeLeaderLoadFactor() float64 {
 	return avgWrite/HIGHEST_PUB_QPS_LEVEL*80.0 + float64(leftConsumed)/HIGHEST_LEFT_CONSUME_MB_SIZE*10.0 + float64(totalLeaderDataSize)/HIGHEST_LEFT_DATA_MB_SIZE*10.0
 }
 
-func (self *NodeTopicStats) GetNodePeakLevelList() []int64 {
+func (nts *NodeTopicStats) GetNodePeakLevelList() []int64 {
 	levelList := make([]int64, 8)
-	for _, dataList := range self.TopicHourlyPubDataList {
+	for _, dataList := range nts.TopicHourlyPubDataList {
 		peak := int64(10)
 		for _, data := range dataList {
 			if data > peak {
@@ -230,10 +230,10 @@ func (self *NodeTopicStats) GetNodePeakLevelList() []int64 {
 	return levelList
 }
 
-func (self *NodeTopicStats) GetNodeAvgWriteLevel() float64 {
+func (nts *NodeTopicStats) GetNodeAvgWriteLevel() float64 {
 	level := int64(0)
 	tmp := make(IntHeap, 0, 24)
-	for _, dataList := range self.TopicHourlyPubDataList {
+	for _, dataList := range nts.TopicHourlyPubDataList {
 		sum := int64(10)
 		cnt := 0
 		tmp = tmp[:0]
@@ -255,10 +255,10 @@ func (self *NodeTopicStats) GetNodeAvgWriteLevel() float64 {
 	return convertQPSLevel(level)
 }
 
-func (self *NodeTopicStats) GetNodeAvgReadLevel() float64 {
+func (nts *NodeTopicStats) GetNodeAvgReadLevel() float64 {
 	level := float64(0)
 	tmp := make(IntHeap, 0, 24)
-	for topicName, dataList := range self.TopicHourlyPubDataList {
+	for topicName, dataList := range nts.TopicHourlyPubDataList {
 		sum := int64(10)
 		cnt := 0
 		tmp = tmp[:0]
@@ -275,7 +275,7 @@ func (self *NodeTopicStats) GetNodeAvgReadLevel() float64 {
 		}
 
 		sum = sum / int64(cnt)
-		num, ok := self.ChannelNum[topicName]
+		num, ok := nts.ChannelNum[topicName]
 		if ok {
 			level += math.Log2(1.0+float64(num)) * float64(sum)
 		}
@@ -283,29 +283,29 @@ func (self *NodeTopicStats) GetNodeAvgReadLevel() float64 {
 	return convertQPSLevel(int64(level))
 }
 
-func (self *NodeTopicStats) GetTopicLoadFactor(topicFullName string) float64 {
-	data := self.TopicTotalDataSize[topicFullName]
+func (nts *NodeTopicStats) GetTopicLoadFactor(topicFullName string) float64 {
+	data := nts.TopicTotalDataSize[topicFullName]
 	if data > HIGHEST_LEFT_DATA_MB_SIZE {
 		data = HIGHEST_LEFT_DATA_MB_SIZE
 	}
-	return self.GetTopicLeaderLoadFactor(topicFullName) + float64(data)/HIGHEST_LEFT_DATA_MB_SIZE*5.0
+	return nts.GetTopicLeaderLoadFactor(topicFullName) + float64(data)/HIGHEST_LEFT_DATA_MB_SIZE*5.0
 }
 
-func (self *NodeTopicStats) GetTopicLeaderLoadFactor(topicFullName string) float64 {
-	writeLevel := self.GetTopicAvgWriteLevel(topicFullName)
-	depth := self.ChannelDepthData[topicFullName]
+func (nts *NodeTopicStats) GetTopicLeaderLoadFactor(topicFullName string) float64 {
+	writeLevel := nts.GetTopicAvgWriteLevel(topicFullName)
+	depth := nts.ChannelDepthData[topicFullName]
 	if depth > HIGHEST_LEFT_CONSUME_MB_SIZE {
 		depth = HIGHEST_LEFT_CONSUME_MB_SIZE
 	}
-	data := self.TopicLeaderDataSize[topicFullName]
+	data := nts.TopicLeaderDataSize[topicFullName]
 	if data > HIGHEST_LEFT_DATA_MB_SIZE {
 		data = HIGHEST_LEFT_DATA_MB_SIZE
 	}
 	return writeLevel/HIGHEST_PUB_QPS_LEVEL*80.0 + float64(depth)/HIGHEST_LEFT_CONSUME_MB_SIZE*10.0 + float64(data)/HIGHEST_LEFT_DATA_MB_SIZE*10.0
 }
 
-func (self *NodeTopicStats) GetTopicAvgWriteLevel(topicFullName string) float64 {
-	dataList, ok := self.TopicHourlyPubDataList[topicFullName]
+func (nts *NodeTopicStats) GetTopicAvgWriteLevel(topicFullName string) float64 {
+	dataList, ok := nts.TopicHourlyPubDataList[topicFullName]
 	if ok {
 		sum := int64(10)
 		cnt := 0
@@ -354,10 +354,10 @@ func (s LFListT) Less(i, j int) bool {
 	return s[i].loadFactor < s[j].loadFactor
 }
 
-func (self *NodeTopicStats) GetSortedTopicWriteLevel(leaderOnly bool) LFListT {
+func (nts *NodeTopicStats) GetSortedTopicWriteLevel(leaderOnly bool) LFListT {
 	topicLFList := make(LFListT, 0)
-	for topicName := range self.TopicHourlyPubDataList {
-		d, ok := self.TopicLeaderDataSize[topicName]
+	for topicName := range nts.TopicHourlyPubDataList {
+		d, ok := nts.TopicLeaderDataSize[topicName]
 		if leaderOnly {
 			if !ok || d <= 0 {
 				continue
@@ -369,9 +369,9 @@ func (self *NodeTopicStats) GetSortedTopicWriteLevel(leaderOnly bool) LFListT {
 		}
 		lf := 0.0
 		if leaderOnly {
-			lf = self.GetTopicLeaderLoadFactor(topicName)
+			lf = nts.GetTopicLeaderLoadFactor(topicName)
 		} else {
-			lf = self.GetTopicLoadFactor(topicName)
+			lf = nts.GetTopicLoadFactor(topicName)
 		}
 		topicLFList = append(topicLFList, loadFactorInfo{
 			topic:      topicName,
@@ -382,13 +382,13 @@ func (self *NodeTopicStats) GetSortedTopicWriteLevel(leaderOnly bool) LFListT {
 	return topicLFList
 }
 
-func (self *NodeTopicStats) GetMostBusyAndIdleTopicWriteLevel(leaderOnly bool) (string, string, float64, float64) {
+func (nts *NodeTopicStats) GetMostBusyAndIdleTopicWriteLevel(leaderOnly bool) (string, string, float64, float64) {
 	busy := float64(0.0)
 	busyTopic := ""
 	idle := float64(math.MaxInt32)
 	idleTopic := ""
-	for topicName := range self.TopicHourlyPubDataList {
-		d, ok := self.TopicLeaderDataSize[topicName]
+	for topicName := range nts.TopicHourlyPubDataList {
+		d, ok := nts.TopicLeaderDataSize[topicName]
 		if leaderOnly {
 			if !ok || d <= 0 {
 				continue
@@ -401,9 +401,9 @@ func (self *NodeTopicStats) GetMostBusyAndIdleTopicWriteLevel(leaderOnly bool) (
 
 		sum := 0.0
 		if leaderOnly {
-			sum = self.GetTopicLeaderLoadFactor(topicName)
+			sum = nts.GetTopicLeaderLoadFactor(topicName)
 		} else {
-			sum = self.GetTopicLoadFactor(topicName)
+			sum = nts.GetTopicLoadFactor(topicName)
 		}
 
 		if sum > busy {
@@ -418,9 +418,9 @@ func (self *NodeTopicStats) GetMostBusyAndIdleTopicWriteLevel(leaderOnly bool) (
 	return idleTopic, busyTopic, idle, busy
 }
 
-func (self *NodeTopicStats) GetTopicPeakLevel(topic TopicPartitionID) float64 {
+func (nts *NodeTopicStats) GetTopicPeakLevel(topic TopicPartitionID) float64 {
 	selectedTopic := topic.String()
-	dataList, ok := self.TopicHourlyPubDataList[selectedTopic]
+	dataList, ok := nts.TopicHourlyPubDataList[selectedTopic]
 	if ok {
 		peak := int64(10)
 		for _, data := range dataList {
@@ -433,11 +433,11 @@ func (self *NodeTopicStats) GetTopicPeakLevel(topic TopicPartitionID) float64 {
 	return 1.0
 }
 
-func (self *NodeTopicStats) LeaderLessLoader(other *NodeTopicStats) bool {
-	left := self.GetNodeLeaderLoadFactor()
+func (nts *NodeTopicStats) LeaderLessLoader(other *NodeTopicStats) bool {
+	left := nts.GetNodeLeaderLoadFactor()
 	right := other.GetNodeLeaderLoadFactor()
 	if math.Abs(left-right) < 0.5 {
-		left := float64(len(self.TopicLeaderDataSize)) + float64(len(self.TopicTotalDataSize)-len(self.TopicLeaderDataSize))*RATIO_BETWEEN_LEADER_FOLLOWER
+		left := float64(len(nts.TopicLeaderDataSize)) + float64(len(nts.TopicTotalDataSize)-len(nts.TopicLeaderDataSize))*RATIO_BETWEEN_LEADER_FOLLOWER
 		right := float64(len(other.TopicLeaderDataSize)) + float64(len(other.TopicTotalDataSize)-len(other.TopicLeaderDataSize))*RATIO_BETWEEN_LEADER_FOLLOWER
 		return left < right
 	}
@@ -448,11 +448,11 @@ func (self *NodeTopicStats) LeaderLessLoader(other *NodeTopicStats) bool {
 	return false
 }
 
-func (self *NodeTopicStats) SlaveLessLoader(other *NodeTopicStats) bool {
-	_, left := self.GetNodeLoadFactor()
+func (nts *NodeTopicStats) SlaveLessLoader(other *NodeTopicStats) bool {
+	_, left := nts.GetNodeLoadFactor()
 	_, right := other.GetNodeLoadFactor()
 	if math.Abs(left-right) < 0.5 {
-		left := float64(len(self.TopicLeaderDataSize)) + float64(len(self.TopicTotalDataSize)-len(self.TopicLeaderDataSize))*RATIO_BETWEEN_LEADER_FOLLOWER
+		left := float64(len(nts.TopicLeaderDataSize)) + float64(len(nts.TopicTotalDataSize)-len(nts.TopicLeaderDataSize))*RATIO_BETWEEN_LEADER_FOLLOWER
 		right := float64(len(other.TopicLeaderDataSize)) + float64(len(other.TopicTotalDataSize)-len(other.TopicLeaderDataSize))*RATIO_BETWEEN_LEADER_FOLLOWER
 		return left < right
 	}
