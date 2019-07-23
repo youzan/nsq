@@ -88,78 +88,78 @@ func NewNsqdRpcClient(addr string, timeout time.Duration) (*NsqdRpcClient, error
 	}, nil
 }
 
-func (self *NsqdRpcClient) Close() {
-	self.Lock()
-	if self.c != nil {
-		self.c.Stop()
-		self.c = nil
+func (nrpc *NsqdRpcClient) Close() {
+	nrpc.Lock()
+	if nrpc.c != nil {
+		nrpc.c.Stop()
+		nrpc.c = nil
 	}
-	if self.grpcConn != nil {
-		self.grpcConn.Close()
-		self.grpcConn = nil
+	if nrpc.grpcConn != nil {
+		nrpc.grpcConn.Close()
+		nrpc.grpcConn = nil
 	}
-	self.Unlock()
+	nrpc.Unlock()
 }
 
-func (self *NsqdRpcClient) ShouldRemoved() bool {
+func (nrpc *NsqdRpcClient) ShouldRemoved() bool {
 	r := true
-	self.Lock()
-	if self.c != nil {
-		r = self.c.ShouldRemoved()
+	nrpc.Lock()
+	if nrpc.c != nil {
+		r = nrpc.c.ShouldRemoved()
 	}
-	self.Unlock()
+	nrpc.Unlock()
 	return r
 }
 
-func (self *NsqdRpcClient) Reconnect() error {
-	self.Lock()
-	if self.c != nil {
-		self.c.Stop()
+func (nrpc *NsqdRpcClient) Reconnect() error {
+	nrpc.Lock()
+	if nrpc.c != nil {
+		nrpc.c.Stop()
 	}
-	if self.grpcConn != nil {
-		self.grpcConn.Close()
+	if nrpc.grpcConn != nil {
+		nrpc.grpcConn.Close()
 	}
-	self.c = gorpc.NewTCPClient(self.remote)
-	self.c.RequestTimeout = self.timeout
-	self.c.DisableCompression = true
-	self.dc = self.d.NewServiceClient("NsqdCoordRpcServer", self.c)
-	self.c.Start()
+	nrpc.c = gorpc.NewTCPClient(nrpc.remote)
+	nrpc.c.RequestTimeout = nrpc.timeout
+	nrpc.c.DisableCompression = true
+	nrpc.dc = nrpc.d.NewServiceClient("NsqdCoordRpcServer", nrpc.c)
+	nrpc.c.Start()
 
-	//ip, port, _ := net.SplitHostPort(self.remote)
+	//ip, port, _ := net.SplitHostPort(nrpc.remote)
 	//portNum, _ := strconv.Atoi(port)
 	//grpcAddr := ip + ":" + strconv.Itoa(portNum+1)
-	//grpcConn, err := grpc.Dial(grpcAddr, grpc.WithInsecure(), grpc.WithBlock(), grpc.WithTimeout(self.timeout))
+	//grpcConn, err := grpc.Dial(grpcAddr, grpc.WithInsecure(), grpc.WithBlock(), grpc.WithTimeout(nrpc.timeout))
 	//if err != nil {
 	//	coordLog.Warningf("failed to connect to grpc server %v: %v", grpcAddr, err)
-	//	self.grpcConn = nil
-	//	self.grpcClient = nil
+	//	nrpc.grpcConn = nil
+	//	nrpc.grpcClient = nil
 	//} else {
-	//	self.grpcConn = grpcConn
-	//	self.grpcClient = pb.NewNsqdCoordRpcV2Client(grpcConn)
+	//	nrpc.grpcConn = grpcConn
+	//	nrpc.grpcClient = pb.NewNsqdCoordRpcV2Client(grpcConn)
 	//}
-	coordLog.Infof("reconnected to rpc server %v", self.remote)
+	coordLog.Infof("reconnected to rpc server %v", nrpc.remote)
 
-	self.Unlock()
+	nrpc.Unlock()
 	return nil
 }
 
-func (self *NsqdRpcClient) CallFast(method string, arg interface{}) (interface{}, error) {
-	reply, err := self.dc.CallTimeout(method, arg, time.Second)
+func (nrpc *NsqdRpcClient) CallFast(method string, arg interface{}) (interface{}, error) {
+	reply, err := nrpc.dc.CallTimeout(method, arg, time.Second)
 	return reply, err
 }
 
-func (self *NsqdRpcClient) CallWithRetry(method string, arg interface{}) (interface{}, error) {
+func (nrpc *NsqdRpcClient) CallWithRetry(method string, arg interface{}) (interface{}, error) {
 	retry := 0
 	var err error
 	var reply interface{}
 	for retry < 5 {
 		retry++
-		reply, err = self.dc.Call(method, arg)
+		reply, err = nrpc.dc.Call(method, arg)
 		if err != nil {
 			cerr, ok := err.(*gorpc.ClientError)
-			if (ok && cerr.Connection) || self.ShouldRemoved() {
-				coordLog.Warningf("rpc connection %v closed, error: %v", self.remote, err)
-				connErr := self.Reconnect()
+			if (ok && cerr.Connection) || nrpc.ShouldRemoved() {
+				coordLog.Warningf("rpc connection %v closed, error: %v", nrpc.remote, err)
+				connErr := nrpc.Reconnect()
 				if connErr != nil {
 					return reply, err
 				}
@@ -176,7 +176,7 @@ func (self *NsqdRpcClient) CallWithRetry(method string, arg interface{}) (interf
 	return nil, err
 }
 
-func (self *NsqdRpcClient) NotifyTopicLeaderSession(epoch EpochType, topicInfo *TopicPartitionMetaInfo, leaderSession *TopicLeaderSession, joinSession string) *CoordErr {
+func (nrpc *NsqdRpcClient) NotifyTopicLeaderSession(epoch EpochType, topicInfo *TopicPartitionMetaInfo, leaderSession *TopicLeaderSession, joinSession string) *CoordErr {
 	var rpcInfo RpcTopicLeaderSession
 	rpcInfo.LookupdEpoch = epoch
 	rpcInfo.TopicLeaderSession = leaderSession.Session
@@ -187,11 +187,11 @@ func (self *NsqdRpcClient) NotifyTopicLeaderSession(epoch EpochType, topicInfo *
 	rpcInfo.JoinSession = joinSession
 	rpcInfo.TopicName = topicInfo.Name
 	rpcInfo.TopicPartition = topicInfo.Partition
-	retErr, err := self.CallWithRetry("NotifyTopicLeaderSession", &rpcInfo)
+	retErr, err := nrpc.CallWithRetry("NotifyTopicLeaderSession", &rpcInfo)
 	return convertRpcError(err, retErr)
 }
 
-func (self *NsqdRpcClient) NotifyAcquireTopicLeader(epoch EpochType, topicInfo *TopicPartitionMetaInfo) *CoordErr {
+func (nrpc *NsqdRpcClient) NotifyAcquireTopicLeader(epoch EpochType, topicInfo *TopicPartitionMetaInfo) *CoordErr {
 	var rpcInfo RpcAcquireTopicLeaderReq
 	rpcInfo.LookupdEpoch = epoch
 	rpcInfo.TopicName = topicInfo.Name
@@ -199,11 +199,11 @@ func (self *NsqdRpcClient) NotifyAcquireTopicLeader(epoch EpochType, topicInfo *
 	rpcInfo.TopicWriteEpoch = topicInfo.EpochForWrite
 	rpcInfo.Epoch = topicInfo.Epoch
 	rpcInfo.LeaderNodeID = topicInfo.Leader
-	retErr, err := self.CallWithRetry("NotifyAcquireTopicLeader", &rpcInfo)
+	retErr, err := nrpc.CallWithRetry("NotifyAcquireTopicLeader", &rpcInfo)
 	return convertRpcError(err, retErr)
 }
 
-func (self *NsqdRpcClient) NotifyReleaseTopicLeader(epoch EpochType, topicInfo *TopicPartitionMetaInfo, 
+func (nrpc *NsqdRpcClient) NotifyReleaseTopicLeader(epoch EpochType, topicInfo *TopicPartitionMetaInfo,
 	leaderSessionEpoch EpochType, leaderSession string) *CoordErr {
 	var rpcInfo RpcReleaseTopicLeaderReq
 	rpcInfo.LookupdEpoch = epoch
@@ -214,74 +214,74 @@ func (self *NsqdRpcClient) NotifyReleaseTopicLeader(epoch EpochType, topicInfo *
 	rpcInfo.LeaderNodeID = topicInfo.Leader
 	rpcInfo.TopicLeaderSessionEpoch = leaderSessionEpoch
 	rpcInfo.TopicLeaderSession = leaderSession
-	retErr, err := self.CallWithRetry("NotifyReleaseTopicLeader", &rpcInfo)
+	retErr, err := nrpc.CallWithRetry("NotifyReleaseTopicLeader", &rpcInfo)
 	return convertRpcError(err, retErr)
 }
 
-func (self *NsqdRpcClient) UpdateTopicInfo(epoch EpochType, topicInfo *TopicPartitionMetaInfo) *CoordErr {
+func (nrpc *NsqdRpcClient) UpdateTopicInfo(epoch EpochType, topicInfo *TopicPartitionMetaInfo) *CoordErr {
 	var rpcInfo RpcAdminTopicInfo
 	rpcInfo.LookupdEpoch = epoch
 	rpcInfo.TopicPartitionMetaInfo = *topicInfo
-	retErr, err := self.CallWithRetry("UpdateTopicInfo", &rpcInfo)
+	retErr, err := nrpc.CallWithRetry("UpdateTopicInfo", &rpcInfo)
 	return convertRpcError(err, retErr)
 }
 
-func (self *NsqdRpcClient) EnableTopicWrite(epoch EpochType, topicInfo *TopicPartitionMetaInfo) *CoordErr {
+func (nrpc *NsqdRpcClient) EnableTopicWrite(epoch EpochType, topicInfo *TopicPartitionMetaInfo) *CoordErr {
 	var rpcInfo RpcAdminTopicInfo
 	rpcInfo.LookupdEpoch = epoch
 	rpcInfo.TopicPartitionMetaInfo = *topicInfo
-	retErr, err := self.CallWithRetry("EnableTopicWrite", &rpcInfo)
+	retErr, err := nrpc.CallWithRetry("EnableTopicWrite", &rpcInfo)
 	return convertRpcError(err, retErr)
 }
 
-func (self *NsqdRpcClient) DisableTopicWriteFast(epoch EpochType, topicInfo *TopicPartitionMetaInfo) *CoordErr {
+func (nrpc *NsqdRpcClient) DisableTopicWriteFast(epoch EpochType, topicInfo *TopicPartitionMetaInfo) *CoordErr {
 	var rpcInfo RpcAdminTopicInfo
 	rpcInfo.LookupdEpoch = epoch
 	rpcInfo.TopicPartitionMetaInfo = *topicInfo
-	retErr, err := self.CallFast("DisableTopicWrite", &rpcInfo)
+	retErr, err := nrpc.CallFast("DisableTopicWrite", &rpcInfo)
 	return convertRpcError(err, retErr)
 }
 
-func (self *NsqdRpcClient) DisableTopicWrite(epoch EpochType, topicInfo *TopicPartitionMetaInfo) *CoordErr {
+func (nrpc *NsqdRpcClient) DisableTopicWrite(epoch EpochType, topicInfo *TopicPartitionMetaInfo) *CoordErr {
 	var rpcInfo RpcAdminTopicInfo
 	rpcInfo.LookupdEpoch = epoch
 	rpcInfo.TopicPartitionMetaInfo = *topicInfo
-	retErr, err := self.CallWithRetry("DisableTopicWrite", &rpcInfo)
+	retErr, err := nrpc.CallWithRetry("DisableTopicWrite", &rpcInfo)
 	return convertRpcError(err, retErr)
 }
 
-func (self *NsqdRpcClient) DeleteNsqdTopic(epoch EpochType, topicInfo *TopicPartitionMetaInfo) *CoordErr {
+func (nrpc *NsqdRpcClient) DeleteNsqdTopic(epoch EpochType, topicInfo *TopicPartitionMetaInfo) *CoordErr {
 	var rpcInfo RpcAdminTopicInfo
 	rpcInfo.LookupdEpoch = epoch
 	rpcInfo.TopicPartitionMetaInfo = *topicInfo
-	retErr, err := self.CallFast("DeleteNsqdTopic", &rpcInfo)
+	retErr, err := nrpc.CallFast("DeleteNsqdTopic", &rpcInfo)
 	return convertRpcError(err, retErr)
 }
 
-func (self *NsqdRpcClient) IsTopicWriteDisabled(topicInfo *TopicPartitionMetaInfo) bool {
+func (nrpc *NsqdRpcClient) IsTopicWriteDisabled(topicInfo *TopicPartitionMetaInfo) bool {
 	var rpcInfo RpcAdminTopicInfo
 	rpcInfo.TopicPartitionMetaInfo = *topicInfo
-	ret, err := self.CallFast("IsTopicWriteDisabled", &rpcInfo)
+	ret, err := nrpc.CallFast("IsTopicWriteDisabled", &rpcInfo)
 	if err != nil {
 		return false
 	}
 	return ret.(bool)
 }
 
-func (self *NsqdRpcClient) GetTopicStats(topic string) (*NodeTopicStats, error) {
-	stat, err := self.CallWithRetry("GetTopicStats", topic)
+func (nrpc *NsqdRpcClient) GetTopicStats(topic string) (*NodeTopicStats, error) {
+	stat, err := nrpc.CallWithRetry("GetTopicStats", topic)
 	if err != nil {
 		return nil, err
 	}
 	return stat.(*NodeTopicStats), err
 }
 
-func (self *NsqdRpcClient) TriggerLookupChanged() error {
-	_, err := self.CallFast("TriggerLookupChanged", "")
+func (nrpc *NsqdRpcClient) TriggerLookupChanged() error {
+	_, err := nrpc.CallFast("TriggerLookupChanged", "")
 	return err
 }
 
-func (self *NsqdRpcClient) UpdateChannelList(leaderSession *TopicLeaderSession, info *TopicPartitionMetaInfo, chList []string) *CoordErr {
+func (nrpc *NsqdRpcClient) UpdateChannelList(leaderSession *TopicLeaderSession, info *TopicPartitionMetaInfo, chList []string) *CoordErr {
 	var updateInfo RpcChannelListArg
 	updateInfo.TopicName = info.Name
 	updateInfo.TopicPartition = info.Partition
@@ -290,11 +290,11 @@ func (self *NsqdRpcClient) UpdateChannelList(leaderSession *TopicLeaderSession, 
 	updateInfo.TopicLeaderSessionEpoch = leaderSession.LeaderEpoch
 	updateInfo.TopicLeaderSession = leaderSession.Session
 	updateInfo.ChannelList = chList
-	retErr, err := self.CallFast("UpdateChannelList", &updateInfo)
+	retErr, err := nrpc.CallFast("UpdateChannelList", &updateInfo)
 	return convertRpcError(err, retErr)
 }
 
-func (self *NsqdRpcClient) NotifyChannelList(leaderSession *TopicLeaderSession, info *TopicPartitionMetaInfo, chList []string) *CoordErr {
+func (nrpc *NsqdRpcClient) NotifyChannelList(leaderSession *TopicLeaderSession, info *TopicPartitionMetaInfo, chList []string) *CoordErr {
 	var updateInfo RpcChannelListArg
 	updateInfo.TopicName = info.Name
 	updateInfo.TopicPartition = info.Partition
@@ -303,11 +303,11 @@ func (self *NsqdRpcClient) NotifyChannelList(leaderSession *TopicLeaderSession, 
 	updateInfo.TopicLeaderSessionEpoch = leaderSession.LeaderEpoch
 	updateInfo.TopicLeaderSession = leaderSession.Session
 	updateInfo.ChannelList = chList
-	err := self.dc.Send("UpdateChannelList", &updateInfo)
+	err := nrpc.dc.Send("UpdateChannelList", &updateInfo)
 	return convertRpcError(err, nil)
 }
 
-func (self *NsqdRpcClient) DeleteChannel(leaderSession *TopicLeaderSession, info *TopicPartitionMetaInfo, channel string) *CoordErr {
+func (nrpc *NsqdRpcClient) DeleteChannel(leaderSession *TopicLeaderSession, info *TopicPartitionMetaInfo, channel string) *CoordErr {
 	var updateInfo RpcChannelOffsetArg
 	updateInfo.TopicName = info.Name
 	updateInfo.TopicPartition = info.Partition
@@ -316,11 +316,11 @@ func (self *NsqdRpcClient) DeleteChannel(leaderSession *TopicLeaderSession, info
 	updateInfo.TopicLeaderSessionEpoch = leaderSession.LeaderEpoch
 	updateInfo.TopicLeaderSession = leaderSession.Session
 	updateInfo.Channel = channel
-	retErr, err := self.CallWithRetry("DeleteChannel", &updateInfo)
+	retErr, err := nrpc.CallWithRetry("DeleteChannel", &updateInfo)
 	return convertRpcError(err, retErr)
 }
 
-func (self *NsqdRpcClient) UpdateChannelState(leaderSession *TopicLeaderSession, info *TopicPartitionMetaInfo, channel string, paused int, skipped int, zanTestSkipped int) *CoordErr {
+func (nrpc *NsqdRpcClient) UpdateChannelState(leaderSession *TopicLeaderSession, info *TopicPartitionMetaInfo, channel string, paused int, skipped int, zanTestSkipped int) *CoordErr {
 	var channelState RpcChannelState
 	channelState.TopicName = info.Name
 	channelState.TopicPartition = info.Partition
@@ -333,13 +333,13 @@ func (self *NsqdRpcClient) UpdateChannelState(leaderSession *TopicLeaderSession,
 	channelState.Skipped = skipped
 	channelState.ZanTestSkipped = zanTestSkipped
 
-	retErr, err := self.CallWithRetry("UpdateChannelState", &channelState)
+	retErr, err := nrpc.CallWithRetry("UpdateChannelState", &channelState)
 	return convertRpcError(err, retErr)
 }
 
-func (self *NsqdRpcClient) UpdateChannelOffset(leaderSession *TopicLeaderSession, info *TopicPartitionMetaInfo, channel string, offset ChannelConsumerOffset) *CoordErr {
+func (nrpc *NsqdRpcClient) UpdateChannelOffset(leaderSession *TopicLeaderSession, info *TopicPartitionMetaInfo, channel string, offset ChannelConsumerOffset) *CoordErr {
 	// it seems grpc is slower, so disable it.
-	if self.grpcClient != nil && false {
+	if nrpc.grpcClient != nil && false {
 		var req pb.RpcChannelOffsetArg
 		var rpcData pb.RpcTopicData
 		rpcData.TopicName = info.Name
@@ -357,7 +357,7 @@ func (self *NsqdRpcClient) UpdateChannelOffset(leaderSession *TopicLeaderSession
 		req.ChannelOffset.AllowBackward = offset.AllowBackward
 
 		ctx, cancel := context.WithTimeout(context.Background(), RPC_TIMEOUT_SHORT)
-		retErr, err := self.grpcClient.UpdateChannelOffset(ctx, &req)
+		retErr, err := nrpc.grpcClient.UpdateChannelOffset(ctx, &req)
 		cancel()
 		if err == nil {
 			return convertRpcError(err, retErr)
@@ -374,11 +374,11 @@ func (self *NsqdRpcClient) UpdateChannelOffset(leaderSession *TopicLeaderSession
 	updateInfo.TopicLeaderSession = leaderSession.Session
 	updateInfo.Channel = channel
 	updateInfo.ChannelOffset = offset
-	retErr, err := self.CallFast("UpdateChannelOffset", &updateInfo)
+	retErr, err := nrpc.CallFast("UpdateChannelOffset", &updateInfo)
 	return convertRpcError(err, retErr)
 }
 
-func (self *NsqdRpcClient) NotifyUpdateChannelOffset(leaderSession *TopicLeaderSession, info *TopicPartitionMetaInfo, channel string, offset ChannelConsumerOffset) *CoordErr {
+func (nrpc *NsqdRpcClient) NotifyUpdateChannelOffset(leaderSession *TopicLeaderSession, info *TopicPartitionMetaInfo, channel string, offset ChannelConsumerOffset) *CoordErr {
 	var updateInfo RpcChannelOffsetArg
 	updateInfo.TopicName = info.Name
 	updateInfo.TopicPartition = info.Partition
@@ -388,11 +388,11 @@ func (self *NsqdRpcClient) NotifyUpdateChannelOffset(leaderSession *TopicLeaderS
 	updateInfo.TopicLeaderSession = leaderSession.Session
 	updateInfo.Channel = channel
 	updateInfo.ChannelOffset = offset
-	err := self.dc.Send("UpdateChannelOffset", &updateInfo)
+	err := nrpc.dc.Send("UpdateChannelOffset", &updateInfo)
 	return convertRpcError(err, nil)
 }
 
-func (self *NsqdRpcClient) UpdateDelayedQueueState(leaderSession *TopicLeaderSession,
+func (nrpc *NsqdRpcClient) UpdateDelayedQueueState(leaderSession *TopicLeaderSession,
 	info *TopicPartitionMetaInfo, ch string, ts int64, cursorList [][]byte,
 	cntList map[int]uint64, channelCntList map[string]uint64, wait bool) *CoordErr {
 	var updateInfo RpcConfirmedDelayedCursor
@@ -408,15 +408,15 @@ func (self *NsqdRpcClient) UpdateDelayedQueueState(leaderSession *TopicLeaderSes
 	updateInfo.Timestamp = ts
 	updateInfo.OtherCntList = cntList
 	if wait {
-		retErr, err := self.CallFast("UpdateDelayedQueueState", &updateInfo)
+		retErr, err := nrpc.CallFast("UpdateDelayedQueueState", &updateInfo)
 		return convertRpcError(err, retErr)
 	} else {
-		err := self.dc.Send("UpdateDelayedQueueState", &updateInfo)
+		err := nrpc.dc.Send("UpdateDelayedQueueState", &updateInfo)
 		return convertRpcError(err, nil)
 	}
 }
 
-func (self *NsqdRpcClient) PutDelayedMessage(leaderSession *TopicLeaderSession, info *TopicPartitionMetaInfo, log CommitLogData, message *nsqd.Message) *CoordErr {
+func (nrpc *NsqdRpcClient) PutDelayedMessage(leaderSession *TopicLeaderSession, info *TopicPartitionMetaInfo, log CommitLogData, message *nsqd.Message) *CoordErr {
 	// it seems grpc is slower, so disable it.
 	var putData RpcPutMessage
 	putData.LogData = log
@@ -427,13 +427,13 @@ func (self *NsqdRpcClient) PutDelayedMessage(leaderSession *TopicLeaderSession, 
 	putData.Epoch = info.Epoch
 	putData.TopicLeaderSessionEpoch = leaderSession.LeaderEpoch
 	putData.TopicLeaderSession = leaderSession.Session
-	retErr, err := self.CallWithRetry("PutDelayedMessage", &putData)
+	retErr, err := nrpc.CallWithRetry("PutDelayedMessage", &putData)
 	return convertRpcError(err, retErr)
 }
 
-func (self *NsqdRpcClient) PutMessage(leaderSession *TopicLeaderSession, info *TopicPartitionMetaInfo, log CommitLogData, message *nsqd.Message) *CoordErr {
+func (nrpc *NsqdRpcClient) PutMessage(leaderSession *TopicLeaderSession, info *TopicPartitionMetaInfo, log CommitLogData, message *nsqd.Message) *CoordErr {
 	// it seems grpc is slower, so disable it.
-	if self.grpcClient != nil && false {
+	if nrpc.grpcClient != nil && false {
 		ctx, cancel := context.WithTimeout(context.Background(), RPC_TIMEOUT_SHORT)
 		var req pb.RpcPutMessage
 		var rpcData pb.RpcTopicData
@@ -462,7 +462,7 @@ func (self *NsqdRpcClient) PutMessage(leaderSession *TopicLeaderSession, info *T
 		msg.Timestamp = message.Timestamp
 		req.TopicMessage = &msg
 
-		retErr, err := self.grpcClient.PutMessage(ctx, &req)
+		retErr, err := nrpc.grpcClient.PutMessage(ctx, &req)
 		cancel()
 		if err == nil {
 			return convertRpcError(err, retErr)
@@ -478,12 +478,12 @@ func (self *NsqdRpcClient) PutMessage(leaderSession *TopicLeaderSession, info *T
 	putData.Epoch = info.Epoch
 	putData.TopicLeaderSessionEpoch = leaderSession.LeaderEpoch
 	putData.TopicLeaderSession = leaderSession.Session
-	retErr, err := self.CallWithRetry("PutMessage", &putData)
+	retErr, err := nrpc.CallWithRetry("PutMessage", &putData)
 	return convertRpcError(err, retErr)
 }
 
-func (self *NsqdRpcClient) PutMessages(leaderSession *TopicLeaderSession, info *TopicPartitionMetaInfo, log CommitLogData, messages []*nsqd.Message) *CoordErr {
-	if self.grpcClient != nil && false {
+func (nrpc *NsqdRpcClient) PutMessages(leaderSession *TopicLeaderSession, info *TopicPartitionMetaInfo, log CommitLogData, messages []*nsqd.Message) *CoordErr {
+	if nrpc.grpcClient != nil && false {
 		ctx, cancel := context.WithTimeout(context.Background(), RPC_TIMEOUT_SHORT)
 		var req pb.RpcPutMessages
 		var rpcData pb.RpcTopicData
@@ -515,7 +515,7 @@ func (self *NsqdRpcClient) PutMessages(leaderSession *TopicLeaderSession, info *
 			req.TopicMessage = append(req.TopicMessage, &msg)
 		}
 
-		retErr, err := self.grpcClient.PutMessages(ctx, &req)
+		retErr, err := nrpc.grpcClient.PutMessages(ctx, &req)
 		cancel()
 		if err == nil {
 			return convertRpcError(err, retErr)
@@ -532,35 +532,35 @@ func (self *NsqdRpcClient) PutMessages(leaderSession *TopicLeaderSession, info *
 	putData.Epoch = info.Epoch
 	putData.TopicLeaderSessionEpoch = leaderSession.LeaderEpoch
 	putData.TopicLeaderSession = leaderSession.Session
-	retErr, err := self.CallWithRetry("PutMessages", &putData)
+	retErr, err := nrpc.CallWithRetry("PutMessages", &putData)
 	return convertRpcError(err, retErr)
 }
 
-func (self *NsqdRpcClient) GetLastCommitLogID(topicInfo *TopicPartitionMetaInfo) (int64, *CoordErr) {
+func (nrpc *NsqdRpcClient) GetLastCommitLogID(topicInfo *TopicPartitionMetaInfo) (int64, *CoordErr) {
 	var req RpcCommitLogReq
 	req.TopicName = topicInfo.Name
 	req.TopicPartition = topicInfo.Partition
 	var retErr CoordErr
-	ret, err := self.CallWithRetry("GetLastCommitLogID", &req)
+	ret, err := nrpc.CallWithRetry("GetLastCommitLogID", &req)
 	if err != nil || ret == nil {
 		return 0, convertRpcError(err, &retErr)
 	}
 	return ret.(int64), convertRpcError(err, &retErr)
 }
 
-func (self *NsqdRpcClient) GetLastDelayedQueueCommitLogID(topicInfo *TopicPartitionMetaInfo) (int64, *CoordErr) {
+func (nrpc *NsqdRpcClient) GetLastDelayedQueueCommitLogID(topicInfo *TopicPartitionMetaInfo) (int64, *CoordErr) {
 	var req RpcCommitLogReq
 	req.TopicName = topicInfo.Name
 	req.TopicPartition = topicInfo.Partition
 	var retErr CoordErr
-	ret, err := self.CallWithRetry("GetLastDelayedQueueCommitLogID", &req)
+	ret, err := nrpc.CallWithRetry("GetLastDelayedQueueCommitLogID", &req)
 	if err != nil || ret == nil {
 		return 0, convertRpcError(err, &retErr)
 	}
 	return ret.(int64), convertRpcError(err, &retErr)
 }
 
-func (self *NsqdRpcClient) GetCommitLogFromOffset(topicInfo *TopicPartitionMetaInfo, logCountNumIndex int64,
+func (nrpc *NsqdRpcClient) GetCommitLogFromOffset(topicInfo *TopicPartitionMetaInfo, logCountNumIndex int64,
 	logIndex int64, offset int64, fromDelayedQueue bool) (bool, int64, int64, int64, CommitLogData, *CoordErr) {
 	var req RpcCommitLogReq
 	req.LogStartIndex = logIndex
@@ -573,9 +573,9 @@ func (self *NsqdRpcClient) GetCommitLogFromOffset(topicInfo *TopicPartitionMetaI
 	var rspVar interface{}
 	var err error
 	if !fromDelayedQueue {
-		rspVar, err = self.CallWithRetry("GetCommitLogFromOffset", &req)
+		rspVar, err = nrpc.CallWithRetry("GetCommitLogFromOffset", &req)
 	} else {
-		rspVar, err = self.CallWithRetry("GetDelayedQueueCommitLogFromOffset", &req)
+		rspVar, err = nrpc.CallWithRetry("GetDelayedQueueCommitLogFromOffset", &req)
 	}
 	if err != nil {
 		return false, 0, 0, 0, CommitLogData{}, convertRpcError(err, nil)
@@ -585,7 +585,7 @@ func (self *NsqdRpcClient) GetCommitLogFromOffset(topicInfo *TopicPartitionMetaI
 
 }
 
-func (self *NsqdRpcClient) PullCommitLogsAndData(topic string, partition int, logCountNumIndex int64,
+func (nrpc *NsqdRpcClient) PullCommitLogsAndData(topic string, partition int, logCountNumIndex int64,
 	logIndex int64, startOffset int64, num int, fromDelayed bool) ([]CommitLogData, [][]byte, error) {
 	var r RpcPullCommitLogsReq
 	r.TopicName = topic
@@ -599,9 +599,9 @@ func (self *NsqdRpcClient) PullCommitLogsAndData(topic string, partition int, lo
 	var retVar interface{}
 	var err error
 	if !fromDelayed {
-		retVar, err = self.CallWithRetry("PullCommitLogsAndData", &r)
+		retVar, err = nrpc.CallWithRetry("PullCommitLogsAndData", &r)
 	} else {
-		retVar, err = self.CallWithRetry("PullDelayedQueueCommitLogsAndData", &r)
+		retVar, err = nrpc.CallWithRetry("PullDelayedQueueCommitLogsAndData", &r)
 	}
 	if err != nil {
 		return nil, nil, err
@@ -610,7 +610,7 @@ func (self *NsqdRpcClient) PullCommitLogsAndData(topic string, partition int, lo
 	return ret.Logs, ret.DataList, nil
 }
 
-func (self *NsqdRpcClient) GetFullSyncInfo(topic string, partition int, fromDelayed bool) (*LogStartInfo, *CommitLogData, error) {
+func (nrpc *NsqdRpcClient) GetFullSyncInfo(topic string, partition int, fromDelayed bool) (*LogStartInfo, *CommitLogData, error) {
 	var r RpcGetFullSyncInfoReq
 	r.TopicName = topic
 	r.TopicPartition = partition
@@ -618,9 +618,9 @@ func (self *NsqdRpcClient) GetFullSyncInfo(topic string, partition int, fromDela
 	var retVar interface{}
 	var err error
 	if !fromDelayed {
-		retVar, err = self.CallWithRetry("GetFullSyncInfo", &r)
+		retVar, err = nrpc.CallWithRetry("GetFullSyncInfo", &r)
 	} else {
-		retVar, err = self.CallWithRetry("GetDelayedQueueFullSyncInfo", &r)
+		retVar, err = nrpc.CallWithRetry("GetDelayedQueueFullSyncInfo", &r)
 	}
 	if err != nil {
 		return nil, nil, err
@@ -629,14 +629,14 @@ func (self *NsqdRpcClient) GetFullSyncInfo(topic string, partition int, fromDela
 	return &ret.StartInfo, &ret.FirstLogData, nil
 }
 
-func (self *NsqdRpcClient) GetBackupedDelayedQueue(topic string, partition int) (io.Reader, error) {
+func (nrpc *NsqdRpcClient) GetBackupedDelayedQueue(topic string, partition int) (io.Reader, error) {
 	var r RpcGetBackupedDQReq
 	r.TopicName = topic
 	r.TopicPartition = partition
 	var ret *RpcGetBackupedDQRsp
 	var retVar interface{}
 	var err error
-	retVar, err = self.CallWithRetry("GetBackupedDelayedQueue", &r)
+	retVar, err = nrpc.CallWithRetry("GetBackupedDelayedQueue", &r)
 	if err != nil {
 		return nil, err
 	}
@@ -644,11 +644,11 @@ func (self *NsqdRpcClient) GetBackupedDelayedQueue(topic string, partition int) 
 	return bytes.NewBuffer(ret.Buffer), nil
 }
 
-func (self *NsqdRpcClient) GetNodeInfo(nid string) (*NsqdNodeInfo, error) {
+func (nrpc *NsqdRpcClient) GetNodeInfo(nid string) (*NsqdNodeInfo, error) {
 	var r RpcNodeInfoReq
 	r.NodeID = nid
 	var ret *RpcNodeInfoRsp
-	retVar, err := self.CallFast("GetNodeInfo", &r)
+	retVar, err := nrpc.CallFast("GetNodeInfo", &r)
 	if err != nil {
 		return nil, err
 	}
@@ -662,11 +662,11 @@ func (self *NsqdRpcClient) GetNodeInfo(nid string) (*NsqdNodeInfo, error) {
 	return &nodeInfo, nil
 }
 
-func (self *NsqdRpcClient) CallRpcTest(data string) (string, *CoordErr) {
+func (nrpc *NsqdRpcClient) CallRpcTest(data string) (string, *CoordErr) {
 	var req RpcTestReq
 	req.Data = data
 	var ret *RpcTestRsp
-	retVar, err := self.CallWithRetry("TestRpcError", &req)
+	retVar, err := nrpc.CallWithRetry("TestRpcError", &req)
 	if err != nil {
 		return "", convertRpcError(err, nil)
 	}
@@ -674,15 +674,15 @@ func (self *NsqdRpcClient) CallRpcTest(data string) (string, *CoordErr) {
 	return ret.RspData, convertRpcError(err, ret.RetErr)
 }
 
-func (self *NsqdRpcClient) CallRpcTesttimeout(data string) error {
-	_, err := self.CallWithRetry("TestRpcTimeout", "req")
+func (nrpc *NsqdRpcClient) CallRpcTesttimeout(data string) error {
+	_, err := nrpc.CallWithRetry("TestRpcTimeout", "req")
 	return err
 }
 
-func (self *NsqdRpcClient) CallRpcTestCoordErr(data string) *CoordErr {
+func (nrpc *NsqdRpcClient) CallRpcTestCoordErr(data string) *CoordErr {
 	var req RpcTestReq
 	req.Data = data
-	reply, err := self.CallWithRetry("TestRpcCoordErr", &req)
+	reply, err := nrpc.CallWithRetry("TestRpcCoordErr", &req)
 	if err != nil {
 		return convertRpcError(err, nil)
 	}

@@ -108,34 +108,34 @@ type coordData struct {
 	forceLeave         int32
 }
 
-func (self *coordData) updateBufferSize(bs int) {
-	self.logMgr.updateBufferSize(bs)
-	if self.delayedLogMgr != nil {
-		self.delayedLogMgr.updateBufferSize(bs)
+func (cd *coordData) updateBufferSize(bs int) {
+	cd.logMgr.updateBufferSize(bs)
+	if cd.delayedLogMgr != nil {
+		cd.delayedLogMgr.updateBufferSize(bs)
 	}
 }
 
-func (self *coordData) flushCommitLogs() {
-	self.logMgr.FlushCommitLogs()
-	if self.delayedLogMgr != nil {
-		self.delayedLogMgr.FlushCommitLogs()
+func (cd *coordData) flushCommitLogs() {
+	cd.logMgr.FlushCommitLogs()
+	if cd.delayedLogMgr != nil {
+		cd.delayedLogMgr.FlushCommitLogs()
 	}
 }
 
-func (self *coordData) switchForMaster(master bool) {
-	self.logMgr.switchForMaster(master)
-	if self.delayedLogMgr != nil {
-		self.delayedLogMgr.switchForMaster(master)
+func (cd *coordData) switchForMaster(master bool) {
+	cd.logMgr.switchForMaster(master)
+	if cd.delayedLogMgr != nil {
+		cd.delayedLogMgr.switchForMaster(master)
 	}
-	self.syncedConsumeMgr.Clear()
+	cd.syncedConsumeMgr.Clear()
 }
 
-func (self *coordData) GetCopy() *coordData {
+func (cd *coordData) GetCopy() *coordData {
 	newCoordData := &coordData{}
-	if self == nil {
+	if cd == nil {
 		return newCoordData
 	}
-	*newCoordData = *self
+	*newCoordData = *cd
 	return newCoordData
 }
 
@@ -205,147 +205,147 @@ func newTopicCoordinator(name string, partition int, basepath string,
 	return tc, nil
 }
 
-func (self *TopicCoordinator) GetDelayedQueueLogMgr() (*TopicCommitLogMgr, error) {
-	logMgr := self.GetData().delayedLogMgr
+func (tc *TopicCoordinator) GetDelayedQueueLogMgr() (*TopicCommitLogMgr, error) {
+	logMgr := tc.GetData().delayedLogMgr
 	if logMgr == nil {
 		return nil, ErrTopicMissingDelayedLog.ToErrorType()
 	}
 	return logMgr, nil
 }
 
-func (self *TopicCoordinator) DeleteNoWriteLock(removeData bool) {
-	self.Exiting()
-	self.SetForceLeave(true)
-	self.dataMutex.Lock()
+func (tc *TopicCoordinator) DeleteNoWriteLock(removeData bool) {
+	tc.Exiting()
+	tc.SetForceLeave(true)
+	tc.dataMutex.Lock()
 	if removeData {
-		self.logMgr.Delete()
-		if self.delayedLogMgr != nil {
-			self.delayedLogMgr.Delete()
+		tc.logMgr.Delete()
+		if tc.delayedLogMgr != nil {
+			tc.delayedLogMgr.Delete()
 		}
 	} else {
-		self.logMgr.Close()
-		if self.delayedLogMgr != nil {
-			self.delayedLogMgr.Close()
+		tc.logMgr.Close()
+		if tc.delayedLogMgr != nil {
+			tc.delayedLogMgr.Close()
 		}
 	}
-	self.dataMutex.Unlock()
+	tc.dataMutex.Unlock()
 }
 
-func (self *TopicCoordinator) DeleteWithLock(removeData bool) {
-	self.Exiting()
-	self.SetForceLeave(true)
-	self.writeHold.Lock()
-	self.dataMutex.Lock()
+func (tc *TopicCoordinator) DeleteWithLock(removeData bool) {
+	tc.Exiting()
+	tc.SetForceLeave(true)
+	tc.writeHold.Lock()
+	tc.dataMutex.Lock()
 	if removeData {
-		self.logMgr.Delete()
-		if self.delayedLogMgr != nil {
-			self.delayedLogMgr.Delete()
+		tc.logMgr.Delete()
+		if tc.delayedLogMgr != nil {
+			tc.delayedLogMgr.Delete()
 		}
 	} else {
-		self.logMgr.Close()
-		if self.delayedLogMgr != nil {
-			self.delayedLogMgr.Close()
+		tc.logMgr.Close()
+		if tc.delayedLogMgr != nil {
+			tc.delayedLogMgr.Close()
 		}
 	}
-	self.dataMutex.Unlock()
-	self.writeHold.Unlock()
+	tc.dataMutex.Unlock()
+	tc.writeHold.Unlock()
 }
 
-func (self *TopicCoordinator) GetData() *coordData {
-	self.dataMutex.Lock()
-	d := self.coordData
-	self.dataMutex.Unlock()
+func (tc *TopicCoordinator) GetData() *coordData {
+	tc.dataMutex.Lock()
+	d := tc.coordData
+	tc.dataMutex.Unlock()
 	return d
 }
 
-func (self *TopicCoordinator) IsWriteDisabled() bool {
-	return atomic.LoadInt32(&self.disableWrite) == 1
+func (tc *TopicCoordinator) IsWriteDisabled() bool {
+	return atomic.LoadInt32(&tc.disableWrite) == 1
 }
 
-func (self *TopicCoordinator) DisableWrite(disable bool) {
+func (tc *TopicCoordinator) DisableWrite(disable bool) {
 	// hold the write lock to wait the current write finish.
-	self.writeHold.Lock()
+	tc.writeHold.Lock()
 	if disable {
-		atomic.StoreInt32(&self.disableWrite, 1)
+		atomic.StoreInt32(&tc.disableWrite, 1)
 	} else {
-		atomic.StoreInt32(&self.disableWrite, 0)
+		atomic.StoreInt32(&tc.disableWrite, 0)
 	}
-	self.writeHold.Unlock()
+	tc.writeHold.Unlock()
 }
 
-func (self *TopicCoordinator) IsExiting() bool {
-	return atomic.LoadInt32(&self.exiting) == 1
+func (tc *TopicCoordinator) IsExiting() bool {
+	return atomic.LoadInt32(&tc.exiting) == 1
 }
 
-func (self *TopicCoordinator) Exiting() {
-	atomic.StoreInt32(&self.exiting, 1)
+func (tc *TopicCoordinator) Exiting() {
+	atomic.StoreInt32(&tc.exiting, 1)
 }
 
-func (self *coordData) GetLeader() string {
-	return self.topicInfo.Leader
+func (cd *coordData) GetLeader() string {
+	return cd.topicInfo.Leader
 }
 
-func (self *coordData) GetLeaderSessionID() string {
-	if self.topicLeaderSession.LeaderNode == nil {
+func (cd *coordData) GetLeaderSessionID() string {
+	if cd.topicLeaderSession.LeaderNode == nil {
 		return ""
 	}
-	return self.topicLeaderSession.LeaderNode.GetID()
+	return cd.topicLeaderSession.LeaderNode.GetID()
 }
 
-func (self *coordData) IsMineISR(id string) bool {
-	return FindSlice(self.topicInfo.ISR, id) != -1
+func (cd *coordData) IsMineISR(id string) bool {
+	return FindSlice(cd.topicInfo.ISR, id) != -1
 }
 
-func (self *coordData) IsMineLeaderSessionReady(id string) bool {
-	if self.topicLeaderSession.LeaderNode != nil &&
-		self.topicLeaderSession.LeaderNode.GetID() == id &&
-		self.topicLeaderSession.Session != "" {
+func (cd *coordData) IsMineLeaderSessionReady(id string) bool {
+	if cd.topicLeaderSession.LeaderNode != nil &&
+		cd.topicLeaderSession.LeaderNode.GetID() == id &&
+		cd.topicLeaderSession.Session != "" {
 		return true
 	}
 	return false
 }
 
-func (self *coordData) GetLeaderSession() string {
-	return self.topicLeaderSession.Session
+func (cd *coordData) GetLeaderSession() string {
+	return cd.topicLeaderSession.Session
 }
 
-func (self *coordData) GetLeaderSessionEpoch() EpochType {
-	return self.topicLeaderSession.LeaderEpoch
+func (cd *coordData) GetLeaderSessionEpoch() EpochType {
+	return cd.topicLeaderSession.LeaderEpoch
 }
 
-func (self *coordData) GetTopicEpochForWrite() EpochType {
-	return self.topicInfo.EpochForWrite
+func (cd *coordData) GetTopicEpochForWrite() EpochType {
+	return cd.topicInfo.EpochForWrite
 }
 
-func (self *TopicCoordinator) checkWriteForLeader(myID string) *CoordErr {
-	return self.GetData().checkWriteForLeader(myID)
+func (cd *TopicCoordinator) checkWriteForLeader(myID string) *CoordErr {
+	return cd.GetData().checkWriteForLeader(myID)
 }
 
-func (self *coordData) checkWriteForLeader(myID string) *CoordErr {
-	if self.IsForceLeave() {
+func (cd *coordData) checkWriteForLeader(myID string) *CoordErr {
+	if cd.IsForceLeave() {
 		return ErrNotTopicLeader
 	}
-	if self.GetLeaderSessionID() != myID || self.topicInfo.Leader != myID {
+	if cd.GetLeaderSessionID() != myID || cd.topicInfo.Leader != myID {
 		return ErrNotTopicLeader
 	}
-	if self.topicLeaderSession.Session == "" {
+	if cd.topicLeaderSession.Session == "" {
 		return ErrMissingTopicLeaderSession
 	}
 	return nil
 }
 
-func (self *coordData) IsISRReadyForWrite(myID string) bool {
-	return (len(self.topicInfo.ISR) > self.topicInfo.Replica/2) && self.IsMineISR(myID)
+func (cd *coordData) IsISRReadyForWrite(myID string) bool {
+	return (len(cd.topicInfo.ISR) > cd.topicInfo.Replica/2) && cd.IsMineISR(myID)
 }
 
-func (self *coordData) SetForceLeave(leave bool) {
+func (cd *coordData) SetForceLeave(leave bool) {
 	if leave {
-		atomic.StoreInt32(&self.forceLeave, 1)
+		atomic.StoreInt32(&cd.forceLeave, 1)
 	} else {
-		atomic.StoreInt32(&self.forceLeave, 0)
+		atomic.StoreInt32(&cd.forceLeave, 0)
 	}
 }
 
-func (self *coordData) IsForceLeave() bool {
-	return atomic.LoadInt32(&self.forceLeave) == 1
+func (cd *coordData) IsForceLeave() bool {
+	return atomic.LoadInt32(&cd.forceLeave) == 1
 }
