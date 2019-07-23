@@ -2094,3 +2094,7 @@ func TestNsqLookupOrderedTopicBalance(t *testing.T) {
 
 	SetCoordLogger(newTestLogger(t), levellogger.LOG_ERR)
 }
+
+func TestNsqLookupTopNTopicBalance(t *testing.T) {
+	// TODO: balance topn
+}
