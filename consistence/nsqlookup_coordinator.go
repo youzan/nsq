@@ -19,6 +19,7 @@ var (
 	ErrWaitingLeaderRelease = errors.New("leader session is still alive")
 	ErrNotNsqLookupLeader   = errors.New("Not nsqlookup leader")
 	ErrClusterUnstable      = errors.New("the cluster is unstable")
+	errLookupExiting        = errors.New("lookup is exiting")
 
 	ErrLeaderNodeLost           = NewCoordErr("leader node is lost", CoordTmpErr)
 	ErrNodeNotFound             = NewCoordErr("node not found", CoordCommonErr)
@@ -39,6 +40,7 @@ const (
 	waitMigrateInterval          = time.Minute * 10
 	waitEmergencyMigrateInterval = time.Second * 10
 	waitRemovingNodeInterval     = time.Second * 30
+	balanceInterval              = time.Minute
 )
 
 type JoinISRState struct {

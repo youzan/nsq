@@ -2,6 +2,8 @@ package consistence
 
 import (
 	"errors"
+	"fmt"
+	"math"
 	"math/rand"
 	"net/http"
 	"os"
@@ -13,6 +15,7 @@ import (
 	"time"
 
 	"github.com/absolute8511/glog"
+	"github.com/stretchr/testify/assert"
 	"github.com/youzan/nsq/internal/levellogger"
 	"github.com/youzan/nsq/internal/test"
 )
@@ -2097,4 +2100,160 @@ func TestNsqLookupOrderedTopicBalance(t *testing.T) {
 
 func TestNsqLookupTopNTopicBalance(t *testing.T) {
 	// TODO: balance topn
+	if testing.Verbose() {
+		SetCoordLogger(levellogger.NewSimpleLog(), levellogger.LOG_INFO)
+		glog.SetFlags(0, "", "", true, true, 1)
+		glog.StartWorker(time.Second)
+	} else {
+		SetCoordLogger(newTestLogger(t), levellogger.LOG_WARN)
+	}
+	idList := []string{"id1", "id2", "id3", "id4", "id5", "id6"}
+	lookupCoord1, nodeInfoList := prepareCluster(t, idList, false)
+	for _, n := range nodeInfoList {
+		defer os.RemoveAll(n.dataPath)
+		defer n.localNsqd.Exit()
+		defer n.nsqdCoord.Stop()
+	}
+	test.Equal(t, 6, len(nodeInfoList))
+
+	topic_p1_r2 := "test-nsqlookup-topic-unit-testtopn-p1-r2"
+	topic_p1_r3 := "test-nsqlookup-topic-unit-testtopn-p1-r3"
+	topic_p2_r2 := "test-nsqlookup-topic-unit-testtopn-p2-r2"
+	topicList := make([]string, 0, topicTopNLimit)
+	for i := 0; i < topicTopNLimit/2; i++ {
+		topicList = append(topicList, fmt.Sprintf("test-nsqlookup-topic-unit-testtopn-t%v", i))
+	}
+
+	time.Sleep(time.Second)
+	checkDeleteErr(t, lookupCoord1.DeleteTopic(topic_p1_r2, "**"))
+	checkDeleteErr(t, lookupCoord1.DeleteTopic(topic_p1_r3, "**"))
+	checkDeleteErr(t, lookupCoord1.DeleteTopic(topic_p2_r2, "**"))
+	for _, tn := range topicList {
+		checkDeleteErr(t, lookupCoord1.DeleteTopic(tn, "**"))
+	}
+	time.Sleep(time.Second * 3)
+	defer func() {
+		waitClusterStable(lookupCoord1, time.Second*3)
+		checkDeleteErr(t, lookupCoord1.DeleteTopic(topic_p1_r2, "**"))
+		checkDeleteErr(t, lookupCoord1.DeleteTopic(topic_p1_r3, "**"))
+		checkDeleteErr(t, lookupCoord1.DeleteTopic(topic_p2_r2, "**"))
+		for _, tn := range topicList {
+			checkDeleteErr(t, lookupCoord1.DeleteTopic(tn, "**"))
+		}
+		time.Sleep(time.Second * 3)
+
+		lookupCoord1.Stop()
+	}()
+
+	err := lookupCoord1.CreateTopic(topic_p1_r2, TopicMetaInfo{1, 2, 0, 0, 0, 0, false, false})
+	test.Nil(t, err)
+	waitClusterStable(lookupCoord1, time.Second)
+	err = lookupCoord1.CreateTopic(topic_p1_r3, TopicMetaInfo{1, 3, 0, 0, 0, 0, false, false})
+	test.Nil(t, err)
+	waitClusterStable(lookupCoord1, time.Second)
+	err = lookupCoord1.CreateTopic(topic_p2_r2, TopicMetaInfo{2, 2, 0, 0, 0, 0, false, false})
+	test.Nil(t, err)
+	waitClusterStable(lookupCoord1, time.Second)
+	for _, tn := range topicList {
+		err = lookupCoord1.CreateTopic(tn, TopicMetaInfo{2, 2, 0, 0, 0, 0, false, false})
+		test.Nil(t, err)
+		waitClusterStable(lookupCoord1, time.Second)
+	}
+	waitClusterStable(lookupCoord1, time.Second*10)
+	time.Sleep(time.Second * 3)
+	coordLog.Infof("====== create topic done ====")
+	var lostNode string
+	for n, _ := range nodeInfoList {
+		nodeInfoList[n].nsqdCoord.leadership.UnregisterNsqd(nodeInfoList[n].nodeInfo)
+		lostNode = n
+		break
+	}
+	waitClusterStable(lookupCoord1, time.Second*10)
+	cnt := 5
+	for cnt > 0 {
+		waitClusterStable(lookupCoord1, time.Second*3)
+		time.Sleep(time.Millisecond * 100)
+		cnt--
+	}
+
+	monitorChan := make(chan struct{})
+	coordLog.Infof("========== begin balance topic ====")
+	nodeTopicStats := make([]NodeTopicStats, 0)
+	balanceCnt := 0
+	for {
+		currentNodes := lookupCoord1.getCurrentNodes()
+		nodeTopicStats = lookupCoord1.dpm.getLeaderSortedNodeTopicStats(currentNodes, nodeTopicStats)
+		topNBalanced, _, topNStats := lookupCoord1.dpm.rebalanceTopNTopics(monitorChan, nodeTopicStats)
+		balanceCnt++
+		cnt = 5
+		for cnt > 0 {
+			waitClusterStable(lookupCoord1, time.Second*3)
+			time.Sleep(time.Millisecond * 100)
+			cnt--
+		}
+		if topNBalanced && topNStats != nil && balanceCnt > 10 {
+			break
+		}
+	}
+	coordLog.Infof("!!!!!====== balance topic done ====")
+	currentNodes := lookupCoord1.getCurrentNodes()
+	nodeTopicStats = lookupCoord1.dpm.getLeaderSortedNodeTopicStats(currentNodes, nodeTopicStats)
+	for _, nodeStat := range nodeTopicStats {
+		lf := nodeStat.GetNodeLeaderLoadFactor()
+		leaderNum := len(nodeStat.TopicLeaderDataSize)
+		allNum := len(nodeStat.TopicTotalDataSize)
+		t.Logf("before failed rejoin, node %v, load %v, leader num: %v, total: %v", nodeStat.NodeID, lf, leaderNum, allNum)
+	}
+
+	coordLog.Infof("!!!========== failed node rejoin ====")
+	nodeInfoList[lostNode].nsqdCoord.leadership.RegisterNsqd(nodeInfoList[lostNode].nodeInfo)
+	waitClusterStable(lookupCoord1, time.Second*10)
+	time.Sleep(time.Second * 10)
+	coordLog.Infof("!!!!========= begin balance topic after node rejoin ====")
+	balanceCnt = 0
+	for {
+		currentNodes := lookupCoord1.getCurrentNodes()
+		nodeTopicStats = lookupCoord1.dpm.getLeaderSortedNodeTopicStats(currentNodes, nodeTopicStats)
+		topNBalanced, _, topNStats := lookupCoord1.dpm.rebalanceTopNTopics(monitorChan, nodeTopicStats)
+		balanceCnt++
+		cnt = 5
+		for cnt > 0 {
+			waitClusterStable(lookupCoord1, time.Second*3)
+			time.Sleep(time.Millisecond * 100)
+			cnt--
+		}
+		if topNBalanced && topNStats != nil && balanceCnt > 10 {
+			break
+		}
+	}
+	coordLog.Infof("=========== balance topic after node rejoin done ====")
+	// check topn number for each node
+	currentNodes = lookupCoord1.getCurrentNodes()
+	nodeTopicStats = lookupCoord1.dpm.getLeaderSortedNodeTopicStats(currentNodes, nodeTopicStats)
+	maxLeaderNum := 0
+	minLeaderNum := math.MaxInt32
+	maxAllNum := 0
+	minAllNum := math.MaxInt32
+	for _, nodeStat := range nodeTopicStats {
+		lf := nodeStat.GetNodeLeaderLoadFactor()
+		leaderNum := len(nodeStat.TopicLeaderDataSize)
+		allNum := len(nodeStat.TopicTotalDataSize)
+		t.Logf("node %v, load %v, leader num: %v, total: %v", nodeStat.NodeID, lf, leaderNum, allNum)
+		if leaderNum > maxLeaderNum {
+			maxLeaderNum = leaderNum
+		}
+		if leaderNum < minLeaderNum {
+			minLeaderNum = leaderNum
+		}
+		if allNum > maxAllNum {
+			maxAllNum = allNum
+		}
+		if allNum < minAllNum {
+			minAllNum = allNum
+		}
+	}
+
+	assert.True(t, maxLeaderNum-minLeaderNum <= topNBalanceDiff+1)
+	assert.True(t, maxAllNum-minAllNum <= topNBalanceDiff+1)
+	SetCoordLogger(newTestLogger(t), levellogger.LOG_ERR)
 }
