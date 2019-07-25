@@ -71,7 +71,7 @@ const (
 	HIGHEST_LEFT_CONSUME_MB_SIZE  = 50 * 1024
 	HIGHEST_LEFT_DATA_MB_SIZE     = 200 * 1024
 	busyTopicLevel                = 13
-	topNBalanceDiff               = 5
+	topNBalanceDiff               = 6
 )
 
 type balanceOpLevel int
@@ -1072,12 +1072,15 @@ func (dpm *DataPlacement) moveTopicPartition(topicName string, partitionID int,
 				return errMoveTopicWaitTimeout
 			}
 
+			ti := time.NewTimer(time.Second)
 			select {
 			case <-dpm.lookupCoord.stopChan:
+				ti.Stop()
 				return errLookupExiting
-			case <-time.After(time.Second * 5):
+			case <-ti.C:
 				coordLog.Infof("waiting move data")
 			}
+			ti.Stop()
 		}
 	}
 	if FindSlice(topicInfo.ISR, toNode) != -1 {
@@ -1914,6 +1917,8 @@ func (dpm *DataPlacement) rebalanceTopNTopicsBetweenNodes(monitorChan chan struc
 			}
 		}
 	}
+	sort.Sort(sort.Reverse(sortedNode))
+	maxDiff = sortedNode[0].loadFactor - sortedNodeBelowAvg[len(sortedNodeBelowAvg)-1].loadFactor
 	return anyMoved, maxDiff
 }
 
