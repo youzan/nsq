@@ -40,7 +40,7 @@ const (
 	waitMigrateInterval          = time.Minute * 10
 	waitEmergencyMigrateInterval = time.Second * 10
 	waitRemovingNodeInterval     = time.Second * 30
-	balanceInterval              = time.Minute
+	balanceInterval              = time.Second * 60
 )
 
 type JoinISRState struct {
@@ -320,7 +320,7 @@ func (nlcoord *NsqLookupCoordinator) notifyLeaderChanged(monitorChan chan struct
 	nlcoord.wg.Add(1)
 	go func() {
 		defer nlcoord.wg.Done()
-		nlcoord.handleRemovingNodes(monitorChan)
+		nlcoord.handleRemovingNodesLoop(monitorChan)
 	}()
 }
 
@@ -468,7 +468,7 @@ func (nlcoord *NsqLookupCoordinator) handleNsqdNodes(monitorChan chan struct{}) 
 
 // this will permanently remove a node from cluster by hand , it will try move all the topics on
 // this node to others, make sure we have enough nodes to safely remove a node.
-func (nlcoord *NsqLookupCoordinator) handleRemovingNodes(monitorChan chan struct{}) {
+func (nlcoord *NsqLookupCoordinator) handleRemovingNodesLoop(monitorChan chan struct{}) {
 	coordLog.Debugf("start handle the removing nsqd nodes.")
 	defer func() {
 		coordLog.Infof("stop handle the removing nsqd nodes.")
@@ -482,7 +482,6 @@ func (nlcoord *NsqLookupCoordinator) handleRemovingNodes(monitorChan chan struct
 			return
 		case <-ticker.C:
 			//
-			anyStateChanged := false
 			nlcoord.nodesMutex.RLock()
 			removingNodes := make(map[string]string)
 			for nid, removeState := range nlcoord.removingNodes {
@@ -493,108 +492,117 @@ func (nlcoord *NsqLookupCoordinator) handleRemovingNodes(monitorChan chan struct
 			if len(removingNodes) == 0 {
 				continue
 			}
-			currentNodes := nlcoord.getCurrentNodes()
-			allTopics, err := nlcoord.leadership.ScanTopics()
-			if err != nil {
+			nodeTopicStats = nlcoord.processRemovingNodes(monitorChan, removingNodes, nodeTopicStats)
+		}
+	}
+}
+
+func (nlcoord *NsqLookupCoordinator) processRemovingNodes(monitorChan chan struct{},
+	removingNodes map[string]string, nodeTopicStats []NodeTopicStats) []NodeTopicStats {
+	anyStateChanged := false
+	if !atomic.CompareAndSwapInt32(&nlcoord.balanceWaiting, 0, 1) {
+		return nodeTopicStats
+	}
+	defer atomic.StoreInt32(&nlcoord.balanceWaiting, 0)
+	currentNodes := nlcoord.getCurrentNodes()
+	allTopics, err := nlcoord.leadership.ScanTopics()
+	if err != nil {
+		return nodeTopicStats
+	}
+	nodeTopicStats = nodeTopicStats[:0]
+	for nodeID, nodeInfo := range currentNodes {
+		topicStat, err := nlcoord.getNsqdTopicStat(nodeInfo)
+		if err != nil {
+			coordLog.Infof("failed to get node topic status : %v", nodeID)
+			continue
+		}
+		nodeTopicStats = append(nodeTopicStats, *topicStat)
+	}
+	leaderSort := func(l, r *NodeTopicStats) bool {
+		return l.LeaderLessLoader(r)
+	}
+	By(leaderSort).Sort(nodeTopicStats)
+
+	for nid := range removingNodes {
+		anyPending := false
+		coordLog.Infof("handle the removing node %v ", nid)
+		// only check the topic with one replica left
+		// because the doCheckTopics will check the others
+		// we add a new replica for the removing node
+		moved := 0
+		for _, topicInfo := range allTopics {
+			if FindSlice(topicInfo.ISR, nid) == -1 {
+				if FindSlice(topicInfo.CatchupList, nid) != -1 {
+					topicInfo.CatchupList = FilterList(topicInfo.CatchupList, []string{nid})
+					nlcoord.notifyOldNsqdsForTopicMetaInfo(&topicInfo, []string{nid})
+					err := nlcoord.leadership.UpdateTopicNodeInfo(topicInfo.Name, topicInfo.Partition,
+						&topicInfo.TopicPartitionReplicaInfo, topicInfo.Epoch)
+					if err != nil {
+						anyPending = true
+					} else {
+						nlcoord.notifyTopicMetaInfo(&topicInfo)
+					}
+				}
 				continue
 			}
-			nodeTopicStats = nodeTopicStats[:0]
-			for nodeID, nodeInfo := range currentNodes {
-				topicStat, err := nlcoord.getNsqdTopicStat(nodeInfo)
+			if len(topicInfo.ISR) <= topicInfo.Replica {
+				anyPending = true
+				// find new catchup and wait isr ready
+				removingNodes[nid] = "pending"
+				err := nlcoord.dpm.addToCatchupAndWaitISRReady(monitorChan, true, nid, topicInfo.Name, topicInfo.Partition,
+					"", getNodeNameList(nodeTopicStats), true)
 				if err != nil {
-					coordLog.Infof("failed to get node topic status : %v", nodeID)
+					coordLog.Infof("topic %v data on node %v transferred failed: %v, waiting next time", topicInfo.GetTopicDesp(), nid, err.Error())
 					continue
 				}
-				nodeTopicStats = append(nodeTopicStats, *topicStat)
+				coordLog.Infof("topic %v data on node %v transferred success", topicInfo.GetTopicDesp(), nid)
+				anyStateChanged = true
+			} else {
+				nlcoord.handleRemoveTopicNodeOrMoveLeader(topicInfo.Leader == nid, topicInfo.Name, topicInfo.Partition, nid)
+				anyPending = true
 			}
-			leaderSort := func(l, r *NodeTopicStats) bool {
-				return l.LeaderLessLoader(r)
-			}
-			By(leaderSort).Sort(nodeTopicStats)
-
-			for nid := range removingNodes {
-				anyPending := false
-				coordLog.Infof("handle the removing node %v ", nid)
-				// only check the topic with one replica left
-				// because the doCheckTopics will check the others
-				// we add a new replica for the removing node
-				moved := 0
-				for _, topicInfo := range allTopics {
-					if FindSlice(topicInfo.ISR, nid) == -1 {
-						if FindSlice(topicInfo.CatchupList, nid) != -1 {
-							topicInfo.CatchupList = FilterList(topicInfo.CatchupList, []string{nid})
-							nlcoord.notifyOldNsqdsForTopicMetaInfo(&topicInfo, []string{nid})
-							err := nlcoord.leadership.UpdateTopicNodeInfo(topicInfo.Name, topicInfo.Partition,
-								&topicInfo.TopicPartitionReplicaInfo, topicInfo.Epoch)
-							if err != nil {
-								anyPending = true
-							} else {
-								nlcoord.notifyTopicMetaInfo(&topicInfo)
-							}
-						}
+			moved++
+			if moved%16 == 0 {
+				// recompute the load factor after moved some topics
+				nodeTopicStats = nodeTopicStats[:0]
+				for nodeID, nodeInfo := range currentNodes {
+					topicStat, err := nlcoord.getNsqdTopicStat(nodeInfo)
+					if err != nil {
+						coordLog.Infof("failed to get node topic status : %v", nodeID)
 						continue
 					}
-					if len(topicInfo.ISR) <= topicInfo.Replica {
-						anyPending = true
-						// find new catchup and wait isr ready
-						removingNodes[nid] = "pending"
-						err := nlcoord.dpm.addToCatchupAndWaitISRReady(monitorChan, topicInfo.Name, topicInfo.Partition,
-							"", nodeTopicStats, true)
-						if err != nil {
-							coordLog.Infof("topic %v data on node %v transferred failed, waiting next time", topicInfo.GetTopicDesp(), nid)
-							continue
-						}
-						coordLog.Infof("topic %v data on node %v transferred success", topicInfo.GetTopicDesp(), nid)
-						anyStateChanged = true
-					}
-					if topicInfo.Leader == nid {
-						nlcoord.handleMoveTopic(true, topicInfo.Name, topicInfo.Partition, nid)
-					} else {
-						nlcoord.handleMoveTopic(false, topicInfo.Name, topicInfo.Partition, nid)
-					}
-					moved++
-					if moved%16 == 0 {
-						// recompute the load factor after moved some topics
-						nodeTopicStats = nodeTopicStats[:0]
-						for nodeID, nodeInfo := range currentNodes {
-							topicStat, err := nlcoord.getNsqdTopicStat(nodeInfo)
-							if err != nil {
-								coordLog.Infof("failed to get node topic status : %v", nodeID)
-								continue
-							}
-							nodeTopicStats = append(nodeTopicStats, *topicStat)
-						}
-						By(leaderSort).Sort(nodeTopicStats)
-					}
+					nodeTopicStats = append(nodeTopicStats, *topicStat)
 				}
-				if !anyPending {
-					anyStateChanged = true
-					coordLog.Infof("node %v data has been transferred, it can be removed from cluster: state: %v", nid, removingNodes[nid])
-					if removingNodes[nid] != "data_transferred" && removingNodes[nid] != "done" {
-						removingNodes[nid] = "data_transferred"
-					} else {
-						if removingNodes[nid] == "data_transferred" {
-							removingNodes[nid] = "done"
-						} else if removingNodes[nid] == "done" {
-							nlcoord.nodesMutex.Lock()
-							_, ok := nlcoord.nsqdNodes[nid]
-							if !ok {
-								delete(removingNodes, nid)
-								coordLog.Infof("the node %v is removed finally since not alive in cluster", nid)
-							}
-							nlcoord.nodesMutex.Unlock()
-						}
-					}
-				}
+				By(leaderSort).Sort(nodeTopicStats)
 			}
-
-			if anyStateChanged {
-				nlcoord.nodesMutex.Lock()
-				nlcoord.removingNodes = removingNodes
-				nlcoord.nodesMutex.Unlock()
+		}
+		if !anyPending {
+			anyStateChanged = true
+			coordLog.Infof("node %v data has been transferred, it can be removed from cluster: state: %v", nid, removingNodes[nid])
+			if removingNodes[nid] != "data_transferred" && removingNodes[nid] != "done" {
+				removingNodes[nid] = "data_transferred"
+			} else {
+				if removingNodes[nid] == "data_transferred" {
+					removingNodes[nid] = "done"
+				} else if removingNodes[nid] == "done" {
+					nlcoord.nodesMutex.Lock()
+					_, ok := nlcoord.nsqdNodes[nid]
+					if !ok {
+						delete(removingNodes, nid)
+						coordLog.Infof("the node %v is removed finally since not alive in cluster", nid)
+					}
+					nlcoord.nodesMutex.Unlock()
+				}
 			}
 		}
 	}
+
+	if anyStateChanged {
+		nlcoord.nodesMutex.Lock()
+		nlcoord.removingNodes = removingNodes
+		nlcoord.nodesMutex.Unlock()
+	}
+	return nodeTopicStats
 }
 
 func (nlcoord *NsqLookupCoordinator) triggerCheckTopicsRandom(topic string, part int, delay time.Duration) {
@@ -1870,7 +1878,7 @@ func (nlcoord *NsqLookupCoordinator) handleRequestNewTopicInfo(topic string, par
 	return nil
 }
 
-func (nlcoord *NsqLookupCoordinator) handleMoveTopic(isLeader bool, topic string, partition int,
+func (nlcoord *NsqLookupCoordinator) handleRemoveTopicNodeOrMoveLeader(isLeader bool, topic string, partition int,
 	nodeID string) *CoordErr {
 	topicInfo, err := nlcoord.leadership.GetTopicInfo(topic, partition)
 	if err != nil {

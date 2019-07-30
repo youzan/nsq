@@ -1931,6 +1931,7 @@ func checkOrderedMultiTopic(t *testing.T, topic string, expectedPart int, aliveN
 	for i := 0; i < pn; i++ {
 		t0, err := leadership.GetTopicInfo(topic, i)
 		test.Nil(t, err)
+		t.Logf("topic %v isr: %v", t0.GetTopicDesp(), t0.ISR)
 		test.Equal(t, pmeta.Replica, len(t0.ISR))
 
 		if nodeInfoList[t0.Leader] == nil {
@@ -2183,7 +2184,7 @@ func TestNsqLookupTopNTopicBalance(t *testing.T) {
 	for {
 		currentNodes := lookupCoord1.getCurrentNodes()
 		nodeTopicStats = lookupCoord1.dpm.getLeaderSortedNodeTopicStats(currentNodes, nodeTopicStats)
-		topNBalanced, _, topNStats := lookupCoord1.dpm.rebalanceTopNTopics(monitorChan, nodeTopicStats)
+		topNBalanced, _, topNStats := lookupCoord1.dpm.rebalanceTopNTopicsByLoad(monitorChan, nodeTopicStats)
 		balanceCnt++
 		cnt = 5
 		for cnt > 0 {
@@ -2214,7 +2215,7 @@ func TestNsqLookupTopNTopicBalance(t *testing.T) {
 	for {
 		currentNodes := lookupCoord1.getCurrentNodes()
 		nodeTopicStats = lookupCoord1.dpm.getLeaderSortedNodeTopicStats(currentNodes, nodeTopicStats)
-		topNBalanced, _, topNStats := lookupCoord1.dpm.rebalanceTopNTopics(monitorChan, nodeTopicStats)
+		topNBalanced, _, topNStats := lookupCoord1.dpm.rebalanceTopNTopicsByLoad(monitorChan, nodeTopicStats)
 		balanceCnt++
 		cnt = 5
 		for cnt > 0 {

@@ -662,7 +662,7 @@ func (nlcoord *NsqLookupCoordinator) checkAndUpdateTopicPartitions(currentNodes 
 	leaders, isrList, err := nlcoord.dpm.allocTopicLeaderAndISR(topic, meta.OrderedMulti, currentNodes, meta.Replica, meta.PartitionNum, existPart)
 	if err != nil {
 		coordLog.Infof("failed to alloc nodes for topic: %v", err)
-		return err.ToErrorType()
+		return err
 	}
 	if len(leaders) != meta.PartitionNum || len(isrList) != meta.PartitionNum {
 		return ErrNodeUnavailable.ToErrorType()
