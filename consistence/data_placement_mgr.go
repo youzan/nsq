@@ -1749,8 +1749,8 @@ func getTopNTopicsStats(nodeTopicStats []NodeTopicStats, topicInfoList []TopicPa
 				coordLog.Infof("dup topic leader %v old: %v", tn, v)
 				continue
 			}
-			//tn.name = nodeStat.NodeID
 			allTopicLoads = append(allTopicLoads, tn)
+			addedNames[tn.topic] = nodeStat.NodeID
 			if added >= n {
 				break
 			}
