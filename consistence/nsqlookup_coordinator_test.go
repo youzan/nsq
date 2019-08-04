@@ -2131,8 +2131,10 @@ func TestNsqLookupTopNTopicBalance(t *testing.T) {
 
 	oldDiff := topNBalanceDiff
 	topNBalanceDiff = 1
+	lookupCoord1.SetTopNBalance(true)
 	defer func() {
 		topNBalanceDiff = oldDiff
+		lookupCoord1.SetTopNBalance(false)
 	}()
 
 	topic_p1_r2 := "test-nsqlookup-topic-unit-testtopn-p1-r2"
