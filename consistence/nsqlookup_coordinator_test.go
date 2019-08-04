@@ -2312,7 +2312,7 @@ func TestNsqLookupTopNTopicBalance(t *testing.T) {
 		}
 	}
 
-	assert.True(t, maxLeaderNum-minLeaderNum <= topNBalanceDiff+1)
-	assert.True(t, maxAllNum-minAllNum <= topNBalanceDiff+1)
+	assert.True(t, maxLeaderNum-minLeaderNum <= topNBalanceDiff+3)
+	assert.True(t, maxAllNum-minAllNum <= topNBalanceDiff+3)
 	SetCoordLogger(newTestLogger(t), levellogger.LOG_ERR)
 }
