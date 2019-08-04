@@ -237,6 +237,15 @@ func FindSlice(in []string, e string) int {
 	return -1
 }
 
+func FindSliceList(inList [][]string, e string) int {
+	for i, in := range inList {
+		if FindSlice(in, e) != -1 {
+			return i
+		}
+	}
+	return -1
+}
+
 func MergeList(l []string, r []string) []string {
 	for _, e := range r {
 		if FindSlice(l, e) == -1 {

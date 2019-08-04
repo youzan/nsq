@@ -1,6 +1,7 @@
 package consistence
 
 import (
+	"fmt"
 	"os"
 	"path"
 	"sync"
@@ -8,6 +9,10 @@ import (
 
 	"github.com/youzan/nsq/nsqd"
 )
+
+func GetTopicFullName(n string, pid int) string {
+	return fmt.Sprintf("%s-%v", n, pid)
+}
 
 type ChannelConsumerOffset struct {
 	VOffset             int64

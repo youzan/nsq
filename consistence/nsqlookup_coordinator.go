@@ -41,6 +41,7 @@ const (
 	waitEmergencyMigrateInterval = time.Second * 10
 	waitRemovingNodeInterval     = time.Second * 30
 	balanceInterval              = time.Second * 60
+	doCheckInterval              = time.Second * 30
 )
 
 type JoinISRState struct {
@@ -110,6 +111,7 @@ type NsqLookupCoordinator struct {
 	dpm                *DataPlacement
 	balanceWaiting     int32
 	doChecking         int32
+	enableTopNBalance  int32
 }
 
 func NewNsqLookupCoordinator(cluster string, n *NsqLookupdNodeInfo, opts *Options) *NsqLookupCoordinator {
@@ -550,7 +552,7 @@ func (nlcoord *NsqLookupCoordinator) processRemovingNodes(monitorChan chan struc
 				// find new catchup and wait isr ready
 				removingNodes[nid] = "pending"
 				err := nlcoord.dpm.addToCatchupAndWaitISRReady(monitorChan, true, nid, topicInfo.Name, topicInfo.Partition,
-					"", getNodeNameList(nodeTopicStats), true)
+					nil, getNodeNameList(nodeTopicStats), true)
 				if err != nil {
 					coordLog.Infof("topic %v data on node %v transferred failed: %v, waiting next time", topicInfo.GetTopicDesp(), nid, err.Error())
 					continue
@@ -626,7 +628,7 @@ func (nlcoord *NsqLookupCoordinator) triggerCheckTopics(topic string, part int, 
 // check if replication is enough
 // check any unexpected state.
 func (nlcoord *NsqLookupCoordinator) checkTopics(monitorChan chan struct{}) {
-	ticker := time.NewTicker(time.Second * 30)
+	ticker := time.NewTicker(doCheckInterval)
 	waitingMigrateTopic := make(map[string]map[int]time.Time)
 	lostLeaderSessions := make(map[string]bool)
 	defer func() {

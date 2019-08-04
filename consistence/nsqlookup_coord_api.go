@@ -68,6 +68,19 @@ func (nlcoord *NsqLookupCoordinator) IsClusterStable() bool {
 		atomic.LoadInt32(&nlcoord.isUpgrading) == 0
 }
 
+func (nlcoord *NsqLookupCoordinator) SetTopNBalance(enable bool) error {
+	if nlcoord.leaderNode.GetID() != nlcoord.myNode.GetID() {
+		coordLog.Infof("not leader while delete topic")
+		return ErrNotNsqLookupLeader
+	}
+	if enable {
+		atomic.StoreInt32(&nlcoord.enableTopNBalance, 1)
+	} else {
+		atomic.StoreInt32(&nlcoord.enableTopNBalance, 0)
+	}
+	return nil
+}
+
 func (nlcoord *NsqLookupCoordinator) SetClusterUpgradeState(upgrading bool) error {
 	if nlcoord.leaderNode.GetID() != nlcoord.myNode.GetID() {
 		coordLog.Infof("not leader while delete topic")
