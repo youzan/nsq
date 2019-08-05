@@ -73,7 +73,11 @@ loglevel数字越大, 日志越详细
 以下几个API是nsqlookupd的HTTP接口, 对于修改API, 只能发送到nsqlookupd的leader节点, 可以通过listlookup
 判断哪个节点是当前的leader.
 
-主动下线某个节点, 其中nodeid是分布式的id, 可以在nsqadmin里面查看对应节点的id, 调用后, 系统会自动将topic数据逐步平滑迁移到其他节点, 等待完成后, 运维就可以直接关机了. 此操作用于永久从集群中下线一台机子.
+主动下线某个节点, 其中nodeid是分布式的id, 可以在nsqadmin里面查看对应节点的id, 下图红框内的一串:
+
+![NSQ NodeID](resources/nsq-nodeid.png)
+
+调用后, 系统会自动将topic数据逐步平滑迁移到其他节点, 等待完成后, 运维就可以直接关机了. 此操作用于永久从集群中下线一台机子.
 <pre>
 POST /cluster/node/remove?remove_node=nodeid
 </pre>
