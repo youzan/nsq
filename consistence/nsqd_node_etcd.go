@@ -43,45 +43,45 @@ func NewNsqdEtcdMgr(host, username, pwd string) (*NsqdEtcdMgr, error) {
 	}, nil
 }
 
-func (self *NsqdEtcdMgr) InitClusterID(id string) {
-	self.clusterID = id
-	self.topicRoot = self.createTopicRootPath()
-	self.lookupdRoot = self.createLookupdRootPath()
+func (nem *NsqdEtcdMgr) InitClusterID(id string) {
+	nem.clusterID = id
+	nem.topicRoot = nem.createTopicRootPath()
+	nem.lookupdRoot = nem.createLookupdRootPath()
 }
 
-func (self *NsqdEtcdMgr) RegisterNsqd(nodeData *NsqdNodeInfo) error {
+func (nem *NsqdEtcdMgr) RegisterNsqd(nodeData *NsqdNodeInfo) error {
 	value, err := json.Marshal(nodeData)
 	if err != nil {
 		return err
 	}
-	if self.refreshStopCh != nil {
-		close(self.refreshStopCh)
+	if nem.refreshStopCh != nil {
+		close(nem.refreshStopCh)
 	}
 
-	self.nodeKey = self.createNsqdNodePath(nodeData)
-	self.nodeValue = string(value)
-	_, err = self.client.Set(self.nodeKey, self.nodeValue, ETCD_TTL)
+	nem.nodeKey = nem.createNsqdNodePath(nodeData)
+	nem.nodeValue = string(value)
+	_, err = nem.client.Set(nem.nodeKey, nem.nodeValue, ETCD_TTL)
 	if err != nil {
 		return err
 	}
 	coordLog.Infof("registered new node: %v", nodeData)
-	self.refreshStopCh = make(chan bool, 1)
+	nem.refreshStopCh = make(chan bool, 1)
 	// start refresh node
-	go self.refresh(self.refreshStopCh)
+	go nem.refresh(nem.refreshStopCh)
 
 	return nil
 }
 
-func (self *NsqdEtcdMgr) refresh(stopChan chan bool) {
+func (nem *NsqdEtcdMgr) refresh(stopChan chan bool) {
 	for {
 		select {
 		case <-stopChan:
 			return
 		case <-time.After(time.Second * time.Duration(ETCD_TTL/10)):
-			_, err := self.client.SetWithTTL(self.nodeKey, ETCD_TTL)
+			_, err := nem.client.SetWithTTL(nem.nodeKey, ETCD_TTL)
 			if err != nil {
 				coordLog.Errorf("update error: %s", err.Error())
-				_, err := self.client.Set(self.nodeKey, self.nodeValue, ETCD_TTL)
+				_, err := nem.client.Set(nem.nodeKey, nem.nodeValue, ETCD_TTL)
 				if err != nil {
 					coordLog.Errorf("set key error: %s", err.Error())
 				}
@@ -90,28 +90,28 @@ func (self *NsqdEtcdMgr) refresh(stopChan chan bool) {
 	}
 }
 
-func (self *NsqdEtcdMgr) UnregisterNsqd(nodeData *NsqdNodeInfo) error {
-	self.Lock()
-	defer self.Unlock()
+func (nem *NsqdEtcdMgr) UnregisterNsqd(nodeData *NsqdNodeInfo) error {
+	nem.Lock()
+	defer nem.Unlock()
 
 	// stop refresh
-	if self.refreshStopCh != nil {
-		close(self.refreshStopCh)
-		self.refreshStopCh = nil
+	if nem.refreshStopCh != nil {
+		close(nem.refreshStopCh)
+		nem.refreshStopCh = nil
 	}
 
-	_, err := self.client.Delete(self.createNsqdNodePath(nodeData), false)
+	_, err := nem.client.Delete(nem.createNsqdNodePath(nodeData), false)
 	if err != nil {
-		coordLog.Warningf("cluser[%v] node[%v] unregister failed: %v", self.clusterID, nodeData, err)
+		coordLog.Warningf("cluser[%v] node[%v] unregister failed: %v", nem.clusterID, nodeData, err)
 		return err
 	}
 
-	coordLog.Infof("cluser[%v] node[%v] unregistered", self.clusterID, nodeData)
+	coordLog.Infof("cluser[%v] node[%v] unregistered", nem.clusterID, nodeData)
 
 	return nil
 }
 
-func (self *NsqdEtcdMgr) AcquireTopicLeader(topic string, partition int, nodeData *NsqdNodeInfo, epoch EpochType) error {
+func (nem *NsqdEtcdMgr) AcquireTopicLeader(topic string, partition int, nodeData *NsqdNodeInfo, epoch EpochType) error {
 	topicLeaderSession := &TopicLeaderSession{
 		Topic:       topic,
 		Partition:   partition,
@@ -123,12 +123,12 @@ func (self *NsqdEtcdMgr) AcquireTopicLeader(topic string, partition int, nodeDat
 	if err != nil {
 		return err
 	}
-	topicKey := self.createTopicLeaderPath(topic, partition)
-	rsp, err := self.client.Get(topicKey, false, false)
+	topicKey := nem.createTopicLeaderPath(topic, partition)
+	rsp, err := nem.client.Get(topicKey, false, false)
 	if err != nil {
 		if client.IsKeyNotFound(err) {
 			coordLog.Infof("try to acquire topic leader session [%s]", topicKey)
-			rsp, err = self.client.Create(topicKey, string(valueB), 0)
+			rsp, err = nem.client.Create(topicKey, string(valueB), 0)
 			if err != nil {
 				coordLog.Infof("acquire topic leader session [%s] failed: %v", topicKey, err)
 				return err
@@ -148,28 +148,28 @@ func (self *NsqdEtcdMgr) AcquireTopicLeader(topic string, partition int, nodeDat
 	return ErrKeyAlreadyExist
 }
 
-func (self *NsqdEtcdMgr) ReleaseTopicLeader(topic string, partition int, session *TopicLeaderSession) error {
-	self.Lock()
-	defer self.Unlock()
+func (nem *NsqdEtcdMgr) ReleaseTopicLeader(topic string, partition int, session *TopicLeaderSession) error {
+	nem.Lock()
+	defer nem.Unlock()
 
-	topicKey := self.createTopicLeaderPath(topic, partition)
+	topicKey := nem.createTopicLeaderPath(topic, partition)
 	valueB, err := json.Marshal(session)
 	if err != nil {
 		return err
 	}
 
-	_, err = self.client.CompareAndDelete(topicKey, string(valueB), 0)
+	_, err = nem.client.CompareAndDelete(topicKey, string(valueB), 0)
 	if err != nil {
 		if !client.IsKeyNotFound(err) {
 			coordLog.Infof("try release topic leader session [%s] error: %v, orig: %v", topicKey, err, session)
 			// since the topic leader session type is changed, we need do the compatible check
-			rsp, innErr := self.client.Get(topicKey, false, false)
+			rsp, innErr := nem.client.Get(topicKey, false, false)
 			if innErr != nil {
 			} else {
 				var old TopicLeaderSession
 				json.Unmarshal([]byte(rsp.Node.Value), &old)
 				if old.IsSame(session) {
-					_, err = self.client.CompareAndDelete(topicKey, rsp.Node.Value, 0)
+					_, err = nem.client.CompareAndDelete(topicKey, rsp.Node.Value, 0)
 					if err != nil {
 						coordLog.Warningf("release topic leader session [%s] error: %v, orig: %v",
 							topicKey, err, old)
@@ -187,8 +187,8 @@ func (self *NsqdEtcdMgr) ReleaseTopicLeader(topic string, partition int, session
 	return err
 }
 
-func (self *NsqdEtcdMgr) GetAllLookupdNodes() ([]NsqLookupdNodeInfo, error) {
-	rsp, err := self.client.Get(self.lookupdRoot, false, false)
+func (nem *NsqdEtcdMgr) GetAllLookupdNodes() ([]NsqLookupdNodeInfo, error) {
+	rsp, err := nem.client.Get(nem.lookupdRoot, false, false)
 	if err != nil {
 		if client.IsKeyNotFound(err) {
 			return nil, ErrKeyNotFound
@@ -206,10 +206,10 @@ func (self *NsqdEtcdMgr) GetAllLookupdNodes() ([]NsqLookupdNodeInfo, error) {
 	return lookupdNodeList, nil
 }
 
-func (self *NsqdEtcdMgr) WatchLookupdLeader(leader chan *NsqLookupdNodeInfo, stop chan struct{}) error {
-	key := self.createLookupdLeaderPath()
+func (nem *NsqdEtcdMgr) WatchLookupdLeader(leader chan *NsqLookupdNodeInfo, stop chan struct{}) error {
+	key := nem.createLookupdLeaderPath()
 
-	rsp, err := self.client.Get(key, false, false)
+	rsp, err := nem.client.Get(key, false, false)
 	var initIndex uint64
 	if err == nil {
 		coordLog.Infof("key: %s value: %s, index: %v", rsp.Node.Key, rsp.Node.Value, rsp.Index)
@@ -230,7 +230,7 @@ func (self *NsqdEtcdMgr) WatchLookupdLeader(leader chan *NsqLookupdNodeInfo, sto
 		coordLog.Errorf("get error: %s", err.Error())
 	}
 
-	watcher := self.client.Watch(key, initIndex, true)
+	watcher := nem.client.Watch(key, initIndex, true)
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
 		select {
@@ -251,14 +251,14 @@ func (self *NsqdEtcdMgr) WatchLookupdLeader(leader chan *NsqLookupdNodeInfo, sto
 				//rewatch
 				if IsEtcdWatchExpired(err) {
 					isMissing = true
-					rsp, err = self.client.Get(key, false, true)
+					rsp, err = nem.client.Get(key, false, true)
 					if err != nil {
 						time.Sleep(time.Second)
 						coordLog.Errorf("rewatch and get key[%s] error: %s", key, err.Error())
 						continue
 					}
-					coordLog.Warningf("rewatch key %v with newest index: %s, new data: %v", key, rsp.Index, rsp.Node.String())
-					watcher = self.client.Watch(key, rsp.Index+1, true)
+					coordLog.Warningf("rewatch key %v with newest index: %v, new data: %v", key, rsp.Index, rsp.Node.String())
+					watcher = nem.client.Watch(key, rsp.Index+1, true)
 				} else {
 					time.Sleep(5 * time.Second)
 					continue
@@ -307,9 +307,9 @@ func (self *NsqdEtcdMgr) WatchLookupdLeader(leader chan *NsqLookupdNodeInfo, sto
 	}
 }
 
-func (self *NsqdEtcdMgr) GetTopicInfo(topic string, partition int) (*TopicPartitionMetaInfo, error) {
+func (nem *NsqdEtcdMgr) GetTopicInfo(topic string, partition int) (*TopicPartitionMetaInfo, error) {
 	var topicInfo TopicPartitionMetaInfo
-	rsp, err := self.client.Get(self.createTopicMetaPath(topic), false, false)
+	rsp, err := nem.client.Get(nem.createTopicMetaPath(topic), false, false)
 	if err != nil {
 		if client.IsKeyNotFound(err) {
 			return nil, ErrKeyNotFound
@@ -323,7 +323,7 @@ func (self *NsqdEtcdMgr) GetTopicInfo(topic string, partition int) (*TopicPartit
 	}
 	topicInfo.TopicMetaInfo = mInfo
 
-	rsp, err = self.client.Get(self.createTopicReplicaInfoPath(topic, partition), false, false)
+	rsp, err = nem.client.Get(nem.createTopicReplicaInfoPath(topic, partition), false, false)
 	if err != nil {
 		return nil, err
 	}
@@ -339,8 +339,8 @@ func (self *NsqdEtcdMgr) GetTopicInfo(topic string, partition int) (*TopicPartit
 	return &topicInfo, nil
 }
 
-func (self *NsqdEtcdMgr) GetTopicLeaderSession(topic string, partition int) (*TopicLeaderSession, error) {
-	rsp, err := self.client.Get(self.createTopicLeaderPath(topic, partition), false, false)
+func (nem *NsqdEtcdMgr) GetTopicLeaderSession(topic string, partition int) (*TopicLeaderSession, error) {
+	rsp, err := nem.client.Get(nem.createTopicLeaderPath(topic, partition), false, false)
 	if err != nil {
 		if client.IsKeyNotFound(err) {
 			return nil, ErrKeyNotFound
@@ -354,38 +354,38 @@ func (self *NsqdEtcdMgr) GetTopicLeaderSession(topic string, partition int) (*To
 	return &topicLeaderSession, nil
 }
 
-func (self *NsqdEtcdMgr) IsTopicRealDeleted(topic string) (bool, error) {
+func (nem *NsqdEtcdMgr) IsTopicRealDeleted(topic string) (bool, error) {
 	return true, nil
 }
 
-func (self *NsqdEtcdMgr) createNsqdNodePath(nodeData *NsqdNodeInfo) string {
-	return path.Join("/", NSQ_ROOT_DIR, self.clusterID, NSQ_NODE_DIR, "Node-"+nodeData.ID)
+func (nem *NsqdEtcdMgr) createNsqdNodePath(nodeData *NsqdNodeInfo) string {
+	return path.Join("/", NSQ_ROOT_DIR, nem.clusterID, NSQ_NODE_DIR, "Node-"+nodeData.ID)
 }
 
-func (self *NsqdEtcdMgr) createTopicRootPath() string {
-	return path.Join("/", NSQ_ROOT_DIR, self.clusterID, NSQ_TOPIC_DIR)
+func (nem *NsqdEtcdMgr) createTopicRootPath() string {
+	return path.Join("/", NSQ_ROOT_DIR, nem.clusterID, NSQ_TOPIC_DIR)
 }
 
-func (self *NsqdEtcdMgr) createTopicMetaPath(topic string) string {
-	return path.Join(self.topicRoot, topic, NSQ_TOPIC_META)
+func (nem *NsqdEtcdMgr) createTopicMetaPath(topic string) string {
+	return path.Join(nem.topicRoot, topic, NSQ_TOPIC_META)
 }
 
-func (self *NsqdEtcdMgr) createTopicReplicaInfoPath(topic string, partition int) string {
-	return path.Join(self.topicRoot, topic, strconv.Itoa(partition), NSQ_TOPIC_REPLICA_INFO)
+func (nem *NsqdEtcdMgr) createTopicReplicaInfoPath(topic string, partition int) string {
+	return path.Join(nem.topicRoot, topic, strconv.Itoa(partition), NSQ_TOPIC_REPLICA_INFO)
 }
 
-func (self *NsqdEtcdMgr) createLookupdRootPath() string {
-	return path.Join("/", NSQ_ROOT_DIR, self.clusterID, NSQ_LOOKUPD_DIR, NSQ_LOOKUPD_NODE_DIR)
+func (nem *NsqdEtcdMgr) createLookupdRootPath() string {
+	return path.Join("/", NSQ_ROOT_DIR, nem.clusterID, NSQ_LOOKUPD_DIR, NSQ_LOOKUPD_NODE_DIR)
 }
 
-func (self *NsqdEtcdMgr) createLookupdLeaderPath() string {
-	return path.Join("/", NSQ_ROOT_DIR, self.clusterID, NSQ_LOOKUPD_DIR, NSQ_LOOKUPD_LEADER_SESSION)
+func (nem *NsqdEtcdMgr) createLookupdLeaderPath() string {
+	return path.Join("/", NSQ_ROOT_DIR, nem.clusterID, NSQ_LOOKUPD_DIR, NSQ_LOOKUPD_LEADER_SESSION)
 }
 
-func (self *NsqdEtcdMgr) createTopicPartitionPath(topic string, partition int) string {
-	return path.Join(self.topicRoot, topic, strconv.Itoa(partition))
+func (nem *NsqdEtcdMgr) createTopicPartitionPath(topic string, partition int) string {
+	return path.Join(nem.topicRoot, topic, strconv.Itoa(partition))
 }
 
-func (self *NsqdEtcdMgr) createTopicLeaderPath(topic string, partition int) string {
-	return path.Join(self.topicRoot, topic, strconv.Itoa(partition), NSQ_TOPIC_LEADER_SESSION)
+func (nem *NsqdEtcdMgr) createTopicLeaderPath(topic string, partition int) string {
+	return path.Join(nem.topicRoot, topic, strconv.Itoa(partition), NSQ_TOPIC_LEADER_SESSION)
 }

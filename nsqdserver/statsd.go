@@ -37,6 +37,10 @@ func (n *NsqdServer) statsdLoop() {
 			goto exit
 		case <-ticker.C:
 			n.ctx.nsqd.UpdateTopicHistoryStats()
+
+			if opts.StatsdAddress == "" {
+				continue
+			}
 			client := statsd.NewClient(opts.StatsdAddress, opts.StatsdPrefix)
 			err := client.CreateSocket(opts.StatsdProtocol)
 			if err != nil {

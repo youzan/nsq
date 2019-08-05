@@ -21,7 +21,6 @@ import (
 // so we use the advised load to determine the actual topic load.
 // use 1~10 to advise from lowest to highest. The 1 or 10 should be used with much careful.
 
-// TODO: support topic move from one to another by manual.
 // TODO: separate the high peak topics to avoid too much high peak on node
 
 // left consume data size level: 0~1GB low, < 5GB medium, < 50GB high , >=50GB very high
@@ -60,7 +59,11 @@ var (
 	ErrBalanceNodeUnavailable     = errors.New("can not find a node to be balanced")
 	ErrNodeIsExcludedForTopicData = errors.New("destination node is excluded for topic")
 	ErrClusterBalanceRunning      = errors.New("another balance is running, should wait")
+	errMoveTopicWaitTimeout       = errors.New("timeout waiting move topic")
 )
+
+var topicTopNLimit = 100
+var topNBalanceDiff = 3
 
 const (
 	RATIO_BETWEEN_LEADER_FOLLOWER = 0.7
@@ -153,6 +156,22 @@ type NodeTopicStats struct {
 	ChannelOffsets         map[string][]WrapChannelConsumerOffset
 }
 
+func getNodeNameList(nodes []NodeTopicStats) []string {
+	nameList := make([]string, 0, len(nodes))
+	for _, s := range nodes {
+		nameList = append(nameList, s.NodeID)
+	}
+	return nameList
+}
+
+func getTopicInfoMap(topicList []TopicPartitionMetaInfo) map[string]TopicPartitionMetaInfo {
+	tinfoMap := make(map[string]TopicPartitionMetaInfo, len(topicList))
+	for _, tinfo := range topicList {
+		tinfoMap[tinfo.GetTopicDesp()] = tinfo
+	}
+	return tinfoMap
+}
+
 func NewNodeTopicStats(nid string, cap int, cpus int) *NodeTopicStats {
 	return &NodeTopicStats{
 		NodeID:                 nid,
@@ -171,49 +190,49 @@ func NewNodeTopicStats(nid string, cap int, cpus int) *NodeTopicStats {
 // the load factor is something like cpu load factor that
 // stand for the busy/idle state for this node.
 // the larger means busier.
-// 70% recent avg load in 24hr + 20% left need to be consumed + 10% data size left
+// 80% recent avg load in 24hr + 10% left need to be consumed + 10% data size left
 
-func (self *NodeTopicStats) GetNodeLoadFactor() (float64, float64) {
-	leaderLF := self.GetNodeLeaderLoadFactor()
+func (nts *NodeTopicStats) GetNodeLoadFactor() (float64, float64) {
+	leaderLF := nts.GetNodeLeaderLoadFactor()
 	totalDataSize := int64(0)
-	for _, v := range self.TopicTotalDataSize {
+	for _, v := range nts.TopicTotalDataSize {
 		totalDataSize += v
 	}
-	totalDataSize += int64(len(self.TopicTotalDataSize))
+	totalDataSize += int64(len(nts.TopicTotalDataSize))
 	if totalDataSize > HIGHEST_LEFT_DATA_MB_SIZE {
 		totalDataSize = HIGHEST_LEFT_DATA_MB_SIZE
 	}
 	return leaderLF, leaderLF + float64(totalDataSize)/HIGHEST_LEFT_DATA_MB_SIZE*5
 }
 
-func (self *NodeTopicStats) GetNodeLeaderLoadFactor() float64 {
+func (nts *NodeTopicStats) GetNodeLeaderLoadFactor() float64 {
 	leftConsumed := int64(0)
-	for _, t := range self.ChannelDepthData {
+	for _, t := range nts.ChannelDepthData {
 		leftConsumed += t
 	}
-	leftConsumed += int64(len(self.ChannelDepthData))
+	leftConsumed += int64(len(nts.ChannelDepthData))
 	if leftConsumed > HIGHEST_LEFT_CONSUME_MB_SIZE {
 		leftConsumed = HIGHEST_LEFT_CONSUME_MB_SIZE
 	}
 	totalLeaderDataSize := int64(0)
-	for _, v := range self.TopicLeaderDataSize {
+	for _, v := range nts.TopicLeaderDataSize {
 		totalLeaderDataSize += v
 	}
-	totalLeaderDataSize += int64(len(self.TopicLeaderDataSize))
+	totalLeaderDataSize += int64(len(nts.TopicLeaderDataSize))
 	if totalLeaderDataSize > HIGHEST_LEFT_DATA_MB_SIZE {
 		totalLeaderDataSize = HIGHEST_LEFT_DATA_MB_SIZE
 	}
-	avgWrite := self.GetNodeAvgWriteLevel()
+	avgWrite := nts.GetNodeAvgWriteLevel()
 	if avgWrite > HIGHEST_PUB_QPS_LEVEL {
 		avgWrite = HIGHEST_PUB_QPS_LEVEL
 	}
 
-	return avgWrite/HIGHEST_PUB_QPS_LEVEL*70.0 + float64(leftConsumed)/HIGHEST_LEFT_CONSUME_MB_SIZE*20.0 + float64(totalLeaderDataSize)/HIGHEST_LEFT_DATA_MB_SIZE*10.0
+	return avgWrite/HIGHEST_PUB_QPS_LEVEL*80.0 + float64(leftConsumed)/HIGHEST_LEFT_CONSUME_MB_SIZE*10.0 + float64(totalLeaderDataSize)/HIGHEST_LEFT_DATA_MB_SIZE*10.0
 }
 
-func (self *NodeTopicStats) GetNodePeakLevelList() []int64 {
+func (nts *NodeTopicStats) GetNodePeakLevelList() []int64 {
 	levelList := make([]int64, 8)
-	for _, dataList := range self.TopicHourlyPubDataList {
+	for _, dataList := range nts.TopicHourlyPubDataList {
 		peak := int64(10)
 		for _, data := range dataList {
 			if data > peak {
@@ -229,10 +248,10 @@ func (self *NodeTopicStats) GetNodePeakLevelList() []int64 {
 	return levelList
 }
 
-func (self *NodeTopicStats) GetNodeAvgWriteLevel() float64 {
+func (nts *NodeTopicStats) GetNodeAvgWriteLevel() float64 {
 	level := int64(0)
 	tmp := make(IntHeap, 0, 24)
-	for _, dataList := range self.TopicHourlyPubDataList {
+	for _, dataList := range nts.TopicHourlyPubDataList {
 		sum := int64(10)
 		cnt := 0
 		tmp = tmp[:0]
@@ -254,10 +273,10 @@ func (self *NodeTopicStats) GetNodeAvgWriteLevel() float64 {
 	return convertQPSLevel(level)
 }
 
-func (self *NodeTopicStats) GetNodeAvgReadLevel() float64 {
+func (nts *NodeTopicStats) GetNodeAvgReadLevel() float64 {
 	level := float64(0)
 	tmp := make(IntHeap, 0, 24)
-	for topicName, dataList := range self.TopicHourlyPubDataList {
+	for topicName, dataList := range nts.TopicHourlyPubDataList {
 		sum := int64(10)
 		cnt := 0
 		tmp = tmp[:0]
@@ -274,7 +293,7 @@ func (self *NodeTopicStats) GetNodeAvgReadLevel() float64 {
 		}
 
 		sum = sum / int64(cnt)
-		num, ok := self.ChannelNum[topicName]
+		num, ok := nts.ChannelNum[topicName]
 		if ok {
 			level += math.Log2(1.0+float64(num)) * float64(sum)
 		}
@@ -282,29 +301,29 @@ func (self *NodeTopicStats) GetNodeAvgReadLevel() float64 {
 	return convertQPSLevel(int64(level))
 }
 
-func (self *NodeTopicStats) GetTopicLoadFactor(topicFullName string) float64 {
-	data := self.TopicTotalDataSize[topicFullName]
+func (nts *NodeTopicStats) GetTopicLoadFactor(topicFullName string) float64 {
+	data := nts.TopicTotalDataSize[topicFullName]
 	if data > HIGHEST_LEFT_DATA_MB_SIZE {
 		data = HIGHEST_LEFT_DATA_MB_SIZE
 	}
-	return self.GetTopicLeaderLoadFactor(topicFullName) + float64(data)/HIGHEST_LEFT_DATA_MB_SIZE*5.0
+	return nts.GetTopicLeaderLoadFactor(topicFullName) + float64(data)/HIGHEST_LEFT_DATA_MB_SIZE*5.0
 }
 
-func (self *NodeTopicStats) GetTopicLeaderLoadFactor(topicFullName string) float64 {
-	writeLevel := self.GetTopicAvgWriteLevel(topicFullName)
-	depth := self.ChannelDepthData[topicFullName]
+func (nts *NodeTopicStats) GetTopicLeaderLoadFactor(topicFullName string) float64 {
+	writeLevel := nts.GetTopicAvgWriteLevel(topicFullName)
+	depth := nts.ChannelDepthData[topicFullName]
 	if depth > HIGHEST_LEFT_CONSUME_MB_SIZE {
 		depth = HIGHEST_LEFT_CONSUME_MB_SIZE
 	}
-	data := self.TopicLeaderDataSize[topicFullName]
+	data := nts.TopicLeaderDataSize[topicFullName]
 	if data > HIGHEST_LEFT_DATA_MB_SIZE {
 		data = HIGHEST_LEFT_DATA_MB_SIZE
 	}
-	return writeLevel/HIGHEST_PUB_QPS_LEVEL*70.0 + float64(depth)/HIGHEST_LEFT_CONSUME_MB_SIZE*20.0 + float64(data)/HIGHEST_LEFT_DATA_MB_SIZE*10.0
+	return writeLevel/HIGHEST_PUB_QPS_LEVEL*80.0 + float64(depth)/HIGHEST_LEFT_CONSUME_MB_SIZE*10.0 + float64(data)/HIGHEST_LEFT_DATA_MB_SIZE*10.0
 }
 
-func (self *NodeTopicStats) GetTopicAvgWriteLevel(topicFullName string) float64 {
-	dataList, ok := self.TopicHourlyPubDataList[topicFullName]
+func (nts *NodeTopicStats) GetTopicAvgWriteLevel(topicFullName string) float64 {
+	dataList, ok := nts.TopicHourlyPubDataList[topicFullName]
 	if ok {
 		sum := int64(10)
 		cnt := 0
@@ -327,27 +346,39 @@ func (self *NodeTopicStats) GetTopicAvgWriteLevel(topicFullName string) float64 
 	return 1.0
 }
 
-type topicLoadFactorInfo struct {
+type loadFactorInfo struct {
+	name       string
 	topic      string
 	loadFactor float64
 }
 
-type topicLFListT []topicLoadFactorInfo
+func (lf *loadFactorInfo) GetTopic() string {
+	return lf.topic
+}
 
-func (s topicLFListT) Len() int {
+func (lf *loadFactorInfo) GetLF() float64 {
+	return lf.loadFactor
+}
+
+type LFListT []loadFactorInfo
+
+func (s LFListT) Len() int {
 	return len(s)
 }
-func (s topicLFListT) Swap(i, j int) {
+func (s LFListT) Swap(i, j int) {
 	s[i], s[j] = s[j], s[i]
 }
-func (s topicLFListT) Less(i, j int) bool {
+func (s LFListT) Less(i, j int) bool {
+	if math.Abs(s[i].loadFactor-s[j].loadFactor) < 0.5 {
+		return s[i].topic < s[j].topic
+	}
 	return s[i].loadFactor < s[j].loadFactor
 }
 
-func (self *NodeTopicStats) GetSortedTopicWriteLevel(leaderOnly bool) topicLFListT {
-	topicLFList := make(topicLFListT, 0)
-	for topicName := range self.TopicHourlyPubDataList {
-		d, ok := self.TopicLeaderDataSize[topicName]
+func (nts *NodeTopicStats) GetSortedTopicWriteLevel(leaderOnly bool) LFListT {
+	topicLFList := make(LFListT, 0)
+	for topicName := range nts.TopicHourlyPubDataList {
+		d, ok := nts.TopicLeaderDataSize[topicName]
 		if leaderOnly {
 			if !ok || d <= 0 {
 				continue
@@ -359,23 +390,26 @@ func (self *NodeTopicStats) GetSortedTopicWriteLevel(leaderOnly bool) topicLFLis
 		}
 		lf := 0.0
 		if leaderOnly {
-			lf = self.GetTopicLeaderLoadFactor(topicName)
+			lf = nts.GetTopicLeaderLoadFactor(topicName)
 		} else {
-			lf = self.GetTopicLoadFactor(topicName)
+			lf = nts.GetTopicLoadFactor(topicName)
 		}
-		topicLFList = append(topicLFList, topicLoadFactorInfo{topicName, lf})
+		topicLFList = append(topicLFList, loadFactorInfo{
+			topic:      topicName,
+			loadFactor: lf,
+		})
 	}
 	sort.Sort(topicLFList)
 	return topicLFList
 }
 
-func (self *NodeTopicStats) GetMostBusyAndIdleTopicWriteLevel(leaderOnly bool) (string, string, float64, float64) {
+func (nts *NodeTopicStats) GetMostBusyAndIdleTopicWriteLevel(leaderOnly bool) (string, string, float64, float64) {
 	busy := float64(0.0)
 	busyTopic := ""
 	idle := float64(math.MaxInt32)
 	idleTopic := ""
-	for topicName := range self.TopicHourlyPubDataList {
-		d, ok := self.TopicLeaderDataSize[topicName]
+	for topicName := range nts.TopicHourlyPubDataList {
+		d, ok := nts.TopicLeaderDataSize[topicName]
 		if leaderOnly {
 			if !ok || d <= 0 {
 				continue
@@ -388,9 +422,9 @@ func (self *NodeTopicStats) GetMostBusyAndIdleTopicWriteLevel(leaderOnly bool) (
 
 		sum := 0.0
 		if leaderOnly {
-			sum = self.GetTopicLeaderLoadFactor(topicName)
+			sum = nts.GetTopicLeaderLoadFactor(topicName)
 		} else {
-			sum = self.GetTopicLoadFactor(topicName)
+			sum = nts.GetTopicLoadFactor(topicName)
 		}
 
 		if sum > busy {
@@ -405,9 +439,9 @@ func (self *NodeTopicStats) GetMostBusyAndIdleTopicWriteLevel(leaderOnly bool) (
 	return idleTopic, busyTopic, idle, busy
 }
 
-func (self *NodeTopicStats) GetTopicPeakLevel(topic TopicPartitionID) float64 {
+func (nts *NodeTopicStats) GetTopicPeakLevel(topic TopicPartitionID) float64 {
 	selectedTopic := topic.String()
-	dataList, ok := self.TopicHourlyPubDataList[selectedTopic]
+	dataList, ok := nts.TopicHourlyPubDataList[selectedTopic]
 	if ok {
 		peak := int64(10)
 		for _, data := range dataList {
@@ -420,11 +454,11 @@ func (self *NodeTopicStats) GetTopicPeakLevel(topic TopicPartitionID) float64 {
 	return 1.0
 }
 
-func (self *NodeTopicStats) LeaderLessLoader(other *NodeTopicStats) bool {
-	left := self.GetNodeLeaderLoadFactor()
+func (nts *NodeTopicStats) LeaderLessLoader(other *NodeTopicStats) bool {
+	left := nts.GetNodeLeaderLoadFactor()
 	right := other.GetNodeLeaderLoadFactor()
 	if math.Abs(left-right) < 0.5 {
-		left := float64(len(self.TopicLeaderDataSize)) + float64(len(self.TopicTotalDataSize)-len(self.TopicLeaderDataSize))*RATIO_BETWEEN_LEADER_FOLLOWER
+		left := float64(len(nts.TopicLeaderDataSize)) + float64(len(nts.TopicTotalDataSize)-len(nts.TopicLeaderDataSize))*RATIO_BETWEEN_LEADER_FOLLOWER
 		right := float64(len(other.TopicLeaderDataSize)) + float64(len(other.TopicTotalDataSize)-len(other.TopicLeaderDataSize))*RATIO_BETWEEN_LEADER_FOLLOWER
 		return left < right
 	}
@@ -435,11 +469,11 @@ func (self *NodeTopicStats) LeaderLessLoader(other *NodeTopicStats) bool {
 	return false
 }
 
-func (self *NodeTopicStats) SlaveLessLoader(other *NodeTopicStats) bool {
-	_, left := self.GetNodeLoadFactor()
+func (nts *NodeTopicStats) SlaveLessLoader(other *NodeTopicStats) bool {
+	_, left := nts.GetNodeLoadFactor()
 	_, right := other.GetNodeLoadFactor()
 	if math.Abs(left-right) < 0.5 {
-		left := float64(len(self.TopicLeaderDataSize)) + float64(len(self.TopicTotalDataSize)-len(self.TopicLeaderDataSize))*RATIO_BETWEEN_LEADER_FOLLOWER
+		left := float64(len(nts.TopicLeaderDataSize)) + float64(len(nts.TopicTotalDataSize)-len(nts.TopicLeaderDataSize))*RATIO_BETWEEN_LEADER_FOLLOWER
 		right := float64(len(other.TopicLeaderDataSize)) + float64(len(other.TopicTotalDataSize)-len(other.TopicLeaderDataSize))*RATIO_BETWEEN_LEADER_FOLLOWER
 		return left < right
 	}
@@ -486,17 +520,99 @@ func NewDataPlacement(coord *NsqLookupCoordinator) *DataPlacement {
 	}
 }
 
-func (self *DataPlacement) SetBalanceInterval(start int, end int) {
+func (dpm *DataPlacement) SetBalanceInterval(start int, end int) {
 	if start == end && start == 0 {
 		return
 	}
-	self.balanceInterval[0] = start
-	self.balanceInterval[1] = end
+	dpm.balanceInterval[0] = start
+	dpm.balanceInterval[1] = end
 }
 
-func (self *DataPlacement) DoBalance(monitorChan chan struct{}) {
+type nodeLoadInfo struct {
+	avgLeaderLoad    float64
+	minLeaderLoad    float64
+	maxLeaderLoad    float64
+	avgNodeLoad      float64
+	minNodeLoad      float64
+	maxNodeLoad      float64
+	validNum         int
+	mostLeaderStats  *NodeTopicStats
+	mostLeaderNum    int
+	leastLeaderStats *NodeTopicStats
+	leastLeaderNum   int
+}
+
+func newLoadInfo() nodeLoadInfo {
+	return nodeLoadInfo{
+		avgLeaderLoad:  0.0,
+		minLeaderLoad:  float64(math.MaxInt32),
+		maxLeaderLoad:  0.0,
+		avgNodeLoad:    0.0,
+		minNodeLoad:    float64(math.MaxInt32),
+		maxNodeLoad:    0.0,
+		leastLeaderNum: math.MaxInt32,
+	}
+}
+
+func (dpm *DataPlacement) getLeaderSortedNodeTopicStats(currentNodes map[string]NsqdNodeInfo, nodeTopicStats []NodeTopicStats) []NodeTopicStats {
+	nodeTopicStats = nodeTopicStats[:0]
+	for nodeID, nodeInfo := range currentNodes {
+		topicStat, err := dpm.lookupCoord.getNsqdTopicStat(nodeInfo)
+		if err != nil {
+			coordLog.Infof("failed to get node topic status while checking balance: %v", nodeID)
+			continue
+		}
+		nodeTopicStats = append(nodeTopicStats, *topicStat)
+	}
+
+	leaderSort := func(l, r *NodeTopicStats) bool {
+		return l.LeaderLessLoader(r)
+	}
+	By(leaderSort).Sort(nodeTopicStats)
+	return nodeTopicStats
+}
+
+func computeNodeLoadInfo(nodeTopicStats []NodeTopicStats, topicStatsMinMax []*NodeTopicStats) ([]*NodeTopicStats, nodeLoadInfo) {
+	nload := newLoadInfo()
+	for _, tstat := range nodeTopicStats {
+		topicStat := tstat
+		nodeID := topicStat.NodeID
+		leaderLF, nodeLF := topicStat.GetNodeLoadFactor()
+		coordLog.Infof("nsqd node %v load factor is : (%v, %v)", nodeID, leaderLF, nodeLF)
+		if leaderLF < nload.minLeaderLoad {
+			topicStatsMinMax[0] = &topicStat
+			nload.minLeaderLoad = leaderLF
+		}
+		nload.minNodeLoad = math.Min(nodeLF, nload.minNodeLoad)
+		if leaderLF > nload.maxLeaderLoad {
+			topicStatsMinMax[1] = &topicStat
+			nload.maxLeaderLoad = leaderLF
+		}
+		nload.maxNodeLoad = math.Max(nodeLF, nload.maxNodeLoad)
+
+		nload.avgLeaderLoad += leaderLF
+		nload.avgNodeLoad += nodeLF
+		nload.validNum++
+		leaderNum := len(topicStat.TopicLeaderDataSize)
+		if leaderNum > nload.mostLeaderNum {
+			nload.mostLeaderNum = leaderNum
+			nload.mostLeaderStats = &topicStat
+		}
+		if leaderNum < nload.leastLeaderNum {
+			nload.leastLeaderNum = leaderNum
+			nload.leastLeaderStats = &topicStat
+		}
+	}
+	return topicStatsMinMax, nload
+}
+
+func (dpm *DataPlacement) isTopNBalanceEnabled() bool {
+	return atomic.LoadInt32(&dpm.lookupCoord.enableTopNBalance) == 1
+}
+
+func (dpm *DataPlacement) DoBalance(monitorChan chan struct{}) {
 	//check period for the data balance.
-	ticker := time.NewTicker(time.Minute)
+	ticker := time.NewTicker(balanceInterval)
 	defer func() {
 		ticker.Stop()
 		coordLog.Infof("balance check exit.")
@@ -509,81 +625,81 @@ func (self *DataPlacement) DoBalance(monitorChan chan struct{}) {
 			return
 		case <-ticker.C:
 			// only balance at given interval
-			if time.Now().Hour() > self.balanceInterval[1] || time.Now().Hour() < self.balanceInterval[0] {
+			if time.Now().Hour() > dpm.balanceInterval[1] || time.Now().Hour() < dpm.balanceInterval[0] {
 				continue
 			}
-			if !self.lookupCoord.IsMineLeader() {
+			if !dpm.lookupCoord.IsMineLeader() {
 				coordLog.Infof("not leader while checking balance")
 				continue
 			}
-			if !self.lookupCoord.IsClusterStable() {
+			if !dpm.lookupCoord.IsClusterStable() {
 				coordLog.Infof("no balance since cluster is not stable while checking balance")
 				continue
 			}
-			avgLeaderLoad := 0.0
-			minLeaderLoad := float64(math.MaxInt32)
-			maxLeaderLoad := 0.0
-			avgNodeLoad := 0.0
-			minNodeLoad := float64(math.MaxInt32)
-			maxNodeLoad := 0.0
+
 			// if max load is 4 times more than avg load, we need move some
 			// leader from max to min load node one by one.
 			// if min load is 4 times less than avg load, we can move some
 			// leader to this min load node.
 			coordLog.Infof("begin checking balance of topic data...")
-			currentNodes := self.lookupCoord.getCurrentNodes()
-			nodeTopicStats = nodeTopicStats[:0]
-			validNum := 0
-			var mostLeaderStats *NodeTopicStats
-			mostLeaderNum := 0
-			var leastLeaderStats *NodeTopicStats
-			leastLeaderNum := math.MaxInt32
-			for nodeID, nodeInfo := range currentNodes {
-				topicStat, err := self.lookupCoord.getNsqdTopicStat(nodeInfo)
-				if err != nil {
-					coordLog.Infof("failed to get node topic status while checking balance: %v", nodeID)
-					continue
-				}
-				nodeTopicStats = append(nodeTopicStats, *topicStat)
-				leaderLF, nodeLF := topicStat.GetNodeLoadFactor()
-				coordLog.Infof("nsqd node %v load factor is : (%v, %v)", nodeID, leaderLF, nodeLF)
-				if leaderLF < minLeaderLoad {
-					topicStatsMinMax[0] = topicStat
-					minLeaderLoad = leaderLF
-				}
-				minNodeLoad = math.Min(nodeLF, minNodeLoad)
-				if leaderLF > maxLeaderLoad {
-					topicStatsMinMax[1] = topicStat
-					maxLeaderLoad = leaderLF
-				}
-				maxNodeLoad = math.Max(nodeLF, maxNodeLoad)
-
-				avgLeaderLoad += leaderLF
-				avgNodeLoad += nodeLF
-				validNum++
-				leaderNum := len(topicStat.TopicLeaderDataSize)
-				if leaderNum > mostLeaderNum {
-					mostLeaderNum = leaderNum
-					mostLeaderStats = topicStat
-				}
-				if leaderNum < leastLeaderNum {
-					leastLeaderNum = leaderNum
-					leastLeaderStats = topicStat
-				}
-			}
-			if validNum < 2 || topicStatsMinMax[0] == nil || topicStatsMinMax[1] == nil {
-				continue
-			}
-
-			moved, _ := self.rebalanceOrderedTopic(monitorChan)
+			moved, _ := dpm.rebalanceOrderedTopic(monitorChan)
 			if moved {
 				continue
 			}
 
-			leaderSort := func(l, r *NodeTopicStats) bool {
-				return l.LeaderLessLoader(r)
+			currentNodes := dpm.lookupCoord.getCurrentNodes()
+			nodeTopicStats = dpm.getLeaderSortedNodeTopicStats(currentNodes, nodeTopicStats)
+			topicList, err := dpm.lookupCoord.leadership.ScanTopics()
+			if err != nil {
+				coordLog.Infof("scan topics error: %v", err)
+				continue
 			}
-			By(leaderSort).Sort(nodeTopicStats)
+			if len(topicList) <= len(currentNodes)*2 {
+				coordLog.Infof("the topics less than nodes, no need balance: %v ", len(topicList))
+				continue
+			}
+			var topNTopics LFListT
+			if dpm.isTopNBalanceEnabled() {
+				topNBalanced := false
+				//topNBalanced, _, topNTopics = dpm.rebalanceTopNTopics(monitorChan, nodeTopicStats)
+				topNBalanced, _, topNTopics = dpm.rebalanceTopNTopicsByLoad(monitorChan,
+					topicList, nodeTopicStats, currentNodes)
+				if !topNBalanced {
+					continue
+				}
+			}
+			// filter out topN topics
+			for _, s := range nodeTopicStats {
+				beforeCnt := len(s.TopicTotalDataSize)
+				for _, t := range topNTopics {
+					topicName := t.topic
+					delete(s.ChannelDepthData, topicName)
+					delete(s.ChannelList, topicName)
+					delete(s.ChannelNum, topicName)
+					delete(s.ChannelOffsets, topicName)
+					delete(s.TopicHourlyPubDataList, topicName)
+					delete(s.TopicLeaderDataSize, topicName)
+					delete(s.TopicTotalDataSize, topicName)
+				}
+				afterCnt := len(s.TopicTotalDataSize)
+				coordLog.Infof("node %v filter topn from %v to %v", s.NodeID, beforeCnt, afterCnt)
+			}
+			var nload nodeLoadInfo
+			topicStatsMinMax, nload = computeNodeLoadInfo(nodeTopicStats, topicStatsMinMax)
+			avgLeaderLoad := nload.avgLeaderLoad
+			minLeaderLoad := nload.minLeaderLoad
+			maxLeaderLoad := nload.maxLeaderLoad
+			avgNodeLoad := nload.avgNodeLoad
+			minNodeLoad := nload.minNodeLoad
+			maxNodeLoad := nload.maxNodeLoad
+			validNum := nload.validNum
+			mostLeaderStats := nload.mostLeaderStats
+			mostLeaderNum := nload.mostLeaderNum
+			leastLeaderStats := nload.leastLeaderStats
+			leastLeaderNum := nload.leastLeaderNum
+			if validNum < 2 || topicStatsMinMax[0] == nil || topicStatsMinMax[1] == nil {
+				continue
+			}
 
 			midLeaderLoad, _ := nodeTopicStats[len(nodeTopicStats)/2].GetNodeLoadFactor()
 			nodeTopicStatsSortedSlave := make([]NodeTopicStats, len(nodeTopicStats))
@@ -603,18 +719,9 @@ func (self *DataPlacement) DoBalance(monitorChan chan struct{}) {
 				continue
 			}
 
-			topicList, err := self.lookupCoord.leadership.ScanTopics()
-			if err != nil {
-				coordLog.Infof("scan topics error: %v", err)
-				continue
-			}
-			if len(topicList) <= len(currentNodes)*2 {
-				coordLog.Infof("the topics less than nodes, no need balance: %v ", len(topicList))
-				continue
-			}
 			moveLeader := false
 			avgTopicNum := len(topicList) / len(currentNodes)
-			if len(topicStatsMinMax[1].TopicLeaderDataSize) > int(1.1*float64(avgTopicNum)) {
+			if len(topicStatsMinMax[1].TopicLeaderDataSize) > int(1.2*float64(avgTopicNum)) {
 				// too many leader topics on this node, try move leader topic
 				coordLog.Infof("move leader topic since leader is more than follower on node")
 				moveLeader = true
@@ -624,54 +731,54 @@ func (self *DataPlacement) DoBalance(monitorChan chan struct{}) {
 			}
 			if minLeaderLoad*4 < avgLeaderLoad {
 				// move some topic from the most busy node to the most idle node
-				self.balanceTopicLeaderBetweenNodes(monitorChan, moveLeader, moveMinLFOnly, minLeaderLoad,
+				dpm.balanceTopicLeaderBetweenNodes(monitorChan, moveLeader, moveMinLFOnly, minLeaderLoad,
 					maxLeaderLoad, topicStatsMinMax, nodeTopicStats)
-			} else if avgLeaderLoad < 5 && maxLeaderLoad < 10 {
+			} else if avgLeaderLoad < 4 && maxLeaderLoad < 8 {
 				// all nodes in the cluster are under low load, no need balance
 				continue
 			} else if avgLeaderLoad*2 < maxLeaderLoad {
-				self.balanceTopicLeaderBetweenNodes(monitorChan, moveLeader, moveAny, minLeaderLoad,
+				dpm.balanceTopicLeaderBetweenNodes(monitorChan, moveLeader, moveAny, minLeaderLoad,
 					maxLeaderLoad, topicStatsMinMax, nodeTopicStats)
 			} else if avgLeaderLoad >= 20 &&
 				((minLeaderLoad*2 < maxLeaderLoad) || (maxLeaderLoad > avgLeaderLoad*1.5)) {
-				self.balanceTopicLeaderBetweenNodes(monitorChan, moveLeader,
+				dpm.balanceTopicLeaderBetweenNodes(monitorChan, moveLeader,
 					moveTryIdle, minLeaderLoad, maxLeaderLoad,
 					topicStatsMinMax, nodeTopicStats)
 			} else if minNodeLoad*4 < avgNodeLoad {
 				topicStatsMinMax[0] = &nodeTopicStatsSortedSlave[0]
 				topicStatsMinMax[1] = &nodeTopicStatsSortedSlave[len(nodeTopicStatsSortedSlave)-1]
 				moveLeader = len(topicStatsMinMax[1].TopicLeaderDataSize) > len(topicStatsMinMax[1].TopicTotalDataSize)/2
-				self.balanceTopicLeaderBetweenNodes(monitorChan, moveLeader, moveMinLFOnly, minNodeLoad,
+				dpm.balanceTopicLeaderBetweenNodes(monitorChan, moveLeader, moveMinLFOnly, minNodeLoad,
 					maxNodeLoad, topicStatsMinMax, nodeTopicStatsSortedSlave)
 			} else if avgNodeLoad*2 < maxNodeLoad {
 				topicStatsMinMax[0] = &nodeTopicStatsSortedSlave[0]
 				topicStatsMinMax[1] = &nodeTopicStatsSortedSlave[len(nodeTopicStatsSortedSlave)-1]
 				moveLeader = len(topicStatsMinMax[1].TopicLeaderDataSize) > len(topicStatsMinMax[1].TopicTotalDataSize)/2
-				self.balanceTopicLeaderBetweenNodes(monitorChan, moveLeader, moveAny, minNodeLoad,
+				dpm.balanceTopicLeaderBetweenNodes(monitorChan, moveLeader, moveAny, minNodeLoad,
 					maxNodeLoad, topicStatsMinMax, nodeTopicStatsSortedSlave)
 			} else if avgNodeLoad >= 20 &&
 				(minNodeLoad*2 < maxNodeLoad || maxNodeLoad > avgNodeLoad*1.5) {
 				topicStatsMinMax[0] = &nodeTopicStatsSortedSlave[0]
 				topicStatsMinMax[1] = &nodeTopicStatsSortedSlave[len(nodeTopicStatsSortedSlave)-1]
 				moveLeader = len(topicStatsMinMax[1].TopicLeaderDataSize) > len(topicStatsMinMax[1].TopicTotalDataSize)/2
-				self.balanceTopicLeaderBetweenNodes(monitorChan, moveLeader,
+				dpm.balanceTopicLeaderBetweenNodes(monitorChan, moveLeader,
 					moveTryIdle, minNodeLoad, maxNodeLoad,
 					topicStatsMinMax, nodeTopicStatsSortedSlave)
 			} else {
-				if mostLeaderStats != nil && avgTopicNum > 10 && mostLeaderNum > int(float64(avgTopicNum)*1.5) {
+				if mostLeaderStats != nil && avgTopicNum > 10 && mostLeaderNum > int(float64(avgTopicNum)*1.3) {
 					needMove := checkMoveLotsOfTopics(true, mostLeaderNum, mostLeaderStats,
 						avgTopicNum, topicStatsMinMax, midLeaderLoad)
 					if needMove {
 						topicStatsMinMax[1] = mostLeaderStats
 						leaderLF, _ := mostLeaderStats.GetNodeLoadFactor()
 						maxLeaderLoad = leaderLF
-						self.balanceTopicLeaderBetweenNodes(monitorChan, true, moveTryIdle, minLeaderLoad,
+						dpm.balanceTopicLeaderBetweenNodes(monitorChan, true, moveTryIdle, minLeaderLoad,
 							maxLeaderLoad, topicStatsMinMax, nodeTopicStats)
 						continue
 					}
 				}
 				// so less leader topics maybe means too much replicas on this node
-				if leastLeaderStats != nil && avgTopicNum > 10 && leastLeaderNum < int(float64(avgTopicNum)*0.5) {
+				if leastLeaderStats != nil && avgTopicNum > 10 && leastLeaderNum < int(float64(avgTopicNum)*0.7) {
 					// TODO: check if we can move a follower topic to leader from other nodes
 					leaderLF, nodeLF := leastLeaderStats.GetNodeLoadFactor()
 					needMove := true
@@ -682,9 +789,10 @@ func (self *DataPlacement) DoBalance(monitorChan chan struct{}) {
 						// maybe too much topic followers on this node
 						if leastLeaderStats.NodeID == topicStatsMinMax[1].NodeID && followerNum > avgTopicNum {
 							moveLeader = false
-						} else if followerNum > int(float64(avgTopicNum)*2) {
+						} else if followerNum > int(float64(avgTopicNum)*1.5) {
 							// too much followers
-							coordLog.Infof("move follower topic since less leader and much follower on node: %v", leastLeaderStats.NodeID)
+							coordLog.Infof("move follower topic since less leader and much follower on node: %v, %v, avg %v",
+								leastLeaderStats.NodeID, followerNum, avgTopicNum)
 							moveLeader = false
 							topicStatsMinMax[1] = leastLeaderStats
 							maxLeaderLoad = nodeLF
@@ -701,7 +809,7 @@ func (self *DataPlacement) DoBalance(monitorChan chan struct{}) {
 						needMove = false
 					}
 					if needMove {
-						self.balanceTopicLeaderBetweenNodes(monitorChan, moveLeader, moveToMinLF, minLeaderLoad,
+						dpm.balanceTopicLeaderBetweenNodes(monitorChan, moveLeader, moveToMinLF, minLeaderLoad,
 							maxLeaderLoad, topicStatsMinMax, nodeTopicStats)
 						continue
 					}
@@ -716,11 +824,11 @@ func (self *DataPlacement) DoBalance(monitorChan chan struct{}) {
 							_, minNodeLoad = s.GetNodeLoadFactor()
 						}
 					}
-					if float64(mostTopicNum) > float64(leastTopicNum)*1.5 && minNodeLoad < midNodeLoad {
+					if float64(mostTopicNum) > float64(leastTopicNum)*1.3 && minNodeLoad < midNodeLoad {
 						topicStatsMinMax[1] = &nodeTopicStatsSortedSlave[len(nodeTopicStatsSortedSlave)-1]
 						coordLog.Infof("node %v has too much topics: %v, the least has only %v", topicStatsMinMax[1].NodeID, mostTopicNum, leastTopicNum)
-						moveLeader = len(topicStatsMinMax[1].TopicLeaderDataSize) > len(topicStatsMinMax[1].TopicTotalDataSize)/2
-						self.balanceTopicLeaderBetweenNodes(monitorChan, moveLeader, moveMinLFOnly, minNodeLoad,
+						moveLeader = len(topicStatsMinMax[1].TopicLeaderDataSize) > len(topicStatsMinMax[1].TopicTotalDataSize)*2/3
+						dpm.balanceTopicLeaderBetweenNodes(monitorChan, moveLeader, moveMinLFOnly, minNodeLoad,
 							maxNodeLoad, topicStatsMinMax, nodeTopicStatsSortedSlave)
 					}
 				}
@@ -738,21 +846,21 @@ func checkMoveLotsOfTopics(moveLeader bool, moveTopicNum int, moveNodeStats *Nod
 	coordLog.Infof("too many topic on node: %v, num: %v", moveNodeStats.NodeID, moveTopicNum)
 	leaderLF, _ := moveNodeStats.GetNodeLoadFactor()
 	//we should avoid move leader topic if the load is not so much
-	if leaderLF < midLeaderLoad && moveTopicNum < avgTopicNum*2 {
+	if leaderLF < midLeaderLoad && float64(moveTopicNum) < float64(avgTopicNum)*1.5 {
 		coordLog.Infof("although many topics , the load is not much: %v", leaderLF)
 		return false
 	}
 	return true
 }
 
-func (self *DataPlacement) balanceTopicLeaderBetweenNodes(monitorChan chan struct{}, moveLeader bool, moveToMinLF balanceOpLevel,
+func (dpm *DataPlacement) balanceTopicLeaderBetweenNodes(monitorChan chan struct{}, moveLeader bool, moveOp balanceOpLevel,
 	minLF float64, maxLF float64, statsMinMax []*NodeTopicStats, sortedNodeTopicStats []NodeTopicStats) {
 
-	if !atomic.CompareAndSwapInt32(&self.lookupCoord.balanceWaiting, 0, 1) {
+	if !atomic.CompareAndSwapInt32(&dpm.lookupCoord.balanceWaiting, 0, 1) {
 		coordLog.Infof("another balance is running, should wait")
 		return
 	}
-	defer atomic.StoreInt32(&self.lookupCoord.balanceWaiting, 0)
+	defer atomic.StoreInt32(&dpm.lookupCoord.balanceWaiting, 0)
 
 	idleTopic, busyTopic, _, busyLevel := statsMinMax[1].GetMostBusyAndIdleTopicWriteLevel(moveLeader)
 	if busyTopic == "" && idleTopic == "" {
@@ -762,77 +870,76 @@ func (self *DataPlacement) balanceTopicLeaderBetweenNodes(monitorChan chan struc
 	// never balance the ordered multi partitions, these partitions should be the same on the all nodes
 
 	coordLog.Infof("balance topic: %v, %v(%v) from node: %v, move : %v ", idleTopic,
-		busyTopic, busyLevel, statsMinMax[1].NodeID, moveToMinLF)
+		busyTopic, busyLevel, statsMinMax[1].NodeID, moveOp)
 	coordLog.Infof("balance topic current max: %v, min: %v ", maxLF, minLF)
 	checkMoveOK := false
 	topicName := ""
 	partitionID := 0
 	var err error
+	moveFromNode := statsMinMax[1].NodeID
 	// avoid move the too busy topic to reduce the impaction of the online service.
 	// if the busiest topic is not so busy, we try move this topic to avoid move too much idle topics
 	if busyTopic != "" && busyLevel < busyTopicLevel && (busyLevel*2 < maxLF-minLF) {
 		topicName, partitionID, err = splitTopicPartitionID(busyTopic)
 		if err != nil {
-			coordLog.Warningf("split topic name and partition failed: %v", err)
+			coordLog.Warningf("split topic name and partition %v failed: %v", busyTopic, err)
 		} else {
-			checkMoveOK = self.checkAndPrepareMove(monitorChan, topicName, partitionID,
+			checkMoveOK = dpm.checkAndPrepareMove(monitorChan, moveFromNode, topicName, partitionID,
 				statsMinMax,
-				sortedNodeTopicStats, moveToMinLF, moveLeader)
+				sortedNodeTopicStats, moveOp, moveLeader)
+			if checkMoveOK {
+				return
+			}
 		}
 	}
-	// TODO: handle the node which has more than two busy topics.
-	// make sure all nodes have the average busy topics.
-	// check top10 topics and make sure all partitions of them is crossed multi different nodes.
 
-	if !checkMoveOK && idleTopic != "" {
+	if idleTopic != "" {
 		topicName, partitionID, err = splitTopicPartitionID(idleTopic)
 		if err != nil {
-			coordLog.Warningf("split topic name and partition failed: %v", err)
+			coordLog.Warningf("split topic name and partition %v failed: %v", idleTopic, err)
 		} else {
-			checkMoveOK = self.checkAndPrepareMove(monitorChan, topicName, partitionID,
+			checkMoveOK = dpm.checkAndPrepareMove(monitorChan, moveFromNode, topicName, partitionID,
 				statsMinMax,
-				sortedNodeTopicStats, moveToMinLF, moveLeader)
-		}
-	}
-	if !checkMoveOK {
-		// maybe we can move some other topic if both idle/busy is not movable
-		sortedTopics := statsMinMax[1].GetSortedTopicWriteLevel(moveLeader)
-		coordLog.Infof("check topic for moving , all sorted topic: %v", sortedTopics)
-		for index, t := range sortedTopics {
-			if t.topic == idleTopic || t.topic == busyTopic {
-				continue
-			}
-			if index > len(sortedTopics)/2 {
-				break
-			}
+				sortedNodeTopicStats, moveOp, moveLeader)
 			if checkMoveOK {
-				break
-			}
-			// do not move the topic with very busy load
-			if t.loadFactor > busyTopicLevel || t.loadFactor > maxLF-minLF {
-				coordLog.Infof("check topic for moving , all busy : %v, %v", t, sortedTopics)
-				break
-			}
-			topicName, partitionID, err = splitTopicPartitionID(t.topic)
-			if err != nil {
-				coordLog.Warningf("split topic %v failed: %v", t.topic, err)
-			} else {
-				coordLog.Infof("check topic %v for moving ", t)
-				checkMoveOK = self.checkAndPrepareMove(monitorChan, topicName, partitionID,
-					statsMinMax,
-					sortedNodeTopicStats, moveToMinLF, moveLeader)
+				return
 			}
 		}
 	}
-	if checkMoveOK {
-		self.lookupCoord.handleMoveTopic(moveLeader, topicName, partitionID, statsMinMax[1].NodeID)
+	// maybe we can move some other topic if both idle/busy is not movable
+	sortedTopics := statsMinMax[1].GetSortedTopicWriteLevel(moveLeader)
+	coordLog.Debugf("check topic for moving , all sorted topic: %v", sortedTopics)
+	for index, t := range sortedTopics {
+		if t.topic == idleTopic || t.topic == busyTopic {
+			continue
+		}
+		if index > len(sortedTopics)/2 {
+			break
+		}
+		if checkMoveOK {
+			break
+		}
+		// do not move the topic with very busy load
+		if t.loadFactor > busyTopicLevel || t.loadFactor > maxLF-minLF {
+			coordLog.Infof("check topic for moving , all busy : %v, %v", t, sortedTopics)
+			break
+		}
+		topicName, partitionID, err = splitTopicPartitionID(t.topic)
+		if err != nil {
+			coordLog.Warningf("split topic %v failed: %v", t.topic, err)
+		} else {
+			coordLog.Infof("check topic %v for moving ", t)
+			checkMoveOK = dpm.checkAndPrepareMove(monitorChan, moveFromNode, topicName, partitionID,
+				statsMinMax,
+				sortedNodeTopicStats, moveOp, moveLeader)
+		}
 	}
 }
 
-func (self *DataPlacement) checkAndPrepareMove(monitorChan chan struct{}, topicName string, partitionID int,
+func (dpm *DataPlacement) checkAndPrepareMove(monitorChan chan struct{}, fromNode string, topicName string, partitionID int,
 	statsMinMax []*NodeTopicStats,
-	sortedNodeTopicStats []NodeTopicStats, moveToMinLF balanceOpLevel, moveLeader bool) bool {
-	topicInfo, err := self.lookupCoord.leadership.GetTopicInfo(topicName, partitionID)
+	sortedNodeTopicStats []NodeTopicStats, moveOp balanceOpLevel, moveLeader bool) bool {
+	topicInfo, err := dpm.lookupCoord.leadership.GetTopicInfo(topicName, partitionID)
 	if err != nil {
 		coordLog.Infof("failed to get topic %v info: %v", topicName, err)
 		return false
@@ -842,7 +949,7 @@ func (self *DataPlacement) checkAndPrepareMove(monitorChan chan struct{}, topicN
 		coordLog.Infof("topic %v is configured as multi ordered, no balance", topicName)
 		return false
 	}
-	if moveToMinLF > moveAny {
+	if moveOp > moveAny {
 		leaderNodeLF, _ := statsMinMax[0].GetNodeLoadFactor()
 		coordLog.Infof("check the min load node first: %v, %v", statsMinMax[0].NodeID, leaderNodeLF)
 		// check first for the specific min load node
@@ -853,9 +960,11 @@ func (self *DataPlacement) checkAndPrepareMove(monitorChan chan struct{}, topicN
 		}
 		if !checkMoveOK {
 			if leaderNodeLF < sortedNodeTopicStats[len(sortedNodeTopicStats)/2].GetNodeLeaderLoadFactor() {
-				err := self.addToCatchupAndWaitISRReady(monitorChan, topicName, partitionID,
-					statsMinMax[0].NodeID,
-					sortedNodeTopicStats, false)
+				nlist := make([]string, 0)
+				nlist = append(nlist, statsMinMax[0].NodeID)
+				err := dpm.addToCatchupAndWaitISRReady(monitorChan, false, fromNode, topicName, partitionID,
+					nlist,
+					getNodeNameList(sortedNodeTopicStats), false)
 				if err != nil {
 					checkMoveOK = false
 				} else {
@@ -864,10 +973,10 @@ func (self *DataPlacement) checkAndPrepareMove(monitorChan chan struct{}, topicN
 			}
 		}
 	}
-	if moveToMinLF == moveMinLFOnly {
+	if moveOp == moveMinLFOnly {
 		return checkMoveOK
 	}
-	if moveToMinLF > moveAny || (len(topicInfo.ISR)-1 <= topicInfo.Replica/2) {
+	if moveOp > moveAny || (len(topicInfo.ISR)-1 <= topicInfo.Replica/2) {
 		if moveLeader {
 			// check if any of current isr nodes is already idle for move
 			for _, nid := range topicInfo.ISR {
@@ -888,7 +997,8 @@ func (self *DataPlacement) checkAndPrepareMove(monitorChan chan struct{}, topicN
 		if !checkMoveOK {
 			// the isr not so idle , we try add a new idle node to the isr.
 			// and make sure that node can accept the topic (no other leader/follower for this topic)
-			err := self.addToCatchupAndWaitISRReady(monitorChan, topicName, partitionID, "", sortedNodeTopicStats, false)
+			err := dpm.addToCatchupAndWaitISRReady(monitorChan, false, fromNode, topicName, partitionID, nil,
+				getNodeNameList(sortedNodeTopicStats), false)
 			if err != nil {
 				checkMoveOK = false
 			} else {
@@ -903,24 +1013,30 @@ func (self *DataPlacement) checkAndPrepareMove(monitorChan chan struct{}, topicN
 	return checkMoveOK
 }
 
-func (self *DataPlacement) moveTopicPartitionByManual(topicName string, partitionID int,
+func (dpm *DataPlacement) moveTopicPartitionByManual(topicName string, partitionID int,
 	moveLeader bool, fromNode string, toNode string) error {
 
-	if !atomic.CompareAndSwapInt32(&self.lookupCoord.balanceWaiting, 0, 1) {
+	if !atomic.CompareAndSwapInt32(&dpm.lookupCoord.balanceWaiting, 0, 1) {
 		coordLog.Infof("another balance is running, should wait")
 		return ErrClusterBalanceRunning
 	}
-	defer atomic.StoreInt32(&self.lookupCoord.balanceWaiting, 0)
+	defer atomic.StoreInt32(&dpm.lookupCoord.balanceWaiting, 0)
 
-	topicInfo, err := self.lookupCoord.leadership.GetTopicInfo(topicName, partitionID)
+	if !dpm.lookupCoord.IsClusterStable() {
+		return ErrClusterUnstable
+	}
+
+	return dpm.tryMoveTopicPartition(dpm.lookupCoord.stopChan, false, topicName, partitionID, moveLeader, fromNode, toNode)
+}
+
+func (dpm *DataPlacement) tryMoveTopicPartition(monitorChan chan struct{}, srcNodeRemoving bool, topicName string, partitionID int, moveLeader bool, fromNode string, toNode string) error {
+	if fromNode == toNode {
+		return errors.New("move to and from node can not be the same")
+	}
+	topicInfo, err := dpm.lookupCoord.leadership.GetTopicInfo(topicName, partitionID)
 	if err != nil {
 		coordLog.Infof("failed to get topic info: %v-%v: %v", topicName, partitionID, err)
 		return err
-	}
-	coordLog.Infof("try move topic: %v-%v data from %v to %v", topicName, partitionID, fromNode, toNode)
-
-	if fromNode == toNode {
-		return errors.New("move to and from node can not be the same")
 	}
 	if moveLeader && fromNode != topicInfo.Leader {
 		return errors.New("move from not the topic leader")
@@ -937,23 +1053,21 @@ func (self *DataPlacement) moveTopicPartitionByManual(topicName string, partitio
 		}
 	}
 
-	if !self.lookupCoord.IsClusterStable() {
-		return ErrClusterUnstable
-	}
-	currentNodes := self.lookupCoord.getCurrentNodes()
+	currentNodes := dpm.lookupCoord.getCurrentNodes()
 	if _, ok := currentNodes[toNode]; !ok {
 		return errors.New("the move destination is not found in cluster")
 	}
-	if _, ok := currentNodes[fromNode]; !ok {
-		return errors.New("the move source data is lost in cluster")
+	if !srcNodeRemoving {
+		if _, ok := currentNodes[fromNode]; !ok {
+			return errors.New("the move source data is lost in cluster")
+		}
 	}
 	if FindSlice(topicInfo.ISR, toNode) == -1 {
 		// add destination to catchup and wait
 		if FindSlice(topicInfo.CatchupList, toNode) != -1 {
 			// wait ready
 		} else {
-			excludeNodes, commonErr := self.getExcludeNodesForTopic(topicInfo, true)
-
+			excludeNodes, commonErr := dpm.getExcludeNodesForTopic(topicInfo, true)
 			if commonErr != nil {
 				return ErrLeadershipServerUnstable.ToErrorType()
 			}
@@ -961,79 +1075,89 @@ func (self *DataPlacement) moveTopicPartitionByManual(topicName string, partitio
 				coordLog.Infof("current node: %v is excluded for topic: %v-%v", toNode, topicName, partitionID)
 				return ErrNodeIsExcludedForTopicData
 			}
-			self.lookupCoord.addCatchupNode(topicInfo, toNode)
+			coordErr := dpm.lookupCoord.addCatchupNode(topicInfo, toNode)
+			if coordErr != nil {
+				return coordErr.ToErrorType()
+			}
 		}
+		coordLog.Infof("try move topic: %v-%v data from %v to %v", topicName, partitionID, fromNode, toNode)
 		waitStart := time.Now()
 		for {
-			if !self.lookupCoord.IsMineLeader() {
+			if !dpm.lookupCoord.IsMineLeader() {
 				coordLog.Infof("not leader while checking balance")
-				return errors.New("lost leader while waiting move done")
+				return ErrNotNsqLookupLeader
 			}
-			topicInfo, err = self.lookupCoord.leadership.GetTopicInfo(topicName, partitionID)
+			topicInfo, err = dpm.lookupCoord.leadership.GetTopicInfo(topicName, partitionID)
 			if err != nil {
 				coordLog.Infof("failed to get topic info: %v-%v: %v", topicName, partitionID, err)
 			} else {
 				if FindSlice(topicInfo.ISR, toNode) != -1 {
 					break
 				}
+				if FindSlice(topicInfo.CatchupList, toNode) == -1 {
+					// maybe changed by others
+					coordLog.Infof("topic : %v-%v catchup changed while moving: %v", topicName, partitionID, topicInfo.CatchupList)
+					return errors.New("catchup changed while wait moving")
+				}
 			}
-			if time.Since(waitStart).Minutes() > 1 {
-				return errors.New("timeout waiting move data")
+			if time.Since(waitStart) > time.Minute*10 {
+				return errMoveTopicWaitTimeout
 			}
 
+			ti := time.NewTimer(time.Second)
 			select {
-			case <-self.lookupCoord.stopChan:
-				return errors.New("quiting")
-			case <-time.After(time.Second * 5):
-				coordLog.Infof("waiting move data")
+			case <-monitorChan:
+				ti.Stop()
+				return errLookupExiting
+			case <-ti.C:
+				coordLog.Infof("node: %v is added for topic: %v-%v catchup, still waiting catchup", toNode, topicName, partitionID)
 			}
+			ti.Stop()
 		}
 	}
 	if FindSlice(topicInfo.ISR, toNode) != -1 {
-		self.lookupCoord.handleMoveTopic(moveLeader, topicName, partitionID, fromNode)
+		// dest node has been added to isr, so we can remove source node
+		coordErr := dpm.lookupCoord.handleRemoveTopicNodeOrMoveLeader(moveLeader, topicName, partitionID, fromNode)
+		if coordErr != nil {
+			return coordErr.ToErrorType()
+		}
 	}
 	return nil
 }
 
-func (self *DataPlacement) addToCatchupAndWaitISRReady(monitorChan chan struct{}, topicName string,
-	partitionID int, addNode string, sortedNodeTopicStats []NodeTopicStats, tryAllNodes bool) error {
-	if len(sortedNodeTopicStats) == 0 {
-		return errors.New("no stats data")
-	}
-	retry := 0
+func (dpm *DataPlacement) addToCatchupAndWaitISRReady(monitorChan chan struct{}, srcNodeRemoving bool, fromNode string, topicName string,
+	partitionID int, addTryFirstNodes []string, sortedNodes []string, tryAllNodes bool) error {
 	currentSelect := 0
-	topicInfo, err := self.lookupCoord.leadership.GetTopicInfo(topicName, partitionID)
+	topicInfo, err := dpm.lookupCoord.leadership.GetTopicInfo(topicName, partitionID)
 	if err != nil {
 		coordLog.Infof("failed to get topic info: %v-%v: %v", topicName, partitionID, err)
 		return err
 	}
-	if topicInfo.OrderedMulti && addNode == "" {
-		nodeNameList := make([]string, 0, len(sortedNodeTopicStats))
-		for _, s := range sortedNodeTopicStats {
-			nodeNameList = append(nodeNameList, s.NodeID)
-		}
-		return self.addToCatchupAndWaitISRReadyForOrderedTopic(monitorChan,
-			topicInfo, nodeNameList)
+	moveLeader := fromNode == topicInfo.Leader
+	if topicInfo.OrderedMulti && len(addTryFirstNodes) == 0 {
+		return dpm.addToCatchupAndWaitISRReadyForOrderedTopic(monitorChan, srcNodeRemoving, fromNode,
+			topicInfo, sortedNodes)
 	}
 	filteredNodes := make([]string, 0)
-	if addNode != "" {
-		if FindSlice(topicInfo.ISR, addNode) != -1 {
+	for _, nid := range addTryFirstNodes {
+		if FindSlice(topicInfo.ISR, nid) != -1 {
 		} else {
-			filteredNodes = append(filteredNodes, addNode)
+			filteredNodes = append(filteredNodes, nid)
 		}
-	} else {
-		for index, s := range sortedNodeTopicStats {
+	}
+	if tryAllNodes || len(addTryFirstNodes) == 0 {
+		for index, s := range sortedNodes {
 			if !tryAllNodes {
-				if index >= len(sortedNodeTopicStats)-2 ||
-					index > len(sortedNodeTopicStats)/2 {
+				if index >= len(sortedNodes)-2 ||
+					index > len(sortedNodes)/2 {
 					// never move to the busy nodes
 					break
 				}
 			}
-			if FindSlice(topicInfo.ISR, s.NodeID) != -1 {
+			if FindSlice(topicInfo.ISR, s) != -1 {
 				// filter
 			} else {
-				filteredNodes = append(filteredNodes, s.NodeID)
+				filteredNodes = append(filteredNodes, s)
 			}
 		}
 	}
@@ -1042,63 +1166,34 @@ func (self *DataPlacement) addToCatchupAndWaitISRReady(monitorChan chan struct{}
 			coordLog.Infof("currently no any node can be balanced for topic: %v", topicName)
 			return ErrBalanceNodeUnavailable
 		}
-		nid := filteredNodes[currentSelect]
-		topicInfo, err := self.lookupCoord.leadership.GetTopicInfo(topicName, partitionID)
-		if err != nil {
-			coordLog.Infof("failed to get topic info: %v-%v: %v", topicName, partitionID, err)
-		} else {
-			if FindSlice(topicInfo.ISR, nid) != -1 {
-				break
-			} else if FindSlice(topicInfo.CatchupList, nid) != -1 {
-				// wait ready
-				select {
-				case <-monitorChan:
-					return errors.New("quiting")
-				case <-time.After(time.Second * 5):
-					coordLog.Infof("node: %v is added for topic: %v-%v catchup, still waiting catchup", nid, topicName, partitionID)
-				}
-				continue
-			} else {
-				excludeNodes, commonErr := self.getExcludeNodesForTopic(topicInfo, false)
-				if commonErr != nil {
-					return ErrLeadershipServerUnstable.ToErrorType()
-				}
-				if _, ok := excludeNodes[nid]; ok {
-					coordLog.Infof("current node: %v is excluded for topic: %v-%v", nid, topicName, partitionID)
-					currentSelect++
-					continue
-				}
-				coordLog.Infof("node: %v is added for topic: %v-%v catchup", nid, topicName, partitionID)
-				self.lookupCoord.addCatchupNode(topicInfo, nid)
-			}
+		toNode := filteredNodes[currentSelect]
+		err := dpm.tryMoveTopicPartition(monitorChan, srcNodeRemoving, topicName, partitionID, moveLeader, fromNode, toNode)
+		if err == ErrNodeIsExcludedForTopicData {
+			currentSelect++
+			continue
 		}
-		select {
-		case <-monitorChan:
-			return errors.New("quiting")
-		case <-time.After(time.Second * 5):
-		}
-		if retry > 5 {
-			coordLog.Infof("add catchup and wait timeout : %v", topicName)
-			return errors.New("wait timeout")
-		}
-		retry++
+		return err
 	}
 	return nil
 }
 
-func (self *DataPlacement) addToCatchupAndWaitISRReadyForOrderedTopic(monitorChan chan struct{}, topicInfo *TopicPartitionMetaInfo,
+func (dpm *DataPlacement) addToCatchupAndWaitISRReadyForOrderedTopic(monitorChan chan struct{}, srcNodeRemoving bool,
+	fromNode string, topicInfo *TopicPartitionMetaInfo,
 	nodeNameList []string) error {
-	retry := 0
+	if len(nodeNameList) == 0 {
+		return errors.New("no node")
+	}
+	moveLeader := fromNode == topicInfo.Leader
 	currentSelect := 0
 	topicName := topicInfo.Name
 	partitionID := topicInfo.Partition
 	// since we need add new catchup, we make the replica as replica+1
-	partitionNodes, err := self.getRebalancedOrderedTopicPartitionsFromNameList(
+	partitionNodes, err := dpm.getRebalancedOrderedTopicPartitionsFromNameList(
 		topicInfo.Name,
 		topicInfo.PartitionNum,
 		topicInfo.Replica+1, nodeNameList)
 	if err != nil {
-		return err.ToErrorType()
+		return err
 	}
 	selectedCatchup := make([]string, 0)
 	for _, nid := range partitionNodes[topicInfo.Partition] {
@@ -1114,51 +1209,57 @@ func (self *DataPlacement) addToCatchupAndWaitISRReadyForOrderedTopic(monitorCha
 				selectedCatchup, topicName, partitionNodes[topicInfo.Partition], nodeNameList)
 			return ErrBalanceNodeUnavailable
 		}
-		nid := selectedCatchup[currentSelect]
-		topicInfo, err := self.lookupCoord.leadership.GetTopicInfo(topicName, partitionID)
-		if err != nil {
-			coordLog.Infof("failed to get topic info: %v-%v: %v", topicName, partitionID, err)
-		} else {
-			if FindSlice(topicInfo.ISR, nid) != -1 {
-				break
-			} else if FindSlice(topicInfo.CatchupList, nid) != -1 {
-				// wait ready
-				select {
-				case <-monitorChan:
-					return errors.New("quiting")
-				case <-time.After(time.Second * 5):
-					coordLog.Infof("node: %v is added for topic: %v-%v catchup, still waiting catchup", nid, topicName, partitionID)
-				}
-				continue
-			} else {
-				excludeNodes, commonErr := self.getExcludeNodesForTopic(topicInfo, true)
-				if commonErr != nil {
-					return ErrLeadershipServerUnstable.ToErrorType()
-				}
-				if _, ok := excludeNodes[nid]; ok {
-					coordLog.Infof("current node: %v is excluded for topic: %v-%v", nid, topicName, partitionID)
-					currentSelect++
-					continue
-				}
-				coordLog.Infof("node: %v is added for topic: %v-%v catchup", nid, topicName, partitionID)
-				self.lookupCoord.addCatchupNode(topicInfo, nid)
-			}
+		toNode := selectedCatchup[currentSelect]
+		err := dpm.tryMoveTopicPartition(monitorChan, srcNodeRemoving, topicName, partitionID, moveLeader, fromNode, toNode)
+		if err == ErrNodeIsExcludedForTopicData {
+			currentSelect++
+			continue
 		}
-		select {
-		case <-monitorChan:
-			return errors.New("quiting")
-		case <-time.After(time.Second * 5):
-		}
-		if retry > 5 {
-			coordLog.Infof("add catchup and wait timeout : %v", topicName)
-			return errors.New("wait timeout")
-		}
-		retry++
+		return err
 	}
 	return nil
 }
 
-func (self *DataPlacement) getExcludeNodesForTopic(topicInfo *TopicPartitionMetaInfo, checkMulti bool) (map[string]struct{}, error) {
+func (dpm *DataPlacement) getTopNTopics(currentNodes map[string]NsqdNodeInfo) (LFListT, []TopicPartitionMetaInfo, error) {
+	topicList, err := dpm.lookupCoord.leadership.ScanTopics()
+	if err != nil {
+		coordLog.Infof("scan topics error: %v", err)
+		return nil, nil, err
+	}
+	if !dpm.isTopNBalanceEnabled() {
+		return nil, topicList, nil
+	}
+	nodeTopicStats := make([]NodeTopicStats, 0, len(currentNodes))
+	nodeTopicStats = dpm.getLeaderSortedNodeTopicStats(currentNodes, nodeTopicStats)
+	sortedTopics := getTopNTopicsStats(nodeTopicStats, topicList, topicTopNLimit, true)
+	return sortedTopics, topicList, nil
+}
+
+func (dpm *DataPlacement) isTopNTopic(topicInfo *TopicPartitionMetaInfo, sortedTopics LFListT) bool {
+	if topicInfo.OrderedMulti {
+		return false
+	}
+	for _, t := range sortedTopics {
+		if t.topic == topicInfo.GetTopicDesp() {
+			return true
+		}
+	}
+	return false
+}
+
+func (dpm *DataPlacement) getBalancedTopNTopicISR(topicInfo *TopicPartitionMetaInfo,
+	sortedTopics LFListT,
+	topicList []TopicPartitionMetaInfo,
+	currentNodes map[string]NsqdNodeInfo) ([]string, error) {
+	topNISR, _, _, err := dpm.getRebalancedTopNTopic(sortedTopics, topicList, currentNodes)
+	if err != nil {
+		return nil, err
+	}
+	isr := topNISR[topicInfo.GetTopicDesp()]
+	return isr, nil
+}
+
+func (dpm *DataPlacement) getExcludeNodesForTopic(topicInfo *TopicPartitionMetaInfo, checkMulti bool) (map[string]struct{}, error) {
 	excludeNodes := make(map[string]struct{})
 	excludeNodes[topicInfo.Leader] = struct{}{}
 	for _, v := range topicInfo.ISR {
@@ -1168,7 +1269,7 @@ func (self *DataPlacement) getExcludeNodesForTopic(topicInfo *TopicPartitionMeta
 		excludeNodes[v] = struct{}{}
 	}
 	// exclude other partition node with the same topic
-	meta, _, err := self.lookupCoord.leadership.GetTopicMetaInfo(topicInfo.Name)
+	meta, _, err := dpm.lookupCoord.leadership.GetTopicMetaInfo(topicInfo.Name)
 	if err != nil {
 		coordLog.Infof("failed get the meta info: %v", err)
 		return excludeNodes, err
@@ -1179,7 +1280,7 @@ func (self *DataPlacement) getExcludeNodesForTopic(topicInfo *TopicPartitionMeta
 	}
 	num := meta.PartitionNum
 	for i := 0; i < num; i++ {
-		topicPartInfo, err := self.lookupCoord.leadership.GetTopicInfo(topicInfo.Name, i)
+		topicPartInfo, err := dpm.lookupCoord.leadership.GetTopicInfo(topicInfo.Name, i)
 		if err != nil {
 			if err == ErrKeyNotFound {
 				continue
@@ -1198,77 +1299,88 @@ func (self *DataPlacement) getExcludeNodesForTopic(topicInfo *TopicPartitionMeta
 	return excludeNodes, nil
 }
 
-func (self *DataPlacement) allocNodeForTopic(topicInfo *TopicPartitionMetaInfo, currentNodes map[string]NsqdNodeInfo) (*NsqdNodeInfo, *CoordErr) {
+func (dpm *DataPlacement) getExpectedAllocNodesForTopic(topicInfo *TopicPartitionMetaInfo, currentNodes map[string]NsqdNodeInfo) ([]string, error) {
 	if topicInfo.OrderedMulti {
-		return self.allocNodeForOrderedTopic(topicInfo, currentNodes)
+		partitionNodes, err := dpm.getRebalancedOrderedTopicPartitions(
+			topicInfo.Name,
+			topicInfo.PartitionNum,
+			topicInfo.Replica, currentNodes)
+		if err != nil {
+			return nil, err
+		}
+		return partitionNodes[topicInfo.Partition], nil
 	}
+	sortedTopN, topicList, err := dpm.getTopNTopics(currentNodes)
+	if err != nil {
+		return nil, err
+	}
+	if dpm.isTopNTopic(topicInfo, sortedTopN) {
+		expectedISR, err := dpm.getBalancedTopNTopicISR(topicInfo, sortedTopN, topicList, currentNodes)
+		if err != nil {
+			return nil, err
+		}
+		return expectedISR, nil
+	}
+	return nil, nil
+}
+
+func getOneFromListAndExclude(expects []string, excludes map[string]struct{}) string {
+	for _, n := range expects {
+		if _, ok := excludes[n]; ok {
+			continue
+		}
+		return n
+	}
+	return ""
+}
+
+func (dpm *DataPlacement) allocNodeForTopic(topicInfo *TopicPartitionMetaInfo, currentNodes map[string]NsqdNodeInfo) (*NsqdNodeInfo, error) {
 	// collect the nsqd data, check if any node has the topic data already.
 	var chosenNode NsqdNodeInfo
 	var chosenStat *NodeTopicStats
 
-	excludeNodes, commonErr := self.getExcludeNodesForTopic(topicInfo, false)
+	excludeNodes, commonErr := dpm.getExcludeNodesForTopic(topicInfo, topicInfo.OrderedMulti)
 	if commonErr != nil {
-		return nil, ErrLeadershipServerUnstable
+		return nil, commonErr
 	}
 
-	for nodeID, nodeInfo := range currentNodes {
-		if _, ok := excludeNodes[nodeID]; ok {
-			continue
-		}
-		topicStat, err := self.lookupCoord.getNsqdTopicStat(nodeInfo)
-		if err != nil {
-			coordLog.Infof("failed to get topic status for this node: %v", nodeInfo)
-			continue
-		}
-		if chosenNode.ID == "" {
-			chosenNode = nodeInfo
-			chosenStat = topicStat
-			continue
-		}
-		if topicStat.SlaveLessLoader(chosenStat) {
-			chosenNode = nodeInfo
-			chosenStat = topicStat
-		}
-	}
-	if chosenNode.ID == "" {
-		coordLog.Infof("no more available node for topic: %v, excluding nodes: %v, all nodes: %v", topicInfo.GetTopicDesp(), excludeNodes, currentNodes)
-		return nil, ErrNodeUnavailable
-	}
-	coordLog.Infof("node %v is alloc for topic: %v", chosenNode, topicInfo.GetTopicDesp())
-	return &chosenNode, nil
-}
-
-func (self *DataPlacement) allocNodeForOrderedTopic(topicInfo *TopicPartitionMetaInfo, currentNodes map[string]NsqdNodeInfo) (*NsqdNodeInfo, *CoordErr) {
-	var chosenNode NsqdNodeInfo
-
-	excludeNodes, commonErr := self.getExcludeNodesForTopic(topicInfo, true)
-	if commonErr != nil {
-		return nil, ErrLeadershipServerUnstable
-	}
-
-	partitionNodes, err := self.getRebalancedOrderedTopicPartitions(
-		topicInfo.Name,
-		topicInfo.PartitionNum,
-		topicInfo.Replica, currentNodes)
+	expectedISR, err := dpm.getExpectedAllocNodesForTopic(topicInfo, currentNodes)
 	if err != nil {
 		return nil, err
 	}
-	for _, nodeID := range partitionNodes[topicInfo.Partition] {
-		if _, ok := excludeNodes[nodeID]; ok {
-			continue
+	nid := getOneFromListAndExclude(expectedISR, excludeNodes)
+	if nid != "" {
+		chosenNode = currentNodes[nid]
+	} else {
+		for nodeID, nodeInfo := range currentNodes {
+			if _, ok := excludeNodes[nodeID]; ok {
+				continue
+			}
+			topicStat, err := dpm.lookupCoord.getNsqdTopicStat(nodeInfo)
+			if err != nil {
+				coordLog.Infof("failed to get topic status for this node: %v", nodeInfo)
+				continue
+			}
+			if chosenNode.ID == "" {
+				chosenNode = nodeInfo
+				chosenStat = topicStat
+				continue
+			}
+			if topicStat.SlaveLessLoader(chosenStat) {
+				chosenNode = nodeInfo
+				chosenStat = topicStat
+			}
 		}
-		chosenNode = currentNodes[nodeID]
-		break
 	}
 	if chosenNode.ID == "" {
 		coordLog.Infof("no more available node for topic: %v, excluding nodes: %v, all nodes: %v", topicInfo.GetTopicDesp(), excludeNodes, currentNodes)
-		return nil, ErrNodeUnavailable
+		return nil, ErrBalanceNodeUnavailable
 	}
 	coordLog.Infof("node %v is alloc for topic: %v", chosenNode, topicInfo.GetTopicDesp())
 	return &chosenNode, nil
 }
 
-func (self *DataPlacement) checkTopicNodeConflict(topicInfo *TopicPartitionMetaInfo) bool {
+func (dpm *DataPlacement) checkTopicNodeConflict(topicInfo *TopicPartitionMetaInfo) bool {
 	existLeaders := make(map[string]struct{})
 	existSlaves := make(map[string]struct{})
 	if !topicInfo.OrderedMulti {
@@ -1276,7 +1388,7 @@ func (self *DataPlacement) checkTopicNodeConflict(topicInfo *TopicPartitionMetaI
 			if i == topicInfo.Partition {
 				continue
 			}
-			tmpInfo, err := self.lookupCoord.leadership.GetTopicInfo(topicInfo.Name, i)
+			tmpInfo, err := dpm.lookupCoord.leadership.GetTopicInfo(topicInfo.Name, i)
 			if err != nil {
 				if err != ErrKeyNotFound {
 					coordLog.Infof("failed to get topic %v info: %v", topicInfo.GetTopicDesp(), err)
@@ -1312,20 +1424,20 @@ func (self *DataPlacement) checkTopicNodeConflict(topicInfo *TopicPartitionMetaI
 }
 
 // init leader node and isr list for the empty topic
-func (self *DataPlacement) allocTopicLeaderAndISR(topicName string, orderedMulti bool, currentNodes map[string]NsqdNodeInfo,
-	replica int, partitionNum int, existPart map[int]*TopicPartitionMetaInfo) ([]string, [][]string, *CoordErr) {
+func (dpm *DataPlacement) allocTopicLeaderAndISR(topicName string, orderedMulti bool, currentNodes map[string]NsqdNodeInfo,
+	replica int, partitionNum int, existPart map[int]*TopicPartitionMetaInfo) ([]string, [][]string, error) {
 
 	if orderedMulti {
-		return self.allocOrderedTopicLeaderAndISR(topicName, currentNodes, replica, partitionNum, existPart)
+		return dpm.allocOrderedTopicLeaderAndISR(topicName, currentNodes, replica, partitionNum, existPart)
 	}
 
 	if len(currentNodes) < replica || len(currentNodes) < partitionNum {
 		coordLog.Infof("nodes %v is less than replica %v or partition %v", len(currentNodes), replica, partitionNum)
-		return nil, nil, ErrNodeUnavailable
+		return nil, nil, ErrBalanceNodeUnavailable
 	}
 	if len(currentNodes) < replica*partitionNum {
 		coordLog.Infof("nodes is less than replica*partition")
-		return nil, nil, ErrNodeUnavailable
+		return nil, nil, ErrBalanceNodeUnavailable
 	}
 	coordLog.Infof("alloc current nodes: %v", len(currentNodes))
 
@@ -1342,7 +1454,7 @@ func (self *DataPlacement) allocTopicLeaderAndISR(topicName string, orderedMulti
 	}
 	nodeTopicStats := make([]NodeTopicStats, 0, len(currentNodes))
 	for _, nodeInfo := range currentNodes {
-		stats, err := self.lookupCoord.getNsqdTopicStat(nodeInfo)
+		stats, err := dpm.lookupCoord.getNsqdTopicStat(nodeInfo)
 		if err != nil {
 			coordLog.Infof("got topic status for node %v failed: %v", nodeInfo.GetID(), err)
 			continue
@@ -1350,7 +1462,7 @@ func (self *DataPlacement) allocTopicLeaderAndISR(topicName string, orderedMulti
 		nodeTopicStats = append(nodeTopicStats, *stats)
 	}
 	if len(nodeTopicStats) < partitionNum*replica {
-		return nil, nil, ErrNodeUnavailable
+		return nil, nil, ErrBalanceNodeUnavailable
 	}
 	leaderSort := func(l, r *NodeTopicStats) bool {
 		return l.LeaderLessLoader(r)
@@ -1367,7 +1479,7 @@ func (self *DataPlacement) allocTopicLeaderAndISR(topicName string, orderedMulti
 			for {
 				if currentSelect >= len(nodeTopicStats) {
 					coordLog.Infof("not enough nodes for leaders")
-					return nil, nil, ErrNodeUnavailable
+					return nil, nil, ErrBalanceNodeUnavailable
 				}
 				nodeInfo := nodeTopicStats[currentSelect]
 				currentSelect++
@@ -1406,7 +1518,7 @@ func (self *DataPlacement) allocTopicLeaderAndISR(topicName string, orderedMulti
 			for {
 				if currentSelect >= len(nodeTopicStats) {
 					coordLog.Infof("not enough nodes for slaves")
-					return nil, nil, ErrNodeUnavailable
+					return nil, nil, ErrBalanceNodeUnavailable
 				}
 				nodeInfo := nodeTopicStats[currentSelect]
 				currentSelect++
@@ -1437,11 +1549,11 @@ func (self *DataPlacement) allocTopicLeaderAndISR(topicName string, orderedMulti
 	return leaders, isrlist, nil
 }
 
-func (self *DataPlacement) allocOrderedTopicLeaderAndISR(topicName string, currentNodes map[string]NsqdNodeInfo,
-	replica int, partitionNum int, existPart map[int]*TopicPartitionMetaInfo) ([]string, [][]string, *CoordErr) {
+func (dpm *DataPlacement) allocOrderedTopicLeaderAndISR(topicName string, currentNodes map[string]NsqdNodeInfo,
+	replica int, partitionNum int, existPart map[int]*TopicPartitionMetaInfo) ([]string, [][]string, error) {
 	leaders := make([]string, partitionNum)
 	isrlist := make([][]string, partitionNum)
-	partitionNodes, err := self.getRebalancedOrderedTopicPartitions(
+	partitionNodes, err := dpm.getRebalancedOrderedTopicPartitions(
 		topicName,
 		partitionNum,
 		replica, currentNodes)
@@ -1464,12 +1576,8 @@ func (self *DataPlacement) allocOrderedTopicLeaderAndISR(topicName string, curre
 	return leaders, isrlist, nil
 }
 
-func (self *DataPlacement) chooseNewLeaderFromISR(topicInfo *TopicPartitionMetaInfo, currentNodes map[string]NsqdNodeInfo) (string, int64, *CoordErr) {
-	if topicInfo.OrderedMulti {
-		return self.chooseNewLeaderFromISRForOrderedTopic(topicInfo, currentNodes)
-	}
-	// choose another leader in ISR list, and add new node to ISR
-	// list.
+func (dpm *DataPlacement) prepareCandidateNodesForNewLeader(topicInfo *TopicPartitionMetaInfo,
+	currentNodes map[string]NsqdNodeInfo) ([]string, int64) {
 	newestReplicas := make([]string, 0)
 	newestLogID := int64(0)
 	for _, replica := range topicInfo.ISR {
@@ -1480,7 +1588,7 @@ func (self *DataPlacement) chooseNewLeaderFromISR(topicInfo *TopicPartitionMetaI
 		if replica == topicInfo.Leader {
 			continue
 		}
-		cid, err := self.lookupCoord.getNsqdLastCommitLogID(replica, topicInfo)
+		cid, err := dpm.lookupCoord.getNsqdLastCommitLogID(replica, topicInfo)
 		if err != nil {
 			coordLog.Infof("failed to get log id on replica: %v, %v", replica, err)
 			continue
@@ -1493,23 +1601,40 @@ func (self *DataPlacement) chooseNewLeaderFromISR(topicInfo *TopicPartitionMetaI
 			newestReplicas = append(newestReplicas, replica)
 		}
 	}
-	// select the least load factor node
+	return newestReplicas, newestLogID
+}
+
+func (dpm *DataPlacement) chooseNewLeaderFromISR(topicInfo *TopicPartitionMetaInfo, currentNodes map[string]NsqdNodeInfo) (string, int64, *CoordErr) {
+	newestReplicas, newestLogID := dpm.prepareCandidateNodesForNewLeader(topicInfo, currentNodes)
 	newLeader := ""
 	if len(newestReplicas) == 1 {
 		newLeader = newestReplicas[0]
+		coordLog.Infof("topic %v new leader %v found with commit id: %v in only one candidate", topicInfo.GetTopicDesp(), newLeader, newestLogID)
+		return newLeader, newestLogID, nil
+	}
+	if topicInfo.OrderedMulti {
+		newLeader = dpm.chooseNewLeaderFromISRForOrderedTopic(topicInfo, currentNodes, newestReplicas)
 	} else {
-		minLF := float64(math.MaxInt64)
-		for _, replica := range newestReplicas {
-			stat, err := self.lookupCoord.getNsqdTopicStat(currentNodes[replica])
-			if err != nil {
-				coordLog.Infof("ignore node %v while choose new leader : %v", replica, topicInfo.GetTopicDesp())
-				continue
-			}
-			lf := stat.GetNodeLeaderLoadFactor()
+		sortedTopN, topicList, err := dpm.getTopNTopics(currentNodes)
+		if err == nil && dpm.isTopNTopic(topicInfo, sortedTopN) {
+			newLeader = dpm.chooseNewLeaderFromISRForTopN(topicInfo, sortedTopN, topicList, currentNodes, newestReplicas)
+		} else {
+			// choose another leader in ISR list, and add new node to ISR
+			// list.
+			// select the least load factor node
+			minLF := float64(math.MaxInt64)
+			for _, replica := range newestReplicas {
+				stat, err := dpm.lookupCoord.getNsqdTopicStat(currentNodes[replica])
+				if err != nil {
+					coordLog.Infof("ignore node %v while choose new leader : %v", replica, topicInfo.GetTopicDesp())
+					continue
+				}
+				lf := stat.GetNodeLeaderLoadFactor()
 
-			coordLog.Infof("node %v load factor is : %v", replica, lf)
-			if newLeader == "" || lf < minLF {
-				newLeader = replica
+				coordLog.Infof("node %v load factor is : %v", replica, lf)
+				if newLeader == "" || lf < minLF {
+					newLeader = replica
+				}
 			}
 		}
 	}
@@ -1517,85 +1642,634 @@ func (self *DataPlacement) chooseNewLeaderFromISR(topicInfo *TopicPartitionMetaI
 		coordLog.Warningf("No leader can be elected. current topic info: %v", topicInfo)
 		return "", 0, ErrNoLeaderCanBeElected
 	}
-	coordLog.Infof("topic %v new leader %v found with commit id: %v", topicInfo.GetTopicDesp(), newLeader, newestLogID)
+	coordLog.Infof("topic %v new leader %v found with commit id: %v from candidate %v", topicInfo.GetTopicDesp(), newLeader, newestLogID, newestReplicas)
 	return newLeader, newestLogID, nil
 }
 
-func (self *DataPlacement) chooseNewLeaderFromISRForOrderedTopic(topicInfo *TopicPartitionMetaInfo, currentNodes map[string]NsqdNodeInfo) (string, int64, *CoordErr) {
-	newestReplicas := make([]string, 0)
-	newestLogID := int64(0)
-	for _, replica := range topicInfo.ISR {
-		if _, ok := currentNodes[replica]; !ok {
-			coordLog.Infof("ignore failed node %v while choose new leader : %v", replica, topicInfo.GetTopicDesp())
-			continue
-		}
-		if replica == topicInfo.Leader {
-			continue
-		}
-		cid, err := self.lookupCoord.getNsqdLastCommitLogID(replica, topicInfo)
-		if err != nil {
-			coordLog.Infof("failed to get log id on replica: %v, %v", replica, err)
-			continue
-		}
-		if cid > newestLogID {
-			newestReplicas = newestReplicas[0:0]
-			newestReplicas = append(newestReplicas, replica)
-			newestLogID = cid
-		} else if cid == newestLogID {
-			newestReplicas = append(newestReplicas, replica)
-		}
-	}
-	// select the least load factor node
+func (dpm *DataPlacement) chooseNewLeaderFromISRForTopN(topicInfo *TopicPartitionMetaInfo,
+	sortedTopics LFListT,
+	topicList []TopicPartitionMetaInfo,
+	currentNodes map[string]NsqdNodeInfo,
+	newestReplicas []string) string {
 	newLeader := ""
-	if len(newestReplicas) == 1 {
-		newLeader = newestReplicas[0]
-	} else if len(newestReplicas) > 0 {
-		partitionNodes, err := self.getRebalancedOrderedTopicPartitions(
-			topicInfo.Name,
-			topicInfo.PartitionNum,
-			topicInfo.Replica, currentNodes)
-		if err != nil {
-			coordLog.Infof("failed to get balanced partitions for ordered topic: %v, %v", topicInfo.GetTopicDesp(), err)
-		} else {
-			for _, nid := range partitionNodes[topicInfo.Partition] {
-				if nid == topicInfo.Leader {
-					continue
-				}
-				for _, validNode := range newestReplicas {
-					if nid == validNode {
-						newLeader = nid
-						break
-					}
-				}
-				if newLeader != "" {
+	if len(newestReplicas) == 0 {
+		return newLeader
+	}
+	expectedISR, err := dpm.getBalancedTopNTopicISR(topicInfo, sortedTopics, topicList, currentNodes)
+	if err != nil {
+		coordLog.Infof("failed to get balanced partitions for topn topic: %v, %v", topicInfo.GetTopicDesp(), err)
+	} else {
+		coordLog.Infof("topic %v choose new leader from %v, %v ", topicInfo.GetTopicDesp(), newestReplicas, expectedISR)
+		for _, nid := range expectedISR {
+			if nid == topicInfo.Leader {
+				continue
+			}
+			for _, validNode := range newestReplicas {
+				if nid == validNode {
+					newLeader = nid
 					break
 				}
 			}
-			if newLeader == "" {
-				newLeader = newestReplicas[0]
-				coordLog.Infof("all the balanced isr is not in the newest log list: %v, %v",
-					partitionNodes[topicInfo.Partition], newestReplicas)
+			if newLeader != "" {
+				break
 			}
 		}
 	}
 	if newLeader == "" {
-		coordLog.Warningf("No leader can be elected. current topic info: %v", topicInfo)
-		return "", 0, ErrNoLeaderCanBeElected
+		newLeader = newestReplicas[0]
 	}
-	coordLog.Infof("topic %v new leader %v found with commit id: %v", topicInfo.GetTopicDesp(), newLeader, newestLogID)
-	return newLeader, newestLogID, nil
+	return newLeader
 }
 
-func (self *DataPlacement) rebalanceOrderedTopic(monitorChan chan struct{}) (bool, bool) {
+func (dpm *DataPlacement) chooseNewLeaderFromISRForOrderedTopic(topicInfo *TopicPartitionMetaInfo,
+	currentNodes map[string]NsqdNodeInfo,
+	newestReplicas []string) string {
+	newLeader := ""
+	if len(newestReplicas) == 0 {
+		return newLeader
+	}
+	partitionNodes, err := dpm.getRebalancedOrderedTopicPartitions(
+		topicInfo.Name,
+		topicInfo.PartitionNum,
+		topicInfo.Replica, currentNodes)
+	if err != nil {
+		coordLog.Infof("failed to get balanced partitions for ordered topic: %v, %v", topicInfo.GetTopicDesp(), err)
+	} else {
+		for _, nid := range partitionNodes[topicInfo.Partition] {
+			if nid == topicInfo.Leader {
+				continue
+			}
+			for _, validNode := range newestReplicas {
+				if nid == validNode {
+					newLeader = nid
+					break
+				}
+			}
+			if newLeader != "" {
+				break
+			}
+		}
+	}
+	if newLeader == "" {
+		newLeader = newestReplicas[0]
+		coordLog.Infof("all the balanced isr is not in the newest log list: %v, %v",
+			partitionNodes[topicInfo.Partition], newestReplicas)
+	}
+
+	return newLeader
+}
+
+func getTopNTopicsStats(nodeTopicStats []NodeTopicStats, topicInfoList []TopicPartitionMetaInfo, n int, filterNonmove bool) LFListT {
+	// filter out the ordered topics
+	tinfoMap := getTopicInfoMap(topicInfoList)
+	allTopicLoads := make(LFListT, 0, len(topicInfoList))
+	addedNames := make(map[string]string)
+	for _, nodeStat := range nodeTopicStats {
+		topics := nodeStat.GetSortedTopicWriteLevel(true)
+		sort.Sort(sort.Reverse(topics))
+		coordLog.Infof("all sorted topics on node %v : %v", nodeStat.NodeID, len(topics))
+		added := 0
+		for _, tn := range topics {
+			tinfo, ok := tinfoMap[tn.topic]
+			if !ok {
+				continue
+			}
+			if tinfo.OrderedMulti {
+				continue
+			}
+			if filterNonmove {
+				// some topic replica*partition == len(nodes), so we no need balance
+				if tinfo.Replica*tinfo.PartitionNum == len(nodeTopicStats) {
+					continue
+				}
+			}
+			added++
+			v, ok := addedNames[tn.topic]
+			if ok {
+				coordLog.Infof("dup topic leader %v old: %v", tn, v)
+				continue
+			}
+			allTopicLoads = append(allTopicLoads, tn)
+			addedNames[tn.topic] = nodeStat.NodeID
+			if added >= n {
+				break
+			}
+		}
+	}
+	// since we only get leader for each node, the topic-pid should have no duplication
+	sort.Sort(sort.Reverse(allTopicLoads))
+	if len(allTopicLoads) <= n {
+		return allTopicLoads
+	}
+	return allTopicLoads[:n]
+}
+
+func (dpm *DataPlacement) getRebalancedTopNTopic(
+	sortedTopicList LFListT, topicInfos []TopicPartitionMetaInfo,
+	currentNodes map[string]NsqdNodeInfo) (map[string][]string, []string, int, error) {
+	nodeNameList := make(SortableStrings, 0, len(currentNodes))
+	for nid := range currentNodes {
+		nodeNameList = append(nodeNameList, nid)
+	}
+	return dpm.getRebalancedTopNTopicFromNameList(sortedTopicList, topicInfos, nodeNameList)
+}
+
+func (dpm *DataPlacement) getRebalancedTopNTopicFromNameList(
+	sortedTopicList LFListT, topicInfos []TopicPartitionMetaInfo,
+	nodeNameList SortableStrings) (map[string][]string, []string, int, error) {
+	sort.Sort(nodeNameList)
+	topNISRNodes := make(map[string][]string, len(sortedTopicList))
+	selectIndex := 0
+	topicInfoMap := getTopicInfoMap(topicInfos)
+
+	allTopicNames := make([]string, 0)
+	nameMap := make(map[string]bool)
+	for i := 0; i < len(sortedTopicList); i++ {
+		topicPart := sortedTopicList[i]
+		name, _, err := splitTopicPartitionID(topicPart.topic)
+		if err != nil {
+			coordLog.Infof("topic fullname error %v", topicPart.topic)
+			return topNISRNodes, allTopicNames, 0, err
+		}
+		_, ok := nameMap[name]
+		if ok {
+			continue
+		}
+		allTopicNames = append(allTopicNames, name)
+		nameMap[name] = true
+	}
+	isrChanged := 0
+	for i := 0; i < len(allTopicNames); i++ {
+		hasNew := false
+		tname := allTopicNames[i]
+		topic0Part := allTopicNames[i] + "-0"
+		info, ok := topicInfoMap[topic0Part]
+		if !ok {
+			coordLog.Infof("no topic info found for %v", topic0Part)
+			return topNISRNodes, allTopicNames, isrChanged, ErrBalanceNodeUnavailable
+		}
+		replica := info.Replica
+		if info.PartitionNum*replica > len(nodeNameList) {
+			return topNISRNodes, allTopicNames, isrChanged, ErrBalanceNodeUnavailable
+		}
+		oldISRs := make([][]string, 0)
+		for pid := 0; pid < info.PartitionNum; pid++ {
+			nlist := make([]string, replica)
+			fullname := GetTopicFullName(tname, pid)
+			oldInfo := topicInfoMap[fullname]
+			oldISRs = append(oldISRs, oldInfo.ISR)
+			topNISRNodes[fullname] = nlist
+			for k := 0; k < replica; k++ {
+				nlist[k] = nodeNameList[(selectIndex+k+pid*replica)%len(nodeNameList)]
+			}
+			if oldInfo.Leader != nlist[0] {
+				hasNew = true
+			}
+		}
+		if !hasNew {
+			for pid := 0; pid < info.PartitionNum; pid++ {
+				fullname := GetTopicFullName(tname, pid)
+				nlist := topNISRNodes[fullname]
+				for k := 0; k < replica; k++ {
+					if FindSliceList(oldISRs, nlist[k]) == -1 {
+						hasNew = true
+					}
+				}
+			}
+		}
+
+		if hasNew {
+			isrChanged++
+		}
+		selectIndex++
+	}
+
+	return topNISRNodes, allTopicNames, isrChanged, nil
+}
+
+func (dpm *DataPlacement) rebalanceTopNTopicsByLoad(monitorChan chan struct{},
+	topicList []TopicPartitionMetaInfo,
+	nodeTopicStats []NodeTopicStats,
+	currentNodes map[string]NsqdNodeInfo) (bool, bool, LFListT) {
+	moved := false
+	if !atomic.CompareAndSwapInt32(&dpm.lookupCoord.balanceWaiting, 0, 1) {
+		coordLog.Infof("another balance is running, should wait")
+		return false, moved, nil
+	}
+	defer atomic.StoreInt32(&dpm.lookupCoord.balanceWaiting, 0)
+
+	sortedTopNTopics := getTopNTopicsStats(nodeTopicStats, topicList, topicTopNLimit, true)
+	if len(sortedTopNTopics) < 2 {
+		coordLog.Infof("ignore balance topn since not enough topn: %v", len(sortedTopNTopics))
+		return true, moved, nil
+	}
+	topNISRNodes, topicNames, isrChanged, err := dpm.getRebalancedTopNTopic(sortedTopNTopics, topicList, currentNodes)
+	if err != nil {
+		return false, moved, sortedTopNTopics
+	}
+	coordLog.Infof("balance topn isr changed : %v", isrChanged)
+	if isrChanged < topNBalanceDiff || len(topicNames) < topNBalanceDiff {
+		return true, moved, sortedTopNTopics
+	}
+	mostLFTopic := topicNames[0]
+	sort.Sort(SortableStrings(topicNames))
+
+	movedCnt := 0
+	needBalanceOthers := true
+	tinfoMap := getTopicInfoMap(topicList)
+	nodeNameList := make([]string, 0)
+	for _, n := range currentNodes {
+		nodeNameList = append(nodeNameList, n.ID)
+	}
+	for _, tname := range topicNames {
+		select {
+		case <-monitorChan:
+			return false, moved, sortedTopNTopics
+		default:
+		}
+		if !dpm.lookupCoord.IsClusterStable() || !dpm.lookupCoord.IsMineLeader() || movedCnt > 10 {
+			coordLog.Infof("no balance since cluster is not stable or too much moved %v while checking balance", movedCnt)
+			return false, moved, sortedTopNTopics
+		}
+		topicInfo0, ok := tinfoMap[GetTopicFullName(tname, 0)]
+		if !ok {
+			coordLog.Infof("ignore balance topn since topic info not found: %v", tname)
+			continue
+		}
+		availableNodes := make(map[string]NsqdNodeInfo)
+		for k, v := range currentNodes {
+			availableNodes[k] = v
+		}
+		anyFailed := false
+		// get all new partitions for this topics
+		isrList := make([][]string, topicInfo0.PartitionNum)
+		moveToNodes := make([]string, 0, topicInfo0.PartitionNum*topicInfo0.Replica)
+		for i := 0; i < topicInfo0.PartitionNum; i++ {
+			tfullName := GetTopicFullName(tname, i)
+			isr := topNISRNodes[tfullName]
+			isrList[i] = isr
+			for _, v := range isr {
+				delete(availableNodes, v)
+				moveToNodes = append(moveToNodes, v)
+			}
+		}
+		if len(isrList) == 0 || len(availableNodes) == 0 {
+			continue
+		}
+		var firstNonISRAvailableNode string
+		for n := range availableNodes {
+			firstNonISRAvailableNode = n
+			break
+		}
+		oldNodes := make([][]string, topicInfo0.PartitionNum)
+		// group old nodes to 3 different group, one for old node but no new
+		// one for new node but no old, one for old changed to other new
+		// left is old new unchanged isr.
+		newNodeForNewISR := make([][]string, topicInfo0.PartitionNum)
+		oldNewChangedISR := make([][]string, topicInfo0.PartitionNum)
+		oldRemovedISR := make([][]string, topicInfo0.PartitionNum)
+		waitingMoveCnt := 0
+		for pid := 0; pid < topicInfo0.PartitionNum; pid++ {
+			tfullName := GetTopicFullName(tname, pid)
+			tinfo, ok := tinfoMap[tfullName]
+			if !ok || len(tinfo.ISR) != tinfo.Replica {
+				coordLog.Infof("ignore balance topn topic %v since info not stable: %v", tfullName, tinfo)
+				anyFailed = true
+				break
+			}
+			oldNodes[pid] = tinfo.ISR
+			for _, old := range tinfo.ISR {
+				found := false
+				for ni, newISR := range isrList {
+					if FindSlice(newISR, old) != -1 {
+						found = true
+						if ni == pid {
+							// old partition unchanged on this node, no need move
+						} else {
+							// the partition on this node is changed, we need replace with other partition
+							oldNewChangedISR[pid] = append(oldNewChangedISR[pid], old)
+							needBalanceOthers = false
+							waitingMoveCnt++
+						}
+						break
+					}
+				}
+				if !found {
+					// the node has no any partitions in new isr
+					// we need remove old from them
+					oldRemovedISR[pid] = append(oldRemovedISR[pid], old)
+					needBalanceOthers = false
+					waitingMoveCnt++
+				}
+			}
+		}
+		if anyFailed {
+			needBalanceOthers = false
+			continue
+		}
+
+		if waitingMoveCnt == 0 {
+			leaderMoved, err := dpm.tryMoveLeaderToExpectedForAllParts(tname, topicInfo0.PartitionNum, isrList)
+			if err != nil {
+				needBalanceOthers = false
+			}
+			if leaderMoved {
+				moved = true
+				needBalanceOthers = false
+			}
+			continue
+		}
+		if tname == mostLFTopic {
+			// avoid move replica of the most data topic to reduce data transfer
+			continue
+		}
+		hasNewNode := false
+		// find all new nodes that not in any old isr
+		for pid, nisr := range isrList {
+			for _, n := range nisr {
+				found := false
+				for _, olds := range oldNodes {
+					if FindSlice(olds, n) != -1 {
+						found = true
+						break
+					}
+				}
+				if !found {
+					newNodeForNewISR[pid] = append(newNodeForNewISR[pid], n)
+					hasNewNode = true
+					needBalanceOthers = false
+				}
+			}
+		}
+		coordLog.Infof("balance topn topic %v expected isr list : %v, old isr: %v, old need remove: %v, brand new add: %v, partition changed: %v",
+			tname, isrList, oldNodes, oldRemovedISR, newNodeForNewISR, oldNewChangedISR)
+		if !hasNewNode && firstNonISRAvailableNode == "" {
+			// no node available for tmp move
+			continue
+		}
+		// 1. check the nodes that need move, add tmp node for move if no any new node for new isr
+		// 2. try move partition changed nodes to new node which has no any old partitions
+		// 3. try move partition removed nodes to new node until all new node is done
+		// 4. try move partition changed nodes to expect isr if it can until all done
+		// 5. try move partition removed nodes to expect isr if it can until all done
+		// 6. move tmp node back to expected isr
+		// consider situation:
+		// n1 n2 n3 n4 n5 n6 n7 n8 n9
+		//  0  0  0  1  1  1 (old)
+		//     0  0  1  1  1  0
+		//  1  0  0     1  1  0
+		//  1     0  0  1  1  0
+		//  1  1  0  0     1  0
+		//  1  1  0  0  0  1 (new)
+
+		//  0  0  0  1  1  1 (old)
+		//  0  0  0     1  1  1
+		//  0  0  0        1  1  1
+		//  0  0  0           1  1  1
+		//     0  0  0        1  1  1
+		//        0  0  0     1  1  1
+		//           0  0  0  1  1  1 (new)
+
+		//  0  0  0  1  1  1  (old)
+		//  0     0  1  1  1     0
+		//  0     0     1  1  1  0
+		//        0  0  1  1  1  0
+		//     1  0  0  1     1  0  (new)
+
+		var tmpNonISRMove struct {
+			node string
+			pid  int
+		}
+		if !hasNewNode {
+			for pid, nlist := range oldNewChangedISR {
+				done, movedNode := dpm.tryMoveAnyOldNodesToNewNode(monitorChan, nlist, firstNonISRAvailableNode, tname, pid)
+				if done {
+					tmpNonISRMove.node = movedNode
+					tmpNonISRMove.pid = pid
+					break
+				}
+			}
+			if tmpNonISRMove.node == "" {
+				coordLog.Infof("balance topn topic %v failed to move any to new node: %v, %v", tname, firstNonISRAvailableNode, oldNewChangedISR)
+				continue
+			}
+		} else {
+			for pid, nlist := range newNodeForNewISR {
+				for _, n := range nlist {
+					moveOlds := oldNewChangedISR[pid]
+					done, _ := dpm.tryMoveAnyOldNodesToNewNode(monitorChan, moveOlds, n, tname, pid)
+					if done {
+						moved = true
+						continue
+					}
+					moveOlds = oldRemovedISR[pid]
+					done, _ = dpm.tryMoveAnyOldNodesToNewNode(monitorChan, moveOlds, n, tname, pid)
+					if !done {
+						// no node can be moved to new
+						coordLog.Infof("balance topn topic %v failed to move any to new node: %v, %v",
+							tname, n, oldNewChangedISR)
+						anyFailed = true
+						break
+					}
+				}
+				if anyFailed {
+					break
+				}
+			}
+		}
+
+		if anyFailed {
+			needBalanceOthers = false
+			continue
+		}
+		loop := 0
+		for {
+			allMoved := true
+			loop++
+			anyDone := false
+			for pid, nlist := range oldNewChangedISR {
+				for i, n := range nlist {
+					if n == "" {
+						continue
+					}
+					allMoved = false
+					err = dpm.addToCatchupAndWaitISRReady(monitorChan, false, n, tname, pid, isrList[pid], nil, false)
+					if err == nil {
+						moved = true
+						nlist[i] = ""
+						anyDone = true
+					}
+				}
+			}
+			if allMoved {
+				break
+			}
+			if !anyDone {
+				coordLog.Infof("balance topn topic %v can not move any: %v, %v", tname, oldNewChangedISR, isrList)
+				anyFailed = true
+				break
+			}
+			if loop > len(moveToNodes) {
+				coordLog.Infof("balance topn topic %v too much loop: %v", tname, loop)
+				anyFailed = true
+				break
+			}
+		}
+		if anyFailed {
+			continue
+		}
+		for pid, nlist := range oldRemovedISR {
+			for i, n := range nlist {
+				if n == "" {
+					continue
+				}
+				err = dpm.addToCatchupAndWaitISRReady(monitorChan, false, n, tname, pid, isrList[pid], nil, false)
+				if err == nil {
+					moved = true
+					nlist[i] = ""
+				} else {
+					coordLog.Infof("balance topn topic %v can not move removed node: %v, %v", tname, oldRemovedISR, isrList[pid])
+					anyFailed = true
+				}
+			}
+		}
+		if anyFailed {
+			continue
+		}
+
+		if !hasNewNode {
+			// move tmp non isr node back to expected isr
+			err = dpm.addToCatchupAndWaitISRReady(monitorChan, false, tmpNonISRMove.node,
+				tname, tmpNonISRMove.pid, isrList[tmpNonISRMove.pid], nil, false)
+			if err != nil {
+				coordLog.Infof("balance topn topic %v can not move tmp non isr node backup: %v, %v", tname, tmpNonISRMove, isrList[tmpNonISRMove.pid])
+				return false, moved, sortedTopNTopics
+			}
+		}
+		movedCnt++
+		leaderMoved, err := dpm.tryMoveLeaderToExpectedForAllParts(tname, topicInfo0.PartitionNum, isrList)
+		if err != nil {
+			return false, moved, sortedTopNTopics
+		}
+		if leaderMoved {
+			moved = true
+			needBalanceOthers = false
+		}
+	}
+	return needBalanceOthers, moved, sortedTopNTopics
+}
+
+func (dpm *DataPlacement) tryMoveLeaderToExpectedForAllParts(tname string, pnum int, isrList [][]string) (bool, error) {
+	moved := false
+	for pid := 0; pid < pnum; pid++ {
+		topicInfo, err := dpm.lookupCoord.leadership.GetTopicInfo(tname, pid)
+		if err != nil {
+			return moved, err
+		}
+		if (topicInfo.Leader != isrList[pid][0]) &&
+			(len(topicInfo.ISR) >= topicInfo.Replica) {
+			moved = true
+			coordLog.Infof("balance topn topic %v move leader %v to expected isr : %v", tname, topicInfo, isrList[pid])
+			dpm.lookupCoord.handleRemoveTopicNodeOrMoveLeader(true,
+				topicInfo.Name, topicInfo.Partition, topicInfo.Leader)
+			time.Sleep(time.Second)
+		}
+	}
+	return moved, nil
+}
+
+func (dpm *DataPlacement) tryMoveAnyOldNodesToNewNode(monitorChan chan struct{}, fromNodeList []string, toNode string, tname string, pid int) (bool, string) {
+	done := false
+	var movedNode string
+	for i, old := range fromNodeList {
+		if old == "" {
+			continue
+		}
+		err := dpm.addToCatchupAndWaitISRReady(monitorChan, false, old, tname, pid, []string{toNode}, nil, false)
+		if err == nil {
+			done = true
+			fromNodeList[i] = ""
+			movedNode = old
+			break
+		}
+	}
+	return done, movedNode
+}
+
+func (dpm *DataPlacement) balanceTopicToExpectedISR(monitorChan chan struct{}, topicInfo TopicPartitionMetaInfo, expectedISR []string, nodeNameList []string) (bool, bool, error) {
+	if len(expectedISR) == 0 {
+		return false, false, nil
+	}
+	moveNodes := make([]string, 0)
+	for _, nid := range topicInfo.ISR {
+		found := false
+		for _, expectedNode := range expectedISR {
+			if nid == expectedNode {
+				found = true
+				break
+			}
+		}
+		if !found {
+			moveNodes = append(moveNodes, nid)
+		}
+	}
+	needMove := false
+	moved := false
+	if len(moveNodes) > 0 {
+		needMove = true
+	}
+	for _, nid := range moveNodes {
+		coordLog.Infof("node %v need move for topic %v since %v not in expected isr list: %v", nid,
+			topicInfo.GetTopicDesp(), topicInfo.ISR, expectedISR)
+		var err error
+		if len(topicInfo.ISR) <= topicInfo.Replica {
+			if topicInfo.OrderedMulti {
+				err = dpm.addToCatchupAndWaitISRReadyForOrderedTopic(monitorChan, false, nid, &topicInfo,
+					nodeNameList)
+			} else {
+				err = dpm.addToCatchupAndWaitISRReady(monitorChan, false, nid, topicInfo.Name, topicInfo.Partition,
+					expectedISR, nodeNameList, true)
+			}
+		} else {
+			coordErr := dpm.lookupCoord.handleRemoveTopicNodeOrMoveLeader(nid == topicInfo.Leader, topicInfo.Name, topicInfo.Partition, nid)
+			if coordErr != nil {
+				err = coordErr.ToErrorType()
+			}
+		}
+		if err != nil {
+			return needMove, moved, err
+		} else {
+			moved = true
+		}
+		newTopicInfo, err := dpm.lookupCoord.leadership.GetTopicInfo(topicInfo.Name, topicInfo.Partition)
+		if err != nil {
+			return needMove, moved, err
+		} else {
+			topicInfo = *newTopicInfo
+		}
+	}
+	if (topicInfo.Leader != expectedISR[0]) &&
+		(len(topicInfo.ISR) >= topicInfo.Replica) {
+		needMove = true
+		moved = true
+		dpm.lookupCoord.handleRemoveTopicNodeOrMoveLeader(true,
+			topicInfo.Name, topicInfo.Partition, topicInfo.Leader)
+
+		time.Sleep(time.Second)
+	}
+	return needMove, moved, nil
+}
+
+func (dpm *DataPlacement) rebalanceOrderedTopic(monitorChan chan struct{}) (bool, bool) {
 	moved := false
 	isAllBalanced := false
-	if !atomic.CompareAndSwapInt32(&self.lookupCoord.balanceWaiting, 0, 1) {
+	if !atomic.CompareAndSwapInt32(&dpm.lookupCoord.balanceWaiting, 0, 1) {
 		coordLog.Infof("another balance is running, should wait")
 		return moved, isAllBalanced
 	}
-	defer atomic.StoreInt32(&self.lookupCoord.balanceWaiting, 0)
+	defer atomic.StoreInt32(&dpm.lookupCoord.balanceWaiting, 0)
 
-	topicList, err := self.lookupCoord.leadership.ScanTopics()
+	topicList, err := dpm.lookupCoord.leadership.ScanTopics()
 	if err != nil {
 		coordLog.Infof("scan topics error: %v", err)
 		return moved, isAllBalanced
@@ -1612,23 +2286,23 @@ func (self *DataPlacement) rebalanceOrderedTopic(monitorChan chan struct{}) (boo
 			return moved, false
 		default:
 		}
-		if !self.lookupCoord.IsClusterStable() {
+		if !dpm.lookupCoord.IsClusterStable() {
 			return moved, false
 		}
-		if !self.lookupCoord.IsMineLeader() {
+		if !dpm.lookupCoord.IsMineLeader() {
 			return moved, true
 		}
 		// balance only one topic once
 		if movedTopic != "" && movedTopic != topicInfo.Name {
 			continue
 		}
-		currentNodes := self.lookupCoord.getCurrentNodes()
+		currentNodes := dpm.lookupCoord.getCurrentNodes()
 		nodeNameList = nodeNameList[0:0]
 		for _, n := range currentNodes {
 			nodeNameList = append(nodeNameList, n.ID)
 		}
 
-		partitionNodes, err := self.getRebalancedOrderedTopicPartitions(
+		partitionNodes, err := dpm.getRebalancedOrderedTopicPartitions(
 			topicInfo.Name,
 			topicInfo.PartitionNum,
 			topicInfo.Replica, currentNodes)
@@ -1636,62 +2310,23 @@ func (self *DataPlacement) rebalanceOrderedTopic(monitorChan chan struct{}) (boo
 			isAllBalanced = false
 			continue
 		}
-		moveNodes := make([]string, 0)
-		for _, nid := range topicInfo.ISR {
-			found := false
-			for _, expectedNode := range partitionNodes[topicInfo.Partition] {
-				if nid == expectedNode {
-					found = true
-					break
-				}
-			}
-			if !found {
-				moveNodes = append(moveNodes, nid)
-			}
-		}
-		for _, nid := range moveNodes {
+
+		expectedISR := partitionNodes[topicInfo.Partition]
+		needMove, singleMoved, err := dpm.balanceTopicToExpectedISR(monitorChan, topicInfo, expectedISR, nodeNameList)
+		if needMove {
 			movedTopic = topicInfo.Name
-			coordLog.Infof("node %v need move for topic %v since %v not in expected isr list: %v", nid,
-				topicInfo.GetTopicDesp(), topicInfo.ISR, partitionNodes[topicInfo.Partition])
-			var err error
-			if len(topicInfo.ISR) <= topicInfo.Replica {
-				err = self.addToCatchupAndWaitISRReadyForOrderedTopic(monitorChan, &topicInfo,
-					nodeNameList)
-			}
-			if err != nil {
-				return moved, false
-			} else {
-				coordErr := self.lookupCoord.handleMoveTopic(nid == topicInfo.Leader,
-					topicInfo.Name, topicInfo.Partition, nid)
-				if coordErr != nil {
-					return moved, false
-				} else {
-					moved = true
-				}
-			}
-			newTopicInfo, err := self.lookupCoord.leadership.GetTopicInfo(topicInfo.Name, topicInfo.Partition)
-			if err != nil {
-				return moved, false
-			} else {
-				topicInfo = *newTopicInfo
-			}
-		}
-		if (topicInfo.Leader != partitionNodes[topicInfo.Partition][0]) &&
-			(len(topicInfo.ISR) >= topicInfo.Replica) {
-			moved = true
-			self.lookupCoord.handleMoveTopic(true,
-				topicInfo.Name, topicInfo.Partition, topicInfo.Leader)
-			select {
-			case <-monitorChan:
-			case <-time.After(time.Second):
-			}
-		}
-		if len(moveNodes) > 0 ||
-			(topicInfo.Leader != partitionNodes[topicInfo.Partition][0]) {
 			isAllBalanced = false
 		}
+		if singleMoved {
+			moved = true
+		}
+		if topicInfo.Leader != expectedISR[0] {
+			isAllBalanced = false
+		}
+		if err != nil {
+			return moved, false
+		}
 	}
-
 	return moved, isAllBalanced
 }
 
@@ -1707,12 +2342,12 @@ func (s SortableStrings) Swap(l, r int) {
 	s[l], s[r] = s[r], s[l]
 }
 
-func (self *DataPlacement) getRebalancedOrderedTopicPartitions(
+func (dpm *DataPlacement) getRebalancedOrderedTopicPartitions(
 	topicName string,
 	partitionNum int, replica int,
-	currentNodes map[string]NsqdNodeInfo) ([][]string, *CoordErr) {
+	currentNodes map[string]NsqdNodeInfo) ([][]string, error) {
 	if len(currentNodes) < replica {
-		return nil, ErrNodeUnavailable
+		return nil, ErrBalanceNodeUnavailable
 	}
 	// for ordered topic we have much partitions than nodes,
 	// so we need make all the nodes have the almost the same leader partitions,
@@ -1752,14 +2387,14 @@ func (self *DataPlacement) getRebalancedOrderedTopicPartitions(
 	for nid := range currentNodes {
 		nodeNameList = append(nodeNameList, nid)
 	}
-	return self.getRebalancedOrderedTopicPartitionsFromNameList(topicName, partitionNum, replica, nodeNameList)
+	return dpm.getRebalancedOrderedTopicPartitionsFromNameList(topicName, partitionNum, replica, nodeNameList)
 }
-func (self *DataPlacement) getRebalancedOrderedTopicPartitionsFromNameList(
+func (dpm *DataPlacement) getRebalancedOrderedTopicPartitionsFromNameList(
 	topicName string,
 	partitionNum int, replica int,
-	nodeNameList SortableStrings) ([][]string, *CoordErr) {
+	nodeNameList SortableStrings) ([][]string, error) {
 	if len(nodeNameList) < replica {
-		return nil, ErrNodeUnavailable
+		return nil, ErrBalanceNodeUnavailable
 	}
 	sort.Sort(nodeNameList)
 	partitionNodes := make([][]string, partitionNum)
@@ -1779,7 +2414,7 @@ func (self *DataPlacement) getRebalancedOrderedTopicPartitionsFromNameList(
 	return partitionNodes, nil
 }
 
-func (self *DataPlacement) decideUnwantedISRNode(topicInfo *TopicPartitionMetaInfo, currentNodes map[string]NsqdNodeInfo) string {
+func (dpm *DataPlacement) decideUnwantedISRNode(topicInfo *TopicPartitionMetaInfo, currentNodes map[string]NsqdNodeInfo) string {
 	unwantedNode := ""
 	//remove the unwanted node in isr
 	if !topicInfo.OrderedMulti {
@@ -1793,7 +2428,7 @@ func (self *DataPlacement) decideUnwantedISRNode(topicInfo *TopicPartitionMetaIn
 				// the isr maybe lost, we should exit without any remove
 				return unwantedNode
 			}
-			stat, err := self.lookupCoord.getNsqdTopicStat(n)
+			stat, err := dpm.lookupCoord.getNsqdTopicStat(n)
 			if err != nil {
 				continue
 			}
@@ -1804,7 +2439,7 @@ func (self *DataPlacement) decideUnwantedISRNode(topicInfo *TopicPartitionMetaIn
 			}
 		}
 	} else {
-		partitionNodes, err := self.getRebalancedOrderedTopicPartitions(
+		partitionNodes, err := dpm.getRebalancedOrderedTopicPartitions(
 			topicInfo.Name,
 			topicInfo.PartitionNum,
 			topicInfo.Replica, currentNodes)

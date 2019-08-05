@@ -107,6 +107,7 @@ func newHTTPServer(ctx *Context) *httpServer {
 	router.Handle("POST", "/cluster/upgrade/begin", http_api.Decorate(s.doClusterBeginUpgrade, log, http_api.V1))
 	router.Handle("POST", "/cluster/upgrade/done", http_api.Decorate(s.doClusterFinishUpgrade, log, http_api.V1))
 	router.Handle("POST", "/cluster/lookupd/tombstone", http_api.Decorate(s.doClusterTombstoneLookupd, log, http_api.V1))
+	router.Handle("POST", "/cluster/balance/topn", http_api.Decorate(s.doClusterBalanceTopN, log, http_api.V1))
 
 	// only v1
 	router.Handle("POST", "/loglevel/set", http_api.Decorate(s.doSetLogLevel, log, http_api.V1))
@@ -168,6 +169,9 @@ func (s *httpServer) doInfo(w http.ResponseWriter, req *http.Request, ps httprou
 func (s *httpServer) doClusterStats(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {
 	stable := false
 	nodeStatMap := make(map[string]*NodeStat)
+	var topTopicStats consistence.LFListT
+	n, _ := strconv.Atoi(req.FormValue("topn"))
+
 	if s.ctx.nsqlookupd.coordinator != nil {
 		if !s.ctx.nsqlookupd.coordinator.IsMineLeader() {
 			nsqlookupLog.Logf("request from remote %v should request to leader", req.RemoteAddr)
@@ -175,6 +179,9 @@ func (s *httpServer) doClusterStats(w http.ResponseWriter, req *http.Request, ps
 		}
 
 		stable = s.ctx.nsqlookupd.coordinator.IsClusterStable()
+		if n > 0 {
+			topTopicStats = s.ctx.nsqlookupd.coordinator.GetClusterTopNTopics(n)
+		}
 		leaderLFs, nodeLFs := s.ctx.nsqlookupd.coordinator.GetClusterNodeLoadFactor()
 		for nid, lf := range leaderLFs {
 			p := s.ctx.nsqlookupd.DB.SearchPeerClientByClusterID(nid)
@@ -215,12 +222,21 @@ func (s *httpServer) doClusterStats(w http.ResponseWriter, req *http.Request, ps
 	for _, v := range nodeStatMap {
 		nodeStatList = append(nodeStatList, v)
 	}
+	topNList := make([]TopNInfo, 0, len(topTopicStats))
+	for _, t := range topTopicStats {
+		topNList = append(topNList, TopNInfo{
+			Topic:      t.GetTopic(),
+			LoadFactor: t.GetLF(),
+		})
+	}
 	return struct {
 		Stable       bool        `json:"stable"`
 		NodeStatList []*NodeStat `json:"node_stat_list"`
+		TopNTopics   []TopNInfo  `json:"topn_topics"`
 	}{
 		Stable:       stable,
 		NodeStatList: nodeStatList,
+		TopNTopics:   topNList,
 	}, nil
 }
 
@@ -731,6 +747,27 @@ func (s *httpServer) doMoveTopicParition(w http.ResponseWriter, req *http.Reques
 	return nil, nil
 }
 
+func (s *httpServer) doClusterBalanceTopN(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {
+	if s.ctx.nsqlookupd.coordinator == nil {
+		return nil, http_api.Err{500, "MISSING_COORDINATOR"}
+	}
+	reqParams, err := url.ParseQuery(req.URL.RawQuery)
+	if err != nil {
+		return nil, http_api.Err{400, "INVALID_REQUEST"}
+	}
+
+	enableStr := reqParams.Get("enable")
+	enable := false
+	if enableStr == "true" {
+		enable = true
+	}
+	err = s.ctx.nsqlookupd.coordinator.SetTopNBalance(enable)
+	if err != nil {
+		return nil, http_api.Err{400, err.Error()}
+	}
+	return nil, nil
+}
+
 func (s *httpServer) doClusterBeginUpgrade(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {
 	if s.ctx.nsqlookupd.coordinator == nil {
 		return nil, http_api.Err{500, "MISSING_COORDINATOR"}
@@ -817,6 +854,11 @@ type NodeStat struct {
 	HTTPPort         int     `json:"http_port"`
 	LeaderLoadFactor float64 `json:"leader_load_factor"`
 	NodeLoadFactor   float64 `json:"node_load_factor"`
+}
+
+type TopNInfo struct {
+	Topic      string  `json:"topic,omitempty"`
+	LoadFactor float64 `json:"load_factor,omitempty"`
 }
 
 type node struct {

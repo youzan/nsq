@@ -20,16 +20,16 @@ import (
 )
 
 var (
-	syncedOffsetKey       = []byte("synced_offset")
-	bucketDelayedMsg      = []byte("delayed_message")
-	bucketDelayedMsgIndex = []byte("delayed_message_index")
-	bucketMeta            = []byte("meta")
-	CompactThreshold      = 1024 * 1024 * 16
-	compactSingleAvgSize  = 1024 * 32
-	errBucketKeyNotFound  = errors.New("bucket key not found")
-	txMaxBatch            = 5000
-	largeDBSize           = 1024 * 1024 * 1024 * 4
-	errDBSizeTooLarge     = errors.New("db size too large")
+	syncedOffsetKey             = []byte("synced_offset")
+	bucketDelayedMsg            = []byte("delayed_message")
+	bucketDelayedMsgIndex       = []byte("delayed_message_index")
+	bucketMeta                  = []byte("meta")
+	CompactThreshold            = 1024 * 1024 * 16
+	compactSingleAvgSize        = 1024 * 32
+	errBucketKeyNotFound        = errors.New("bucket key not found")
+	txMaxBatch                  = 5000
+	largeDBSize           int64 = 1024 * 1024 * 1024 * 4
+	errDBSizeTooLarge           = errors.New("db size too large")
 )
 
 const (
@@ -849,7 +849,7 @@ func (q *DelayQueue) emptyDelayedUntil(dt int, peekTs int64, id MessageID, ch st
 
 	err = db.Update(func(tx *bolt.Tx) error {
 		dbSize := tx.Size()
-		if dbSize > int64(largeDBSize) && totalCnt < uint64(txMaxBatch) {
+		if dbSize > largeDBSize && totalCnt < uint64(txMaxBatch) {
 			exceedMaxBatch = true
 			nsqLog.Infof("topic %v empty return early since exceed max size %v, %v", q.GetFullName(), string(prefix), tx.Size())
 			return errDBSizeTooLarge
@@ -862,7 +862,7 @@ func (q *DelayQueue) emptyDelayedUntil(dt int, peekTs int64, id MessageID, ch st
 				nsqLog.Infof("topic %v empty return early since exceed max batch : %v, %v", q.GetFullName(), string(prefix), batched)
 				break
 			}
-			if dbSize > int64(largeDBSize/4) && time.Since(scanStart) >= time.Second {
+			if dbSize > largeDBSize/4 && time.Since(scanStart) >= time.Second {
 				exceedMaxBatch = true
 				nsqLog.Infof("topic %v empty return early since exceed max time: %v, %v, %v", q.GetFullName(), string(prefix), batched, dbSize)
 				break

@@ -1,9 +1,10 @@
 package consistence
 
 import (
-	"github.com/absolute8511/gorpc"
 	"net"
 	"time"
+
+	"github.com/absolute8511/gorpc"
 )
 
 type RpcLookupReqBase struct {
@@ -63,26 +64,26 @@ func NewNsqLookupCoordRpcServer(coord *NsqLookupCoordinator) *NsqLookupCoordRpcS
 	}
 }
 
-func (self *NsqLookupCoordRpcServer) start(ip, port string) error {
-	self.rpcDispatcher.AddService("NsqLookupCoordRpcServer", self)
-	self.rpcServer = gorpc.NewTCPServer(net.JoinHostPort(ip, port), self.rpcDispatcher.NewHandlerFunc())
-	e := self.rpcServer.Start()
+func (nlcoord *NsqLookupCoordRpcServer) start(ip, port string) error {
+	nlcoord.rpcDispatcher.AddService("NsqLookupCoordRpcServer", nlcoord)
+	nlcoord.rpcServer = gorpc.NewTCPServer(net.JoinHostPort(ip, port), nlcoord.rpcDispatcher.NewHandlerFunc())
+	e := nlcoord.rpcServer.Start()
 	if e != nil {
 		coordLog.Errorf("listen rpc error : %v", e)
 		panic(e)
 	}
 
-	coordLog.Infof("nsqlookup coordinator rpc listen at : %v", self.rpcServer.Listener.ListenAddr())
+	coordLog.Infof("nsqlookup coordinator rpc listen at : %v", nlcoord.rpcServer.Listener.ListenAddr())
 	return nil
 }
 
-func (self *NsqLookupCoordRpcServer) stop() {
-	if self.rpcServer != nil {
-		self.rpcServer.Stop()
+func (nlcoord *NsqLookupCoordRpcServer) stop() {
+	if nlcoord.rpcServer != nil {
+		nlcoord.rpcServer.Stop()
 	}
 }
 
-func (self *NsqLookupCoordRpcServer) RequestJoinCatchup(req *RpcReqJoinCatchup) *CoordErr {
+func (nlcoord *NsqLookupCoordRpcServer) RequestJoinCatchup(req *RpcReqJoinCatchup) *CoordErr {
 	s := time.Now().Unix()
 	defer func() {
 		e := time.Now().Unix()
@@ -91,7 +92,7 @@ func (self *NsqLookupCoordRpcServer) RequestJoinCatchup(req *RpcReqJoinCatchup) 
 		}
 	}()
 	var ret CoordErr
-	err := self.nsqLookupCoord.handleRequestJoinCatchup(req.TopicName, req.TopicPartition, req.NodeID)
+	err := nlcoord.nsqLookupCoord.handleRequestJoinCatchup(req.TopicName, req.TopicPartition, req.NodeID)
 	if err != nil {
 		ret = *err
 		return &ret
@@ -99,25 +100,7 @@ func (self *NsqLookupCoordRpcServer) RequestJoinCatchup(req *RpcReqJoinCatchup) 
 	return &ret
 }
 
-func (self *NsqLookupCoordRpcServer) RequestJoinTopicISR(req *RpcReqJoinISR) *CoordErr {
-	s := time.Now().Unix()
-	defer func() {
-		e := time.Now().Unix()
-		if e-s > int64(RPC_TIMEOUT/2) {
-			coordLog.Infof("rpc call used: %v", e-s)
-		}
-	}()
-
-	var ret CoordErr
-	err := self.nsqLookupCoord.handleRequestJoinISR(req.TopicName, req.TopicPartition, req.NodeID)
-	if err != nil {
-		ret = *err
-		return &ret
-	}
-	return &ret
-}
-
-func (self *NsqLookupCoordRpcServer) ReadyForTopicISR(req *RpcReadyForISR) *CoordErr {
+func (nlcoord *NsqLookupCoordRpcServer) RequestJoinTopicISR(req *RpcReqJoinISR) *CoordErr {
 	s := time.Now().Unix()
 	defer func() {
 		e := time.Now().Unix()
@@ -127,7 +110,7 @@ func (self *NsqLookupCoordRpcServer) ReadyForTopicISR(req *RpcReadyForISR) *Coor
 	}()
 
 	var ret CoordErr
-	err := self.nsqLookupCoord.handleReadyForISR(req.TopicName, req.TopicPartition, req.NodeID, req.LeaderSession, req.JoinISRSession)
+	err := nlcoord.nsqLookupCoord.handleRequestJoinISR(req.TopicName, req.TopicPartition, req.NodeID)
 	if err != nil {
 		ret = *err
 		return &ret
@@ -135,7 +118,7 @@ func (self *NsqLookupCoordRpcServer) ReadyForTopicISR(req *RpcReadyForISR) *Coor
 	return &ret
 }
 
-func (self *NsqLookupCoordRpcServer) RequestLeaveFromISR(req *RpcReqLeaveFromISR) *CoordErr {
+func (nlcoord *NsqLookupCoordRpcServer) ReadyForTopicISR(req *RpcReadyForISR) *CoordErr {
 	s := time.Now().Unix()
 	defer func() {
 		e := time.Now().Unix()
@@ -145,7 +128,7 @@ func (self *NsqLookupCoordRpcServer) RequestLeaveFromISR(req *RpcReqLeaveFromISR
 	}()
 
 	var ret CoordErr
-	err := self.nsqLookupCoord.handleLeaveFromISR(req.TopicName, req.TopicPartition, nil, req.NodeID)
+	err := nlcoord.nsqLookupCoord.handleReadyForISR(req.TopicName, req.TopicPartition, req.NodeID, req.LeaderSession, req.JoinISRSession)
 	if err != nil {
 		ret = *err
 		return &ret
@@ -153,7 +136,7 @@ func (self *NsqLookupCoordRpcServer) RequestLeaveFromISR(req *RpcReqLeaveFromISR
 	return &ret
 }
 
-func (self *NsqLookupCoordRpcServer) RequestLeaveFromISRByLeader(req *RpcReqLeaveFromISRByLeader) *CoordErr {
+func (nlcoord *NsqLookupCoordRpcServer) RequestLeaveFromISR(req *RpcReqLeaveFromISR) *CoordErr {
 	s := time.Now().Unix()
 	defer func() {
 		e := time.Now().Unix()
@@ -163,7 +146,7 @@ func (self *NsqLookupCoordRpcServer) RequestLeaveFromISRByLeader(req *RpcReqLeav
 	}()
 
 	var ret CoordErr
-	err := self.nsqLookupCoord.handleLeaveFromISR(req.TopicName, req.TopicPartition, &req.LeaderSession, req.NodeID)
+	err := nlcoord.nsqLookupCoord.handleLeaveFromISR(req.TopicName, req.TopicPartition, nil, req.NodeID)
 	if err != nil {
 		ret = *err
 		return &ret
@@ -171,17 +154,35 @@ func (self *NsqLookupCoordRpcServer) RequestLeaveFromISRByLeader(req *RpcReqLeav
 	return &ret
 }
 
-func (self *NsqLookupCoordRpcServer) RequestNotifyNewTopicInfo(req *RpcReqNewTopicInfo) *CoordErr {
+func (nlcoord *NsqLookupCoordRpcServer) RequestLeaveFromISRByLeader(req *RpcReqLeaveFromISRByLeader) *CoordErr {
+	s := time.Now().Unix()
+	defer func() {
+		e := time.Now().Unix()
+		if e-s > int64(RPC_TIMEOUT/2) {
+			coordLog.Infof("rpc call used: %v", e-s)
+		}
+	}()
+
+	var ret CoordErr
+	err := nlcoord.nsqLookupCoord.handleLeaveFromISR(req.TopicName, req.TopicPartition, &req.LeaderSession, req.NodeID)
+	if err != nil {
+		ret = *err
+		return &ret
+	}
+	return &ret
+}
+
+func (nlcoord *NsqLookupCoordRpcServer) RequestNotifyNewTopicInfo(req *RpcReqNewTopicInfo) *CoordErr {
 	var coordErr CoordErr
-	if time.Since(self.lastNotify) < time.Millisecond*10 {
+	if time.Since(nlcoord.lastNotify) < time.Millisecond*10 {
 		return &coordErr
 	}
-	self.nsqLookupCoord.handleRequestNewTopicInfo(req.TopicName, req.TopicPartition, req.NodeID)
+	nlcoord.nsqLookupCoord.handleRequestNewTopicInfo(req.TopicName, req.TopicPartition, req.NodeID)
 	return &coordErr
 }
 
-func (self *NsqLookupCoordRpcServer) RequestCheckTopicConsistence(req *RpcReqCheckTopic) *CoordErr {
+func (nlcoord *NsqLookupCoordRpcServer) RequestCheckTopicConsistence(req *RpcReqCheckTopic) *CoordErr {
 	var coordErr CoordErr
-	self.nsqLookupCoord.handleRequestCheckTopicConsistence(req.TopicName, req.TopicPartition)
+	nlcoord.nsqLookupCoord.handleRequestCheckTopicConsistence(req.TopicName, req.TopicPartition)
 	return &coordErr
 }
