@@ -18,6 +18,7 @@ type IMsgTracer interface {
 	TracePubClient(topic string, part int, traceID uint64, msgID MessageID, diskOffset BackendOffset, clientID string)
 	// state will be READ_QUEUE, Start, Req, Fin, Timeout
 	TraceSub(topic string, channel string, state string, traceID uint64, msg *Message, clientID string, cost int64)
+	IsRemote() bool
 }
 
 func GetMsgTracer() IMsgTracer {
@@ -63,6 +64,10 @@ func (self *LogMsgTracer) TraceSub(topic string, channel string, state string, t
 	nsqLog.Logf("[TRACE] topic %v channel %v trace id %v: message %v (offset: %v, pri:%v) consume state %v from client %v(%v) at time: %v cost: %v, attempt: %v",
 		topic, channel, msg.TraceID,
 		msg.ID, msg.Offset, msg.pri, state, clientID, msg.GetClientID(), time.Now().UnixNano(), cost, msg.Attempts)
+}
+
+func (self *LogMsgTracer) IsRemote() bool {
+	return false
 }
 
 // this tracer will send the trace info to remote server for each seconds
@@ -152,6 +157,10 @@ func (self *RemoteMsgTracer) TraceSub(topic string, channel string, state string
 		}
 		self.localTracer.TraceSub(topic, channel, state, traceID, msg, clientID, cost)
 	}
+}
+
+func (self *RemoteMsgTracer) IsRemote() bool {
+	return true
 }
 
 func init() {
