@@ -1,14 +1,15 @@
 package consistence
 
 import (
+	"net"
+	"os"
+	"time"
+
 	pb "github.com/youzan/nsq/consistence/coordgrpc"
 	"github.com/youzan/nsq/internal/levellogger"
 	"github.com/youzan/nsq/nsqd"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
-	"net"
-	"os"
-	"time"
 )
 
 // grpc is not used anymore
@@ -80,7 +81,16 @@ func (s *nsqdCoordGRpcServer) UpdateChannelOffset(ctx context.Context, req *pb.R
 	var chOffset ChannelConsumerOffset
 	chOffset.Flush = req.ChannelOffset.Flush
 	chOffset.VOffset = req.ChannelOffset.Voffset
+	chOffset.VCnt = req.ChannelOffset.Vcnt
 	chOffset.AllowBackward = req.ChannelOffset.AllowBackward
+	chOffset.NeedUpdateConfirmed = req.ChannelOffset.NeedUpdateConfirmed
+	for _, interval := range req.ChannelOffset.ConfirmedIntervals {
+		chOffset.ConfirmedInterval = append(chOffset.ConfirmedInterval, nsqd.MsgQueueInterval{
+			Start:  interval.Start,
+			End:    interval.End,
+			EndCnt: interval.EndCnt,
+		})
+	}
 	err = s.nsqdCoord.updateChannelOffsetOnSlave(tc.GetData(), req.Channel, chOffset)
 	if err != nil {
 		coordErr.ErrMsg = err.ErrMsg
@@ -180,4 +190,76 @@ func (s *nsqdCoordGRpcServer) PutMessages(ctx context.Context, req *pb.RpcPutMes
 		coordErr.ErrType = int32(err.ErrType)
 	}
 	return &coordErr, nil
+}
+
+func (s *nsqdCoordGRpcServer) PullCommitLogsAndData(ctx context.Context, req *pb.PullCommitLogsReq) (*pb.PullCommitLogsRsp, error) {
+	rsp := &pb.PullCommitLogsRsp{}
+	rreq := &RpcPullCommitLogsReq{
+		StartLogOffset:   req.StartLogOffset,
+		LogMaxNum:        int(req.LogMaxNum),
+		StartIndexCnt:    req.StartIndexCnt,
+		LogCountNumIndex: req.LogCountNumIndex,
+		UseCountIndex:    req.UseCountIndex,
+	}
+	rreq.TopicName = req.TopicData.TopicName
+	rreq.TopicPartition = int(req.TopicData.TopicPartition)
+	rreq.Epoch = EpochType(req.TopicData.Epoch)
+	rreq.TopicWriteEpoch = EpochType(req.TopicData.TopicWriteEpoch)
+	rreq.TopicLeaderSessionEpoch = EpochType(req.TopicData.TopicLeaderSessionEpoch)
+	rreq.TopicLeaderSession = req.TopicData.TopicLeaderSession
+	rreq.TopicLeader = req.TopicData.TopicLeader
+	rrsp, err := s.nsqdCoord.pullCommitLogsAndData(rreq, false)
+	if err != nil {
+		return rsp, err
+	}
+	rsp.DataList = rrsp.DataList
+	rsp.Logs = make([]pb.CommitLogData, 0, len(rrsp.Logs))
+	for _, l := range rrsp.Logs {
+		var commitData pb.CommitLogData
+		commitData.Epoch = int64(l.Epoch)
+		commitData.LogID = l.LogID
+		commitData.MsgNum = l.MsgNum
+		commitData.MsgCnt = l.MsgCnt
+		commitData.MsgSize = l.MsgSize
+		commitData.MsgOffset = l.MsgOffset
+		commitData.LastMsgLogID = l.LastMsgLogID
+		rsp.Logs = append(rsp.Logs, commitData)
+	}
+	return rsp, nil
+}
+
+func (s *nsqdCoordGRpcServer) PullDelayedQueueCommitLogsAndData(ctx context.Context, req *pb.PullCommitLogsReq) (*pb.PullCommitLogsRsp, error) {
+	rsp := &pb.PullCommitLogsRsp{}
+	rreq := &RpcPullCommitLogsReq{
+		StartLogOffset:   req.StartLogOffset,
+		LogMaxNum:        int(req.LogMaxNum),
+		StartIndexCnt:    req.StartIndexCnt,
+		LogCountNumIndex: req.LogCountNumIndex,
+		UseCountIndex:    req.UseCountIndex,
+	}
+	rreq.TopicName = req.TopicData.TopicName
+	rreq.TopicPartition = int(req.TopicData.TopicPartition)
+	rreq.Epoch = EpochType(req.TopicData.Epoch)
+	rreq.TopicWriteEpoch = EpochType(req.TopicData.TopicWriteEpoch)
+	rreq.TopicLeaderSessionEpoch = EpochType(req.TopicData.TopicLeaderSessionEpoch)
+	rreq.TopicLeaderSession = req.TopicData.TopicLeaderSession
+	rreq.TopicLeader = req.TopicData.TopicLeader
+	rrsp, err := s.nsqdCoord.pullCommitLogsAndData(rreq, true)
+	if err != nil {
+		return rsp, err
+	}
+	rsp.DataList = rrsp.DataList
+	rsp.Logs = make([]pb.CommitLogData, 0, len(rrsp.Logs))
+	for _, l := range rrsp.Logs {
+		var commitData pb.CommitLogData
+		commitData.Epoch = int64(l.Epoch)
+		commitData.LogID = l.LogID
+		commitData.MsgNum = l.MsgNum
+		commitData.MsgCnt = l.MsgCnt
+		commitData.MsgSize = l.MsgSize
+		commitData.MsgOffset = l.MsgOffset
+		commitData.LastMsgLogID = l.LastMsgLogID
+		rsp.Logs = append(rsp.Logs, commitData)
+	}
+	return rsp, nil
 }

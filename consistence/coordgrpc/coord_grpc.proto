@@ -1,11 +1,20 @@
 syntax = "proto3";
-
 package coordgrpc;
+
+import "gogoproto/gogo.proto";
+
+option (gogoproto.marshaler_all) = true;
+option (gogoproto.sizer_all) = true;
+option (gogoproto.unmarshaler_all) = true;
+option (gogoproto.goproto_getters_all) = false;
+option (gogoproto.goproto_enum_prefix_all) = false;
 
 service NsqdCoordRpcV2 {
     rpc UpdateChannelOffset(RpcChannelOffsetArg) returns (CoordErr) {}
     rpc PutMessage(RpcPutMessage) returns (CoordErr) {}
     rpc PutMessages(RpcPutMessages) returns (CoordErr) {}
+    rpc PullCommitLogsAndData(PullCommitLogsReq) returns (PullCommitLogsRsp) {}
+    rpc PullDelayedQueueCommitLogsAndData(PullCommitLogsReq) returns (PullCommitLogsRsp) {}
 }
 
 message CoordErr {
@@ -21,12 +30,22 @@ message RpcTopicData {
     int64 topic_write_epoch = 4;
     int64 topic_leader_session_epoch = 5;
     string topic_leader_session = 6;
+    string topic_leader = 7;
+}
+
+message MsgQueueInterval {
+    int64 start = 1;
+    int64 end = 2;
+    uint64 end_cnt = 3;
 }
 
 message ChannelConsumerOffset {
     int64 voffset = 1;
     bool flush = 2;
     bool allow_backward = 3;
+    int64 vcnt = 4;
+    bool need_update_confirmed = 5;
+    repeated MsgQueueInterval confirmed_intervals = 6 [(gogoproto.nullable) = false];
 }
 
 message CommitLogData {
@@ -57,10 +76,26 @@ message RpcPutMessage {
     RpcTopicData topic_data = 1;
     CommitLogData log_data = 2;
     NsqdMessage topic_message = 3;
+    bytes topic_raw_message = 4;
 }
 
 message RpcPutMessages {
     RpcTopicData topic_data = 1;
     CommitLogData log_data = 2;
     repeated NsqdMessage topic_message = 3;
+    bytes topic_raw_message = 4;
+}
+
+message PullCommitLogsReq {
+    RpcTopicData topic_data = 1;
+    int64 start_log_offset = 2;
+    int32 log_max_num = 3;
+    int64 start_index_cnt = 4;
+    int64 log_count_num_index = 5;
+    bool use_count_index = 6;
+}
+
+message PullCommitLogsRsp {
+    repeated CommitLogData logs = 1 [(gogoproto.nullable) = false];
+    repeated bytes data_list = 2;
 }

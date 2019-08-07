@@ -3,6 +3,8 @@ package consistence
 import (
 	"bytes"
 	"io"
+	"net"
+	"strconv"
 	"sync"
 	"time"
 
@@ -63,18 +65,18 @@ func NewNsqdRpcClient(addr string, timeout time.Duration) (*NsqdRpcClient, error
 	c.Start()
 	d := gorpc.NewDispatcher()
 	d.AddService("NsqdCoordRpcServer", &NsqdCoordRpcServer{})
-	//ip, port, _ := net.SplitHostPort(addr)
-	//portNum, _ := strconv.Atoi(port)
-	//grpcAddr := ip + ":" + strconv.Itoa(portNum+1)
-	//grpcConn, err := grpc.Dial(grpcAddr, grpc.WithInsecure(), grpc.WithBlock(), grpc.WithTimeout(timeout))
+	ip, port, _ := net.SplitHostPort(addr)
+	portNum, _ := strconv.Atoi(port)
+	grpcAddr := ip + ":" + strconv.Itoa(portNum+1)
+	grpcConn, err := grpc.Dial(grpcAddr, grpc.WithInsecure(), grpc.WithBlock(), grpc.WithTimeout(timeout))
 	var grpcClient pb.NsqdCoordRpcV2Client
-	//if err != nil {
-	//	coordLog.Warningf("failed to connect to grpc server %v: %v", grpcAddr, err)
-	//	grpcClient = nil
-	//	grpcConn = nil
-	//} else {
-	//	grpcClient = pb.NewNsqdCoordRpcV2Client(grpcConn)
-	//}
+	if err != nil {
+		coordLog.Warningf("failed to connect to grpc server %v: %v", grpcAddr, err)
+		grpcClient = nil
+		grpcConn = nil
+	} else {
+		grpcClient = pb.NewNsqdCoordRpcV2Client(grpcConn)
+	}
 	coordLog.Infof("connected to rpc server %v", addr)
 
 	return &NsqdRpcClient{
@@ -125,18 +127,18 @@ func (nrpc *NsqdRpcClient) Reconnect() error {
 	nrpc.dc = nrpc.d.NewServiceClient("NsqdCoordRpcServer", nrpc.c)
 	nrpc.c.Start()
 
-	//ip, port, _ := net.SplitHostPort(nrpc.remote)
-	//portNum, _ := strconv.Atoi(port)
-	//grpcAddr := ip + ":" + strconv.Itoa(portNum+1)
-	//grpcConn, err := grpc.Dial(grpcAddr, grpc.WithInsecure(), grpc.WithBlock(), grpc.WithTimeout(nrpc.timeout))
-	//if err != nil {
-	//	coordLog.Warningf("failed to connect to grpc server %v: %v", grpcAddr, err)
-	//	nrpc.grpcConn = nil
-	//	nrpc.grpcClient = nil
-	//} else {
-	//	nrpc.grpcConn = grpcConn
-	//	nrpc.grpcClient = pb.NewNsqdCoordRpcV2Client(grpcConn)
-	//}
+	ip, port, _ := net.SplitHostPort(nrpc.remote)
+	portNum, _ := strconv.Atoi(port)
+	grpcAddr := ip + ":" + strconv.Itoa(portNum+1)
+	grpcConn, err := grpc.Dial(grpcAddr, grpc.WithInsecure(), grpc.WithBlock(), grpc.WithTimeout(nrpc.timeout))
+	if err != nil {
+		coordLog.Warningf("failed to connect to grpc server %v: %v", grpcAddr, err)
+		nrpc.grpcConn = nil
+		nrpc.grpcClient = nil
+	} else {
+		nrpc.grpcConn = grpcConn
+		nrpc.grpcClient = pb.NewNsqdCoordRpcV2Client(grpcConn)
+	}
 	coordLog.Infof("reconnected to rpc server %v", nrpc.remote)
 
 	nrpc.Unlock()
@@ -351,10 +353,19 @@ func (nrpc *NsqdRpcClient) UpdateChannelOffset(leaderSession *TopicLeaderSession
 		req.TopicData = &rpcData
 		req.Channel = channel
 		req.ChannelOffset.Voffset = offset.VOffset
-		// TODO: VCnt for pb
-		// req.ChannelOffset.VCnt = offset.VCnt
+		req.ChannelOffset.Vcnt = offset.VCnt
 		req.ChannelOffset.Flush = offset.Flush
 		req.ChannelOffset.AllowBackward = offset.AllowBackward
+		if offset.NeedUpdateConfirmed {
+			req.ChannelOffset.NeedUpdateConfirmed = offset.NeedUpdateConfirmed
+			for _, interval := range offset.ConfirmedInterval {
+				req.ChannelOffset.ConfirmedIntervals = append(req.ChannelOffset.ConfirmedIntervals, pb.MsgQueueInterval{
+					Start:  interval.Start,
+					End:    interval.End,
+					EndCnt: interval.EndCnt,
+				})
+			}
+		}
 
 		ctx, cancel := context.WithTimeout(context.Background(), RPC_TIMEOUT_SHORT)
 		retErr, err := nrpc.grpcClient.UpdateChannelOffset(ctx, &req)
@@ -587,6 +598,44 @@ func (nrpc *NsqdRpcClient) GetCommitLogFromOffset(topicInfo *TopicPartitionMetaI
 
 func (nrpc *NsqdRpcClient) PullCommitLogsAndData(topic string, partition int, logCountNumIndex int64,
 	logIndex int64, startOffset int64, num int, fromDelayed bool) ([]CommitLogData, [][]byte, error) {
+	if nrpc.grpcClient != nil {
+		var req pb.PullCommitLogsReq
+		var rpcData pb.RpcTopicData
+		rpcData.TopicName = topic
+		rpcData.TopicPartition = int32(partition)
+		req.TopicData = &rpcData
+		req.StartLogOffset = startOffset
+		req.StartIndexCnt = logIndex
+		req.LogMaxNum = int32(num)
+		req.LogCountNumIndex = logCountNumIndex
+		req.UseCountIndex = true
+		ctx, cancel := context.WithTimeout(context.Background(), RPC_TIMEOUT)
+		var rsp *pb.PullCommitLogsRsp
+		var err error
+		if !fromDelayed {
+			rsp, err = nrpc.grpcClient.PullCommitLogsAndData(ctx, &req)
+		} else {
+			rsp, err = nrpc.grpcClient.PullDelayedQueueCommitLogsAndData(ctx, &req)
+		}
+		cancel()
+		if err == nil {
+			logs := make([]CommitLogData, 0, len(rsp.Logs))
+			for _, log := range rsp.Logs {
+				logs = append(logs, CommitLogData{
+					LogID:        log.LogID,
+					Epoch:        EpochType(log.Epoch),
+					MsgNum:       log.MsgNum,
+					MsgCnt:       log.MsgCnt,
+					MsgSize:      log.MsgSize,
+					MsgOffset:    log.MsgOffset,
+					LastMsgLogID: log.LastMsgLogID,
+				})
+			}
+			return logs, rsp.DataList, nil
+		}
+		// maybe old server not implemented the grpc method.
+	}
+
 	var r RpcPullCommitLogsReq
 	r.TopicName = topic
 	r.TopicPartition = partition
