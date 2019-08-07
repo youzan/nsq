@@ -156,6 +156,18 @@
   version = "v0.2.3"
 
 [[projects]]
+  digest = "1:4652941215f23c7ad6546bab86964c72248a1134baa53f0df618661344ba5cac"
+  name = "github.com/gogo/protobuf"
+  packages = [
+    "gogoproto",
+    "proto",
+    "protoc-gen-gogo/descriptor",
+  ]
+  pruneopts = "UT"
+  revision = "ba06b47c162d49f2af050fb4c75bcbc86a159d5c"
+  version = "v1.2.1"
+
+[[projects]]
   digest = "1:4c0989ca0bcd10799064318923b9bc2db6b4d6338dd75f3f2d86c3511aaaf5cf"
   name = "github.com/golang/protobuf"
   packages = [
@@ -423,6 +435,7 @@
     "github.com/cenkalti/backoff",
     "github.com/coreos/etcd/client",
     "github.com/gobwas/glob",
+    "github.com/gogo/protobuf/gogoproto",
     "github.com/golang/protobuf/proto",
     "github.com/golang/snappy",
     "github.com/gorilla/sessions",
