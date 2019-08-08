@@ -42,11 +42,14 @@ var LOGROTATE_NUM = 500000
 var MIN_KEEP_LOG_ITEM = 1000
 
 var bp sync.Pool
+var emptyLogData CommitLogData
+var logDataSize int
 
 func init() {
 	bp.New = func() interface{} {
 		return &bytes.Buffer{}
 	}
+	logDataSize = binary.Size(emptyLogData)
 }
 
 func bufferPoolGet() *bytes.Buffer {
@@ -73,10 +76,8 @@ type CommitLogData struct {
 	MsgNum int32
 }
 
-var emptyLogData CommitLogData
-
 func GetLogDataSize() int {
-	return binary.Size(emptyLogData)
+	return logDataSize
 }
 
 func GetPrevLogOffset(cur int64) int64 {
