@@ -216,8 +216,8 @@ func (d *DiskQueueSnapshot) ReadRaw(size int32) ([]byte, error) {
 
 	result := make([]byte, size)
 	readOffset := int32(0)
-	var stat os.FileInfo
 	var err error
+	var rn int
 
 	for readOffset < size {
 
@@ -239,57 +239,30 @@ func (d *DiskQueueSnapshot) ReadRaw(size int32) ([]byte, error) {
 			}
 			d.reader = bufio.NewReader(d.readFile)
 		}
-		stat, err = d.readFile.Stat()
+
+		rn, err = io.ReadFull(d.reader, result[readOffset:])
+		readOffset += int32(rn)
 		if err != nil {
-			return result, err
-		}
-		if d.readPos.EndOffset.FileNum < d.endPos.EndOffset.FileNum {
-			if d.readPos.EndOffset.Pos >= stat.Size() {
-				d.readPos.EndOffset.FileNum++
-				d.readPos.EndOffset.Pos = 0
-				nsqLog.Logf("DISKQUEUE snapshot(%s): readRaw() read end, try next: %v",
-					d.readFrom, d.readPos)
+			if err != io.ErrUnexpectedEOF || d.readPos.EndOffset.FileNum >= d.endPos.EndOffset.FileNum {
 				d.readFile.Close()
 				d.readFile = nil
-				goto CheckFileOpen
-			}
-		}
-
-		fileLeft := stat.Size() - d.readPos.EndOffset.Pos
-		if d.readPos.EndOffset.FileNum == d.endPos.EndOffset.FileNum && fileLeft == 0 {
-			return result[:readOffset], io.EOF
-		}
-		currentRead := int64(size - readOffset)
-		if fileLeft < currentRead {
-			currentRead = fileLeft
-		}
-		_, err = io.ReadFull(d.reader, result[readOffset:int64(readOffset)+currentRead])
-		if err != nil {
-			d.readFile.Close()
-			d.readFile = nil
-			return result, err
-		}
-
-		oldPos := d.readPos
-		d.readPos.EndOffset.Pos = d.readPos.EndOffset.Pos + currentRead
-		readOffset += int32(currentRead)
-		d.readPos.virtualEnd += BackendOffset(currentRead)
-		if nsqLog.Level() >= levellogger.LOG_DETAIL {
-			nsqLog.LogDebugf("===snapshot read move forward: %v to  %v", oldPos,
-				d.readPos)
-		}
-
-		isEnd := false
-		if d.readPos.EndOffset.FileNum < d.endPos.EndOffset.FileNum {
-			isEnd = d.readPos.EndOffset.Pos >= stat.Size()
-		}
-		if isEnd {
-			if d.readFile != nil {
-				d.readFile.Close()
-				d.readFile = nil
+				return result, err
 			}
 			d.readPos.EndOffset.FileNum++
 			d.readPos.EndOffset.Pos = 0
+			nsqLog.Logf("DISKQUEUE snapshot(%s): readRaw() read end, try next: %v",
+				d.readFrom, d.readPos)
+			d.readFile.Close()
+			d.readFile = nil
+			goto CheckFileOpen
+		}
+
+		oldPos := d.readPos
+		d.readPos.EndOffset.Pos = d.readPos.EndOffset.Pos + int64(rn)
+		d.readPos.virtualEnd += BackendOffset(rn)
+		if nsqLog.Level() >= levellogger.LOG_DETAIL {
+			nsqLog.LogDebugf("===snapshot read move forward: %v to  %v", oldPos,
+				d.readPos)
 		}
 	}
 	return result, nil
