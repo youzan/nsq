@@ -1868,7 +1868,7 @@ func (dpm *DataPlacement) rebalanceTopNTopicsByLoad(monitorChan chan struct{},
 		return false, moved, sortedTopNTopics
 	}
 	coordLog.Infof("balance topn isr changed : %v", isrChanged)
-	if isrChanged < topNBalanceDiff || len(topicNames) < topNBalanceDiff {
+	if isrChanged <= topNBalanceDiff || len(topicNames) <= topNBalanceDiff {
 		return true, moved, sortedTopNTopics
 	}
 	mostLFTopic := topicNames[0]
