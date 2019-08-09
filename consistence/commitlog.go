@@ -122,26 +122,21 @@ func getCommitLogCountFromFile(path string, start int64) (int64, error) {
 }
 
 func getCommitLogFromFile(file *os.File, offset int64) (*CommitLogData, error) {
-	f, err := file.Stat()
-	if err != nil {
-		return nil, err
-	}
-	fsize := f.Size()
-	if offset == fsize {
-		return nil, ErrCommitLogEOF
-	}
-
-	if offset > fsize-int64(GetLogDataSize()) {
-		return nil, ErrCommitLogOutofBound
-	}
-
 	if (offset % int64(GetLogDataSize())) != 0 {
 		return nil, ErrCommitLogOffsetInvalid
 	}
 	b := bytes.NewBuffer(make([]byte, GetLogDataSize()))
 	n, err := file.ReadAt(b.Bytes(), offset)
 	if err != nil {
-		return nil, err
+		if err == io.EOF {
+			if n == 0 {
+				return nil, ErrCommitLogEOF
+			} else if n < int(GetLogDataSize()) {
+				return nil, ErrCommitLogOutofBound
+			}
+		} else {
+			return nil, err
+		}
 	}
 	if n != GetLogDataSize() {
 		return nil, ErrCommitLogOffsetInvalid

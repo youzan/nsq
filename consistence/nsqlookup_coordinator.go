@@ -37,11 +37,11 @@ var (
 )
 
 const (
-	waitMigrateInterval          = time.Minute * 10
-	waitEmergencyMigrateInterval = time.Second * 10
-	waitRemovingNodeInterval     = time.Second * 30
-	balanceInterval              = time.Second * 60
-	doCheckInterval              = time.Second * 30
+	waitMigrateInterval          = time.Second * 3
+	waitEmergencyMigrateInterval = time.Second * 1
+	waitRemovingNodeInterval     = time.Second * 3
+	balanceInterval              = time.Second * 6
+	doCheckInterval              = time.Second * 3
 )
 
 type JoinISRState struct {
