@@ -252,6 +252,11 @@ func (d *DiskQueueSnapshot) ReadRaw(size int32) ([]byte, error) {
 					d.readFrom, d.readPos)
 				goto CheckFileOpen
 			}
+			if isEnd && readOffset == size {
+				break
+			}
+			nsqLog.Logf("DISKQUEUE snapshot(%s): readRaw() read failed: %v, at %v, %v, readed: %v",
+				d.readFrom, err.Error(), d.readPos, readOffset, rn)
 			d.readFile.Close()
 			d.readFile = nil
 			return result, err
