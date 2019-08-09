@@ -1605,6 +1605,7 @@ func (ncoord *NsqdCoordinator) decideCatchupCommitLogInfo(tc *TopicCoordinator,
 			localTopic.Unlock()
 			if localErr != nil {
 				coordLog.Errorf("failed to reset local topic data: %v", localErr)
+				localLogQ.SetDataFixState(true)
 				return logIndex, offset, needFullSync, &CoordErr{localErr.Error(), RpcNoErr, CoordLocalErr}
 			}
 			_, localErr = logMgr.TruncateToOffsetV2(0, 0)
