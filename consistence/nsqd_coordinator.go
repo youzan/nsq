@@ -249,12 +249,12 @@ func (ncoord *NsqdCoordinator) Start() error {
 	}
 	_, realRpcPort, _ := net.SplitHostPort(realAddr)
 	ncoord.myNode.RpcPort = realRpcPort
-	port, _ := strconv.Atoi(realRpcPort)
-	grpcPort := strconv.Itoa(port + 1)
-	err = ncoord.grpcServer.start(ncoord.myNode.NodeIP, grpcPort)
-	if err != nil {
-		coordLog.Warningf("failed to start nsqd grpc server: %v", err)
-	}
+	//port, _ := strconv.Atoi(realRpcPort)
+	//grpcPort := strconv.Itoa(port + 1)
+	//err = ncoord.grpcServer.start(ncoord.myNode.NodeIP, grpcPort)
+	//if err != nil {
+	//	coordLog.Warningf("failed to start nsqd grpc server: %v", err)
+	//}
 
 	if ncoord.leadership != nil {
 		err := ncoord.leadership.RegisterNsqd(&ncoord.myNode)
@@ -283,8 +283,8 @@ func (ncoord *NsqdCoordinator) Stop() {
 	close(ncoord.stopChan)
 	ncoord.rpcServer.stop()
 	ncoord.rpcServer = nil
-	ncoord.grpcServer.stop()
-	ncoord.grpcServer = nil
+	//ncoord.grpcServer.stop()
+	//ncoord.grpcServer = nil
 	ncoord.rpcClientMutex.Lock()
 	for _, c := range ncoord.nsqdRpcClients {
 		c.Close()
