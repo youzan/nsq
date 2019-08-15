@@ -366,6 +366,7 @@ func (ncoord *NsqdCoordinator) doSyncOpToCluster(isWrite bool, coord *TopicCoord
 	failedNodes := make(map[string]struct{})
 	retryCnt := uint32(0)
 	exitErr := 0
+	halfSuccess := false
 
 	localErr := doLocalWrite(tcData)
 	if localErr != nil {
@@ -375,6 +376,16 @@ func (ncoord *NsqdCoordinator) doSyncOpToCluster(isWrite bool, coord *TopicCoord
 	needLeaveISR = true
 
 retrysync:
+	if !halfSuccess && coord.IsExiting() {
+		needLeaveISR = true
+		clusterWriteErr = ErrTopicExiting
+		goto exitsync
+	}
+	if isWrite && !halfSuccess && coord.IsWriteDisabled() {
+		needLeaveISR = true
+		clusterWriteErr = ErrWriteDisabled
+		goto exitsync
+	}
 	if retryCnt > MAX_WRITE_RETRY {
 		coordLog.Warningf("retrying times is large: %v", retryCnt)
 		needRefreshISR = true
@@ -481,6 +492,7 @@ retrysync:
 		coordLog.Warningf("topic %v sync operation failed since no enough success: %v", topicFullName, success)
 		if success > tcData.topicInfo.Replica/2 {
 			needLeaveISR = false
+			halfSuccess = true
 			if retryCnt > MAX_WRITE_RETRY {
 				// request lookup to remove the failed nodes from isr and keep the quorum alive.
 				// isr may down or some error.
@@ -499,6 +511,7 @@ retrysync:
 			}
 		} else {
 			needLeaveISR = true
+			halfSuccess = false
 		}
 
 		if retryCnt > MAX_WRITE_RETRY*2 {

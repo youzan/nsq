@@ -377,7 +377,7 @@ func (self *NsqdCoordRpcServer) UpdateTopicInfo(rpcTopicReq *RpcAdminTopicInfo) 
 	if !needUpdate {
 		return &ret
 	}
-	self.nsqdCoord.coordMutex.Lock()
+	self.nsqdCoord.coordMutex.RLock()
 	firstInit := false
 	coords, ok := self.nsqdCoord.topicCoords[rpcTopicReq.Name]
 	if !ok {
@@ -388,7 +388,7 @@ func (self *NsqdCoordRpcServer) UpdateTopicInfo(rpcTopicReq *RpcAdminTopicInfo) 
 			firstInit = true
 		}
 	}
-	self.nsqdCoord.coordMutex.Unlock()
+	self.nsqdCoord.coordMutex.RUnlock()
 	if firstInit {
 		// here we may close or delete local topic if magic is wrong, so we should not check in coordinator lock
 		checkErr := self.nsqdCoord.checkLocalTopicMagicCode(&rpcTopicReq.TopicPartitionMetaInfo, true)
@@ -399,17 +399,19 @@ func (self *NsqdCoordRpcServer) UpdateTopicInfo(rpcTopicReq *RpcAdminTopicInfo) 
 	}
 
 	// init should not update topic coordinator topic info, since we need do some check while update topic info
-	tpCoord, _, _ := self.nsqdCoord.initLocalTopicCoord(&rpcTopicReq.TopicPartitionMetaInfo, nil,
+	tpCoord, _, initErr := self.nsqdCoord.initLocalTopicCoord(&rpcTopicReq.TopicPartitionMetaInfo, nil,
 		GetTopicPartitionBasePath(self.dataRootPath, rpcTopicReq.Name, rpcTopicReq.Partition),
-		ForceFixLeaderData, false,
+		ForceFixLeaderData, false, true,
 	)
 	if tpCoord == nil {
 		ret = *ErrLocalInitTopicCoordFailed
 		return &ret
 	}
-	tpCoord.DisableWrite(true)
-	rpcTopicReq.DisableWrite = true
-
+	if initErr != ErrAlreadyExist {
+		// init to disable write
+		rpcTopicReq.DisableWrite = true
+	}
+	// should not hold topic coordinator write lock since it need update topic info during cluster message write
 	err = self.nsqdCoord.updateTopicInfo(tpCoord, rpcTopicReq.DisableWrite, &rpcTopicReq.TopicPartitionMetaInfo)
 	if err != nil {
 		ret = *err
