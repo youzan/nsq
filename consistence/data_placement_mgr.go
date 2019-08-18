@@ -869,14 +869,14 @@ func (dpm *DataPlacement) balanceTopicLeaderBetweenNodes(monitorChan chan struct
 	}
 	// never balance the ordered multi partitions, these partitions should be the same on the all nodes
 
+	moveFromNode := statsMinMax[1].NodeID
 	coordLog.Infof("balance topic: %v, %v(%v) from node: %v, move : %v ", idleTopic,
-		busyTopic, busyLevel, statsMinMax[1].NodeID, moveOp)
+		busyTopic, busyLevel, moveFromNode, moveOp)
 	coordLog.Infof("balance topic current max: %v, min: %v ", maxLF, minLF)
 	checkMoveOK := false
 	topicName := ""
 	partitionID := 0
 	var err error
-	moveFromNode := statsMinMax[1].NodeID
 	// avoid move the too busy topic to reduce the impaction of the online service.
 	// if the busiest topic is not so busy, we try move this topic to avoid move too much idle topics
 	if busyTopic != "" && busyLevel < busyTopicLevel && (busyLevel*2 < maxLF-minLF) {
@@ -908,13 +908,11 @@ func (dpm *DataPlacement) balanceTopicLeaderBetweenNodes(monitorChan chan struct
 	}
 	// maybe we can move some other topic if both idle/busy is not movable
 	sortedTopics := statsMinMax[1].GetSortedTopicWriteLevel(moveLeader)
+	coordLog.Infof("check %v for moving , all sorted topic number: %v", moveFromNode, len(sortedTopics))
 	coordLog.Debugf("check topic for moving , all sorted topic: %v", sortedTopics)
-	for index, t := range sortedTopics {
+	for _, t := range sortedTopics {
 		if t.topic == idleTopic || t.topic == busyTopic {
 			continue
-		}
-		if index > len(sortedTopics)/2 {
-			break
 		}
 		if checkMoveOK {
 			break
@@ -965,18 +963,15 @@ func (dpm *DataPlacement) checkAndPrepareMove(monitorChan chan struct{}, fromNod
 				err := dpm.addToCatchupAndWaitISRReady(monitorChan, false, fromNode, topicName, partitionID,
 					nlist,
 					getNodeNameList(sortedNodeTopicStats), false)
-				if err != nil {
-					checkMoveOK = false
-				} else {
-					checkMoveOK = true
+				if err == nil {
+					return true
 				}
 			}
 		}
 	}
 	if moveOp == moveMinLFOnly {
-		return checkMoveOK
-	}
-	if moveOp > moveAny || (len(topicInfo.ISR)-1 <= topicInfo.Replica/2) {
+		// no try other node
+	} else if moveOp > moveAny || (len(topicInfo.ISR)-1 <= topicInfo.Replica/2) {
 		if moveLeader {
 			// check if any of current isr nodes is already idle for move
 			for _, nid := range topicInfo.ISR {
@@ -999,10 +994,8 @@ func (dpm *DataPlacement) checkAndPrepareMove(monitorChan chan struct{}, fromNod
 			// and make sure that node can accept the topic (no other leader/follower for this topic)
 			err := dpm.addToCatchupAndWaitISRReady(monitorChan, false, fromNode, topicName, partitionID, nil,
 				getNodeNameList(sortedNodeTopicStats), false)
-			if err != nil {
-				checkMoveOK = false
-			} else {
-				checkMoveOK = true
+			if err == nil {
+				return true
 			}
 		}
 	} else {
@@ -1010,6 +1003,12 @@ func (dpm *DataPlacement) checkAndPrepareMove(monitorChan chan struct{}, fromNod
 		checkMoveOK = true
 	}
 
+	if checkMoveOK {
+		coordErr := dpm.lookupCoord.handleRemoveTopicNodeOrMoveLeader(moveLeader, topicName, partitionID, fromNode)
+		if coordErr != nil {
+			return false
+		}
+	}
 	return checkMoveOK
 }
 
