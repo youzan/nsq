@@ -383,10 +383,6 @@ func (nts *NodeTopicStats) GetSortedTopicWriteLevel(leaderOnly bool) LFListT {
 			if !ok || d <= 0 {
 				continue
 			}
-		} else {
-			if ok && d > 0 {
-				continue
-			}
 		}
 		lf := 0.0
 		if leaderOnly {
@@ -908,8 +904,8 @@ func (dpm *DataPlacement) balanceTopicLeaderBetweenNodes(monitorChan chan struct
 	}
 	// maybe we can move some other topic if both idle/busy is not movable
 	sortedTopics := statsMinMax[1].GetSortedTopicWriteLevel(moveLeader)
-	coordLog.Infof("check %v for moving , all sorted topic number: %v", moveFromNode, len(sortedTopics))
-	coordLog.Debugf("check topic for moving , all sorted topic: %v", sortedTopics)
+	coordLog.Infof("check %v for moving , all sorted topic number: %v, %v, %v", moveFromNode, len(sortedTopics),
+		len(statsMinMax[1].TopicHourlyPubDataList), len(statsMinMax[1].TopicLeaderDataSize))
 	for _, t := range sortedTopics {
 		if t.topic == idleTopic || t.topic == busyTopic {
 			continue
@@ -931,6 +927,9 @@ func (dpm *DataPlacement) balanceTopicLeaderBetweenNodes(monitorChan chan struct
 				statsMinMax,
 				sortedNodeTopicStats, moveOp, moveLeader)
 		}
+	}
+	if !checkMoveOK {
+		coordLog.Infof("check topic for moving can not move any on node: %v, all sorted topic: %v", statsMinMax[1].TopicHourlyPubDataList, sortedTopics)
 	}
 }
 
