@@ -825,35 +825,27 @@ func (d *diskQueueReader) skipToEndofQueue() error {
 	return nil
 }
 
-func (d *diskQueueReader) ensureReadBuffer(dataNeed int64, currentRead int64, currentFileEnd int64) error {
+func (d *diskQueueReader) ensureReadBuffer(dataNeed int64, currentRead int64) (int64, error) {
+	var n int64
+	var err error
 	if int64(d.readBuffer.Len()) < dataNeed {
 		bufDataSize := dataNeed
 		// at least we should buffer a buffer size
 		if bufDataSize < readBufferSize {
 			bufDataSize = readBufferSize
 		}
-		readable := currentFileEnd - currentRead
-		if readable < dataNeed {
-			nsqLog.LogErrorf("DISKQUEUE(%s): buffer error , no readable %v, %v, need: %v, cur end: %v", d.readerMetaName,
-				currentRead, currentFileEnd, dataNeed, d.queueEndInfo)
-			return ErrInvalidReadable
-		}
-		if readable < bufDataSize {
-			bufDataSize = readable
-		}
-
-		n, err := io.CopyN(d.readBuffer, d.readFile, bufDataSize-int64(d.readBuffer.Len()))
+		n, err = io.CopyN(d.readBuffer, d.readFile, bufDataSize-int64(d.readBuffer.Len()))
 		if err != nil {
-			nsqLog.LogErrorf("DISKQUEUE(%s): read to buffer error: %v (read), current read: %v, current end:%v, buffer(%v, %v), need: %v, err: %v, end: %v",
-				d.readerMetaName, n, currentRead, currentFileEnd, d.readBuffer.Len(), bufDataSize,
-				dataNeed, err, d.queueEndInfo)
-			curPos, err := d.readFile.Seek(0, 1)
-			newPos, err := d.readFile.Seek(currentFileEnd, 0)
-			nsqLog.Logf("seek to end : %v, %v, %v", curPos, newPos, err)
-			return err
+			if err != io.EOF && err != io.ErrUnexpectedEOF {
+				nsqLog.LogErrorf("DISKQUEUE(%s): read to buffer error: %v (read), current read: %v, buffer(%v, %v), need: %v, err: %v, end: %v, readed: %v",
+					d.readerMetaName, n, currentRead, d.readBuffer.Len(), bufDataSize,
+					dataNeed, err, d.queueEndInfo, n)
+				curPos, err2 := d.readFile.Seek(0, 1)
+				nsqLog.Logf("seek to current: %v, %v", curPos, err2)
+			}
 		}
 	}
-	return nil
+	return n, err
 }
 
 // readOne performs a low level filesystem read for a single []byte
@@ -861,7 +853,6 @@ func (d *diskQueueReader) ensureReadBuffer(dataNeed int64, currentRead int64, cu
 func (d *diskQueueReader) readOne() ReadResult {
 	var result ReadResult
 	var msgSize int32
-	var stat os.FileInfo
 	result.Offset = BackendOffset(0)
 	if d.readQueueInfo.totalMsgCnt <= 0 && d.readQueueInfo.Offset() > 0 {
 		result.Err = ErrReadQueueCountMissing
@@ -899,21 +890,6 @@ CheckFileOpen:
 			}
 		}
 	}
-	if d.readQueueInfo.EndOffset.FileNum < d.queueEndInfo.EndOffset.FileNum {
-		stat, result.Err = d.readFile.Stat()
-		if result.Err != nil {
-			return result
-		}
-		if d.readQueueInfo.EndOffset.Pos >= stat.Size() {
-			d.readQueueInfo.EndOffset.FileNum++
-			d.readQueueInfo.EndOffset.Pos = 0
-			nsqLog.Logf("DISKQUEUE(%s): readOne() read end, try next: %v",
-				d.readerMetaName, d.readQueueInfo.EndOffset.FileNum)
-			d.readFile.Close()
-			d.readFile = nil
-			goto CheckFileOpen
-		}
-	}
 
 	defer func() {
 		if result.Err != nil {
@@ -923,28 +899,33 @@ CheckFileOpen:
 		}
 	}()
 
-	currentFileEnd := int64(0)
-	if d.readQueueInfo.EndOffset.FileNum == d.queueEndInfo.EndOffset.FileNum {
-		currentFileEnd = d.queueEndInfo.EndOffset.Pos
-	} else if d.readQueueInfo.EndOffset.FileNum < d.queueEndInfo.EndOffset.FileNum {
-		// TODO: maybe cache stats if filenum unchanged to speed up next readOne
-		stat, result.Err = d.readFile.Stat()
-		if result.Err == nil {
-			currentFileEnd = stat.Size()
-		} else {
-			return result
-		}
-	} else {
+	if d.readQueueInfo.EndOffset.FileNum > d.queueEndInfo.EndOffset.FileNum {
 		nsqLog.LogWarningf("DISKQUEUE(%s): read %v exceed current end %v", d.readerMetaName,
 			d.readQueueInfo, d.queueEndInfo)
 		result.Err = errors.New("exceed end of queue")
 		return result
 	}
 
-	result.Err = d.ensureReadBuffer(4, d.readQueueInfo.EndOffset.Pos, currentFileEnd)
+	var rn int64
+	rn, result.Err = d.ensureReadBuffer(4, d.readQueueInfo.EndOffset.Pos)
 	if result.Err != nil {
-		nsqLog.LogWarningf("DISKQUEUE(%s): ensure buffer error, current end %v", d.readerMetaName, currentFileEnd)
-		return result
+		if result.Err == io.EOF {
+			if d.readBuffer.Len() >= 4 {
+				// do consume buffer since we already have read to buffer
+			} else if d.readBuffer.Len() == 0 {
+				if d.readQueueInfo.EndOffset.FileNum < d.queueEndInfo.EndOffset.FileNum {
+					d.handleReachEnd()
+					nsqLog.Logf("DISKQUEUE(%s): readOne() read end, try next: %v",
+						d.readerMetaName, d.readQueueInfo.EndOffset.FileNum)
+					goto CheckFileOpen
+				}
+			} else {
+				return result
+			}
+		} else {
+			nsqLog.LogWarningf("DISKQUEUE(%s): ensure buffer error: %v, %v", d.readerMetaName, result.Err.Error(), rn)
+			return result
+		}
 	}
 	result.Err = binary.Read(d.readBuffer, binary.BigEndian, &msgSize)
 	if result.Err != nil {
@@ -955,7 +936,6 @@ CheckFileOpen:
 		} else {
 			nsqLog.LogWarningf("DISKQUEUE(%s): stat %v", d.readerMetaName, tmpStat)
 		}
-
 		return result
 	}
 
@@ -967,11 +947,14 @@ CheckFileOpen:
 	}
 
 	result.Data = make([]byte, msgSize)
-
-	result.Err = d.ensureReadBuffer(int64(msgSize), d.readQueueInfo.EndOffset.Pos+4, currentFileEnd)
+	rn, result.Err = d.ensureReadBuffer(int64(msgSize), d.readQueueInfo.EndOffset.Pos+4)
 	if result.Err != nil {
-		nsqLog.LogWarningf("DISKQUEUE(%s): ensure buffer error, current read end %v", d.readerMetaName, currentFileEnd)
-		return result
+		if result.Err == io.EOF && d.readBuffer.Len() >= int(msgSize) {
+			//
+		} else {
+			nsqLog.LogWarningf("DISKQUEUE(%s): ensure buffer for msg body error %v, %v", d.readerMetaName, result.Err.Error(), rn)
+			return result
+		}
 	}
 	_, result.Err = io.ReadFull(d.readBuffer, result.Data)
 	if result.Err != nil {
@@ -1012,39 +995,32 @@ CheckFileOpen:
 	// TODO: each data file should embed the maxBytesPerFile
 	// as the first 8 bytes (at creation time) ensuring that
 	// the value can change without affecting runtime
-	isEnd := false
-	if d.readQueueInfo.EndOffset.FileNum < d.queueEndInfo.EndOffset.FileNum {
-		isEnd = d.readQueueInfo.EndOffset.Pos >= currentFileEnd
-	}
-	if (d.readQueueInfo.EndOffset.Pos > d.maxBytesPerFile) && !isEnd {
-		// this can happen if the maxbytesperfile configure is changed.
-		nsqLog.LogDebugf("should be end since next position is larger than maxfile size. %v", d.readQueueInfo)
-	}
-	if isEnd {
-		if d.readFile != nil {
-			d.readFile.Close()
-			d.readFile = nil
-		}
-		d.readBuffer.Reset()
-
-		d.readQueueInfo.EndOffset.FileNum++
-		d.readQueueInfo.EndOffset.Pos = 0
-		fixCnt, _, metaEnd, err := getQueueFileOffsetMeta(d.fileName(d.readQueueInfo.EndOffset.FileNum - 1))
-		if err == nil {
-			// we compare the meta file to check if any wrong on the count of message
-			if metaEnd != int64(d.readQueueInfo.Offset()) {
-				nsqLog.Warningf("the reader offset is not equal with the meta. %v %d", d.readQueueInfo, metaEnd)
-			} else {
-				if fixCnt != d.readQueueInfo.TotalMsgCnt() {
-					nsqLog.Warningf("the reader offset is not equal with the meta. %v %d", d.readQueueInfo, fixCnt)
-				}
-			}
-		}
-	}
 	if d.readQueueInfo.EndOffset.GreatThan(&d.queueEndInfo.EndOffset) {
 		nsqLog.LogWarningf("read exceed end: %v, %v", d.readQueueInfo, d.queueEndInfo)
 	}
 	return result
+}
+
+func (d *diskQueueReader) handleReachEnd() {
+	if d.readFile != nil {
+		d.readFile.Close()
+		d.readFile = nil
+	}
+	d.readBuffer.Reset()
+
+	d.readQueueInfo.EndOffset.FileNum++
+	d.readQueueInfo.EndOffset.Pos = 0
+	fixCnt, _, metaEnd, err := getQueueFileOffsetMeta(d.fileName(d.readQueueInfo.EndOffset.FileNum - 1))
+	if err == nil {
+		// we compare the meta file to check if any wrong on the count of message
+		if metaEnd != int64(d.readQueueInfo.Offset()) {
+			nsqLog.Warningf("the reader offset is not equal with the meta. %v %d", d.readQueueInfo, metaEnd)
+		} else {
+			if fixCnt != d.readQueueInfo.TotalMsgCnt() {
+				nsqLog.Warningf("the reader offset is not equal with the meta. %v %d", d.readQueueInfo, fixCnt)
+			}
+		}
+	}
 }
 
 func (d *diskQueueReader) syncAll(fsync bool) error {

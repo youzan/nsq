@@ -251,7 +251,11 @@ func (ncoord *NsqdCoordinator) Start() error {
 	ncoord.myNode.RpcPort = realRpcPort
 	//port, _ := strconv.Atoi(realRpcPort)
 	//grpcPort := strconv.Itoa(port + 1)
-	//go ncoord.grpcServer.start(ncoord.myNode.NodeIP, grpcPort)
+	//err = ncoord.grpcServer.start(ncoord.myNode.NodeIP, grpcPort)
+	//if err != nil {
+	//	coordLog.Warningf("failed to start nsqd grpc server: %v", err)
+	//}
+
 	if ncoord.leadership != nil {
 		err := ncoord.leadership.RegisterNsqd(&ncoord.myNode)
 		if err != nil {
@@ -279,6 +283,8 @@ func (ncoord *NsqdCoordinator) Stop() {
 	close(ncoord.stopChan)
 	ncoord.rpcServer.stop()
 	ncoord.rpcServer = nil
+	//ncoord.grpcServer.stop()
+	//ncoord.grpcServer = nil
 	ncoord.rpcClientMutex.Lock()
 	for _, c := range ncoord.nsqdRpcClients {
 		c.Close()
@@ -593,7 +599,7 @@ func (ncoord *NsqdCoordinator) forceCleanTopicData(topicName string, partition i
 
 func (ncoord *NsqdCoordinator) initLocalTopicCoord(topicInfo *TopicPartitionMetaInfo,
 	topicLeaderSession *TopicLeaderSession,
-	basepath string, forceFixCommitLog bool, updateCoordInfo bool) (*TopicCoordinator, *nsqd.Topic, error) {
+	basepath string, forceFixCommitLog bool, updateCoordInfo bool, initDisable bool) (*TopicCoordinator, *nsqd.Topic, error) {
 	ncoord.coordMutex.Lock()
 	defer ncoord.coordMutex.Unlock()
 	coords, ok := ncoord.topicCoords[topicInfo.Name]
@@ -618,6 +624,9 @@ func (ncoord *NsqdCoordinator) initLocalTopicCoord(topicInfo *TopicPartitionMeta
 
 	if updateCoordInfo {
 		tc.topicInfo = *topicInfo
+	}
+	if initDisable {
+		tc.DisableWrite(true)
 	}
 
 	tc.writeHold.Lock()
@@ -747,7 +756,7 @@ func (ncoord *NsqdCoordinator) loadLocalTopicData() error {
 				coordLog.Infof("failed to get topic leader info:%v-%v, err:%v", topicName, partition, err)
 			}
 			fixCommitLog := ForceFixLeaderData
-			_, _, loadErr := ncoord.initLocalTopicCoord(topicInfo, topicLeaderSession, basepath, fixCommitLog, true)
+			_, _, loadErr := ncoord.initLocalTopicCoord(topicInfo, topicLeaderSession, basepath, fixCommitLog, true, false)
 			if loadErr != nil {
 				coordLog.Infof("topic %v coord init error: %v", topicInfo.GetTopicDesp(), loadErr.Error())
 				continue
@@ -1599,6 +1608,7 @@ func (ncoord *NsqdCoordinator) decideCatchupCommitLogInfo(tc *TopicCoordinator,
 			localTopic.Unlock()
 			if localErr != nil {
 				coordLog.Errorf("failed to reset local topic data: %v", localErr)
+				localLogQ.SetDataFixState(true)
 				return logIndex, offset, needFullSync, &CoordErr{localErr.Error(), RpcNoErr, CoordLocalErr}
 			}
 			_, localErr = logMgr.TruncateToOffsetV2(0, 0)
@@ -2659,7 +2669,7 @@ func (ncoord *NsqdCoordinator) readTopicRawData(topic string, partition int, off
 		}
 		buf, err := snap.ReadRaw(size)
 		if err != nil {
-			coordLog.Infof("read topic data at offset %v, size:%v, error: %v", offset, size, err)
+			coordLog.Infof("read topic data at offset %v, size:%v(actual: %v), error: %v", offset, size, len(buf), err)
 			break
 		}
 		dataList = append(dataList, buf)
@@ -2668,6 +2678,66 @@ func (ncoord *NsqdCoordinator) readTopicRawData(topic string, partition int, off
 		return dataList, &CoordErr{err.Error(), RpcCommonErr, CoordLocalErr}
 	}
 	return dataList, nil
+}
+
+func (ncoord *NsqdCoordinator) pullCommitLogsAndData(req *RpcPullCommitLogsReq, fromDelayed bool) (*RpcPullCommitLogsRsp, error) {
+	var ret RpcPullCommitLogsRsp
+	tcData, err := ncoord.getTopicCoordData(req.TopicName, req.TopicPartition)
+	if err != nil {
+		return nil, err.ToErrorType()
+	}
+
+	logMgr := tcData.logMgr
+	if fromDelayed {
+		logMgr = tcData.delayedLogMgr
+		if logMgr == nil {
+			return nil, ErrTopicMissingDelayedLog.ToErrorType()
+		}
+	}
+
+	var localErr error
+	if req.UseCountIndex {
+		newFileNum, newOffset, localErr := logMgr.ConvertToOffsetIndex(req.LogCountNumIndex)
+		if localErr != nil {
+			coordLog.Warningf("topic %v failed to convert to offset index: %v, err:%v",
+				req.TopicName, req.LogCountNumIndex, localErr)
+			if localErr != ErrCommitLogEOF {
+				return nil, localErr
+			}
+		}
+		req.StartIndexCnt = newFileNum
+		req.StartLogOffset = newOffset
+	}
+	ret.Logs, localErr = logMgr.GetCommitLogsV2(req.StartIndexCnt, req.StartLogOffset, req.LogMaxNum)
+	if localErr != nil {
+		if localErr != ErrCommitLogEOF {
+			return nil, localErr
+		}
+	}
+	offsetList := make([]int64, len(ret.Logs))
+	sizeList := make([]int32, len(ret.Logs))
+	totalSize := int32(0)
+	for i, l := range ret.Logs {
+		offsetList[i] = l.MsgOffset
+		sizeList[i] = l.MsgSize
+		totalSize += l.MsgSize
+		// note: this should be large than the max message body size
+		if totalSize > MAX_LOG_PULL_BYTES {
+			coordLog.Warningf("pulling too much log data at one time: %v, %v", totalSize, i)
+			offsetList = offsetList[:i]
+			sizeList = sizeList[:i]
+			break
+		}
+	}
+
+	ret.DataList, err = ncoord.readTopicRawData(tcData.topicInfo.Name,
+		tcData.topicInfo.Partition, offsetList, sizeList, fromDelayed)
+	ret.Logs = ret.Logs[:len(ret.DataList)]
+	if err != nil {
+		coordLog.Infof("pull log data read failed : %v, %v, %v", err, offsetList, sizeList)
+		return nil, err.ToErrorType()
+	}
+	return &ret, nil
 }
 
 // flush cached data to disk. This should be called when topic isr list

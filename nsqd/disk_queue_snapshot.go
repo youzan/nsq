@@ -216,11 +216,10 @@ func (d *DiskQueueSnapshot) ReadRaw(size int32) ([]byte, error) {
 
 	result := make([]byte, size)
 	readOffset := int32(0)
-	var stat os.FileInfo
 	var err error
+	var rn int
 
 	for readOffset < size {
-
 	CheckFileOpen:
 		if d.readFile == nil {
 			curFileName := d.fileName(d.readPos.EndOffset.FileNum)
@@ -239,57 +238,32 @@ func (d *DiskQueueSnapshot) ReadRaw(size int32) ([]byte, error) {
 			}
 			d.reader = bufio.NewReader(d.readFile)
 		}
-		stat, err = d.readFile.Stat()
+
+		rn, err = io.ReadFull(d.reader, result[readOffset:])
+		readOffset += int32(rn)
+		oldPos := d.readPos
+		d.readPos.virtualEnd += BackendOffset(rn)
+		d.readPos.EndOffset.Pos = d.readPos.EndOffset.Pos + int64(rn)
 		if err != nil {
-			return result, err
-		}
-		if d.readPos.EndOffset.FileNum < d.endPos.EndOffset.FileNum {
-			if d.readPos.EndOffset.Pos >= stat.Size() {
-				d.readPos.EndOffset.FileNum++
-				d.readPos.EndOffset.Pos = 0
+			isEnd := err == io.EOF || err == io.ErrUnexpectedEOF
+			if isEnd && d.readPos.EndOffset.FileNum < d.endPos.EndOffset.FileNum {
+				d.handleReachEnd()
 				nsqLog.Logf("DISKQUEUE snapshot(%s): readRaw() read end, try next: %v",
 					d.readFrom, d.readPos)
-				d.readFile.Close()
-				d.readFile = nil
 				goto CheckFileOpen
 			}
-		}
-
-		fileLeft := stat.Size() - d.readPos.EndOffset.Pos
-		if d.readPos.EndOffset.FileNum == d.endPos.EndOffset.FileNum && fileLeft == 0 {
-			return result[:readOffset], io.EOF
-		}
-		currentRead := int64(size - readOffset)
-		if fileLeft < currentRead {
-			currentRead = fileLeft
-		}
-		_, err = io.ReadFull(d.reader, result[readOffset:int64(readOffset)+currentRead])
-		if err != nil {
+			if isEnd && readOffset == size {
+				break
+			}
+			nsqLog.Logf("DISKQUEUE snapshot(%s): readRaw() read failed: %v, at %v, %v, readed: %v",
+				d.readFrom, err.Error(), d.readPos, readOffset, rn)
 			d.readFile.Close()
 			d.readFile = nil
 			return result, err
 		}
-
-		oldPos := d.readPos
-		d.readPos.EndOffset.Pos = d.readPos.EndOffset.Pos + currentRead
-		readOffset += int32(currentRead)
-		d.readPos.virtualEnd += BackendOffset(currentRead)
 		if nsqLog.Level() >= levellogger.LOG_DETAIL {
 			nsqLog.LogDebugf("===snapshot read move forward: %v to  %v", oldPos,
 				d.readPos)
-		}
-
-		isEnd := false
-		if d.readPos.EndOffset.FileNum < d.endPos.EndOffset.FileNum {
-			isEnd = d.readPos.EndOffset.Pos >= stat.Size()
-		}
-		if isEnd {
-			if d.readFile != nil {
-				d.readFile.Close()
-				d.readFile = nil
-			}
-			d.readPos.EndOffset.FileNum++
-			d.readPos.EndOffset.Pos = 0
 		}
 	}
 	return result, nil
@@ -303,7 +277,6 @@ func (d *DiskQueueSnapshot) ReadOne() ReadResult {
 
 	var result ReadResult
 	var msgSize int32
-	var stat os.FileInfo
 	result.Offset = BackendOffset(0)
 	if d.readPos == d.endPos {
 		result.Err = io.EOF
@@ -333,24 +306,15 @@ CheckFileOpen:
 
 		d.reader = bufio.NewReader(d.readFile)
 	}
-	if d.readPos.EndOffset.FileNum < d.endPos.EndOffset.FileNum {
-		stat, result.Err = d.readFile.Stat()
-		if result.Err != nil {
-			return result
-		}
-		if d.readPos.EndOffset.Pos >= stat.Size() {
-			d.readPos.EndOffset.FileNum++
-			d.readPos.EndOffset.Pos = 0
-			nsqLog.Logf("DISKQUEUE(%s): readOne() read end, try next: %v",
-				d.readFrom, d.readPos.EndOffset.FileNum)
-			d.readFile.Close()
-			d.readFile = nil
-			goto CheckFileOpen
-		}
-	}
 
 	result.Err = binary.Read(d.reader, binary.BigEndian, &msgSize)
 	if result.Err != nil {
+		if result.Err == io.EOF && d.readPos.EndOffset.FileNum < d.endPos.EndOffset.FileNum {
+			d.handleReachEnd()
+			nsqLog.Logf("DISKQUEUE(%s): readOne() read end, try next: %v",
+				d.readFrom, d.readPos.EndOffset.FileNum)
+			goto CheckFileOpen
+		}
 		d.readFile.Close()
 		d.readFile = nil
 		return result
@@ -384,25 +348,16 @@ CheckFileOpen:
 	nsqLog.LogDebugf("=== read move forward: %v to %v", oldPos,
 		d.readPos)
 
-	isEnd := false
-	if d.readPos.EndOffset.FileNum < d.endPos.EndOffset.FileNum {
-		stat, result.Err = d.readFile.Stat()
-		if result.Err == nil {
-			isEnd = d.readPos.EndOffset.Pos >= stat.Size()
-		} else {
-			return result
-		}
-	}
-	if isEnd {
-		if d.readFile != nil {
-			d.readFile.Close()
-			d.readFile = nil
-		}
-
-		d.readPos.EndOffset.FileNum++
-		d.readPos.EndOffset.Pos = 0
-	}
 	return result
+}
+
+func (d *DiskQueueSnapshot) handleReachEnd() {
+	if d.readFile != nil {
+		d.readFile.Close()
+		d.readFile = nil
+	}
+	d.readPos.EndOffset.FileNum++
+	d.readPos.EndOffset.Pos = 0
 }
 
 func (d *DiskQueueSnapshot) fileName(fileNum int64) string {

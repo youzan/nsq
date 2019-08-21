@@ -166,10 +166,10 @@ func (self *NsqdCoordRpcServer) NotifyReleaseTopicLeader(rpcTopicReq *RpcRelease
 		// check if any old leader session acquired by mine is not released
 		if self.nsqdCoord.GetMyID() == coordData.GetLeaderSessionID() {
 			coordLog.Warningf("old leader session acquired by me is not released, my leader should release: %v", coordData)
-			if origSession.LeaderEpoch  != rpcTopicReq.TopicLeaderSessionEpoch ||
-			origSession.Session != rpcTopicReq.TopicLeaderSession {
+			if origSession.LeaderEpoch != rpcTopicReq.TopicLeaderSessionEpoch ||
+				origSession.Session != rpcTopicReq.TopicLeaderSession {
 				coordLog.Warningf("old topic %v leader old session %v on local is not matched with newest : %v", rpcTopicReq.TopicName,
-				origSession, rpcTopicReq)
+					origSession, rpcTopicReq)
 				if rpcTopicReq.TopicLeaderSession != "" {
 					origSession.LeaderEpoch = rpcTopicReq.TopicLeaderSessionEpoch
 					origSession.Session = rpcTopicReq.TopicLeaderSession
@@ -377,7 +377,7 @@ func (self *NsqdCoordRpcServer) UpdateTopicInfo(rpcTopicReq *RpcAdminTopicInfo) 
 	if !needUpdate {
 		return &ret
 	}
-	self.nsqdCoord.coordMutex.Lock()
+	self.nsqdCoord.coordMutex.RLock()
 	firstInit := false
 	coords, ok := self.nsqdCoord.topicCoords[rpcTopicReq.Name]
 	if !ok {
@@ -388,7 +388,7 @@ func (self *NsqdCoordRpcServer) UpdateTopicInfo(rpcTopicReq *RpcAdminTopicInfo) 
 			firstInit = true
 		}
 	}
-	self.nsqdCoord.coordMutex.Unlock()
+	self.nsqdCoord.coordMutex.RUnlock()
 	if firstInit {
 		// here we may close or delete local topic if magic is wrong, so we should not check in coordinator lock
 		checkErr := self.nsqdCoord.checkLocalTopicMagicCode(&rpcTopicReq.TopicPartitionMetaInfo, true)
@@ -399,17 +399,19 @@ func (self *NsqdCoordRpcServer) UpdateTopicInfo(rpcTopicReq *RpcAdminTopicInfo) 
 	}
 
 	// init should not update topic coordinator topic info, since we need do some check while update topic info
-	tpCoord, _, _ := self.nsqdCoord.initLocalTopicCoord(&rpcTopicReq.TopicPartitionMetaInfo, nil,
+	tpCoord, _, initErr := self.nsqdCoord.initLocalTopicCoord(&rpcTopicReq.TopicPartitionMetaInfo, nil,
 		GetTopicPartitionBasePath(self.dataRootPath, rpcTopicReq.Name, rpcTopicReq.Partition),
-		ForceFixLeaderData, false,
+		ForceFixLeaderData, false, true,
 	)
 	if tpCoord == nil {
 		ret = *ErrLocalInitTopicCoordFailed
 		return &ret
 	}
-	tpCoord.DisableWrite(true)
-	rpcTopicReq.DisableWrite = true
-
+	if initErr != ErrAlreadyExist {
+		// init to disable write
+		rpcTopicReq.DisableWrite = true
+	}
+	// should not hold topic coordinator write lock since it need update topic info during cluster message write
 	err = self.nsqdCoord.updateTopicInfo(tpCoord, rpcTopicReq.DisableWrite, &rpcTopicReq.TopicPartitionMetaInfo)
 	if err != nil {
 		ret = *err
@@ -1099,68 +1101,7 @@ func (self *NsqdCoordRpcServer) getCommitLogFromOffset(req *RpcCommitLogReq,
 }
 
 func (self *NsqdCoordRpcServer) PullCommitLogsAndData(req *RpcPullCommitLogsReq) (*RpcPullCommitLogsRsp, error) {
-	return self.pullCommitLogsAndData(req, false)
-}
-
-func (self *NsqdCoordRpcServer) pullCommitLogsAndData(req *RpcPullCommitLogsReq,
-	fromDelayed bool) (*RpcPullCommitLogsRsp, error) {
-	var ret RpcPullCommitLogsRsp
-	tcData, err := self.nsqdCoord.getTopicCoordData(req.TopicName, req.TopicPartition)
-	if err != nil {
-		return nil, err.ToErrorType()
-	}
-
-	logMgr := tcData.logMgr
-	if fromDelayed {
-		logMgr = tcData.delayedLogMgr
-		if logMgr == nil {
-			return nil, ErrTopicMissingDelayedLog.ToErrorType()
-		}
-	}
-
-	var localErr error
-	if req.UseCountIndex {
-		newFileNum, newOffset, localErr := logMgr.ConvertToOffsetIndex(req.LogCountNumIndex)
-		if localErr != nil {
-			coordLog.Warningf("topic %v failed to convert to offset index: %v, err:%v",
-				req.TopicName, req.LogCountNumIndex, localErr)
-			if localErr != ErrCommitLogEOF {
-				return nil, localErr
-			}
-		}
-		req.StartIndexCnt = newFileNum
-		req.StartLogOffset = newOffset
-	}
-	ret.Logs, localErr = logMgr.GetCommitLogsV2(req.StartIndexCnt, req.StartLogOffset, req.LogMaxNum)
-	if localErr != nil {
-		if localErr != ErrCommitLogEOF {
-			return nil, localErr
-		}
-	}
-	offsetList := make([]int64, len(ret.Logs))
-	sizeList := make([]int32, len(ret.Logs))
-	totalSize := int32(0)
-	for i, l := range ret.Logs {
-		offsetList[i] = l.MsgOffset
-		sizeList[i] = l.MsgSize
-		totalSize += l.MsgSize
-		// note: this should be large than the max message body size
-		if totalSize > MAX_LOG_PULL_BYTES {
-			coordLog.Warningf("pulling too much log data at one time: %v, %v", totalSize, i)
-			offsetList = offsetList[:i]
-			sizeList = sizeList[:i]
-			break
-		}
-	}
-
-	ret.DataList, err = self.nsqdCoord.readTopicRawData(tcData.topicInfo.Name,
-		tcData.topicInfo.Partition, offsetList, sizeList, fromDelayed)
-	ret.Logs = ret.Logs[:len(ret.DataList)]
-	if err != nil {
-		coordLog.Infof("pull log data read failed : %v, %v, %v", err, offsetList, sizeList)
-		return nil, err.ToErrorType()
-	}
-	return &ret, nil
+	return self.nsqdCoord.pullCommitLogsAndData(req, false)
 }
 
 func (self *NsqdCoordRpcServer) GetFullSyncInfo(req *RpcGetFullSyncInfoReq) (*RpcGetFullSyncInfoRsp, error) {
@@ -1244,7 +1185,7 @@ func (self *NsqdCoordRpcServer) GetDelayedQueueCommitLogFromOffset(req *RpcCommi
 }
 
 func (self *NsqdCoordRpcServer) PullDelayedQueueCommitLogsAndData(req *RpcPullCommitLogsReq) (*RpcPullCommitLogsRsp, error) {
-	return self.pullCommitLogsAndData(req, true)
+	return self.nsqdCoord.pullCommitLogsAndData(req, true)
 }
 
 func (self *NsqdCoordRpcServer) GetDelayedQueueFullSyncInfo(req *RpcGetFullSyncInfoReq) (*RpcGetFullSyncInfoRsp, error) {

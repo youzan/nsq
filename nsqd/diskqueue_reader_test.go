@@ -2,6 +2,7 @@ package nsqd
 
 import (
 	"fmt"
+	"io"
 	"io/ioutil"
 	"os"
 	"strconv"
@@ -383,6 +384,42 @@ func TestDiskQueueSnapshotReader(t *testing.T) {
 	test.Nil(t, err)
 	test.Equal(t, 100, len(data))
 	// remove some begin of queue, and test queue start
+}
+
+func TestDiskQueueSnapshotReaderToEnd(t *testing.T) {
+	dqName := "test_disk_queue" + strconv.Itoa(int(time.Now().Unix()))
+	tmpDir, err := ioutil.TempDir("", fmt.Sprintf("nsq-test-%d", time.Now().UnixNano()))
+	test.Nil(t, err)
+	defer os.RemoveAll(tmpDir)
+	queue, _ := NewDiskQueueWriter(dqName, tmpDir, 1024, 4, 1<<10, 1)
+	dqWriter := queue.(*diskQueueWriter)
+	defer dqWriter.Close()
+	test.NotNil(t, dqWriter)
+
+	msg := []byte("test")
+	_, written, _, err := dqWriter.Put(msg)
+	test.Nil(t, err)
+	dqWriter.Flush(false)
+	end := dqWriter.GetQueueWriteEnd()
+	test.Nil(t, err)
+
+	dqReader := NewDiskQueueSnapshot(dqName, tmpDir, end)
+	defer dqReader.Close()
+	queueStart := dqReader.queueStart
+	test.Equal(t, BackendOffset(0), queueStart.Offset())
+	result := dqReader.ReadOne()
+	test.Nil(t, result.Err)
+	test.Equal(t, result.Data, msg)
+	result = dqReader.ReadOne()
+	test.Equal(t, io.EOF, result.Err)
+
+	dqRawReader := NewDiskQueueSnapshot(dqName, tmpDir, end)
+	defer dqRawReader.Close()
+	data, err := dqRawReader.ReadRaw(written)
+	test.Nil(t, err)
+	test.Equal(t, msg, data[4:])
+	_, err = dqRawReader.ReadRaw(written)
+	test.Equal(t, io.EOF, err)
 }
 
 func TestDiskQueueReaderFileMetaInvalid(t *testing.T) {

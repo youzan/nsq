@@ -54,6 +54,10 @@ func TestPutMessage(t *testing.T) {
 	opts.Logger = newTestLogger(t)
 	opts.LogLevel = 3
 	opts.SyncEvery = 1
+	if testing.Verbose() {
+		opts.LogLevel = 4
+		SetLogger(opts.Logger)
+	}
 	_, _, nsqd := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqd.Exit()
@@ -67,9 +71,13 @@ func TestPutMessage(t *testing.T) {
 	topic.PutMessage(msg)
 	topic.ForceFlush()
 
-	outputMsg := <-channel1.clientMsgChan
-	equal(t, msg.ID, outputMsg.ID)
-	equal(t, msg.Body, outputMsg.Body)
+	select {
+	case outputMsg := <-channel1.clientMsgChan:
+		equal(t, msg.ID, outputMsg.ID)
+		equal(t, msg.Body, outputMsg.Body)
+	case <-time.After(time.Second * 10):
+		t.Logf("timeout wait")
+	}
 }
 
 // ensure that both channels get the same message

@@ -42,11 +42,14 @@ var LOGROTATE_NUM = 500000
 var MIN_KEEP_LOG_ITEM = 1000
 
 var bp sync.Pool
+var emptyLogData CommitLogData
+var logDataSize int
 
 func init() {
 	bp.New = func() interface{} {
 		return &bytes.Buffer{}
 	}
+	logDataSize = binary.Size(emptyLogData)
 }
 
 func bufferPoolGet() *bytes.Buffer {
@@ -73,10 +76,8 @@ type CommitLogData struct {
 	MsgNum int32
 }
 
-var emptyLogData CommitLogData
-
 func GetLogDataSize() int {
-	return binary.Size(emptyLogData)
+	return logDataSize
 }
 
 func GetPrevLogOffset(cur int64) int64 {
@@ -121,26 +122,21 @@ func getCommitLogCountFromFile(path string, start int64) (int64, error) {
 }
 
 func getCommitLogFromFile(file *os.File, offset int64) (*CommitLogData, error) {
-	f, err := file.Stat()
-	if err != nil {
-		return nil, err
-	}
-	fsize := f.Size()
-	if offset == fsize {
-		return nil, ErrCommitLogEOF
-	}
-
-	if offset > fsize-int64(GetLogDataSize()) {
-		return nil, ErrCommitLogOutofBound
-	}
-
 	if (offset % int64(GetLogDataSize())) != 0 {
 		return nil, ErrCommitLogOffsetInvalid
 	}
 	b := bytes.NewBuffer(make([]byte, GetLogDataSize()))
 	n, err := file.ReadAt(b.Bytes(), offset)
 	if err != nil {
-		return nil, err
+		if err == io.EOF {
+			if n == 0 {
+				return nil, ErrCommitLogEOF
+			} else if n < int(GetLogDataSize()) {
+				return nil, ErrCommitLogOutofBound
+			}
+		} else {
+			return nil, err
+		}
 	}
 	if n != GetLogDataSize() {
 		return nil, ErrCommitLogOffsetInvalid
