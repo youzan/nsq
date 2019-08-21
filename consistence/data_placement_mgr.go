@@ -977,6 +977,9 @@ func (dpm *DataPlacement) checkAndPrepareMove(monitorChan chan struct{}, fromNod
 				if checkMoveOK {
 					break
 				}
+				if nid == fromNode {
+					continue
+				}
 				for index, stat := range sortedNodeTopicStats {
 					if index >= len(sortedNodeTopicStats)/3 {
 						break
