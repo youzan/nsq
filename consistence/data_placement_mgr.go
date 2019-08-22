@@ -71,7 +71,7 @@ const (
 	HIGHEST_PUB_QPS_LEVEL         = 100
 	HIGHEST_LEFT_CONSUME_MB_SIZE  = 50 * 1024
 	HIGHEST_LEFT_DATA_MB_SIZE     = 200 * 1024
-	busyTopicLevel                = 13
+	busyTopicLevel                = 15
 )
 
 type balanceOpLevel int
@@ -928,9 +928,6 @@ func (dpm *DataPlacement) balanceTopicLeaderBetweenNodes(monitorChan chan struct
 				sortedNodeTopicStats, moveOp, moveLeader)
 		}
 	}
-	if !checkMoveOK {
-		coordLog.Infof("check topic for moving can not move any on node: %v, all sorted topic: %v", statsMinMax[1].TopicHourlyPubDataList, sortedTopics)
-	}
 }
 
 func (dpm *DataPlacement) checkAndPrepareMove(monitorChan chan struct{}, fromNode string, topicName string, partitionID int,
@@ -943,7 +940,7 @@ func (dpm *DataPlacement) checkAndPrepareMove(monitorChan chan struct{}, fromNod
 	}
 	checkMoveOK := false
 	if topicInfo.OrderedMulti {
-		coordLog.Infof("topic %v is configured as multi ordered, no balance", topicName)
+		coordLog.Debugf("topic %v is configured as multi ordered, no balance", topicName)
 		return false
 	}
 	if moveOp > moveAny {
