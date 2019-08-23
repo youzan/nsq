@@ -776,6 +776,7 @@ func (nlcoord *NsqLookupCoordinator) doCheckTopics(monitorChan chan struct{}, fa
 		}
 		if currentNodesEpoch != atomic.LoadInt64(&nlcoord.nodesEpoch) {
 			coordLog.Infof("nodes changed while checking topics: %v, %v", currentNodesEpoch, atomic.LoadInt64(&nlcoord.nodesEpoch))
+			atomic.StoreInt32(&nlcoord.isClusterUnstable, 1)
 			return
 		}
 		// should copy to avoid reused
@@ -814,6 +815,9 @@ func (nlcoord *NsqLookupCoordinator) doCheckTopics(monitorChan chan struct{}, fa
 					// notify the nsqd node to acquire the leader session.
 					nlcoord.notifyISRTopicMetaInfo(&topicInfo)
 					nlcoord.notifyAcquireTopicLeader(&topicInfo)
+					if err == ErrLeaderSessionNotExist {
+						break
+					}
 					time.Sleep(time.Millisecond * 100)
 					continue
 				} else {
@@ -841,14 +845,17 @@ func (nlcoord *NsqLookupCoordinator) doCheckTopics(monitorChan chan struct{}, fa
 				tmpTopicInfo := t
 				tmpTopicInfo.Leader = leaderSession.LeaderNode.ID
 				nlcoord.notifyReleaseTopicLeader(&tmpTopicInfo, leaderSession.LeaderEpoch, leaderSession.Session)
-				err := nlcoord.waitOldLeaderRelease(&tmpTopicInfo)
-				if err != nil {
-					coordLog.Warningf("topic %v leader session release failed: %v, force release", t.GetTopicDesp(), err.Error())
-					err = nlcoord.leadership.ReleaseTopicLeader(topicInfo.Name, topicInfo.Partition, leaderSession)
+				tmpSession := *leaderSession
+				go func() {
+					err := nlcoord.waitOldLeaderRelease(&tmpTopicInfo)
 					if err != nil {
-						coordLog.Errorf("release session failed [%s] : %v", topicInfo.GetTopicDesp(), err)
+						coordLog.Warningf("topic %v leader session release failed: %v, force release", tmpTopicInfo.GetTopicDesp(), err.Error())
+						err = nlcoord.leadership.ReleaseTopicLeader(tmpTopicInfo.Name, tmpTopicInfo.Partition, &tmpSession)
+						if err != nil {
+							coordLog.Errorf("release session failed [%s] : %v", tmpTopicInfo.GetTopicDesp(), err)
+						}
 					}
-				}
+				}()
 				nlcoord.notifyISRTopicMetaInfo(&topicInfo)
 				nlcoord.notifyAcquireTopicLeader(&topicInfo)
 				continue
@@ -916,6 +923,7 @@ func (nlcoord *NsqLookupCoordinator) doCheckTopics(monitorChan chan struct{}, fa
 
 		if currentNodesEpoch != atomic.LoadInt64(&nlcoord.nodesEpoch) {
 			coordLog.Infof("nodes changed while checking topics: %v, %v", currentNodesEpoch, atomic.LoadInt64(&nlcoord.nodesEpoch))
+			atomic.StoreInt32(&nlcoord.isClusterUnstable, 1)
 			return
 		}
 		// check if write disabled
