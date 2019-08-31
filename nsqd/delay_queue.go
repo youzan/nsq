@@ -1119,9 +1119,16 @@ func (q *DelayQueue) ConfirmedMessage(msg *Message) error {
 	atomic.StoreInt64(&q.changedTs, time.Now().UnixNano())
 	q.compactMutex.Unlock()
 	if err != nil {
-		nsqLog.LogErrorf(
-			"%s : failed to delete delayed message %v-%v, %v",
-			q.GetFullName(), msg.DelayedOrigID, msg, err)
+		if err != errBucketKeyNotFound {
+			nsqLog.LogErrorf(
+				"%s : failed to delete delayed message %v-%v, %v",
+				q.GetFullName(), msg.DelayedOrigID, msg, err)
+		} else {
+			nsqLog.Logf(
+				"%s : failed to delete delayed message %v-%v, %v",
+				q.GetFullName(), msg.DelayedOrigID, msg, err)
+			return nil
+		}
 	}
 	return err
 }
