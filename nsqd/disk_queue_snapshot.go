@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"sync"
+	"sync/atomic"
 
 	"github.com/youzan/nsq/internal/levellogger"
 )
@@ -344,6 +345,7 @@ CheckFileOpen:
 
 	oldPos := d.readPos
 	d.readPos.EndOffset.Pos = d.readPos.EndOffset.Pos + totalBytes
+	result.CurCnt = atomic.AddInt64(&d.readPos.totalMsgCnt, 1)
 	d.readPos.virtualEnd += BackendOffset(totalBytes)
 	nsqLog.LogDebugf("=== read move forward: %v to %v", oldPos,
 		d.readPos)
