@@ -157,15 +157,15 @@ func (d *DiskQueueSnapshot) SkipToNext() error {
 }
 
 // this can allow backward seek
-func (d *DiskQueueSnapshot) ResetSeekTo(voffset BackendOffset) error {
-	return d.seekTo(voffset, true)
+func (d *DiskQueueSnapshot) ResetSeekTo(voffset BackendOffset, cnt int64) error {
+	return d.seekTo(voffset, cnt, true)
 }
 
-func (d *DiskQueueSnapshot) SeekTo(voffset BackendOffset) error {
-	return d.seekTo(voffset, false)
+func (d *DiskQueueSnapshot) SeekTo(voffset BackendOffset, cnt int64) error {
+	return d.seekTo(voffset, cnt, false)
 }
 
-func (d *DiskQueueSnapshot) seekTo(voffset BackendOffset, allowBackward bool) error {
+func (d *DiskQueueSnapshot) seekTo(voffset BackendOffset, cnt int64, allowBackward bool) error {
 	d.Lock()
 	defer d.Unlock()
 	if d.readFile != nil {
@@ -196,6 +196,7 @@ func (d *DiskQueueSnapshot) seekTo(voffset BackendOffset, allowBackward bool) er
 		d.readPos, newPos, voffset)
 	d.readPos.EndOffset = newPos
 	d.readPos.virtualEnd = voffset
+	d.readPos.totalMsgCnt = cnt
 	return nil
 }
 

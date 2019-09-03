@@ -166,7 +166,11 @@ func main() {
 		}
 		backendReader := nsqd.NewDiskQueueSnapshot(backendName, topicDataPath, backendWriter.GetQueueReadEnd())
 		backendReader.SetQueueStart(backendWriter.GetQueueReadStart())
-		backendReader.SeekTo(nsqd.BackendOffset(queueOffset))
+		if queueOffset == 0 {
+			backendReader.SeekTo(nsqd.BackendOffset(queueOffset), 0)
+		} else {
+			backendReader.SeekTo(nsqd.BackendOffset(queueOffset), logData.MsgCnt-1)
+		}
 		cnt := *viewCnt
 		for cnt > 0 {
 			cnt--
