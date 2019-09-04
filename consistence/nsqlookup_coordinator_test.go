@@ -1931,9 +1931,19 @@ func checkOrderedMultiTopic(t *testing.T, topic string, expectedPart int, aliveN
 	nodePartitionNum := make(map[string][]int)
 	nodeLeaderPartNum := make(map[string][]int)
 	for i := 0; i < pn; i++ {
-		t0, err := leadership.GetTopicInfo(topic, i)
-		test.Nil(t, err)
-		t.Logf("topic %v isr: %v", t0.GetTopicDesp(), t0.ISR)
+		var t0 *TopicPartitionMetaInfo
+		retry := 3
+		for retry > 0 {
+			retry--
+			t0, err = leadership.GetTopicInfo(topic, i)
+			test.Nil(t, err)
+			t.Logf("topic %v isr: %v", t0.GetTopicDesp(), t0.ISR)
+			if len(t0.ISR) > pmeta.Replica {
+				time.Sleep(time.Second * 3)
+				continue
+			}
+			break
+		}
 		test.Equal(t, pmeta.Replica, len(t0.ISR))
 
 		if nodeInfoList[t0.Leader] == nil {

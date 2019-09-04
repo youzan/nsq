@@ -131,7 +131,7 @@ func main() {
 			log.Fatalln(err)
 		}
 	} else if *searchMode == "virtual_offset" {
-		searchLogIndexStart, searchOffset, _, err = tpLogMgr.SearchLogDataByMsgOffset(*viewStartID)
+		searchLogIndexStart, searchOffset, _, err = tpLogMgr.SearchLogDataByMsgOffset(*viewOffset)
 		if err != nil {
 			log.Fatalln(err)
 		}
@@ -166,7 +166,11 @@ func main() {
 		}
 		backendReader := nsqd.NewDiskQueueSnapshot(backendName, topicDataPath, backendWriter.GetQueueReadEnd())
 		backendReader.SetQueueStart(backendWriter.GetQueueReadStart())
-		backendReader.SeekTo(nsqd.BackendOffset(queueOffset))
+		if queueOffset == 0 {
+			backendReader.SeekTo(nsqd.BackendOffset(queueOffset), 0)
+		} else {
+			backendReader.SeekTo(nsqd.BackendOffset(queueOffset), logData.MsgCnt-1)
+		}
 		cnt := *viewCnt
 		for cnt > 0 {
 			cnt--
@@ -176,7 +180,7 @@ func main() {
 				return
 			}
 
-			fmt.Printf("%v:%v:%v, string: %v\n", ret.Offset, ret.MovedSize, ret.Data, string(ret.Data))
+			fmt.Printf("%v:%v:%v:%v, string: %v\n", ret.Offset, ret.MovedSize, ret.CurCnt, ret.Data, string(ret.Data))
 			msg, err := nsqd.DecodeMessage(ret.Data, *isExt)
 			if err != nil {
 				log.Fatalf("decode data error: %v", err)

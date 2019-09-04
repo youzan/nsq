@@ -376,7 +376,7 @@ func (ncoord *NsqdCoordinator) doSyncOpToCluster(isWrite bool, coord *TopicCoord
 	needLeaveISR = true
 
 retrysync:
-	if !halfSuccess && coord.IsExiting() {
+	if isWrite && !halfSuccess && coord.IsExiting() {
 		needLeaveISR = true
 		clusterWriteErr = ErrTopicExiting
 		goto exitsync

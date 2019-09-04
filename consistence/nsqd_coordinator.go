@@ -917,7 +917,11 @@ func checkAndFixLocalLogQueueData(tc *coordData,
 
 	snap := localLogQ.GetDiskQueueSnapshot()
 	for {
-		err = snap.SeekTo(nsqd.BackendOffset(log.MsgOffset))
+		seekCnt := int64(0)
+		if log.MsgCnt > 0 {
+			seekCnt = log.MsgCnt - 1
+		}
+		err = snap.SeekTo(nsqd.BackendOffset(log.MsgOffset), seekCnt)
 		if err == nil {
 			break
 		}
@@ -1176,7 +1180,12 @@ func (ncoord *NsqdCoordinator) SearchLogByMsgOffset(topic string, part int, offs
 			return l, 0, 0, localErr
 		}
 		snap := t.GetDiskQueueSnapshot()
-		localErr = snap.SeekTo(nsqd.BackendOffset(realOffset))
+
+		seekCnt := int64(0)
+		if l.MsgCnt > 0 {
+			seekCnt = l.MsgCnt - 1
+		}
+		localErr = snap.SeekTo(nsqd.BackendOffset(realOffset), seekCnt)
 		if localErr != nil {
 			coordLog.Infof("seek to disk queue error: %v, %v", localErr, realOffset)
 			return l, 0, 0, localErr
@@ -1220,7 +1229,12 @@ func (ncoord *NsqdCoordinator) SearchLogByMsgCnt(topic string, part int, count i
 			return l, 0, 0, localErr
 		}
 		snap := t.GetDiskQueueSnapshot()
-		localErr = snap.SeekTo(nsqd.BackendOffset(realOffset))
+
+		seekCnt := int64(0)
+		if l.MsgCnt > 0 {
+			seekCnt = l.MsgCnt - 1
+		}
+		localErr = snap.SeekTo(nsqd.BackendOffset(realOffset), seekCnt)
 		if localErr != nil {
 			coordLog.Infof("seek to disk queue error: %v, %v", localErr, realOffset)
 			return l, 0, 0, localErr
@@ -1258,7 +1272,12 @@ func (ncoord *MsgTimestampComparator) SearchEndBoundary() int64 {
 }
 
 func (ncoord *MsgTimestampComparator) LessThanLeftBoundary(l *CommitLogData) bool {
-	err := ncoord.localTopicReader.ResetSeekTo(nsqd.BackendOffset(l.MsgOffset))
+
+	seekCnt := int64(0)
+	if l.MsgCnt > 0 {
+		seekCnt = l.MsgCnt - 1
+	}
+	err := ncoord.localTopicReader.ResetSeekTo(nsqd.BackendOffset(l.MsgOffset), seekCnt)
 	if err != nil {
 		coordLog.Errorf("seek disk queue failed: %v, %v", l, err)
 		return true
@@ -1280,8 +1299,12 @@ func (ncoord *MsgTimestampComparator) LessThanLeftBoundary(l *CommitLogData) boo
 }
 
 func (ncoord *MsgTimestampComparator) GreatThanRightBoundary(l *CommitLogData) bool {
+	seekCnt := int64(0)
+	if l.MsgCnt > 0 {
+		seekCnt = l.MsgCnt - 1
+	}
 	// we may read the eof , in this situation we reach the end, so the search should not be great than right boundary
-	err := ncoord.localTopicReader.ResetSeekTo(nsqd.BackendOffset(l.MsgOffset + int64(l.MsgSize)))
+	err := ncoord.localTopicReader.ResetSeekTo(nsqd.BackendOffset(l.MsgOffset+int64(l.MsgSize)), seekCnt)
 	if err != nil {
 		coordLog.Errorf("seek disk queue failed: %v, %v", l, err)
 		return false
@@ -1332,8 +1355,13 @@ func (ncoord *NsqdCoordinator) SearchLogByMsgTimestamp(topic string, part int, t
 		return nil, 0, 0, localErr
 	}
 	realOffset := l.MsgOffset
+
+	seekCnt := int64(0)
+	if l.MsgCnt > 0 {
+		seekCnt = l.MsgCnt - 1
+	}
 	// check if the message timestamp is fit the require
-	localErr = snap.ResetSeekTo(nsqd.BackendOffset(realOffset))
+	localErr = snap.ResetSeekTo(nsqd.BackendOffset(realOffset), seekCnt)
 	if localErr != nil {
 		coordLog.Infof("seek to disk queue error: %v, %v", localErr, realOffset)
 		return l, 0, 0, localErr
@@ -2662,7 +2690,7 @@ func (ncoord *NsqdCoordinator) readTopicRawData(topic string, partition int, off
 	}
 	for i, offset := range offsetList {
 		size := sizeList[i]
-		err = snap.SeekTo(nsqd.BackendOffset(offset))
+		err = snap.SeekTo(nsqd.BackendOffset(offset), 0)
 		if err != nil {
 			coordLog.Infof("read topic %v data at offset %v, size: %v, error: %v", t.GetFullName(), offset, size, err)
 			break

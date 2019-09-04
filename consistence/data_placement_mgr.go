@@ -71,7 +71,7 @@ const (
 	HIGHEST_PUB_QPS_LEVEL         = 100
 	HIGHEST_LEFT_CONSUME_MB_SIZE  = 50 * 1024
 	HIGHEST_LEFT_DATA_MB_SIZE     = 200 * 1024
-	busyTopicLevel                = 13
+	busyTopicLevel                = 15
 )
 
 type balanceOpLevel int
@@ -736,7 +736,7 @@ func (dpm *DataPlacement) DoBalance(monitorChan chan struct{}) {
 				dpm.balanceTopicLeaderBetweenNodes(monitorChan, moveLeader, moveAny, minLeaderLoad,
 					maxLeaderLoad, topicStatsMinMax, nodeTopicStats)
 			} else if avgLeaderLoad >= 20 &&
-				((minLeaderLoad*2 < maxLeaderLoad) || (maxLeaderLoad > avgLeaderLoad*1.5)) {
+				((minLeaderLoad*1.5 < maxLeaderLoad) || (maxLeaderLoad > avgLeaderLoad*1.3)) {
 				dpm.balanceTopicLeaderBetweenNodes(monitorChan, moveLeader,
 					moveTryIdle, minLeaderLoad, maxLeaderLoad,
 					topicStatsMinMax, nodeTopicStats)
@@ -753,7 +753,7 @@ func (dpm *DataPlacement) DoBalance(monitorChan chan struct{}) {
 				dpm.balanceTopicLeaderBetweenNodes(monitorChan, moveLeader, moveAny, minNodeLoad,
 					maxNodeLoad, topicStatsMinMax, nodeTopicStatsSortedSlave)
 			} else if avgNodeLoad >= 20 &&
-				(minNodeLoad*2 < maxNodeLoad || maxNodeLoad > avgNodeLoad*1.5) {
+				(minNodeLoad*1.5 < maxNodeLoad || maxNodeLoad > avgNodeLoad*1.3) {
 				topicStatsMinMax[0] = &nodeTopicStatsSortedSlave[0]
 				topicStatsMinMax[1] = &nodeTopicStatsSortedSlave[len(nodeTopicStatsSortedSlave)-1]
 				moveLeader = len(topicStatsMinMax[1].TopicLeaderDataSize) > len(topicStatsMinMax[1].TopicTotalDataSize)/2
@@ -785,7 +785,7 @@ func (dpm *DataPlacement) DoBalance(monitorChan chan struct{}) {
 						// maybe too much topic followers on this node
 						if leastLeaderStats.NodeID == topicStatsMinMax[1].NodeID && followerNum > avgTopicNum {
 							moveLeader = false
-						} else if followerNum > int(float64(avgTopicNum)*1.5) {
+						} else if followerNum > int(float64(avgTopicNum)*1.3) {
 							// too much followers
 							coordLog.Infof("move follower topic since less leader and much follower on node: %v, %v, avg %v",
 								leastLeaderStats.NodeID, followerNum, avgTopicNum)
@@ -928,9 +928,6 @@ func (dpm *DataPlacement) balanceTopicLeaderBetweenNodes(monitorChan chan struct
 				sortedNodeTopicStats, moveOp, moveLeader)
 		}
 	}
-	if !checkMoveOK {
-		coordLog.Infof("check topic for moving can not move any on node: %v, all sorted topic: %v", statsMinMax[1].TopicHourlyPubDataList, sortedTopics)
-	}
 }
 
 func (dpm *DataPlacement) checkAndPrepareMove(monitorChan chan struct{}, fromNode string, topicName string, partitionID int,
@@ -943,7 +940,7 @@ func (dpm *DataPlacement) checkAndPrepareMove(monitorChan chan struct{}, fromNod
 	}
 	checkMoveOK := false
 	if topicInfo.OrderedMulti {
-		coordLog.Infof("topic %v is configured as multi ordered, no balance", topicName)
+		coordLog.Debugf("topic %v is configured as multi ordered, no balance", topicName)
 		return false
 	}
 	if moveOp > moveAny {
@@ -976,6 +973,9 @@ func (dpm *DataPlacement) checkAndPrepareMove(monitorChan chan struct{}, fromNod
 			for _, nid := range topicInfo.ISR {
 				if checkMoveOK {
 					break
+				}
+				if nid == fromNode {
+					continue
 				}
 				for index, stat := range sortedNodeTopicStats {
 					if index >= len(sortedNodeTopicStats)/3 {

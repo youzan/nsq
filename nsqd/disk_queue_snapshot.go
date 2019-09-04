@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"sync"
+	"sync/atomic"
 
 	"github.com/youzan/nsq/internal/levellogger"
 )
@@ -156,15 +157,15 @@ func (d *DiskQueueSnapshot) SkipToNext() error {
 }
 
 // this can allow backward seek
-func (d *DiskQueueSnapshot) ResetSeekTo(voffset BackendOffset) error {
-	return d.seekTo(voffset, true)
+func (d *DiskQueueSnapshot) ResetSeekTo(voffset BackendOffset, cnt int64) error {
+	return d.seekTo(voffset, cnt, true)
 }
 
-func (d *DiskQueueSnapshot) SeekTo(voffset BackendOffset) error {
-	return d.seekTo(voffset, false)
+func (d *DiskQueueSnapshot) SeekTo(voffset BackendOffset, cnt int64) error {
+	return d.seekTo(voffset, cnt, false)
 }
 
-func (d *DiskQueueSnapshot) seekTo(voffset BackendOffset, allowBackward bool) error {
+func (d *DiskQueueSnapshot) seekTo(voffset BackendOffset, cnt int64, allowBackward bool) error {
 	d.Lock()
 	defer d.Unlock()
 	if d.readFile != nil {
@@ -195,6 +196,7 @@ func (d *DiskQueueSnapshot) seekTo(voffset BackendOffset, allowBackward bool) er
 		d.readPos, newPos, voffset)
 	d.readPos.EndOffset = newPos
 	d.readPos.virtualEnd = voffset
+	d.readPos.totalMsgCnt = cnt
 	return nil
 }
 
@@ -344,6 +346,7 @@ CheckFileOpen:
 
 	oldPos := d.readPos
 	d.readPos.EndOffset.Pos = d.readPos.EndOffset.Pos + totalBytes
+	result.CurCnt = atomic.AddInt64(&d.readPos.totalMsgCnt, 1)
 	d.readPos.virtualEnd += BackendOffset(totalBytes)
 	nsqLog.LogDebugf("=== read move forward: %v to %v", oldPos,
 		d.readPos)

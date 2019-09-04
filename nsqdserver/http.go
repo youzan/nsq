@@ -1055,12 +1055,13 @@ func (s *httpServer) doMessageGet(w http.ResponseWriter, req *http.Request, ps h
 
 	t, err := s.ctx.getExistingTopic(topicName, topicPart)
 	var realOffset int64
+	var curCnt int64
 	if searchMode == "count" {
-		_, realOffset, _, err = s.ctx.nsqdCoord.SearchLogByMsgCnt(topicName, topicPart, searchPos)
+		_, realOffset, curCnt, err = s.ctx.nsqdCoord.SearchLogByMsgCnt(topicName, topicPart, searchPos)
 	} else if searchMode == "id" {
-		_, realOffset, _, err = s.ctx.nsqdCoord.SearchLogByMsgID(topicName, topicPart, searchPos)
+		_, realOffset, curCnt, err = s.ctx.nsqdCoord.SearchLogByMsgID(topicName, topicPart, searchPos)
 	} else if searchMode == "virtual_offset" {
-		_, realOffset, _, err = s.ctx.nsqdCoord.SearchLogByMsgOffset(topicName, topicPart, searchPos)
+		_, realOffset, curCnt, err = s.ctx.nsqdCoord.SearchLogByMsgOffset(topicName, topicPart, searchPos)
 	} else {
 		return nil, http_api.Err{400, "search mode should be one of id/count/virtual_offset"}
 	}
@@ -1071,7 +1072,7 @@ func (s *httpServer) doMessageGet(w http.ResponseWriter, req *http.Request, ps h
 	if backendReader == nil {
 		return nil, http_api.Err{500, "Failed to get queue reader"}
 	}
-	backendReader.SeekTo(nsqd.BackendOffset(realOffset))
+	backendReader.SeekTo(nsqd.BackendOffset(realOffset), curCnt)
 	ret := backendReader.ReadOne()
 	if ret.Err != nil {
 		nsqd.NsqLogger().LogErrorf("search %v-%v, read data error: %v", searchMode, searchPos, ret)

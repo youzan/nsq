@@ -1379,7 +1379,12 @@ func (t *Topic) TryCleanOldData(retentionSize int64, noRealClean bool, maxCleanO
 	}
 	snapReader := NewDiskQueueSnapshot(getBackendName(t.tname, t.partition), t.dataPath, oldestPos)
 	snapReader.SetQueueStart(cleanStart)
-	err := snapReader.SeekTo(cleanStart.Offset())
+
+	seekCnt := int64(0)
+	if cleanStart.TotalMsgCnt() > 0 {
+		seekCnt = cleanStart.TotalMsgCnt() - 1
+	}
+	err := snapReader.SeekTo(cleanStart.Offset(), seekCnt)
 	if err != nil {
 		nsqLog.Errorf("topic: %v failed to seek to %v: %v", t.GetFullName(), cleanStart, err)
 		return nil, err
