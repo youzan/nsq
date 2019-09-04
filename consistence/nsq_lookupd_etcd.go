@@ -80,7 +80,7 @@ func NewNsqLookupdEtcdMgr(host, username, pwd string) (*NsqLookupdEtcdMgr, error
 	if err != nil {
 		return nil, err
 	}
-	c, _ := lru.NewARC(3000)
+	c, _ := lru.NewARC(10000)
 	return &NsqLookupdEtcdMgr{
 		client:               client,
 		ifTopicChanged:       1,
@@ -786,7 +786,7 @@ func (self *NsqLookupdEtcdMgr) GetTopicLeaderSession(topic string, partition int
 	if err = json.Unmarshal([]byte(rsp.Node.Value), &topicLeaderSession); err != nil {
 		return nil, err
 	}
-	putCacheValue(self.cache, etcdKey, &topicLeaderSession, tn, time.Second*5)
+	putCacheValue(self.cache, etcdKey, &topicLeaderSession, tn, time.Minute*5)
 
 	return &topicLeaderSession, nil
 }
