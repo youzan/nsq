@@ -555,7 +555,7 @@ func (self *NsqLookupdEtcdMgr) processTopicNode(nodes client.Nodes,
 
 func (self *NsqLookupdEtcdMgr) GetTopicInfo(topic string, partition int) (*TopicPartitionMetaInfo, error) {
 	var topicInfo TopicPartitionMetaInfo
-	metaInfo, err := self.GetTopicMetaInfoTryCache(topic)
+	metaInfo, _, err := self.GetTopicMetaInfoTryCache(topic)
 	if err != nil {
 		return nil, err
 	}
@@ -653,7 +653,7 @@ func (self *NsqLookupdEtcdMgr) IsExistTopicPartition(topic string, partitionNum 
 	return true, nil
 }
 
-func (self *NsqLookupdEtcdMgr) GetTopicMetaInfoTryCache(topic string) (TopicMetaInfo, error) {
+func (self *NsqLookupdEtcdMgr) GetTopicMetaInfoTryCache(topic string) (TopicMetaInfo, bool, error) {
 	var metaInfo TopicMetaInfo
 	var ok bool
 	if self.isCacheNewest() {
@@ -662,15 +662,15 @@ func (self *NsqLookupdEtcdMgr) GetTopicMetaInfoTryCache(topic string) (TopicMeta
 		self.tmiMutex.RUnlock()
 	}
 	if ok {
-		return metaInfo, nil
+		return metaInfo, true, nil
 	}
 
 	mInfo, _, err := self.GetTopicMetaInfo(topic)
 	if err != nil {
-		return metaInfo, err
+		return metaInfo, false, err
 	}
 	atomic.StoreInt32(&self.ifTopicChanged, 1)
-	return mInfo, nil
+	return mInfo, false, nil
 }
 
 func (self *NsqLookupdEtcdMgr) GetTopicMetaInfo(topic string) (TopicMetaInfo, EpochType, error) {
