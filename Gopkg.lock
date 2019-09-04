@@ -214,6 +214,17 @@
   version = "v1.1.3"
 
 [[projects]]
+  digest = "1:c77361e611524ec8f2ad37c408c3c916111a70b6acf806a1200855696bf8fa4d"
+  name = "github.com/hashicorp/golang-lru"
+  packages = [
+    ".",
+    "simplelru",
+  ]
+  pruneopts = "UT"
+  revision = "7f827b33c0f158ec5dfbba01bb0b14a4541fd81d"
+  version = "v0.5.3"
+
+[[projects]]
   digest = "1:213ecd7cf2442d4c3fb297fdcb00c70be7aaed543b78c8b77a0ed5622940a6f1"
   name = "github.com/judwhite/go-svc"
   packages = ["svc"]
@@ -439,6 +450,7 @@
     "github.com/golang/protobuf/proto",
     "github.com/golang/snappy",
     "github.com/gorilla/sessions",
+    "github.com/hashicorp/golang-lru",
     "github.com/judwhite/go-svc/svc",
     "github.com/julienschmidt/httprouter",
     "github.com/mreiferson/go-options",
