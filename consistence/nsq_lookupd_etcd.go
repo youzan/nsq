@@ -562,7 +562,8 @@ func (self *NsqLookupdEtcdMgr) GetTopicInfo(topic string, partition int) (*Topic
 
 	topicInfo.TopicMetaInfo = metaInfo
 	var rInfo TopicPartitionReplicaInfo
-	cached := false
+	found := false
+	notInCache := false
 	// try get cache first
 	if self.isCacheNewest() {
 		self.tmiMutex.RLock()
@@ -571,12 +572,16 @@ func (self *NsqLookupdEtcdMgr) GetTopicInfo(topic string, partition int) (*Topic
 			p, ok := parts[partition]
 			if ok {
 				rInfo = *(p.Copy())
-				cached = true
+				found = true
+			} else {
+				notInCache = true
 			}
+		} else {
+			notInCache = true
 		}
 		self.tmiMutex.RUnlock()
 	}
-	if !cached {
+	if !found {
 		rsp, err := self.client.GetNewest(self.createTopicReplicaInfoPath(topic, partition), false, false)
 		if err != nil {
 			if client.IsKeyNotFound(err) {
@@ -587,8 +592,10 @@ func (self *NsqLookupdEtcdMgr) GetTopicInfo(topic string, partition int) (*Topic
 		if err = json.Unmarshal([]byte(rsp.Node.Value), &rInfo); err != nil {
 			return nil, err
 		}
-		// no cached, but in the etcd, something changed
-		atomic.StoreInt32(&self.ifTopicChanged, 1)
+		if notInCache {
+			// not in local cached, but in the etcd, something changed
+			atomic.StoreInt32(&self.ifTopicChanged, 1)
+		}
 		rInfo.Epoch = EpochType(rsp.Node.ModifiedIndex)
 	}
 	topicInfo.TopicPartitionReplicaInfo = rInfo
@@ -656,9 +663,13 @@ func (self *NsqLookupdEtcdMgr) IsExistTopicPartition(topic string, partitionNum 
 func (self *NsqLookupdEtcdMgr) GetTopicMetaInfoTryCache(topic string) (TopicMetaInfo, bool, error) {
 	var metaInfo TopicMetaInfo
 	var ok bool
+	noInCache := false
 	if self.isCacheNewest() {
 		self.tmiMutex.RLock()
 		metaInfo, ok = self.topicMetaMap[topic]
+		if !ok {
+			noInCache = true
+		}
 		self.tmiMutex.RUnlock()
 	}
 	if ok {
@@ -669,7 +680,9 @@ func (self *NsqLookupdEtcdMgr) GetTopicMetaInfoTryCache(topic string) (TopicMeta
 	if err != nil {
 		return metaInfo, false, err
 	}
-	atomic.StoreInt32(&self.ifTopicChanged, 1)
+	if noInCache {
+		atomic.StoreInt32(&self.ifTopicChanged, 1)
+	}
 	return mInfo, false, nil
 }
 
