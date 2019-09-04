@@ -171,8 +171,6 @@ type NSQLookupdLeadership interface {
 	GetClusterEpoch() (EpochType, error)
 	GetAllLookupdNodes() ([]NsqLookupdNodeInfo, error) // add
 	AcquireAndWatchLeader(leader chan *NsqLookupdNodeInfo, stop chan struct{})
-	CheckIfLeader(session string) bool
-	UpdateLookupEpoch(oldGen EpochType) (EpochType, error)
 
 	GetNsqdNodes() ([]NsqdNodeInfo, error)
 	// watching the cluster nsqd node, should return the newest for the first time.
