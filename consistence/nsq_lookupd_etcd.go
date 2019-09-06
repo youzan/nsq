@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/coreos/etcd/client"
+	lru "github.com/hashicorp/golang-lru"
 	"golang.org/x/net/context"
 )
 
@@ -25,8 +26,32 @@ const (
 	EVENT_WATCH_TOPIC_L_DELETE
 )
 
+type cachedItemWithTs struct {
+	value interface{}
+	ts    int64
+}
+
+func getCacheValue(cache *lru.ARCCache, k string, tn time.Time) (interface{}, bool) {
+	cv, ok := cache.Get(k)
+	if ok {
+		item := cv.(cachedItemWithTs)
+		if item.ts > tn.UnixNano() {
+			return item.value, true
+		}
+	}
+	return nil, false
+}
+
+func putCacheValue(cache *lru.ARCCache, k string, v interface{}, tn time.Time, ttl time.Duration) {
+	cache.Add(k, cachedItemWithTs{
+		ts:    tn.Add(ttl).UnixNano(),
+		value: v,
+	})
+}
+
 type NsqLookupdEtcdMgr struct {
 	tmiMutex sync.RWMutex
+	cache    *lru.ARCCache
 
 	client            *EtcdClient
 	clusterID         string
@@ -55,6 +80,7 @@ func NewNsqLookupdEtcdMgr(host, username, pwd string) (*NsqLookupdEtcdMgr, error
 	if err != nil {
 		return nil, err
 	}
+	c, _ := lru.NewARC(10000)
 	return &NsqLookupdEtcdMgr{
 		client:               client,
 		ifTopicChanged:       1,
@@ -64,6 +90,7 @@ func NewNsqLookupdEtcdMgr(host, username, pwd string) (*NsqLookupdEtcdMgr, error
 		topicMetaMap:         make(map[string]TopicMetaInfo),
 		refreshStopCh:        make(chan bool, 1),
 		topicReplicasMap:     make(map[string]map[int]TopicPartitionReplicaInfo),
+		cache:                c,
 	}, nil
 }
 
@@ -157,8 +184,12 @@ func (self *NsqLookupdEtcdMgr) GetClusterEpoch() (EpochType, error) {
 	return EpochType(rsp.Node.ModifiedIndex), nil
 }
 
-// TODO: cache this to improve performance
 func (self *NsqLookupdEtcdMgr) GetAllLookupdNodes() ([]NsqLookupdNodeInfo, error) {
+	tn := time.Now()
+	cv, ok := getCacheValue(self.cache, self.lookupdRootPath, tn)
+	if ok {
+		return cv.([]NsqLookupdNodeInfo), nil
+	}
 	rsp, err := self.client.Get(self.lookupdRootPath, false, false)
 	if err != nil {
 		if client.IsKeyNotFound(err) {
@@ -174,6 +205,7 @@ func (self *NsqLookupdEtcdMgr) GetAllLookupdNodes() ([]NsqLookupdNodeInfo, error
 		}
 		lookupdNodeList = append(lookupdNodeList, nodeInfo)
 	}
+	putCacheValue(self.cache, self.lookupdRootPath, lookupdNodeList, tn, time.Second)
 	return lookupdNodeList, nil
 }
 
@@ -240,21 +272,6 @@ func (self *NsqLookupdEtcdMgr) processMasterEvents(master Master, leader chan *N
 			return
 		}
 	}
-}
-
-func (self *NsqLookupdEtcdMgr) CheckIfLeader(session string) bool {
-	rsp, err := self.client.Get(self.leaderSessionPath, false, false)
-	if err != nil {
-		return false
-	}
-	if rsp.Node.Value == session {
-		return true
-	}
-	return false
-}
-
-func (self *NsqLookupdEtcdMgr) UpdateLookupEpoch(oldGen EpochType) (EpochType, error) {
-	return 0, nil
 }
 
 func (self *NsqLookupdEtcdMgr) GetNsqdNodes() ([]NsqdNodeInfo, error) {
@@ -472,6 +489,7 @@ func (self *NsqLookupdEtcdMgr) scanTopics() ([]TopicPartitionMetaInfo, error) {
 	self.topicMetaMap = topicMetaMap
 	self.topicReplicasMap = topicReplicasMap
 	self.tmiMutex.Unlock()
+	self.cache.Purge()
 
 	return topicMetaInfos, nil
 }
@@ -537,14 +555,15 @@ func (self *NsqLookupdEtcdMgr) processTopicNode(nodes client.Nodes,
 
 func (self *NsqLookupdEtcdMgr) GetTopicInfo(topic string, partition int) (*TopicPartitionMetaInfo, error) {
 	var topicInfo TopicPartitionMetaInfo
-	metaInfo, err := self.GetTopicMetaInfoTryCache(topic)
+	metaInfo, _, err := self.GetTopicMetaInfoTryCache(topic)
 	if err != nil {
 		return nil, err
 	}
 
 	topicInfo.TopicMetaInfo = metaInfo
 	var rInfo TopicPartitionReplicaInfo
-	cached := false
+	found := false
+	notInCache := false
 	// try get cache first
 	if self.isCacheNewest() {
 		self.tmiMutex.RLock()
@@ -553,12 +572,16 @@ func (self *NsqLookupdEtcdMgr) GetTopicInfo(topic string, partition int) (*Topic
 			p, ok := parts[partition]
 			if ok {
 				rInfo = *(p.Copy())
-				cached = true
+				found = true
+			} else {
+				notInCache = true
 			}
+		} else {
+			notInCache = true
 		}
 		self.tmiMutex.RUnlock()
 	}
-	if !cached {
+	if !found {
 		rsp, err := self.client.GetNewest(self.createTopicReplicaInfoPath(topic, partition), false, false)
 		if err != nil {
 			if client.IsKeyNotFound(err) {
@@ -569,8 +592,10 @@ func (self *NsqLookupdEtcdMgr) GetTopicInfo(topic string, partition int) (*Topic
 		if err = json.Unmarshal([]byte(rsp.Node.Value), &rInfo); err != nil {
 			return nil, err
 		}
-		// no cached, but in the etcd, something changed
-		atomic.StoreInt32(&self.ifTopicChanged, 1)
+		if notInCache {
+			// not in local cached, but in the etcd, something changed
+			atomic.StoreInt32(&self.ifTopicChanged, 1)
+		}
 		rInfo.Epoch = EpochType(rsp.Node.ModifiedIndex)
 	}
 	topicInfo.TopicPartitionReplicaInfo = rInfo
@@ -635,24 +660,30 @@ func (self *NsqLookupdEtcdMgr) IsExistTopicPartition(topic string, partitionNum 
 	return true, nil
 }
 
-func (self *NsqLookupdEtcdMgr) GetTopicMetaInfoTryCache(topic string) (TopicMetaInfo, error) {
+func (self *NsqLookupdEtcdMgr) GetTopicMetaInfoTryCache(topic string) (TopicMetaInfo, bool, error) {
 	var metaInfo TopicMetaInfo
 	var ok bool
+	noInCache := false
 	if self.isCacheNewest() {
 		self.tmiMutex.RLock()
 		metaInfo, ok = self.topicMetaMap[topic]
+		if !ok {
+			noInCache = true
+		}
 		self.tmiMutex.RUnlock()
 	}
 	if ok {
-		return metaInfo, nil
+		return metaInfo, true, nil
 	}
 
 	mInfo, _, err := self.GetTopicMetaInfo(topic)
 	if err != nil {
-		return metaInfo, err
+		return metaInfo, false, err
 	}
-	atomic.StoreInt32(&self.ifTopicChanged, 1)
-	return mInfo, nil
+	if noInCache {
+		atomic.StoreInt32(&self.ifTopicChanged, 1)
+	}
+	return mInfo, false, nil
 }
 
 func (self *NsqLookupdEtcdMgr) GetTopicMetaInfo(topic string) (TopicMetaInfo, EpochType, error) {
@@ -748,7 +779,16 @@ func (self *NsqLookupdEtcdMgr) UpdateTopicNodeInfo(topic string, partition int, 
 }
 
 func (self *NsqLookupdEtcdMgr) GetTopicLeaderSession(topic string, partition int) (*TopicLeaderSession, error) {
-	rsp, err := self.client.Get(self.createTopicLeaderSessionPath(topic, partition), false, false)
+	etcdKey := self.createTopicLeaderSessionPath(topic, partition)
+	tn := time.Now()
+	if self.isCacheNewest() {
+		cv, ok := getCacheValue(self.cache, etcdKey, tn)
+		if ok {
+			return cv.(*TopicLeaderSession), nil
+		}
+	}
+
+	rsp, err := self.client.Get(etcdKey, false, false)
 	if err != nil {
 		if client.IsKeyNotFound(err) {
 			return nil, ErrLeaderSessionNotExist
@@ -759,6 +799,7 @@ func (self *NsqLookupdEtcdMgr) GetTopicLeaderSession(topic string, partition int
 	if err = json.Unmarshal([]byte(rsp.Node.Value), &topicLeaderSession); err != nil {
 		return nil, err
 	}
+	putCacheValue(self.cache, etcdKey, &topicLeaderSession, tn, time.Minute*5)
 
 	return &topicLeaderSession, nil
 }

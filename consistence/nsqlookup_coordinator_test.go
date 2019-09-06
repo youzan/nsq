@@ -292,9 +292,9 @@ func (self *FakeNsqlookupLeadership) IsExistTopicPartition(topic string, partiti
 	return ok, nil
 }
 
-func (self *FakeNsqlookupLeadership) GetTopicMetaInfoTryCache(topic string) (TopicMetaInfo, error) {
+func (self *FakeNsqlookupLeadership) GetTopicMetaInfoTryCache(topic string) (TopicMetaInfo, bool, error) {
 	m, _, err := self.GetTopicMetaInfo(topic)
-	return m, err
+	return m, false, err
 }
 
 func (self *FakeNsqlookupLeadership) GetTopicMetaInfo(topic string) (TopicMetaInfo, EpochType, error) {

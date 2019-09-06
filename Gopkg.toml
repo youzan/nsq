@@ -125,6 +125,11 @@
   branch = "master"
   name = "github.com/viki-org/dnscache"
 
+
+[[constraint]]
+  name = "github.com/hashicorp/golang-lru"
+  version = "0.5.3"
+
 [[constraint]]
   name = "github.com/youzan/go-nsq"
   version = "1.3.2-HA"

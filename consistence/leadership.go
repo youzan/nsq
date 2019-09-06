@@ -171,8 +171,6 @@ type NSQLookupdLeadership interface {
 	GetClusterEpoch() (EpochType, error)
 	GetAllLookupdNodes() ([]NsqLookupdNodeInfo, error) // add
 	AcquireAndWatchLeader(leader chan *NsqLookupdNodeInfo, stop chan struct{})
-	CheckIfLeader(session string) bool
-	UpdateLookupEpoch(oldGen EpochType) (EpochType, error)
 
 	GetNsqdNodes() ([]NsqdNodeInfo, error)
 	// watching the cluster nsqd node, should return the newest for the first time.
@@ -191,7 +189,7 @@ type NSQLookupdLeadership interface {
 	IsExistTopicPartition(topic string, partition int) (bool, error)
 	// get topic meta info only
 	GetTopicMetaInfo(topic string) (TopicMetaInfo, EpochType, error)
-	GetTopicMetaInfoTryCache(topic string) (TopicMetaInfo, error)
+	GetTopicMetaInfoTryCache(topic string) (TopicMetaInfo, bool, error)
 	UpdateTopicMetaInfo(topic string, meta *TopicMetaInfo, oldGen EpochType) error
 	DeleteTopic(topic string, partition int) error
 	DeleteWholeTopic(topic string) error

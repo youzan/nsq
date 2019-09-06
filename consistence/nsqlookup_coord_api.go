@@ -24,9 +24,12 @@ func (nlcoord *NsqLookupCoordinator) GetLookupLeader() NsqLookupdNodeInfo {
 }
 
 func (nlcoord *NsqLookupCoordinator) GetTopicMetaInfo(topicName string) (TopicMetaInfo, error) {
-	meta, err := nlcoord.leadership.GetTopicMetaInfoTryCache(topicName)
+	meta, cached, err := nlcoord.leadership.GetTopicMetaInfoTryCache(topicName)
 	if err != nil {
 		return TopicMetaInfo{}, err
+	}
+	if !cached {
+		coordLog.Infof("miss cache read for topic info: %v", topicName)
 	}
 	return meta, err
 }
@@ -36,10 +39,13 @@ func (nlcoord *NsqLookupCoordinator) GetTopicsMetaInfoMap(topics []string) (map[
 }
 
 func (nlcoord *NsqLookupCoordinator) GetTopicLeaderNodes(topicName string) (map[string]string, error) {
-	meta, err := nlcoord.leadership.GetTopicMetaInfoTryCache(topicName)
+	meta, cached, err := nlcoord.leadership.GetTopicMetaInfoTryCache(topicName)
 	if err != nil {
 		coordLog.Infof("failed to get topic %v meta: %v", topicName, err)
 		return nil, err
+	}
+	if !cached {
+		coordLog.Infof("miss cache read for topic info: %v", topicName)
 	}
 	ret := make(map[string]string)
 	var anyErr error

@@ -41,7 +41,7 @@ const (
 	waitEmergencyMigrateInterval = time.Second * 10
 	waitRemovingNodeInterval     = time.Second * 30
 	balanceInterval              = time.Second * 60
-	doCheckInterval              = time.Second * 30
+	doCheckInterval              = time.Second * 60
 )
 
 type JoinISRState struct {
@@ -734,13 +734,6 @@ func (nlcoord *NsqLookupCoordinator) doCheckTopics(monitorChan chan struct{}, fa
 			coordLog.Infof("ISR is not enough for topic %v, isr is :%v", t.GetTopicDesp(), t.ISR)
 			needMigrate = true
 			checkOK = false
-		}
-
-		// check if etcd is ok
-		_, err := nlcoord.leadership.GetClusterEpoch()
-		if err != nil {
-			coordLog.Infof("get cluster epoch failed: %v", err)
-			continue
 		}
 
 		// check if any ISR waiting join the topic, if so
