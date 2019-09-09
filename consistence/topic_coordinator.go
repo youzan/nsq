@@ -1,9 +1,9 @@
 package consistence
 
 import (
-	"fmt"
 	"os"
 	"path"
+	"strconv"
 	"sync"
 	"sync/atomic"
 
@@ -11,7 +11,7 @@ import (
 )
 
 func GetTopicFullName(n string, pid int) string {
-	return fmt.Sprintf("%s-%v", n, pid)
+	return n + "-" + strconv.Itoa(pid)
 }
 
 type ChannelConsumerOffset struct {

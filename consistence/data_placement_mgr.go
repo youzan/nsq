@@ -369,7 +369,7 @@ func (s LFListT) Swap(i, j int) {
 	s[i], s[j] = s[j], s[i]
 }
 func (s LFListT) Less(i, j int) bool {
-	if math.Abs(s[i].loadFactor-s[j].loadFactor) < 0.5 {
+	if math.Abs(s[i].loadFactor-s[j].loadFactor) < 1 {
 		return s[i].topic < s[j].topic
 	}
 	return s[i].loadFactor < s[j].loadFactor
