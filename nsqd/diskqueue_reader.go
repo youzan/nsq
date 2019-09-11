@@ -952,7 +952,9 @@ CheckFileOpen:
 		if result.Err == io.EOF && d.readBuffer.Len() >= int(msgSize) {
 			//
 		} else {
-			nsqLog.LogWarningf("DISKQUEUE(%s): ensure buffer for msg body error %v, %v", d.readerMetaName, result.Err.Error(), rn)
+			tmpStat, _ := d.readFile.Stat()
+			nsqLog.LogWarningf("DISKQUEUE(%s): ensure buffer for msg body error %v, %v, left %v, need: %v, stats: %v",
+				d.readerMetaName, result.Err.Error(), rn, d.readBuffer.Len(), msgSize, tmpStat)
 			return result
 		}
 	}
@@ -974,12 +976,12 @@ CheckFileOpen:
 	totalBytes := int64(4 + msgSize)
 	result.MovedSize = BackendOffset(totalBytes)
 	oldCnt := d.readQueueInfo.TotalMsgCnt()
+	oldPos := d.readQueueInfo.EndOffset
 
 	// we only advance next* because we have not yet sent this to consumers
 	// (where readFileNum, readQueueInfo.EndOffset will actually be advanced)
-	oldPos := d.readQueueInfo.EndOffset
-	d.readQueueInfo.EndOffset.Pos = d.readQueueInfo.EndOffset.Pos + totalBytes
 	result.CurCnt = atomic.AddInt64(&d.readQueueInfo.totalMsgCnt, 1)
+	d.readQueueInfo.EndOffset.Pos = d.readQueueInfo.EndOffset.Pos + totalBytes
 	d.readQueueInfo.virtualEnd += BackendOffset(totalBytes)
 	if d.readQueueInfo.virtualEnd == d.queueEndInfo.virtualEnd {
 		if d.readQueueInfo.totalMsgCnt != 0 && d.readQueueInfo.totalMsgCnt != d.queueEndInfo.totalMsgCnt {

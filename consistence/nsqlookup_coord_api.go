@@ -29,7 +29,7 @@ func (nlcoord *NsqLookupCoordinator) GetTopicMetaInfo(topicName string) (TopicMe
 		return TopicMetaInfo{}, err
 	}
 	if !cached {
-		coordLog.Infof("miss cache read for topic info: %v", topicName)
+		coordLog.Debugf("miss cache read for topic info: %v", topicName)
 	}
 	return meta, err
 }
