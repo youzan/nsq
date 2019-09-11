@@ -337,6 +337,63 @@ func TestDiskQueueReaderUpdateEnd(t *testing.T) {
 	equal(t, hasData, true)
 }
 
+func TestDiskQueueReaderPrefetchExceedEnd(t *testing.T) {
+	// write buffer to disk but not committed, check if the reader will prefetch
+	dqName := "test_disk_queue" + strconv.Itoa(int(time.Now().Unix()))
+	tmpDir, err := ioutil.TempDir("", fmt.Sprintf("nsq-test-%d", time.Now().UnixNano()))
+	test.Nil(t, err)
+	defer os.RemoveAll(tmpDir)
+	if testing.Verbose() {
+		nsqLog.SetLevel(3)
+		SetLogger(newTestLogger(t))
+	}
+	queue, _ := NewDiskQueueWriter(dqName, tmpDir, 1024*8, 4, 1<<10, 1)
+	dqWriter := queue.(*diskQueueWriter)
+	defer dqWriter.Close()
+	test.NotNil(t, dqWriter)
+
+	msg := []byte("test")
+	msgNum := 100
+	for i := 0; i < msgNum; i++ {
+		dqWriter.Put(msg)
+	}
+	dqWriter.Flush(false)
+	end := dqWriter.GetQueueWriteEnd()
+	test.Nil(t, err)
+
+	dqReader := newDiskQueueReaderWithMetaStorage(dqName, dqName+"-meta1", tmpDir, 1024*8, 4, 1<<10, 1, 2*time.Second, end, false)
+	defer dqReader.Close()
+	test.Equal(t, dqReader.GetQueueReadEnd(), end)
+	test.Equal(t, dqReader.GetQueueConfirmed(), end)
+	_, hasData := dqReader.TryReadOne()
+	equal(t, hasData, false)
+
+	for i := 0; i < msgNum; i++ {
+		dqWriter.Put(msg)
+	}
+	dqWriter.Flush(true)
+
+	rend := dqWriter.GetQueueReadEnd()
+	dqReader.UpdateQueueEnd(rend, false)
+	test.Equal(t, dqReader.GetQueueReadEnd(), rend)
+
+	for i := 0; i < msgNum; i++ {
+		dqWriter.Put(msg)
+	}
+	dqWriter.Flush(true)
+	for {
+		rr, hasData := dqReader.TryReadOne()
+		if hasData {
+			t.Logf("read offset: %v, %v, cnt: %v", rr.Offset, rr.MovedSize, rr.CurCnt)
+			continue
+		}
+		break
+	}
+	test.Equal(t, rend, dqReader.GetQueueReadEnd())
+	test.Equal(t, rend.Offset(), dqReader.(*diskQueueReader).readQueueInfo.Offset())
+	test.Equal(t, 0, dqReader.(*diskQueueReader).readBuffer.Len())
+}
+
 func TestDiskQueueSnapshotReader(t *testing.T) {
 	dqName := "test_disk_queue" + strconv.Itoa(int(time.Now().Unix()))
 	tmpDir, err := ioutil.TempDir("", fmt.Sprintf("nsq-test-%d", time.Now().UnixNano()))

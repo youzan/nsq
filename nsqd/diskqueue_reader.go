@@ -825,7 +825,7 @@ func (d *diskQueueReader) skipToEndofQueue() error {
 	return nil
 }
 
-func (d *diskQueueReader) ensureReadBuffer(dataNeed int64, currentRead int64) (int64, error) {
+func (d *diskQueueReader) ensureReadBuffer(dataNeed int64, curNum int64, currentRead int64, qend diskQueueEndInfo) (int64, error) {
 	var n int64
 	var err error
 	if int64(d.readBuffer.Len()) < dataNeed {
@@ -833,6 +833,13 @@ func (d *diskQueueReader) ensureReadBuffer(dataNeed int64, currentRead int64) (i
 		// at least we should buffer a buffer size
 		if bufDataSize < readBufferSize {
 			bufDataSize = readBufferSize
+		}
+		if curNum == qend.EndOffset.FileNum {
+			// we should avoid prefetch uncommit file data after the committed queue end
+			maxAllowSize := qend.EndOffset.Pos - currentRead
+			if bufDataSize > maxAllowSize {
+				bufDataSize = maxAllowSize
+			}
 		}
 		n, err = io.CopyN(d.readBuffer, d.readFile, bufDataSize-int64(d.readBuffer.Len()))
 		if err != nil {
@@ -907,7 +914,7 @@ CheckFileOpen:
 	}
 
 	var rn int64
-	rn, result.Err = d.ensureReadBuffer(4, d.readQueueInfo.EndOffset.Pos)
+	rn, result.Err = d.ensureReadBuffer(4, d.readQueueInfo.EndOffset.FileNum, d.readQueueInfo.EndOffset.Pos, d.queueEndInfo)
 	if result.Err != nil {
 		if result.Err == io.EOF {
 			if d.readBuffer.Len() >= 4 {
@@ -947,7 +954,7 @@ CheckFileOpen:
 	}
 
 	result.Data = make([]byte, msgSize)
-	rn, result.Err = d.ensureReadBuffer(int64(msgSize), d.readQueueInfo.EndOffset.Pos+4)
+	rn, result.Err = d.ensureReadBuffer(int64(msgSize), d.readQueueInfo.EndOffset.FileNum, d.readQueueInfo.EndOffset.Pos+4, d.queueEndInfo)
 	if result.Err != nil {
 		if result.Err == io.EOF && d.readBuffer.Len() >= int(msgSize) {
 			//
