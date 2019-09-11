@@ -84,7 +84,8 @@ func checkChannelStats() {
 		if ch.Skipped == ch2.Skipped && ch.Paused == ch2.Paused {
 			continue
 		}
-		log.Printf("ch %v mismatch, src channel %v, dest channel: %v\n", name, ch, ch2)
+		log.Printf("ch %v mismatch, src channel (paused: %v, skipped: %v), dest channel: (%v, %v)\n", name, ch.Paused, ch.Skipped,
+			ch2.Paused, ch2.Skipped)
 	}
 	for name, ch := range channels2 {
 		ch2, ok := channels[name]
@@ -95,7 +96,8 @@ func checkChannelStats() {
 		if ch.Skipped == ch2.Skipped && ch.Paused == ch2.Paused {
 			continue
 		}
-		log.Printf("ch %v mismatch, src channel %v, dest channel: %v\n", name, ch2, ch)
+		log.Printf("ch %v mismatch, src channel (paused: %v, skipped: %v), dest channel: (%v, %v)\n", name, ch2.Paused, ch2.Skipped,
+			ch.Paused, ch.Skipped)
 	}
 }
 
@@ -107,6 +109,10 @@ func main() {
 		return
 	}
 
+	if *searchMode == "check_channels" {
+		checkChannelStats()
+		return
+	}
 	nsqd.SetLogger(levellogger.NewSimpleLog())
 	nsqd.NsqLogger().SetLevel(int32(*logLevel))
 	consistence.SetCoordLogger(levellogger.NewSimpleLog(), int32(*logLevel))
