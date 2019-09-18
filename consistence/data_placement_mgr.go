@@ -1885,7 +1885,7 @@ func (dpm *DataPlacement) rebalanceTopNTopicsByLoad(monitorChan chan struct{},
 			return false, moved, sortedTopNTopics
 		default:
 		}
-		if !dpm.lookupCoord.IsClusterStable() || !dpm.lookupCoord.IsMineLeader() || movedCnt > 10 {
+		if !dpm.lookupCoord.IsClusterStable() || !dpm.lookupCoord.IsMineLeader() || movedCnt > 20 {
 			coordLog.Infof("no balance since cluster is not stable or too much moved %v while checking balance", movedCnt)
 			return false, moved, sortedTopNTopics
 		}

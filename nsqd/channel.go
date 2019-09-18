@@ -1641,7 +1641,7 @@ func (c *Channel) drainChannelWaiting(clearConfirmed bool, lastDataNeedRead *boo
 		curConfirm := c.GetConfirmed()
 		c.confirmedMsgs.DeleteLower(int64(curConfirm.Offset()))
 		atomic.StoreInt32(&c.waitingConfirm, int32(c.confirmedMsgs.Len()))
-		nsqLog.Logf("channel %v current confirmed interval %v ", c.GetName(), c.confirmedMsgs.ToString())
+		nsqLog.Logf("topic %v channel %v current confirmed interval %v ", c.GetTopicName(), c.GetName(), c.confirmedMsgs.ToString())
 	}
 	c.confirmMutex.Unlock()
 	atomic.StoreInt64(&c.waitingProcessMsgTs, 0)

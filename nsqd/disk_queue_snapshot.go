@@ -1,8 +1,8 @@
 package nsqd
 
 import (
-	"bufio"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -26,7 +26,6 @@ type DiskQueueSnapshot struct {
 	exitFlag int32
 
 	readFile *os.File
-	reader   *bufio.Reader
 }
 
 // newDiskQueue instantiates a new instance of DiskQueueSnapshot, retrieving metadata
@@ -220,6 +219,9 @@ func (d *DiskQueueSnapshot) ReadRaw(size int32) ([]byte, error) {
 	readOffset := int32(0)
 	var err error
 	var rn int
+	if d.readPos.Offset() == d.endPos.Offset() && d.readPos.EndOffset == d.endPos.EndOffset {
+		return result, io.EOF
+	}
 
 	for readOffset < size {
 	CheckFileOpen:
@@ -238,10 +240,16 @@ func (d *DiskQueueSnapshot) ReadRaw(size int32) ([]byte, error) {
 					return result, err
 				}
 			}
-			d.reader = bufio.NewReader(d.readFile)
 		}
-
-		rn, err = io.ReadFull(d.reader, result[readOffset:])
+		if d.readPos.EndOffset.FileNum > d.endPos.EndOffset.FileNum {
+			nsqLog.LogErrorf("%v read raw error : overflow to : %v, %v", d.readFrom, d.readPos, d.endPos)
+			return result, ErrMoveOffsetOverflowed
+		}
+		if d.readPos.virtualEnd+BackendOffset(len(result))-BackendOffset(readOffset) > d.endPos.virtualEnd {
+			nsqLog.LogErrorf("%v read raw error : overflow to : %v, %v, %v %v", d.readFrom, d.readPos, readOffset, size, d.endPos)
+			return result, ErrMoveOffsetOverflowed
+		}
+		rn, err = io.ReadFull(d.readFile, result[readOffset:])
 		readOffset += int32(rn)
 		oldPos := d.readPos
 		d.readPos.virtualEnd += BackendOffset(rn)
@@ -257,7 +265,7 @@ func (d *DiskQueueSnapshot) ReadRaw(size int32) ([]byte, error) {
 			if isEnd && readOffset == size {
 				break
 			}
-			nsqLog.Logf("DISKQUEUE snapshot(%s): readRaw() read failed: %v, at %v, %v, readed: %v",
+			nsqLog.LogWarningf("DISKQUEUE snapshot(%s): readRaw() read failed: %v, at %v, %v, readed: %v",
 				d.readFrom, err.Error(), d.readPos, readOffset, rn)
 			d.readFile.Close()
 			d.readFile = nil
@@ -287,7 +295,7 @@ func (d *DiskQueueSnapshot) ReadOne() ReadResult {
 
 CheckFileOpen:
 
-	result.Offset = d.readPos.virtualEnd
+	result.Offset = d.readPos.Offset()
 	if d.readFile == nil {
 		curFileName := d.fileName(d.readPos.EndOffset.FileNum)
 		d.readFile, result.Err = os.OpenFile(curFileName, os.O_RDONLY, 0600)
@@ -305,18 +313,21 @@ CheckFileOpen:
 				return result
 			}
 		}
-
-		d.reader = bufio.NewReader(d.readFile)
 	}
 
-	result.Err = binary.Read(d.reader, binary.BigEndian, &msgSize)
+	if d.readPos.EndOffset.FileNum > d.endPos.EndOffset.FileNum {
+		result.Err = errors.New("exceed end of queue")
+		return result
+	}
+	result.Err = binary.Read(d.readFile, binary.BigEndian, &msgSize)
 	if result.Err != nil {
+		nsqLog.LogWarningf("DISKQUEUE(%s): readOne() read failed %v  at %v, end: %v",
+			d.readFrom, result.Err, d.readPos, d.endPos)
 		if result.Err == io.EOF && d.readPos.EndOffset.FileNum < d.endPos.EndOffset.FileNum {
 			d.handleReachEnd()
-			nsqLog.Logf("DISKQUEUE(%s): readOne() read end, try next: %v",
-				d.readFrom, d.readPos.EndOffset.FileNum)
 			goto CheckFileOpen
 		}
+
 		d.readFile.Close()
 		d.readFile = nil
 		return result
@@ -332,14 +343,14 @@ CheckFileOpen:
 	}
 
 	result.Data = make([]byte, msgSize)
-	_, result.Err = io.ReadFull(d.reader, result.Data)
+	_, result.Err = io.ReadFull(d.readFile, result.Data)
 	if result.Err != nil {
 		d.readFile.Close()
 		d.readFile = nil
 		return result
 	}
 
-	result.Offset = d.readPos.virtualEnd
+	result.Offset = d.readPos.Offset()
 
 	totalBytes := int64(4 + msgSize)
 	result.MovedSize = BackendOffset(totalBytes)
