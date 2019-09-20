@@ -33,6 +33,7 @@ var (
 	MaxRetryWait                = time.Second * 3
 	ForceFixLeaderData          = false
 	MaxTopicRetentionSizePerDay = int64(1024 * 1024 * 1024 * 16)
+	flushTicker                 = time.Second * 2
 )
 
 var testCatchupPausedPullLogs int32
@@ -432,7 +433,7 @@ func (ncoord *NsqdCoordinator) periodFlushCommitLogs() {
 	tmpCoords := make(map[string]map[int]*TopicCoordinator)
 	syncCounter := 0
 	defer ncoord.wg.Done()
-	flushTicker := time.NewTicker(time.Second * 2)
+	flushTicker := time.NewTicker(flushTicker)
 	doFlush := func() {
 		syncCounter++
 		ncoord.getAllCoords(tmpCoords)

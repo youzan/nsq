@@ -1844,6 +1844,315 @@ func TestNsqLookupMovePartition(t *testing.T) {
 	SetCoordLogger(newTestLogger(t), levellogger.LOG_ERR)
 }
 
+func TestNsqLookupMovePartitionWhileReadWrite(t *testing.T) {
+	if testing.Verbose() {
+		SetCoordLogger(levellogger.NewSimpleLog(), levellogger.LOG_INFO)
+		glog.SetFlags(0, "", "", true, true, 1)
+		glog.StartWorker(time.Second)
+	} else {
+		SetCoordLogger(newTestLogger(t), levellogger.LOG_WARN)
+	}
+
+	idList := []string{"id1", "id2", "id3", "id4"}
+	lookupCoord, nodeInfoList := prepareCluster(t, idList, false)
+	for _, n := range nodeInfoList {
+		defer os.RemoveAll(n.dataPath)
+		defer n.localNsqd.Exit()
+		defer n.nsqdCoord.Stop()
+	}
+
+	topic_p1_r2 := "test-nsqlookup-topic-unit-test-writemove-p1-r2"
+	lookupLeadership := lookupCoord.leadership
+
+	checkDeleteErr(t, lookupCoord.DeleteTopic(topic_p1_r2, "**"))
+	time.Sleep(time.Second * 3)
+	defer func() {
+		waitClusterStable(lookupCoord, time.Second*3)
+		checkDeleteErr(t, lookupCoord.DeleteTopic(topic_p1_r2, "**"))
+		time.Sleep(time.Second * 3)
+		lookupCoord.Stop()
+	}()
+
+	err := lookupCoord.CreateTopic(topic_p1_r2, TopicMetaInfo{1, 2, 0, 0, 0, 0, false, false})
+	test.Nil(t, err)
+	waitClusterStable(lookupCoord, time.Second*5)
+
+	lookupCoord.triggerCheckTopics("", 0, 0)
+	waitClusterStable(lookupCoord, time.Second*5)
+	ti, err := lookupLeadership.GetTopicInfo(topic_p1_r2, 0)
+	test.Nil(t, err)
+
+	for _, node := range nodeInfoList {
+		if ti.Leader == node.nodeInfo.GetID() {
+			localT, _ := node.nsqdCoord.localNsqd.GetExistingTopic(topic_p1_r2, 0)
+			test.NotNil(t, localT)
+			ch := localT.GetChannel("ch1")
+			test.NotNil(t, ch)
+		}
+	}
+
+	stopC := make(chan struct{})
+	var wg sync.WaitGroup
+	totalPub := int32(0)
+	for i := 0; i < 5; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			wcnt := 0
+			for {
+				time.Sleep(time.Millisecond)
+				select {
+				case <-stopC:
+					t.Logf("write %v cnt at end: %v", wcnt, time.Now())
+					test.Assert(t, wcnt > 100, "write more than 100")
+					return
+				default:
+				}
+				// write to cluster
+				ti, err := lookupLeadership.GetTopicInfo(topic_p1_r2, 0)
+				if err != nil {
+					continue
+				}
+				for _, node := range nodeInfoList {
+					if ti.Leader == node.nodeInfo.GetID() {
+						localT, _ := node.nsqdCoord.localNsqd.GetExistingTopic(topic_p1_r2, 0)
+						if localT == nil {
+							continue
+						}
+						_, _, _, _, err = node.nsqdCoord.PutMessageBodyToCluster(localT, []byte("12345678901234567890"), 0)
+						if err == nil {
+							wcnt++
+							atomic.AddInt32(&totalPub, 1)
+						}
+					}
+				}
+			}
+		}()
+	}
+
+	totalSub := int32(0)
+	var consumeGroup sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		consumeGroup.Add(1)
+		go func() {
+			defer consumeGroup.Done()
+			cnt := 0
+			var stoppedTime *time.Time
+			for {
+				time.Sleep(time.Microsecond * 10)
+				// consume from cluster
+				ti, err := lookupLeadership.GetTopicInfo(topic_p1_r2, 0)
+				if err != nil {
+					continue
+				}
+				for _, node := range nodeInfoList {
+					if ti.Leader == node.nodeInfo.GetID() {
+						localT, _ := node.nsqdCoord.localNsqd.GetExistingTopic(topic_p1_r2, 0)
+						ch, _ := localT.GetExistingChannel("ch1")
+						if ch == nil {
+							continue
+						}
+						select {
+						case msg := <-ch.GetClientMsgChan():
+							ch.StartInFlightTimeout(msg, NewFakeConsumer(1), "", time.Second)
+							time.Sleep(time.Millisecond * time.Duration(rand.Intn(10)))
+							err := node.nsqdCoord.FinishMessageToCluster(ch, 1, "", msg.ID)
+							if err == nil {
+								cnt++
+								atomic.AddInt32(&totalSub, 1)
+							} else {
+								t.Logf("fin error: %v", err.Error())
+							}
+							if cnt%1000 == 0 {
+								t.Logf("consumed %v cnt, depth: %v, stats: %v", cnt, ch.Depth(), ch.GetChannelDebugStats())
+							}
+						default:
+						}
+						select {
+						case <-stopC:
+							if stoppedTime == nil {
+								tn := time.Now()
+								stoppedTime = &tn
+							}
+							if ch.Depth() <= 0 && stoppedTime != nil {
+								if time.Since(*stoppedTime) > time.Second*5 {
+									t.Logf("consumed %v cnt, depth: %v at end: %v", cnt, ch.Depth(), time.Now())
+									return
+								}
+							}
+							if stoppedTime != nil && time.Since(*stoppedTime) > time.Minute*5 {
+								t.Logf("consumed %v cnt, depth: %v at end: %v", cnt, ch.Depth(), time.Now())
+								return
+							}
+						default:
+						}
+					}
+				}
+			}
+		}()
+	}
+
+	start := time.Now()
+	movedCnt := 0
+	for {
+		if time.Since(start) > time.Minute*5 {
+			break
+		}
+		movedCnt++
+		coordLog.Infof("begin move topic again")
+		waitClusterStable(lookupCoord, time.Second*30)
+		t0, err := lookupLeadership.GetTopicInfo(topic_p1_r2, 0)
+		test.Nil(t, err)
+		test.Assert(t, len(t0.ISR) >= 2, "replica should be enough")
+
+		toNode := ""
+		for _, nid := range t0.ISR {
+			if nid == t0.Leader {
+				continue
+			}
+			toNode = nid
+			break
+		}
+		waitClusterStable(lookupCoord, time.Second*5)
+		// move leader to other isr node
+		oldLeader := t0.Leader
+		err = lookupCoord.MoveTopicPartitionDataByManual(topic_p1_r2, 0, true, t0.Leader, toNode)
+		waitClusterStable(lookupCoord, time.Second*3)
+		if err != nil {
+			continue
+		}
+
+		t0, err = lookupLeadership.GetTopicInfo(topic_p1_r2, 0)
+		test.Nil(t, err)
+		test.Equal(t, len(t0.ISR) >= t0.Replica, true)
+		test.NotEqual(t, t0.Leader, oldLeader)
+		test.Equal(t, t0.Leader, toNode)
+
+		// move leader to other non-isr node
+		toNode = ""
+		for _, node := range nodeInfoList {
+			if FindSlice(t0.ISR, node.nodeInfo.GetID()) != -1 {
+				continue
+			}
+			toNode = node.nodeInfo.GetID()
+			break
+		}
+		if toNode == "" {
+			t.Fatalf("toNode error: %v, %v", t0, nodeInfoList)
+		}
+		test.Equal(t, true, toNode != "")
+		oldLeader = t0.Leader
+
+		lookupCoord.triggerCheckTopics("", 0, 0)
+		time.Sleep(time.Second)
+		err = lookupCoord.MoveTopicPartitionDataByManual(topic_p1_r2, 0, true, t0.Leader, toNode)
+		waitClusterStable(lookupCoord, time.Second*3)
+		if err != nil {
+			continue
+		}
+		t0, err = lookupLeadership.GetTopicInfo(topic_p1_r2, 0)
+		test.Nil(t, err)
+		test.Equal(t, len(t0.ISR) >= t0.Replica, true)
+		test.NotEqual(t, oldLeader, t0.Leader)
+		test.Equal(t, true, FindSlice(t0.ISR, toNode) != -1)
+		// wait to remove replica if more than replicator
+		for len(t0.ISR) > t0.Replica {
+			lookupCoord.triggerCheckTopics("", 0, 0)
+			time.Sleep(time.Second * 3)
+		}
+
+		// move non-leader to other non-isr node
+		toNode = ""
+		fromNode := ""
+		for _, nid := range t0.ISR {
+			if nid != t0.Leader {
+				fromNode = nid
+			}
+		}
+		for _, node := range nodeInfoList {
+			if FindSlice(t0.ISR, node.nodeInfo.GetID()) != -1 {
+				continue
+			}
+			toNode = node.nodeInfo.GetID()
+			break
+		}
+		if toNode == "" {
+			t.Fatalf("toNode error: %v, %v", t0, nodeInfoList)
+		}
+		test.Equal(t, true, toNode != "")
+		lookupCoord.triggerCheckTopics("", 0, 0)
+		time.Sleep(time.Second)
+
+		err = lookupCoord.MoveTopicPartitionDataByManual(topic_p1_r2, 0, false, fromNode, toNode)
+		waitClusterStable(lookupCoord, time.Second*3)
+		if err != nil {
+			continue
+		}
+		t0, err = lookupLeadership.GetTopicInfo(topic_p1_r2, 0)
+		test.Nil(t, err)
+		test.Equal(t, len(t0.ISR) >= t0.Replica, true)
+		test.Equal(t, FindSlice(t0.ISR, toNode) != -1, true)
+		test.Equal(t, -1, FindSlice(t0.ISR, fromNode))
+	}
+
+	close(stopC)
+	t.Logf("stopped at: %v, moved: %v", time.Now(), movedCnt)
+	wg.Wait()
+	time.Sleep(time.Second * 5)
+	consumeGroup.Wait()
+	time.Sleep(time.Second * 5)
+
+	t.Logf("stopped at: %v, %v", totalPub, totalSub)
+	test.Assert(t, totalSub >= totalPub, "sub should enough")
+	start = time.Now()
+	for {
+		time.Sleep(time.Second * 3)
+		// check consume depth
+		ti, err = lookupLeadership.GetTopicInfo(topic_p1_r2, 0)
+		test.Nil(t, err)
+		allDone := true
+
+		for _, node := range nodeInfoList {
+			if ti.Leader == node.nodeInfo.GetID() {
+				localT, _ := node.nsqdCoord.localNsqd.GetExistingTopic(topic_p1_r2, 0)
+				ch := localT.GetChannel("ch1")
+				t.Logf("node %v final depth: %v, stats: %v", node.nodeInfo.GetID(), ch.Depth(), ch.GetChannelDebugStats())
+				test.Assert(t, ch.GetConfirmedIntervalLen() <= 0, "should have no confirmed interval")
+				test.Assert(t, ch.Depth() <= 0, "should have no depth")
+				tc, _ := node.nsqdCoord.getTopicCoord(topic_p1_r2, 0)
+				node.nsqdCoord.trySyncTopicChannels(tc.GetData(), false, true, false)
+				co, _ := tc.syncedConsumeMgr.Get("ch1")
+				t.Logf("synced ch: %v", co)
+			} else {
+				if FindSlice(ti.ISR, node.nodeInfo.GetID()) == -1 {
+					continue
+				}
+				localT, _ := node.nsqdCoord.localNsqd.GetExistingTopic(topic_p1_r2, 0)
+				if localT == nil {
+					continue
+				}
+				ch, _ := localT.GetExistingChannel("ch1")
+				if ch == nil {
+					continue
+				}
+				t.Logf("node %v final depth: %v, stats: %v", node.nodeInfo.GetID(), ch.Depth(), ch.GetChannelDebugStats())
+				if ch.Depth() > 0 {
+					allDone = false
+				}
+			}
+		}
+		if allDone {
+			break
+		}
+		if time.Since(start) > time.Minute {
+			t.Errorf("timeout wait channel depth")
+			break
+		}
+	}
+	SetCoordLogger(newTestLogger(t), levellogger.LOG_ERR)
+	time.Sleep(time.Second)
+}
+
 func TestNsqLookupOrderedTopicCreate(t *testing.T) {
 	if testing.Verbose() {
 		SetCoordLogger(levellogger.NewSimpleLog(), levellogger.LOG_INFO)
