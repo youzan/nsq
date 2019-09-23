@@ -459,7 +459,7 @@ func (d *diskQueueReader) TryReadOne() (ReadResult, bool) {
 	d.Lock()
 	defer d.Unlock()
 	for {
-		if d.queueEndInfo.EndOffset.GreatThan(&d.readQueueInfo.EndOffset) {
+		if d.queueEndInfo.EndOffset.GreatThan(&d.readQueueInfo.EndOffset) && d.queueEndInfo.Offset() > d.readQueueInfo.Offset() {
 			dataRead := d.readOne()
 			rerr := dataRead.Err
 			if rerr != nil {
@@ -926,6 +926,8 @@ CheckFileOpen:
 						d.readerMetaName, d.readQueueInfo.EndOffset.FileNum)
 					goto CheckFileOpen
 				}
+				nsqLog.LogWarningf("DISKQUEUE(%s): read %v error %v, end: %v", d.readerMetaName, d.readQueueInfo, result.Err, d.queueEndInfo)
+				return result
 			} else {
 				return result
 			}
@@ -936,7 +938,7 @@ CheckFileOpen:
 	}
 	result.Err = binary.Read(d.readBuffer, binary.BigEndian, &msgSize)
 	if result.Err != nil {
-		nsqLog.LogWarningf("DISKQUEUE(%s): read %v error %v", d.readerMetaName, d.readQueueInfo, result.Err)
+		nsqLog.LogWarningf("DISKQUEUE(%s): read %v error %v, buffer: %v", d.readerMetaName, d.readQueueInfo, result.Err, d.readBuffer.Len())
 		tmpStat, tmpErr := d.readFile.Stat()
 		if tmpErr != nil {
 			nsqLog.LogWarningf("DISKQUEUE(%s): stat error %s", d.readerMetaName, tmpErr)
@@ -967,7 +969,7 @@ CheckFileOpen:
 	}
 	_, result.Err = io.ReadFull(d.readBuffer, result.Data)
 	if result.Err != nil {
-		nsqLog.LogWarningf("DISKQUEUE(%s): read %v error %v", d.readerMetaName, d.readQueueInfo, result.Err)
+		nsqLog.LogWarningf("DISKQUEUE(%s): read %v error %v, %v, buffer: %v", d.readerMetaName, d.readQueueInfo, result.Err, msgSize, d.readBuffer.Len())
 		tmpStat, tmpErr := d.readFile.Stat()
 		if tmpErr != nil {
 			nsqLog.LogWarningf("DISKQUEUE(%s): stat error %s", d.readerMetaName, tmpErr)
