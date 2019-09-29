@@ -309,7 +309,7 @@ func (c *ClusterInfo) GetLookupdProducers(lookupdHTTPAddrs []LookupdAddressDC) (
 					p = producer
 				}
 				p.RemoteAddresses = append(p.RemoteAddresses,
-					fmt.Sprintf("%s/%s", addr, producer.Address()))
+					fmt.Sprintf("%s/%s", lookupd, producer.Address()))
 			}
 		}(lookupd)
 	}
