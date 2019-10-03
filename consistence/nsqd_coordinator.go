@@ -2272,6 +2272,8 @@ func (ncoord *NsqdCoordinator) switchStateForMaster(topicCoord *TopicCoordinator
 	if master {
 		isWriteDisabled := topicCoord.IsWriteDisabled()
 		localTopic.Lock()
+		// TODO: why try fix while !isWriteDisabled? what does the syncCommitDisk mean?
+		// syncCommitDisk means we need make sure the commit log and disk queue is consistence
 		localErr := checkAndFixLocalLogQueueEnd(tcData, localTopic, tcData.logMgr, !isWriteDisabled && syncCommitDisk, ForceFixLeaderData)
 		if localErr != nil {
 			atomic.StoreInt32(&topicCoord.disableWrite, 1)
@@ -2696,7 +2698,8 @@ func (ncoord *NsqdCoordinator) readTopicRawData(topic string, partition int, off
 			coordLog.Infof("read topic %v data at offset %v, size: %v, error: %v", t.GetFullName(), offset, size, err)
 			break
 		}
-		buf, err := snap.ReadRaw(size)
+		var buf []byte
+		buf, err = snap.ReadRaw(size)
 		if err != nil {
 			coordLog.Infof("read topic data at offset %v, size:%v(actual: %v), error: %v", offset, size, len(buf), err)
 			break

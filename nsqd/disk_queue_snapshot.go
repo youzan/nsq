@@ -220,7 +220,9 @@ func (d *DiskQueueSnapshot) ReadRaw(size int32) ([]byte, error) {
 	var err error
 	var rn int
 	if d.readPos.Offset() == d.endPos.Offset() && d.readPos.EndOffset == d.endPos.EndOffset {
-		return result, io.EOF
+		nsqLog.Logf("DISKQUEUE snapshot(%s): readRaw() read end: %v, %v",
+			d.readFrom, d.readPos, d.endPos)
+		return nil, io.EOF
 	}
 
 	for readOffset < size {
