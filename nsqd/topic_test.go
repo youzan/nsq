@@ -3,6 +3,8 @@ package nsqd
 import (
 	"errors"
 	"os"
+	"sync/atomic"
+
 	//"runtime"
 	"path"
 	"path/filepath"
@@ -235,6 +237,11 @@ func TestTopicBackendMaxMsgSize(t *testing.T) {
 	test.Equal(t, topic.backend.maxMsgSize, int32(opts.MaxMsgSize+minValidMsgLength))
 }
 
+func changeDynamicConfAutCommit(dynamicConf *TopicDynamicConf) {
+	atomic.StoreInt32(&dynamicConf.AutoCommit, 1)
+	atomic.StoreInt64(&dynamicConf.SyncEvery, 10)
+}
+
 func TestTopicPutChannelWait(t *testing.T) {
 	opts := NewOptions()
 	opts.Logger = newTestLogger(t)
@@ -243,8 +250,7 @@ func TestTopicPutChannelWait(t *testing.T) {
 	defer nsqd.Exit()
 
 	topic := nsqd.GetTopic("test", 0, false)
-	topic.dynamicConf.AutoCommit = 1
-	topic.dynamicConf.SyncEvery = 10
+	changeDynamicConfAutCommit(topic.dynamicConf)
 
 	channel := topic.GetChannel("ch")
 	test.NotNil(t, channel)
@@ -304,9 +310,8 @@ func TestTopicCleanOldDataByRetentionSize(t *testing.T) {
 	defer nsqd.Exit()
 
 	topic := nsqd.GetTopic("test", 0, false)
-	topic.dynamicConf.AutoCommit = 1
-	topic.dynamicConf.SyncEvery = 10
-	topic.dynamicConf.RetentionDay = 1
+	changeDynamicConfAutCommit(topic.dynamicConf)
+	atomic.StoreInt32(&topic.dynamicConf.RetentionDay, 1)
 
 	msgNum := 5000
 	channel := topic.GetChannel("ch")
@@ -377,8 +382,7 @@ func TestTopicCleanOldDataByRetentionDay(t *testing.T) {
 	defer nsqd.Exit()
 
 	topic := nsqd.GetTopic("test", 0, false)
-	topic.dynamicConf.AutoCommit = 1
-	topic.dynamicConf.SyncEvery = 10
+	changeDynamicConfAutCommit(topic.dynamicConf)
 
 	msgNum := 5000
 	channel := topic.GetChannel("ch")
@@ -461,8 +465,7 @@ func TestTopicCleanOldDataByRetentionDayWithResetStart(t *testing.T) {
 	defer nsqd.Exit()
 
 	topic := nsqd.GetTopic("test", 0, false)
-	topic.dynamicConf.AutoCommit = 1
-	topic.dynamicConf.SyncEvery = 10
+	changeDynamicConfAutCommit(topic.dynamicConf)
 
 	readStart := *(topic.backend.GetQueueReadStart().(*diskQueueEndInfo))
 	test.Equal(t, int64(0), readStart.EndOffset.FileNum)
@@ -486,8 +489,7 @@ func TestTopicCleanOldDataByRetentionDayWithResetStart(t *testing.T) {
 
 	nsqd.CloseExistingTopic("test", 0)
 	topic = nsqd.GetTopic("test", 0, false)
-	topic.dynamicConf.AutoCommit = 1
-	topic.dynamicConf.SyncEvery = 10
+	changeDynamicConfAutCommit(topic.dynamicConf)
 
 	writeEnd2 := topic.backend.GetQueueWriteEnd()
 	readStart2 := topic.backend.GetQueueReadStart().(*diskQueueEndInfo)
@@ -551,8 +553,7 @@ func TestTopicResetWithQueueStart(t *testing.T) {
 	defer nsqd.Exit()
 
 	topic := nsqd.GetTopic("test", 0, false)
-	topic.dynamicConf.AutoCommit = 1
-	topic.dynamicConf.SyncEvery = 10
+	changeDynamicConfAutCommit(topic.dynamicConf)
 
 	msgNum := 5000
 	channel := topic.GetChannel("ch")
@@ -610,8 +611,7 @@ func TestTopicResetWithQueueStart(t *testing.T) {
 	// test reopen
 	nsqd.CloseExistingTopic("test", 0)
 	topic = nsqd.GetTopic("test", 0, false)
-	topic.dynamicConf.AutoCommit = 1
-	topic.dynamicConf.SyncEvery = 10
+	changeDynamicConfAutCommit(topic.dynamicConf)
 	channel = topic.GetChannel("ch")
 	test.NotNil(t, channel)
 	newEnd2 := topic.backend.GetQueueWriteEnd().(*diskQueueEndInfo)
@@ -655,8 +655,7 @@ func TestTopicResetWithQueueStart(t *testing.T) {
 	// test reopen
 	nsqd.CloseExistingTopic("test", 0)
 	topic = nsqd.GetTopic("test", 0, false)
-	topic.dynamicConf.AutoCommit = 1
-	topic.dynamicConf.SyncEvery = 10
+	changeDynamicConfAutCommit(topic.dynamicConf)
 	channel = topic.GetChannel("ch")
 	test.NotNil(t, channel)
 	newEnd2 = topic.backend.GetQueueWriteEnd().(*diskQueueEndInfo)
