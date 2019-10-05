@@ -1995,9 +1995,10 @@ func TestNsqLookupMovePartitionWhileReadWrite(t *testing.T) {
 	start := time.Now()
 	movedCnt := 0
 	for {
-		if time.Since(start) > time.Minute*5 {
+		if time.Since(start) > time.Minute*8 {
 			break
 		}
+		// TODO: reset queue end to make sure we can consume all
 		movedCnt++
 		coordLog.Infof("begin move topic again")
 		waitClusterStable(lookupCoord, time.Second*30)
@@ -2017,7 +2018,7 @@ func TestNsqLookupMovePartitionWhileReadWrite(t *testing.T) {
 		// move leader to other isr node
 		oldLeader := t0.Leader
 		err = lookupCoord.MoveTopicPartitionDataByManual(topic_p1_r2, 0, true, t0.Leader, toNode)
-		waitClusterStable(lookupCoord, time.Second*3)
+		waitClusterStable(lookupCoord, time.Second*10)
 		if err != nil {
 			continue
 		}
@@ -2046,7 +2047,7 @@ func TestNsqLookupMovePartitionWhileReadWrite(t *testing.T) {
 		lookupCoord.triggerCheckTopics("", 0, 0)
 		time.Sleep(time.Second)
 		err = lookupCoord.MoveTopicPartitionDataByManual(topic_p1_r2, 0, true, t0.Leader, toNode)
-		waitClusterStable(lookupCoord, time.Second*3)
+		waitClusterStable(lookupCoord, time.Second*10)
 		if err != nil {
 			continue
 		}
@@ -2059,6 +2060,8 @@ func TestNsqLookupMovePartitionWhileReadWrite(t *testing.T) {
 		for len(t0.ISR) > t0.Replica {
 			lookupCoord.triggerCheckTopics("", 0, 0)
 			time.Sleep(time.Second * 3)
+			t0, err = lookupLeadership.GetTopicInfo(topic_p1_r2, 0)
+			test.Nil(t, err)
 		}
 
 		// move non-leader to other non-isr node
@@ -2084,7 +2087,7 @@ func TestNsqLookupMovePartitionWhileReadWrite(t *testing.T) {
 		time.Sleep(time.Second)
 
 		err = lookupCoord.MoveTopicPartitionDataByManual(topic_p1_r2, 0, false, fromNode, toNode)
-		waitClusterStable(lookupCoord, time.Second*3)
+		waitClusterStable(lookupCoord, time.Second*10)
 		if err != nil {
 			continue
 		}

@@ -2272,8 +2272,8 @@ func (ncoord *NsqdCoordinator) switchStateForMaster(topicCoord *TopicCoordinator
 	if master {
 		isWriteDisabled := topicCoord.IsWriteDisabled()
 		localTopic.Lock()
-		// TODO: why try fix while !isWriteDisabled? what does the syncCommitDisk mean?
 		// syncCommitDisk means we need make sure the commit log and disk queue is consistence
+		// while enable the new leader (or old leader while leader not changed), we need make sure all data is consistence
 		localErr := checkAndFixLocalLogQueueEnd(tcData, localTopic, tcData.logMgr, !isWriteDisabled && syncCommitDisk, ForceFixLeaderData)
 		if localErr != nil {
 			atomic.StoreInt32(&topicCoord.disableWrite, 1)

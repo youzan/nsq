@@ -246,6 +246,7 @@ func ensureCatchupForTopic(nsqdCoord *NsqdCoordinator, topicInfo RpcAdminTopicIn
 func newNsqdNode(t *testing.T, id string) (*nsqdNs.NSQD, int, *NsqdNodeInfo, string) {
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
+	opts.MaxBytesPerFile = 1024 * 1024
 	if testing.Verbose() {
 		opts.Logger = &levellogger.SimpleLogger{}
 		opts.LogLevel = levellogger.LOG_INFO
