@@ -10,6 +10,20 @@ import (
 	"github.com/youzan/nsq/nsqd"
 )
 
+var testSlaveTimeout int32
+
+func setTestSlaveTimeout(enableTest bool) {
+	if enableTest {
+		atomic.StoreInt32(&testSlaveTimeout, 1)
+	} else {
+		atomic.StoreInt32(&testSlaveTimeout, 0)
+	}
+}
+
+func isTestSlaveTimeout() bool {
+	return atomic.LoadInt32(&testSlaveTimeout) == 1
+}
+
 type localWriteFunc func(*coordData) *CoordErr
 type localExitFunc func(*CoordErr)
 type localCommitFunc func() error
@@ -152,6 +166,9 @@ func (ncoord *NsqdCoordinator) internalPutMessageToCluster(topic *nsqd.Topic,
 		return nil
 	}
 	doSlaveSync := func(c *NsqdRpcClient, nodeID string, tcData *coordData) *CoordErr {
+		if isTestSlaveTimeout() {
+			return NewCoordErr("timeout test for slave sync", CoordNetErr)
+		}
 		// should retry if failed, and the slave should keep the last success write to avoid the duplicated
 		if putDelayed {
 			putErr := c.PutDelayedMessage(&tcData.topicLeaderSession, &tcData.topicInfo, commitLog, msg)
@@ -289,6 +306,9 @@ func (ncoord *NsqdCoordinator) PutMessagesToCluster(topic *nsqd.Topic,
 		return nil
 	}
 	doSlaveSync := func(c *NsqdRpcClient, nodeID string, tcData *coordData) *CoordErr {
+		if isTestSlaveTimeout() {
+			return NewCoordErr("timeout test for slave sync", CoordNetErr)
+		}
 		// should retry if failed, and the slave should keep the last success write to avoid the duplicated
 		putErr := c.PutMessages(&tcData.topicLeaderSession, &tcData.topicInfo, commitLog, msgs)
 		if putErr != nil {

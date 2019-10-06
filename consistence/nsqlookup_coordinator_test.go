@@ -1844,7 +1844,7 @@ func TestNsqLookupMovePartition(t *testing.T) {
 	SetCoordLogger(newTestLogger(t), levellogger.LOG_ERR)
 }
 
-func TestNsqLookupMovePartitionWhileReadWrite(t *testing.T) {
+func TestNsqLookupMovePartitionAndSlaveTimeoutWhileReadWrite(t *testing.T) {
 	// force fix leader should be set to true to test the force fix will not fix data while write
 	ForceFixLeaderData = true
 	if testing.Verbose() {
@@ -2098,6 +2098,9 @@ func TestNsqLookupMovePartitionWhileReadWrite(t *testing.T) {
 		test.Equal(t, len(t0.ISR) >= t0.Replica, true)
 		test.Equal(t, FindSlice(t0.ISR, toNode) != -1, true)
 		test.Equal(t, -1, FindSlice(t0.ISR, fromNode))
+		setTestSlaveTimeout(true)
+		time.Sleep(time.Second * MAX_WRITE_RETRY * 10)
+		setTestSlaveTimeout(false)
 	}
 
 	close(stopC)
