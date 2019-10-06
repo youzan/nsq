@@ -1845,6 +1845,8 @@ func TestNsqLookupMovePartition(t *testing.T) {
 }
 
 func TestNsqLookupMovePartitionWhileReadWrite(t *testing.T) {
+	// force fix leader should be set to true to test the force fix will not fix data while write
+	ForceFixLeaderData = true
 	if testing.Verbose() {
 		SetCoordLogger(levellogger.NewSimpleLog(), levellogger.LOG_INFO)
 		glog.SetFlags(0, "", "", true, true, 1)

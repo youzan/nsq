@@ -393,7 +393,7 @@ retrysync:
 			clusterWriteErr = ErrTopicExiting
 			goto exitsync
 		}
-		time.Sleep(time.Second)
+		time.Sleep(time.Second / 2)
 	}
 	if needRefreshISR {
 		tcData = coord.GetData()
@@ -507,7 +507,7 @@ retrysync:
 						coordLog.Infof("request the failed node: %v to leave topic %v isr", nid, topicFullName)
 					}
 				}
-				time.Sleep(time.Second)
+				time.Sleep(time.Second / 2)
 			}
 		} else {
 			needLeaveISR = true

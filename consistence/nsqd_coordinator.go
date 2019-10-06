@@ -30,7 +30,7 @@ const (
 )
 
 var (
-	MaxRetryWait                = time.Second * 3
+	MaxRetryWait                = time.Second
 	ForceFixLeaderData          = false
 	MaxTopicRetentionSizePerDay = int64(1024 * 1024 * 1024 * 16)
 	flushTicker                 = time.Second * 2
@@ -851,14 +851,19 @@ func checkAndFixLocalLogQueueEnd(tc *coordData,
 		coordLog.Infof("no commit last log data : %v", err)
 		return nil
 	}
-	coordLog.Infof("current topic %v log: %v:%v, %v",
-		tname, logIndex, logOffset, logData)
+
+	commitEndOffset := nsqd.BackendOffset(logData.MsgOffset + int64(logData.MsgSize))
+	commitEndCnt := logData.MsgCnt + int64(logData.MsgNum) - 1
+	if localLogQ.TotalDataSize() == int64(commitEndOffset) && localLogQ.TotalMessageCnt() == uint64(commitEndCnt) {
+		return nil
+	}
+	coordLog.Infof("current topic %v log: %v:%v, %v, diskqueue end: %v",
+		tname, logIndex, logOffset, logData, localLogQ.TotalDataSize())
 
 	if !forceFix && !tryFixEnd {
 		return nil
 	}
-	localErr := localLogQ.ResetBackendEndNoLock(nsqd.BackendOffset(logData.MsgOffset+int64(logData.MsgSize)),
-		logData.MsgCnt+int64(logData.MsgNum)-1)
+	localErr := localLogQ.ResetBackendEndNoLock(commitEndOffset, commitEndCnt)
 	if localErr == nil {
 		return nil
 	}
@@ -2261,8 +2266,8 @@ func (ncoord *NsqdCoordinator) TryFixLocalTopic(topic string, pid int) error {
 
 // handle all the things while leader is changed or isr is changed.
 func (ncoord *NsqdCoordinator) switchStateForMaster(topicCoord *TopicCoordinator,
-	localTopic *nsqd.Topic, syncCommitDisk bool) *CoordErr {
-	// flush topic data and channel comsume data if any cluster topic info changed
+	localTopic *nsqd.Topic, lockedAndFixCommitDisk bool) *CoordErr {
+	// flush topic data and channel consume data if any cluster topic info changed
 	tcData := topicCoord.GetData()
 	master := tcData.GetLeader() == ncoord.myNode.GetID()
 	// leader changed (maybe down), we make sure out data is flushed to keep data safe
@@ -2274,7 +2279,9 @@ func (ncoord *NsqdCoordinator) switchStateForMaster(topicCoord *TopicCoordinator
 		localTopic.Lock()
 		// syncCommitDisk means we need make sure the commit log and disk queue is consistence
 		// while enable the new leader (or old leader while leader not changed), we need make sure all data is consistence
-		localErr := checkAndFixLocalLogQueueEnd(tcData, localTopic, tcData.logMgr, !isWriteDisabled && syncCommitDisk, ForceFixLeaderData)
+		// we can not force fix data while not syncCommitDisk because the write lock is not hold without syncCommitDisk
+		localErr := checkAndFixLocalLogQueueEnd(tcData, localTopic, tcData.logMgr,
+			!isWriteDisabled && lockedAndFixCommitDisk, ForceFixLeaderData && lockedAndFixCommitDisk)
 		if localErr != nil {
 			atomic.StoreInt32(&topicCoord.disableWrite, 1)
 			isWriteDisabled = true
@@ -2283,7 +2290,7 @@ func (ncoord *NsqdCoordinator) switchStateForMaster(topicCoord *TopicCoordinator
 		}
 		if tcData.delayedLogMgr != nil && !tcData.topicInfo.OrderedMulti {
 			localErr = checkAndFixLocalLogQueueEnd(tcData, localTopic.GetDelayedQueue(), tcData.delayedLogMgr,
-				!isWriteDisabled && syncCommitDisk, ForceFixLeaderData)
+				!isWriteDisabled && lockedAndFixCommitDisk, ForceFixLeaderData && lockedAndFixCommitDisk)
 			if localErr != nil {
 				atomic.StoreInt32(&topicCoord.disableWrite, 1)
 				isWriteDisabled = true
