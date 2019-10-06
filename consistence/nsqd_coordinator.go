@@ -2277,9 +2277,9 @@ func (ncoord *NsqdCoordinator) switchStateForMaster(topicCoord *TopicCoordinator
 	if master {
 		isWriteDisabled := topicCoord.IsWriteDisabled()
 		localTopic.Lock()
-		// syncCommitDisk means we need make sure the commit log and disk queue is consistence
+		// lockedAndFixCommitDisk means we need make sure the commit log and disk queue is consistence
 		// while enable the new leader (or old leader while leader not changed), we need make sure all data is consistence
-		// we can not force fix data while not syncCommitDisk because the write lock is not hold without syncCommitDisk
+		// we can not force fix data while not lockedAndFixCommitDisk because the write lock is not hold without it
 		localErr := checkAndFixLocalLogQueueEnd(tcData, localTopic, tcData.logMgr,
 			!isWriteDisabled && lockedAndFixCommitDisk, ForceFixLeaderData && lockedAndFixCommitDisk)
 		if localErr != nil {
