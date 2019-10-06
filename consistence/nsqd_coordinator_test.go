@@ -248,8 +248,10 @@ func newNsqdNode(t *testing.T, id string) (*nsqdNs.NSQD, int, *NsqdNodeInfo, str
 	opts.Logger = newTestLogger(t)
 	opts.MaxBytesPerFile = 1024 * 1024
 	if testing.Verbose() {
-		opts.Logger = &levellogger.SimpleLogger{}
 		opts.LogLevel = levellogger.LOG_INFO
+		opts.Logger = levellogger.NewSimpleLog()
+		nsqdNs.SetLogger(opts.Logger)
+		glog.SetFlags(0, "", "", true, true, 1)
 		glog.StartWorker(time.Second)
 	} else {
 		opts.LogLevel = levellogger.LOG_INFO
