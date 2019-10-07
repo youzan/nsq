@@ -246,9 +246,12 @@ func ensureCatchupForTopic(nsqdCoord *NsqdCoordinator, topicInfo RpcAdminTopicIn
 func newNsqdNode(t *testing.T, id string) (*nsqdNs.NSQD, int, *NsqdNodeInfo, string) {
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
+	opts.MaxBytesPerFile = 1024 * 1024
 	if testing.Verbose() {
-		opts.Logger = &levellogger.SimpleLogger{}
 		opts.LogLevel = levellogger.LOG_INFO
+		opts.Logger = levellogger.NewSimpleLog()
+		nsqdNs.SetLogger(opts.Logger)
+		glog.SetFlags(0, "", "", true, true, 1)
 		glog.StartWorker(time.Second)
 	} else {
 		opts.LogLevel = levellogger.LOG_INFO
@@ -259,9 +262,10 @@ func newNsqdNode(t *testing.T, id string) (*nsqdNs.NSQD, int, *NsqdNodeInfo, str
 	nsqd := mustStartNSQD(opts)
 	randPort := rand.Int31n(10000) + 20000
 	nodeInfo := NsqdNodeInfo{
-		NodeIP:  "127.0.0.1",
-		TcpPort: "0",
-		RpcPort: strconv.Itoa(int(randPort)),
+		NodeIP:   "127.0.0.1",
+		TcpPort:  "0",
+		RpcPort:  strconv.Itoa(int(randPort)),
+		HttpPort: strconv.Itoa(int(randPort + 1)),
 	}
 	nodeInfo.ID = GenNsqdNodeID(&nodeInfo, id)
 	return nsqd, int(randPort), &nodeInfo, opts.DataPath
@@ -1819,12 +1823,6 @@ func testNsqdCoordPutMessageAndSyncChannelOffset(t *testing.T, isExt bool) {
 func TestNsqdCoordLeaderChangeWhileWrite(t *testing.T) {
 	// TODO: old leader write and part of the isr got the write,
 	// then leader failed, choose new leader from isr
-	// RESULT: all new isr nodes should be synced
-}
-
-func TestNsqdCoordISRChangedWhileWrite(t *testing.T) {
-	// TODO: leader write while network split, and part of isr agreed with write
-	// leader need rollback (or just move leader out from isr and sync with new leader )
 	// RESULT: all new isr nodes should be synced
 }
 

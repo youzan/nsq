@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/youzan/nsq/consistence"
+	"github.com/youzan/nsq/internal/clusterinfo"
+	"github.com/youzan/nsq/internal/http_api"
 	"github.com/youzan/nsq/internal/levellogger"
 	"github.com/youzan/nsq/internal/version"
 	"github.com/youzan/nsq/nsqd"
@@ -19,8 +21,10 @@ var (
 	topic              = flag.String("topic", "", "NSQ topic")
 	partition          = flag.Int("partition", -1, "NSQ topic partition")
 	dataPath           = flag.String("data_path", "", "the data path of nsqd")
+	srcNsqLookupd      = flag.String("src_nsqlookupd", "", "")
+	dstNsqLookupd      = flag.String("dest_nsqlookupd", "", "")
 	view               = flag.String("view", "commitlog", "commitlog | topicdata | delayedqueue")
-	searchMode         = flag.String("search_mode", "count", "the view start of mode. (count|id|timestamp|virtual_offset)")
+	searchMode         = flag.String("search_mode", "count", "the view start of mode. (count|id|timestamp|virtual_offset|check_channels)")
 	viewStart          = flag.Int64("view_start", 0, "the start count of message.")
 	viewStartID        = flag.Int64("view_start_id", 0, "the start id of message.")
 	viewStartTimestamp = flag.Int64("view_start_timestamp", 0, "the start timestamp of message.")
@@ -37,6 +41,66 @@ func getBackendName(topicName string, part int) string {
 	return backendName
 }
 
+func checkChannelStats() {
+	lsrc := clusterinfo.LookupdAddressDC{
+		DC:   "",
+		Addr: *srcNsqLookupd,
+	}
+
+	client := http_api.NewClient(nil)
+	ci := clusterinfo.New(nil, client)
+	srcnodes, err := ci.GetLookupdProducers([]clusterinfo.LookupdAddressDC{lsrc})
+	if err != nil {
+		log.Printf("error: %v", err.Error())
+		return
+	}
+	_, channels, err := ci.GetNSQDStats(srcnodes, "", "", true)
+	if err != nil {
+		log.Printf("error: %v", err.Error())
+		return
+	}
+	ldest := clusterinfo.LookupdAddressDC{
+		DC:   "",
+		Addr: *dstNsqLookupd,
+	}
+
+	destnodes, err := ci.GetLookupdProducers([]clusterinfo.LookupdAddressDC{ldest})
+	if err != nil {
+		log.Printf("error: %v", err.Error())
+		return
+	}
+	_, channels2, err := ci.GetNSQDStats(destnodes, "", "", true)
+	if err != nil {
+		log.Printf("error: %v", err.Error())
+		return
+	}
+
+	for name, ch := range channels {
+		ch2, ok := channels2[name]
+		if !ok {
+			log.Printf("src channel not found in dst: %v", name)
+			continue
+		}
+		if ch.Skipped == ch2.Skipped && ch.Paused == ch2.Paused {
+			continue
+		}
+		log.Printf("ch %v mismatch, src channel (paused: %v, skipped: %v), dest channel: (%v, %v)\n", name, ch.Paused, ch.Skipped,
+			ch2.Paused, ch2.Skipped)
+	}
+	for name, ch := range channels2 {
+		ch2, ok := channels[name]
+		if !ok {
+			log.Printf("dest channel not found in src: %v", name)
+			continue
+		}
+		if ch.Skipped == ch2.Skipped && ch.Paused == ch2.Paused {
+			continue
+		}
+		log.Printf("ch %v mismatch, src channel (paused: %v, skipped: %v), dest channel: (%v, %v)\n", name, ch2.Paused, ch2.Skipped,
+			ch.Paused, ch.Skipped)
+	}
+}
+
 func main() {
 	flag.Parse()
 
@@ -45,6 +109,10 @@ func main() {
 		return
 	}
 
+	if *searchMode == "check_channels" {
+		checkChannelStats()
+		return
+	}
 	nsqd.SetLogger(levellogger.NewSimpleLog())
 	nsqd.NsqLogger().SetLevel(int32(*logLevel))
 	consistence.SetCoordLogger(levellogger.NewSimpleLog(), int32(*logLevel))

@@ -369,7 +369,7 @@ func (s LFListT) Swap(i, j int) {
 	s[i], s[j] = s[j], s[i]
 }
 func (s LFListT) Less(i, j int) bool {
-	if math.Abs(s[i].loadFactor-s[j].loadFactor) < 0.5 {
+	if math.Abs(s[i].loadFactor-s[j].loadFactor) < 1 {
 		return s[i].topic < s[j].topic
 	}
 	return s[i].loadFactor < s[j].loadFactor
@@ -1885,7 +1885,7 @@ func (dpm *DataPlacement) rebalanceTopNTopicsByLoad(monitorChan chan struct{},
 			return false, moved, sortedTopNTopics
 		default:
 		}
-		if !dpm.lookupCoord.IsClusterStable() || !dpm.lookupCoord.IsMineLeader() || movedCnt > 10 {
+		if !dpm.lookupCoord.IsClusterStable() || !dpm.lookupCoord.IsMineLeader() || movedCnt > 20 {
 			coordLog.Infof("no balance since cluster is not stable or too much moved %v while checking balance", movedCnt)
 			return false, moved, sortedTopNTopics
 		}
