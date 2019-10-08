@@ -2709,6 +2709,10 @@ func (ncoord *NsqdCoordinator) readTopicRawData(topic string, partition int, off
 		buf, err = snap.ReadRaw(size)
 		if err != nil {
 			coordLog.Infof("read topic data at offset %v, size:%v(actual: %v), error: %v", offset, size, len(buf), err)
+			if err == io.EOF && len(dataList) > 0 {
+				// we can ignore EOF if we already read some data
+				err = nil
+			}
 			break
 		}
 		dataList = append(dataList, buf)
