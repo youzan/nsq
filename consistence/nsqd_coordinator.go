@@ -417,9 +417,8 @@ func (ncoord *NsqdCoordinator) checkAndCleanOldData() {
 			if now.Hour() > 2 && now.Hour() < 6 {
 				coordLog.Infof("check and clean at time: %v", now)
 				doCheckAndCleanOld(true)
-			} else {
-				doCheckAndCleanOld(false)
 			}
+			doCheckAndCleanOld(false)
 		case <-ncoord.stopChan:
 			return
 		}
