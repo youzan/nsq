@@ -102,17 +102,17 @@ func checkTopicStats() {
 	for c, cnt := range clientConns {
 		clientList = append(clientList, sortCnt{Name: c, Cnt: cnt})
 	}
-	sort.Sort(topicList)
-	sort.Sort(clientList)
+	sort.Sort(sort.Reverse(topicList))
+	sort.Sort(sort.Reverse(clientList))
 	for i, t := range topicList {
-		fmt.Printf("topn producers topic: %v", t)
-		if i > 10 {
+		fmt.Printf("topn producers topic: %v\n", t)
+		if i > 100 {
 			break
 		}
 	}
 	for i, c := range clientList {
-		fmt.Printf("topn client conn: %v", c)
-		if i > 10 {
+		fmt.Printf("topn client conn: %v\n", c)
+		if i > 100 {
 			break
 		}
 	}
