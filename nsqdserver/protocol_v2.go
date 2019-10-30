@@ -65,6 +65,24 @@ var (
 	ErrPubToWaitTimeout         = errors.New("pub to wait channel timeout")
 )
 
+func isNetErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := strings.ToLower(err.Error())
+	if strings.Contains(errStr, "connection refuse") {
+		return true
+	}
+	if strings.Contains(errStr, "use of closed network") {
+		return true
+	}
+	if strings.Contains(errStr, "broken pipe") {
+		return true
+	}
+	// we ignore timeout error
+	return false
+}
+
 type protocolV2 struct {
 	ctx *context
 }
@@ -608,7 +626,7 @@ func (p *protocolV2) messagePump(client *nsqd.ClientV2, startedChan chan bool,
 			if err != nil {
 				heartbeatFailedCnt++
 				nsqd.NsqLogger().Logf("PROTOCOL(V2): [%s] send heartbeat failed %v times, %v", client, heartbeatFailedCnt, err)
-				if heartbeatFailedCnt > 2 {
+				if heartbeatFailedCnt > 2 || isNetErr(err) {
 					goto exit
 				}
 			} else {
