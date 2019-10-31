@@ -26,12 +26,12 @@
   version = "v1.4.0"
 
 [[projects]]
-  branch = "master"
-  digest = "1:ab552448dc85766c7bf1864d41908bdf1c25aa0997e718a3779983a922462327"
+  digest = "1:68854f47091d4b87190d6a59955e83dcec64a3a7c9a1f63d5c11d0f1340224df"
   name = "github.com/absolute8511/glog"
   packages = ["."]
   pruneopts = "UT"
-  revision = "53123a9d31b5d1784186f716fce9322f95cc9edb"
+  revision = "b806bb4131dde3194b6fbc719cc2c53d3d0dec28"
+  version = "v0.2.0"
 
 [[projects]]
   branch = "master"
