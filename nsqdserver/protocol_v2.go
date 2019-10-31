@@ -30,7 +30,10 @@ const (
 	E_TOPIC_NOT_EXIST = "E_TOPIC_NOT_EXIST"
 )
 
-const maxTimeout = time.Hour
+const (
+	maxTimeout     = time.Hour
+	pubWaitTimeout = time.Second * 3
+)
 
 const (
 	frameTypeResponse int32 = 0
@@ -77,6 +80,9 @@ func isNetErr(err error) bool {
 		return true
 	}
 	if strings.Contains(errStr, "broken pipe") {
+		return true
+	}
+	if strings.Contains(errStr, "connection reset by peer") {
 		return true
 	}
 	// we ignore timeout error
@@ -1483,9 +1489,9 @@ func internalPubAsync(clientTimer *time.Timer, msgBody *bytes.Buffer, topic *nsq
 	case topic.GetWaitChan() <- info:
 	default:
 		if clientTimer == nil {
-			clientTimer = time.NewTimer(time.Second * 5)
+			clientTimer = time.NewTimer(pubWaitTimeout)
 		} else {
-			clientTimer.Reset(time.Second * 5)
+			clientTimer.Reset(pubWaitTimeout)
 		}
 		select {
 		case topic.GetWaitChan() <- info:
