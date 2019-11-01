@@ -4,7 +4,9 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"path"
+	"sort"
 	"time"
 
 	"github.com/youzan/nsq/consistence"
@@ -24,7 +26,7 @@ var (
 	srcNsqLookupd      = flag.String("src_nsqlookupd", "", "")
 	dstNsqLookupd      = flag.String("dest_nsqlookupd", "", "")
 	view               = flag.String("view", "commitlog", "commitlog | topicdata | delayedqueue")
-	searchMode         = flag.String("search_mode", "count", "the view start of mode. (count|id|timestamp|virtual_offset|check_channels)")
+	searchMode         = flag.String("search_mode", "count", "the view start of mode. (count|id|timestamp|virtual_offset|check_channels|check_topics)")
 	viewStart          = flag.Int64("view_start", 0, "the start count of message.")
 	viewStartID        = flag.Int64("view_start_id", 0, "the start id of message.")
 	viewStartTimestamp = flag.Int64("view_start_timestamp", 0, "the start timestamp of message.")
@@ -39,6 +41,81 @@ var (
 func getBackendName(topicName string, part int) string {
 	backendName := nsqd.GetTopicFullName(topicName, part)
 	return backendName
+}
+
+type sortCnt struct {
+	Name string
+	Cnt  int
+}
+
+type sortCntListT []sortCnt
+
+func (s sortCntListT) Len() int {
+	return len(s)
+}
+
+func (s sortCntListT) Swap(i, j int) {
+	s[i], s[j] = s[j], s[i]
+}
+
+func (s sortCntListT) Less(i, j int) bool {
+	if s[i].Cnt == s[j].Cnt {
+		return s[i].Name < s[j].Name
+	}
+	return s[i].Cnt < s[j].Cnt
+}
+
+func checkTopicStats() {
+	lsrc := clusterinfo.LookupdAddressDC{
+		DC:   "",
+		Addr: *srcNsqLookupd,
+	}
+
+	client := http_api.NewClient(nil)
+	ci := clusterinfo.New(nil, client)
+	srcnodes, err := ci.GetLookupdProducers([]clusterinfo.LookupdAddressDC{lsrc})
+	if err != nil {
+		log.Printf("error: %v", err.Error())
+		return
+	}
+	producers, _, err := ci.GetNSQDStats(srcnodes, "", "", true)
+	if err != nil {
+		log.Printf("error: %v", err.Error())
+		return
+	}
+
+	topicConns := make(map[string]int)
+	clientConns := make(map[string]int)
+	for _, p := range producers {
+		for _, c := range p.Clients {
+			host, _, _ := net.SplitHostPort(c.RemoteAddress)
+			clientConns[host] = clientConns[host] + 1
+		}
+		topicConns[p.TopicName] += topicConns[p.TopicName] + len(p.Clients)
+	}
+
+	topicList := make(sortCntListT, 0)
+	for t, cnt := range topicConns {
+		topicList = append(topicList, sortCnt{Name: t, Cnt: cnt})
+	}
+	clientList := make(sortCntListT, 0)
+	for c, cnt := range clientConns {
+		clientList = append(clientList, sortCnt{Name: c, Cnt: cnt})
+	}
+	sort.Sort(sort.Reverse(topicList))
+	sort.Sort(sort.Reverse(clientList))
+	for i, t := range topicList {
+		fmt.Printf("topn producers topic: %v\n", t)
+		if i > 100 {
+			break
+		}
+	}
+	for i, c := range clientList {
+		fmt.Printf("topn client conn: %v\n", c)
+		if i > 100 {
+			break
+		}
+	}
 }
 
 func checkChannelStats() {
@@ -109,6 +186,10 @@ func main() {
 		return
 	}
 
+	if *searchMode == "check_topics" {
+		checkTopicStats()
+		return
+	}
 	if *searchMode == "check_channels" {
 		checkChannelStats()
 		return

@@ -6,6 +6,9 @@ import (
 	"strconv"
 	"testing"
 	"time"
+
+	simpleJson "github.com/bitly/go-simplejson"
+	"github.com/youzan/nsq/internal/ext"
 )
 
 type fakeConsumer struct {
@@ -269,6 +272,104 @@ func TestChannelSkip(t *testing.T) {
 		outputMsg := <-channel.clientMsgChan
 		equal(t, string(outputMsg.Body[:]), strconv.Itoa(i+10))
 	}
+}
+
+func TestChannelSkipZanTestForOrdered(t *testing.T) {
+	// while the ordered message is timeouted and requeued,
+	// change the state to skip zan test may block waiting the next
+	// we test this case for ordered topic
+	opts := NewOptions()
+	opts.SyncEvery = 1
+	opts.Logger = newTestLogger(t)
+	opts.MsgTimeout = time.Second * 2
+	opts.AllowZanTestSkip = true
+	if testing.Verbose() {
+		opts.LogLevel = 4
+		SetLogger(opts.Logger)
+	}
+	_, _, nsqd := mustStartNSQD(opts)
+	defer os.RemoveAll(opts.DataPath)
+	defer nsqd.Exit()
+
+	topicName := "test_channel_skiptest_order" + strconv.Itoa(int(time.Now().Unix()))
+	topic := nsqd.GetTopicWithExt(topicName, 0, true)
+	channel := topic.GetChannel("order_channel")
+	channel.SetOrdered(true)
+	channel.doSkipZanTest(false)
+
+	msgs := make([]*Message, 0, 3)
+	for i := 0; i < 3; i++ {
+		var msgId MessageID
+		msgBytes := []byte(strconv.Itoa(i))
+		msg := NewMessage(msgId, msgBytes)
+		msgs = append(msgs, msg)
+	}
+	topic.PutMessages(msgs)
+
+	msgs = make([]*Message, 0, 3)
+	//put another 10 zan test messages
+	for i := 0; i < 3; i++ {
+		var msgId MessageID
+		msgBytes := []byte("zan_test")
+		extJ := simpleJson.New()
+		extJ.Set(ext.ZAN_TEST_KEY, true)
+		extBytes, _ := extJ.Encode()
+		msg := NewMessageWithExt(msgId, msgBytes, ext.JSON_HEADER_EXT_VER, extBytes)
+		msgs = append(msgs, msg)
+	}
+	topic.PutMessages(msgs)
+	topic.flushBuffer(true)
+	time.Sleep(time.Millisecond)
+
+	msgs = make([]*Message, 0, 3)
+	// put another normal messsages
+	for i := 0; i < 3; i++ {
+		var msgId MessageID
+		msgBytes := []byte(strconv.Itoa(i + 11 + 10))
+		msg := NewMessage(msgId, msgBytes)
+		msgs = append(msgs, msg)
+	}
+	topic.PutMessages(msgs)
+	topic.flushBuffer(true)
+	time.Sleep(time.Second)
+	// consume normal message and some test message
+	for i := 0; i < 3; i++ {
+		outputMsg := <-channel.clientMsgChan
+		t.Logf("consume %v", string(outputMsg.Body))
+		channel.StartInFlightTimeout(outputMsg, NewFakeConsumer(0), "", opts.MsgTimeout)
+		channel.FinishMessageForce(0, "", outputMsg.ID, true)
+		channel.ContinueConsumeForOrder()
+	}
+	time.Sleep(time.Millisecond * 10)
+	// make sure zan test timeout
+	outputMsg := <-channel.clientMsgChan
+	t.Logf("consume %v", string(outputMsg.Body))
+	channel.StartInFlightTimeout(outputMsg, NewFakeConsumer(0), "", opts.MsgTimeout)
+	equal(t, []byte("zan_test"), outputMsg.Body)
+	time.Sleep(time.Millisecond * 10)
+	// skip zan test soon to make sure the zan test is inflight
+	channel.doSkipZanTest(true)
+	time.Sleep(time.Second * 3)
+	toC := time.After(time.Second * 30)
+
+	// set zan test skip and should continue consume normal messages
+	for i := 0; i < 3; i++ {
+		select {
+		case outputMsg = <-channel.clientMsgChan:
+		case <-toC:
+			t.Errorf("timeout waiting consume")
+			return
+		}
+		t.Logf("consume %v, %v, %v", string(outputMsg.Body), string(outputMsg.ExtBytes), outputMsg.ExtVer)
+		channel.StartInFlightTimeout(outputMsg, NewFakeConsumer(0), "", opts.MsgTimeout)
+		channel.FinishMessageForce(0, "", outputMsg.ID, true)
+		channel.ContinueConsumeForOrder()
+		nequal(t, []byte("zan_test"), outputMsg.Body)
+		if channel.Depth() == 0 {
+			break
+		}
+	}
+	equal(t, channel.Depth(), int64(0))
 }
 
 func TestChannelInitWithOldStart(t *testing.T) {

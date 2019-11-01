@@ -30,7 +30,10 @@ const (
 	E_TOPIC_NOT_EXIST = "E_TOPIC_NOT_EXIST"
 )
 
-const maxTimeout = time.Hour
+const (
+	maxTimeout     = time.Hour
+	pubWaitTimeout = time.Second * 3
+)
 
 const (
 	frameTypeResponse int32 = 0
@@ -64,6 +67,27 @@ var (
 	ErrOrderChannelOnSampleRate = errors.New("order consume is not allowed while sample rate is not 0")
 	ErrPubToWaitTimeout         = errors.New("pub to wait channel timeout")
 )
+
+func isNetErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := strings.ToLower(err.Error())
+	if strings.Contains(errStr, "connection refuse") {
+		return true
+	}
+	if strings.Contains(errStr, "use of closed network") {
+		return true
+	}
+	if strings.Contains(errStr, "broken pipe") {
+		return true
+	}
+	if strings.Contains(errStr, "connection reset by peer") {
+		return true
+	}
+	// we ignore timeout error
+	return false
+}
 
 type protocolV2 struct {
 	ctx *context
@@ -608,7 +632,7 @@ func (p *protocolV2) messagePump(client *nsqd.ClientV2, startedChan chan bool,
 			if err != nil {
 				heartbeatFailedCnt++
 				nsqd.NsqLogger().Logf("PROTOCOL(V2): [%s] send heartbeat failed %v times, %v", client, heartbeatFailedCnt, err)
-				if heartbeatFailedCnt > 2 {
+				if heartbeatFailedCnt > 2 || isNetErr(err) {
 					goto exit
 				}
 			} else {
@@ -1465,9 +1489,9 @@ func internalPubAsync(clientTimer *time.Timer, msgBody *bytes.Buffer, topic *nsq
 	case topic.GetWaitChan() <- info:
 	default:
 		if clientTimer == nil {
-			clientTimer = time.NewTimer(time.Second * 5)
+			clientTimer = time.NewTimer(pubWaitTimeout)
 		} else {
-			clientTimer.Reset(time.Second * 5)
+			clientTimer.Reset(pubWaitTimeout)
 		}
 		select {
 		case topic.GetWaitChan() <- info:

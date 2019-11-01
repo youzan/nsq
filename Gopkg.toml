@@ -38,8 +38,8 @@
   version = "1.4.0"
 
 [[constraint]]
-  branch = "master"
   name = "github.com/absolute8511/glog"
+  version = "0.2.0"
 
 [[constraint]]
   branch = "master"

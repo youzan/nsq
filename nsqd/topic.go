@@ -1105,7 +1105,7 @@ func (t *Topic) updateChannelsEnd(forceReload bool, forceUpdate bool) {
 		}
 	}
 	t.channelLock.RUnlock()
-	cost := time.Now().Sub(s)
+	cost := time.Since(s)
 	if cost > time.Second/2 {
 		nsqLog.LogWarningf("topic(%s): update channels end cost: %v", t.GetFullName(), cost)
 	}
@@ -1268,9 +1268,13 @@ func (t *Topic) ForceFlush() {
 	for _, channel := range t.channelMap {
 		updateChannelEnd(false, e, channel)
 		channel.Flush(useFsync)
+		cost := time.Since(s)
+		if cost > slowCost*10 {
+			nsqLog.Logf("topic(%s): flush channel %v cost: %v", t.GetFullName(), channel.GetName(), cost)
+		}
 	}
 	t.channelLock.RUnlock()
-	cost := time.Now().Sub(s)
+	cost := time.Since(s)
 	if cost > slowCost*10 {
 		nsqLog.Logf("topic(%s): flush channel cost: %v", t.GetFullName(), cost)
 	}
@@ -1468,13 +1472,13 @@ func (t *Topic) ResetBackendWithQueueStartNoLock(queueStartOffset int64, queueSt
 	newEnd := t.backend.GetQueueReadEnd()
 	t.UpdateCommittedOffset(newEnd)
 
-	t.channelLock.Lock()
+	t.channelLock.RLock()
 	for _, ch := range t.channelMap {
 		nsqLog.Infof("channel stats: %v", ch.GetChannelDebugStats())
 		ch.UpdateQueueEnd(newEnd, true)
 		ch.ConfirmBackendQueueOnSlave(newEnd.Offset(), newEnd.TotalMsgCnt(), true)
 	}
-	t.channelLock.Unlock()
+	t.channelLock.RUnlock()
 	return nil
 }
 

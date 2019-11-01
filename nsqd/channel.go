@@ -2010,6 +2010,10 @@ LOOP:
 				}
 			}
 			c.CleanWaitingRequeueChan(msg)
+			// while the ordered message is timeouted and requeued, the
+			// readBackendWait and needNotifyRead need reset to notify
+			// the requeued message has been acked.
+			c.ContinueConsumeForOrder()
 			continue LOOP
 		}
 

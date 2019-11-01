@@ -257,6 +257,9 @@ func (p *program) Start() error {
 	if opts.LogDir != "" {
 		glog.SetGLogDir(opts.LogDir)
 	}
+	glog.SetLogExitFunc(func(err error) {
+		fmt.Printf("glog error: %v\n", err)
+	})
 	glog.StartWorker(time.Second * 2)
 
 	if strings.TrimSpace(opts.ClusterLeadershipRootDir) != "" {

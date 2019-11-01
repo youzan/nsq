@@ -417,9 +417,8 @@ func (ncoord *NsqdCoordinator) checkAndCleanOldData() {
 			if now.Hour() > 2 && now.Hour() < 6 {
 				coordLog.Infof("check and clean at time: %v", now)
 				doCheckAndCleanOld(true)
-			} else {
-				doCheckAndCleanOld(false)
 			}
+			doCheckAndCleanOld(false)
 		case <-ncoord.stopChan:
 			return
 		}
@@ -2709,6 +2708,10 @@ func (ncoord *NsqdCoordinator) readTopicRawData(topic string, partition int, off
 		buf, err = snap.ReadRaw(size)
 		if err != nil {
 			coordLog.Infof("read topic data at offset %v, size:%v(actual: %v), error: %v", offset, size, len(buf), err)
+			if err == io.EOF && len(dataList) > 0 {
+				// we can ignore EOF if we already read some data
+				err = nil
+			}
 			break
 		}
 		dataList = append(dataList, buf)
