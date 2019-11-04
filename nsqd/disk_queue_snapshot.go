@@ -137,7 +137,9 @@ func (d *DiskQueueSnapshot) stepOffset(allowBackward bool, cur diskQueueEndInfo,
 func (d *DiskQueueSnapshot) SkipToNext() error {
 	d.Lock()
 	defer d.Unlock()
-	if d.readPos.EndOffset.FileNum >= d.endPos.EndOffset.FileNum {
+	newPos := d.readPos
+retry:
+	if newPos.EndOffset.FileNum >= d.endPos.EndOffset.FileNum {
 		return ErrReadEndOfQueue
 	}
 
@@ -145,13 +147,22 @@ func (d *DiskQueueSnapshot) SkipToNext() error {
 		d.readFile.Close()
 		d.readFile = nil
 	}
-	_, _, endPos, err := getQueueFileOffsetMeta(d.fileName(d.readPos.EndOffset.FileNum))
+	cnt, _, endPos, err := getQueueFileOffsetMeta(d.fileName(newPos.EndOffset.FileNum))
+	newPos.EndOffset.FileNum++
+	newPos.EndOffset.Pos = 0
+	newPos.virtualEnd = BackendOffset(endPos)
+	newPos.totalMsgCnt = cnt
 	if err != nil {
-		return err
+		if os.IsNotExist(err) {
+			nsqLog.LogWarningf("skip not exist offset meta: %v", newPos)
+			goto retry
+		} else {
+			return err
+		}
 	}
-	d.readPos.EndOffset.FileNum++
-	d.readPos.EndOffset.Pos = 0
-	d.readPos.virtualEnd = BackendOffset(endPos)
+	d.readPos.EndOffset = newPos.EndOffset
+	d.readPos.virtualEnd = newPos.virtualEnd
+	d.readPos.totalMsgCnt = newPos.totalMsgCnt
 	return nil
 }
 
