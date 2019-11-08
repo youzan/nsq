@@ -267,6 +267,68 @@ func TestDiskQueueReaderSkip(t *testing.T) {
 	test.Equal(t, &dqReader.(*diskQueueReader).readQueueInfo, curEnd.(*diskQueueEndInfo))
 }
 
+func TestDiskQueueReaderSkipNextError(t *testing.T) {
+	// test skip can ignore not exist error to skip next
+	dqName := "test_disk_queue" + strconv.Itoa(int(time.Now().Unix()))
+	tmpDir, err := ioutil.TempDir("", fmt.Sprintf("nsq-test-%d", time.Now().UnixNano()))
+	test.Nil(t, err)
+	defer os.RemoveAll(tmpDir)
+	queue, _ := NewDiskQueueWriter(dqName, tmpDir, 1024, 4, 1<<10, 1)
+	dqWriter := queue.(*diskQueueWriter)
+	defer dqWriter.Close()
+	test.NotNil(t, dqWriter)
+
+	msg := []byte("test")
+	msgNum := 2000
+	for i := 0; i < msgNum; i++ {
+		dqWriter.Put(msg)
+	}
+	dqWriter.Flush(false)
+	end := dqWriter.GetQueueWriteEnd()
+	test.Nil(t, err)
+
+	dqReader := newDiskQueueReaderWithMetaStorage(dqName, dqName, tmpDir, 1024, 4, 1<<10, 1, 2*time.Second, nil, true)
+	dqReader.UpdateQueueEnd(end, false)
+	defer dqReader.Close()
+	curFileNum := dqReader.(*diskQueueReader).confirmedQueueInfo.EndOffset.FileNum
+	rend := dqReader.(*diskQueueReader).queueEndInfo
+	t.Logf("reader end : %v", rend)
+	// remove offset meta files
+	fName := dqReader.(*diskQueueReader).fileName(rend.EndOffset.FileNum / 2)
+	fName = fName + ".offsetmeta.dat"
+	err = os.Remove(fName)
+	test.Nil(t, err)
+	fName = dqReader.(*diskQueueReader).fileName(curFileNum + 1)
+	fName = fName + ".offsetmeta.dat"
+	err = os.Remove(fName)
+	test.Nil(t, err)
+
+	// skip to next file normal
+	newReaderInfo2, err := dqReader.(*diskQueueReader).SkipToNext()
+	test.Nil(t, err)
+	test.Equal(t, newReaderInfo2.(*diskQueueEndInfo).EndOffset.FileNum, curFileNum+1)
+
+	// skip to next file skip error meta
+	curFileNum = dqReader.(*diskQueueReader).confirmedQueueInfo.EndOffset.FileNum
+	newReaderInfo2, err = dqReader.(*diskQueueReader).SkipToNext()
+	test.Nil(t, err)
+	test.Equal(t, newReaderInfo2.(*diskQueueEndInfo).EndOffset.FileNum, curFileNum+2)
+
+	for {
+		curFileNum := dqReader.(*diskQueueReader).confirmedQueueInfo.EndOffset.FileNum
+		if curFileNum == rend.EndOffset.FileNum {
+			break
+		}
+		newReaderInfo2, err := dqReader.(*diskQueueReader).SkipToNext()
+		test.Nil(t, err)
+		if curFileNum == rend.EndOffset.FileNum/2 {
+			test.Equal(t, newReaderInfo2.(*diskQueueEndInfo).EndOffset.FileNum, curFileNum+2)
+		} else {
+			test.Equal(t, newReaderInfo2.(*diskQueueEndInfo).EndOffset.FileNum, curFileNum+1)
+		}
+	}
+}
+
 func TestDiskQueueReaderUpdateEnd(t *testing.T) {
 	// init empty with end
 	// init old reader with end
@@ -443,6 +505,67 @@ func TestDiskQueueSnapshotReader(t *testing.T) {
 	test.Nil(t, err)
 	test.Equal(t, 100, len(data))
 	// remove some begin of queue, and test queue start
+}
+
+func TestDiskQueueSnapshotReaderSkipNextError(t *testing.T) {
+	// test skip can ignore not exist error to skip next
+	dqName := "test_disk_queue" + strconv.Itoa(int(time.Now().Unix()))
+	tmpDir, err := ioutil.TempDir("", fmt.Sprintf("nsq-test-%d", time.Now().UnixNano()))
+	test.Nil(t, err)
+	defer os.RemoveAll(tmpDir)
+	queue, _ := NewDiskQueueWriter(dqName, tmpDir, 1024, 4, 1<<10, 1)
+	dqWriter := queue.(*diskQueueWriter)
+	defer dqWriter.Close()
+	test.NotNil(t, dqWriter)
+
+	msg := []byte("test")
+	msgNum := 2000
+	for i := 0; i < msgNum; i++ {
+		dqWriter.Put(msg)
+	}
+	dqWriter.Flush(false)
+	end := dqWriter.GetQueueWriteEnd()
+	test.Nil(t, err)
+
+	dqReader := NewDiskQueueSnapshot(dqName, tmpDir, end)
+	defer dqReader.Close()
+	curFileNum := dqReader.readPos.EndOffset.FileNum
+	rend := dqReader.endPos
+	t.Logf("reader end : %v", rend)
+	// remove offset meta files
+	fName := dqReader.fileName(rend.EndOffset.FileNum / 2)
+	fName = fName + ".offsetmeta.dat"
+	err = os.Remove(fName)
+	test.Nil(t, err)
+	fName = dqReader.fileName(curFileNum + 1)
+	fName = fName + ".offsetmeta.dat"
+	err = os.Remove(fName)
+	test.Nil(t, err)
+
+	// skip to next file normal
+	err = dqReader.SkipToNext()
+	test.Nil(t, err)
+	test.Equal(t, curFileNum+1, dqReader.readPos.EndOffset.FileNum)
+
+	// skip to next file skip error meta
+	curFileNum = dqReader.readPos.EndOffset.FileNum
+	err = dqReader.SkipToNext()
+	test.Nil(t, err)
+	test.Equal(t, curFileNum+2, dqReader.readPos.EndOffset.FileNum)
+
+	for {
+		curFileNum = dqReader.readPos.EndOffset.FileNum
+		if curFileNum == rend.EndOffset.FileNum {
+			break
+		}
+		err := dqReader.SkipToNext()
+		test.Nil(t, err)
+		if curFileNum == rend.EndOffset.FileNum/2 {
+			test.Equal(t, curFileNum+2, dqReader.readPos.EndOffset.FileNum)
+		} else {
+			test.Equal(t, curFileNum+1, dqReader.readPos.EndOffset.FileNum)
+		}
+	}
 }
 
 func TestDiskQueueSnapshotReaderToEnd(t *testing.T) {
