@@ -53,6 +53,24 @@ For details please refer to the sample configure files under contrib directory.
 
 Other deploy can be the same as the Official.
 
+## 有赞NSQ文档索引
+
+### 用户指南
+
+[有赞NSQ用户指南](doc/NSQ-user-guide.md)
+
+[JavaSDK使用指南](https://github.com/youzan/nsqJavaSDK/wiki/Get-started)
+
+### 内部实现文档
+
+[重构概览](doc/redesign-overview.md)
+
+[重构实现细节](doc/The-details-of-the-new-arch.md)
+
+[客户端SDK实现](doc/how-we-redesign-the-nsq-smart-client.md)
+
+[扩展消息设计](doc/Message-Extend-Header-Design.md)
+
 ## FAQ for this Fork
 
 ### Can I use the Official client SDK?
