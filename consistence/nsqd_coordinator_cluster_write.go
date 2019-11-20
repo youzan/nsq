@@ -407,13 +407,13 @@ retrysync:
 		goto exitsync
 	}
 	if retryCnt > MAX_WRITE_RETRY {
-		coordLog.Warningf("retrying times is large: %v", retryCnt)
+		coordLog.Errorf("topic %v sync operation failed and retrying many times: %v", topicFullName, retryCnt)
 		needRefreshISR = true
 		if coord.IsExiting() {
 			clusterWriteErr = ErrTopicExiting
 			goto exitsync
 		}
-		time.Sleep(time.Second / 2)
+		time.Sleep(MaxRetryWait / 2)
 	}
 	if needRefreshISR {
 		tcData = coord.GetData()
@@ -527,7 +527,7 @@ retrysync:
 						coordLog.Infof("request the failed node: %v to leave topic %v isr", nid, topicFullName)
 					}
 				}
-				time.Sleep(time.Second / 2)
+				time.Sleep(MaxRetryWait / 2)
 			}
 		} else {
 			needLeaveISR = true
@@ -535,7 +535,7 @@ retrysync:
 		}
 
 		if retryCnt > MAX_WRITE_RETRY*2 {
-			coordLog.Warningf("topic %v sync write failed due to max retry: %v", topicFullName, retryCnt)
+			coordLog.Errorf("topic %v sync write failed due to max retry: %v", topicFullName, retryCnt)
 			goto exitsync
 		}
 

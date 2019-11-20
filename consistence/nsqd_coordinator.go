@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	MAX_WRITE_RETRY             = 10
+	MAX_WRITE_RETRY             = 8
 	MAX_CATCHUP_RETRY           = 5
 	MAX_LOG_PULL                = 10000
 	MAX_LOG_PULL_BYTES          = 1024 * 1024 * 32
@@ -30,7 +30,7 @@ const (
 )
 
 var (
-	MaxRetryWait                = time.Second
+	MaxRetryWait                = time.Millisecond * 200
 	ForceFixLeaderData          = false
 	MaxTopicRetentionSizePerDay = int64(1024 * 1024 * 1024 * 16)
 	flushTicker                 = time.Second * 2
@@ -2300,7 +2300,7 @@ func (ncoord *NsqdCoordinator) switchStateForMaster(topicCoord *TopicCoordinator
 		localTopic.Unlock()
 
 		if !isWriteDisabled {
-			ncoord.trySyncTopicChannels(tcData, true, false, false)
+			ncoord.trySyncTopicChannels(tcData, true, false, true)
 		}
 
 		coordLog.Infof("current topic %v write state: %v",
@@ -2594,9 +2594,10 @@ func (ncoord *NsqdCoordinator) trySyncTopicChannels(tcData *coordData, syncDelay
 			if keyList == nil && cntList == nil && channelCntList == nil {
 				// no delayed queue
 			} else {
+				waitRsp := !notifyOnly
 				ncoord.doRpcForNodeList(tcData.topicInfo.ISR, false, func(c *NsqdRpcClient) *CoordErr {
 					rpcErr := c.UpdateDelayedQueueState(&tcData.topicLeaderSession, &tcData.topicInfo,
-						"", ts, keyList, cntList, channelCntList, true)
+						"", ts, keyList, cntList, channelCntList, waitRsp)
 					if rpcErr != nil {
 						coordLog.Infof("node %v update delayed queue state %v failed %v.", c.remote,
 							tcData.topicInfo.GetTopicDesp(), rpcErr)

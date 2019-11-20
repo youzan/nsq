@@ -20,16 +20,17 @@ import (
 )
 
 var (
-	syncedOffsetKey             = []byte("synced_offset")
-	bucketDelayedMsg            = []byte("delayed_message")
-	bucketDelayedMsgIndex       = []byte("delayed_message_index")
-	bucketMeta                  = []byte("meta")
-	CompactThreshold            = 1024 * 1024 * 16
-	compactSingleAvgSize        = 1024 * 32
-	errBucketKeyNotFound        = errors.New("bucket key not found")
-	txMaxBatch                  = 5000
-	largeDBSize           int64 = 1024 * 1024 * 1024 * 4
-	errDBSizeTooLarge           = errors.New("db size too large")
+	syncedOffsetKey              = []byte("synced_offset")
+	bucketDelayedMsg             = []byte("delayed_message")
+	bucketDelayedMsgIndex        = []byte("delayed_message_index")
+	bucketMeta                   = []byte("meta")
+	CompactThreshold             = 1024 * 1024 * 16
+	compactSingleAvgSize         = 1024 * 32
+	errBucketKeyNotFound         = errors.New("bucket key not found")
+	txMaxBatch                   = 5000
+	largeDBSize            int64 = 1024 * 1024 * 1024 * 4
+	errDBSizeTooLarge            = errors.New("db size too large")
+	errTooMuchRunningEmpty       = errors.New("too much running empty")
 )
 
 const (
@@ -39,7 +40,8 @@ const (
 	TransactionDelayed  = 3
 	MaxDelayedType      = 4
 	TxMaxSize           = 65536
-	CompactCntThreshold = 20000
+	CompactCntThreshold = 40000
+	maxEmptyRunning     = 5
 )
 
 type RecentKeyList [][]byte
@@ -240,6 +242,7 @@ type DelayQueue struct {
 	oldestChannelDelayedTs map[string]int64
 	oldestMutex            sync.Mutex
 	changedTs              int64
+	updateConsumeCnt       int64
 }
 
 func NewDelayQueueForRead(topicName string, part int, dataPath string, opt *Options,
@@ -838,6 +841,13 @@ func (q *DelayQueue) emptyDelayedUntil(dt int, peekTs int64, id MessageID, ch st
 	}
 	db := q.getStore()
 	prefix := getDelayedMsgDBPrefixKey(dt, ch)
+	if totalCnt < uint64(txMaxBatch) {
+		if ds, _ := q.GetDBSize(); ds > largeDBSize {
+			nsqLog.Infof("topic %v empty return early since exceed max size %v, %v, %v", q.GetFullName(), string(prefix), ds, totalCnt)
+			// we just ignore large db error
+			return cleanedTs, nil
+		}
+	}
 	q.compactMutex.Lock()
 	defer q.compactMutex.Unlock()
 	// 1. to avoid too much in batch, we should empty at most 10000 at each tx
@@ -849,11 +859,6 @@ func (q *DelayQueue) emptyDelayedUntil(dt int, peekTs int64, id MessageID, ch st
 
 	err = db.Update(func(tx *bolt.Tx) error {
 		dbSize := tx.Size()
-		if dbSize > largeDBSize && totalCnt < uint64(txMaxBatch) {
-			exceedMaxBatch = true
-			nsqLog.Infof("topic %v empty return early since exceed max size %v, %v", q.GetFullName(), string(prefix), tx.Size())
-			return errDBSizeTooLarge
-		}
 		b := tx.Bucket(bucketDelayedMsg)
 		c := b.Cursor()
 		for k, _ := c.Seek(prefix); k != nil && bytes.HasPrefix(k, prefix); k, _ = c.Next() {
@@ -1224,6 +1229,13 @@ func (q *DelayQueue) GetOldestConsumedState(chList []string, includeOthers bool)
 }
 
 func (q *DelayQueue) UpdateConsumedState(ts int64, keyList RecentKeyList, cntList map[int]uint64, channelCntList map[string]uint64) error {
+	// avoid too much running
+	n := atomic.AddInt64(&q.updateConsumeCnt, 1)
+	defer atomic.AddInt64(&q.updateConsumeCnt, -1)
+	if n > maxEmptyRunning {
+		nsqLog.Infof("topic %v empty too much %v", q.GetFullName(), n)
+		return errTooMuchRunningEmpty
+	}
 	for _, k := range keyList {
 		dt, dts, id, delayedCh, err := decodeDelayedMsgDBKey(k)
 		if err != nil {
@@ -1364,6 +1376,7 @@ func (q *DelayQueue) compactStore(force bool) error {
 			return err
 		}
 		if cnt > CompactCntThreshold {
+			nsqLog.Infof("db %v no need compact %v, %v", origPath, fi.Size(), cnt)
 			return nil
 		}
 		// 10000 msgs with no delete is about 80MB, so we should check if it can become smaller after compact
@@ -1393,7 +1406,7 @@ func (q *DelayQueue) compactStore(force bool) error {
 
 	nsqLog.Infof("db %v begin compact", origPath)
 	defer nsqLog.Infof("db %v end compact", origPath)
-	err = compactBolt(dst, src, time.Second*10)
+	err = compactBolt(dst, src, time.Second*30)
 	if err != nil {
 		nsqLog.Infof("db %v compact failed: %v", origPath, err)
 		os.Remove(tmpPath)
