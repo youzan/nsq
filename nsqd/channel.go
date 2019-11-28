@@ -1893,7 +1893,7 @@ LOOP:
 			case data = <-readChan:
 				lastDataNeedRead = false
 				if data.Err != nil {
-					nsqLog.LogErrorf("channel (%v): failed to read message - %s", c.GetName(), data.Err)
+					nsqLog.Errorf("channel (%v-%v): failed to read message - %s", c.GetTopicName(), c.GetName(), data.Err)
 					if data.Err == ErrReadQueueCountMissing {
 						time.Sleep(time.Second)
 					} else {
@@ -1924,7 +1924,7 @@ LOOP:
 				backendErr = 0
 				msg, err = decodeMessage(data.Data, c.IsExt())
 				if err != nil {
-					nsqLog.LogErrorf("channel (%v): failed to decode message - %s - %v", c.GetName(), err, data)
+					nsqLog.Errorf("channel (%v-%v): failed to decode message - %s - %v", c.GetTopicName(), c.GetName(), err, data)
 					continue LOOP
 				}
 				msg.Offset = data.Offset
