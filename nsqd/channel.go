@@ -1904,7 +1904,7 @@ LOOP:
 							_, skipErr := c.backend.(*diskQueueReader).SkipToNext()
 							if skipErr != nil {
 							}
-							nsqLog.Warningf("channel %v skip to next because of backend error: %v", c.GetName(), backendErr)
+							nsqLog.Errorf("channel %v-%v skip to next because of backend error: %v", c.GetTopicName(), c.GetName(), backendErr)
 							isSkipped = true
 							backendErr = 0
 						} else {
@@ -1952,7 +1952,7 @@ LOOP:
 				lastDataResult = data
 				if isSkipped {
 					// TODO: store the skipped info to retry error if possible.
-					nsqLog.LogWarningf("channel (%v): skipped message from %v:%v to the : %v:%v",
+					nsqLog.LogWarningf("channel (%v-%v): skipped message from %v:%v to the : %v:%v", c.GetTopicName(),
 						c.GetName(), lastMsg.ID, lastMsg.Offset, msg.ID, msg.Offset)
 				}
 				if resumedFirst {
