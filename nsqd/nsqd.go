@@ -326,6 +326,11 @@ func (n *NSQD) LoadMetadata(disabled int32) {
 		}
 		topic := n.internalGetTopic(topicName, part, ext, ordered, disabled)
 
+		if topic == nil {
+			nsqLog.LogErrorf("failed to init topic %v - %s", topicName, err)
+			continue
+		}
+
 		// old meta should also be loaded
 		channels, err := topicJs.Get("channels").Array()
 		if err != nil {
