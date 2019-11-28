@@ -1904,7 +1904,7 @@ LOOP:
 							_, skipErr := c.backend.(*diskQueueReader).SkipToNext()
 							if skipErr != nil {
 							}
-							nsqLog.Warningf("channel %v skip to next because of backend error: %v", c.GetName(), backendErr)
+							nsqLog.Errorf("channel %v-%v skip to next because of backend error: %v", c.GetTopicName(), c.GetName(), backendErr)
 							isSkipped = true
 							backendErr = 0
 						} else {
@@ -1952,7 +1952,7 @@ LOOP:
 				lastDataResult = data
 				if isSkipped {
 					// TODO: store the skipped info to retry error if possible.
-					nsqLog.LogWarningf("channel (%v): skipped message from %v:%v to the : %v:%v",
+					nsqLog.LogWarningf("channel (%v-%v): skipped message from %v:%v to the : %v:%v", c.GetTopicName(),
 						c.GetName(), lastMsg.ID, lastMsg.Offset, msg.ID, msg.Offset)
 				}
 				if resumedFirst {
@@ -2096,7 +2096,10 @@ exit:
 func (c *Channel) shouldSkipZanTest(msg *Message) bool {
 	if c.IsZanTestSkipped() && msg.ExtVer == ext.JSON_HEADER_EXT_VER {
 		//check if zan_test header contained in json header
-		extHeader, _ := simpleJson.NewJson(msg.ExtBytes)
+		extHeader, err := simpleJson.NewJson(msg.ExtBytes)
+		if err != nil {
+			return false
+		}
 		if flag, exist := extHeader.CheckGet(ext.ZAN_TEST_KEY); exist {
 			tb, err := flag.Bool()
 			if err != nil {
@@ -2425,7 +2428,7 @@ func (c *Channel) peekAndReqDelayedMessages(tnow int64, delayedQueue *DelayQueue
 			if ok2 {
 				// the delayed orig message id in delayed message is the actual id in the topic queue
 				if oldMsg2.ID != m.DelayedOrigID || oldMsg2.DelayedTs != m.DelayedTs {
-					nsqLog.Logf("old msg %v in flight mismatch peek from delayed queue, new %v ",
+					nsqLog.Debugf("old msg %v in flight mismatch peek from delayed queue, new %v ",
 						oldMsg2, m)
 					if oldMsg2.ID == m.DelayedOrigID &&
 						oldMsg2.DelayedChannel == "" &&
