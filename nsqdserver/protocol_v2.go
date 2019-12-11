@@ -343,7 +343,7 @@ func handleRequestReponseForClient(client *nsqd.ClientV2, response []byte, err e
 
 		sendErr := Send(client, frameTypeError, []byte(err.Error()))
 		if sendErr != nil {
-			nsqd.NsqLogger().LogErrorf("Send response error: [%s] - %s%s", client, sendErr, ctx)
+			nsqd.NsqLogger().LogWarningf("Send response error: [%s] - %s%s", client, sendErr, ctx)
 			return err
 		}
 

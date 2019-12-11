@@ -2041,7 +2041,8 @@ LOOP:
 			//deliver according to tag value in message
 			msgTag, err = parseTagIfAny(msg)
 			if err != nil {
-				nsqLog.Errorf("error parse tag from message %v, offset %v, data: %v", msg.ID, msg.Offset, PrintMessage(msg))
+				nsqLog.Errorf("topic %v channel %v error parse tag from message %v, offset %v, ext data: %s, err: %v",
+					c.GetTopicName(), c.GetName(), msg.ID, msg.Offset, msg.ExtBytes, err.Error())
 			}
 			extParsed = true
 		}
@@ -2127,6 +2128,9 @@ func parseTagIfAny(msg *Message) (string, error) {
 			if tagJson, exist := jsonExt.CheckGet(ext.CLIENT_DISPATCH_TAG_KEY); exist {
 				msgTag, err = tagJson.String()
 			}
+		} else if len(msg.ExtBytes) == 0 {
+			err = nil
+			msgTag = ""
 		}
 	}
 	return msgTag, err

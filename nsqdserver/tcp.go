@@ -4,10 +4,11 @@ import (
 	"io"
 	"net"
 
+	"time"
+
 	"github.com/youzan/nsq/internal/levellogger"
 	"github.com/youzan/nsq/internal/protocol"
 	"github.com/youzan/nsq/nsqd"
-	"time"
 )
 
 type tcpServer struct {
@@ -40,7 +41,7 @@ func (p *tcpServer) Handle(clientConn net.Conn) {
 	default:
 		protocol.SendFramedResponse(clientConn, frameTypeError, []byte("E_BAD_PROTOCOL"))
 		clientConn.Close()
-		nsqd.NsqLogger().LogErrorf("client(%s) bad protocol magic '%s'",
+		nsqd.NsqLogger().Logf("client(%s) bad protocol magic '%s'",
 			clientConn.RemoteAddr(), protocolMagic)
 		return
 	}
