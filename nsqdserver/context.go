@@ -394,13 +394,13 @@ func (c *context) internalPubLoop(topic *nsqd.Topic) {
 		case <-quitChan:
 			return
 		case info := <-infoChan:
-			if info.MsgBody.Len() <= 0 {
+			if len(info.MsgBody) <= 0 {
 				nsqd.NsqLogger().Logf("empty msg body")
 			}
 			if !topic.IsExt() {
-				messages = append(messages, nsqd.NewMessage(0, info.MsgBody.Bytes()))
+				messages = append(messages, nsqd.NewMessage(0, info.MsgBody))
 			} else {
-				messages = append(messages, nsqd.NewMessageWithExt(0, info.MsgBody.Bytes(), info.ExtContent.ExtVersion(), info.ExtContent.GetBytes()))
+				messages = append(messages, nsqd.NewMessageWithExt(0, info.MsgBody, info.ExtContent.ExtVersion(), info.ExtContent.GetBytes()))
 			}
 			pubInfoList = append(pubInfoList, info)
 			// TODO: avoid too much in a batch
@@ -411,9 +411,9 @@ func (c *context) internalPubLoop(topic *nsqd.Topic) {
 					return
 				case info := <-infoChan:
 					if !topic.IsExt() {
-						messages = append(messages, nsqd.NewMessage(0, info.MsgBody.Bytes()))
+						messages = append(messages, nsqd.NewMessage(0, info.MsgBody))
 					} else {
-						messages = append(messages, nsqd.NewMessageWithExt(0, info.MsgBody.Bytes(), info.ExtContent.ExtVersion(), info.ExtContent.GetBytes()))
+						messages = append(messages, nsqd.NewMessageWithExt(0, info.MsgBody, info.ExtContent.ExtVersion(), info.ExtContent.GetBytes()))
 					}
 					pubInfoList = append(pubInfoList, info)
 				}

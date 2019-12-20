@@ -73,7 +73,7 @@ type TopicDynamicConf struct {
 
 type PubInfo struct {
 	Done       chan struct{}
-	MsgBody    *bytes.Buffer
+	MsgBody    []byte
 	ExtContent ext.IExtContent
 	StartPub   time.Time
 	Err        error
