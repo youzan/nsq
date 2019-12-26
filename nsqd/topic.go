@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"math/rand"
 	"os"
@@ -72,7 +73,7 @@ type TopicDynamicConf struct {
 
 type PubInfo struct {
 	Done       chan struct{}
-	MsgBody    *bytes.Buffer
+	MsgBody    []byte
 	ExtContent ext.IExtContent
 	StartPub   time.Time
 	Err        error
@@ -1393,11 +1394,7 @@ func (t *Topic) TryCleanOldData(retentionSize int64, noRealClean bool, maxCleanO
 		nsqLog.Errorf("topic: %v failed to seek to %v: %v", t.GetFullName(), cleanStart, err)
 		return nil, err
 	}
-	readInfo := snapReader.GetCurrentReadQueueOffset()
-	data := snapReader.ReadOne()
-	if data.Err != nil {
-		return nil, data.Err
-	}
+
 	var cleanEndInfo BackendQueueOffset
 	t.Lock()
 	retentionDay := atomic.LoadInt32(&t.dynamicConf.RetentionDay)
@@ -1407,6 +1404,20 @@ func (t *Topic) TryCleanOldData(retentionSize int64, noRealClean bool, maxCleanO
 	cleanTime := time.Now().Add(-1 * time.Hour * 24 * time.Duration(retentionDay))
 	t.Unlock()
 	for {
+		readInfo := snapReader.GetCurrentReadQueueOffset()
+		data := snapReader.ReadOne()
+		if data.Err != nil {
+			if data.Err == io.EOF {
+				break
+			}
+			nsqLog.Warningf("failed to read at %v - %s", readInfo, data.Err)
+			err := snapReader.SkipToNext()
+			if err != nil {
+				nsqLog.Logf("failed to skip - %s ", err)
+				break
+			}
+			continue
+		}
 		if retentionSize > 0 {
 			// clean data ignore the retention day
 			// only keep the retention size (start from the last consumed)
@@ -1431,12 +1442,6 @@ func (t *Topic) TryCleanOldData(retentionSize int64, noRealClean bool, maxCleanO
 		err = snapReader.SkipToNext()
 		if err != nil {
 			nsqLog.Logf("failed to skip - %s ", err)
-			break
-		}
-		readInfo = snapReader.GetCurrentReadQueueOffset()
-		data = snapReader.ReadOne()
-		if data.Err != nil {
-			nsqLog.Logf("failed to read - %s ", data.Err)
 			break
 		}
 	}

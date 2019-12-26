@@ -445,7 +445,7 @@ func (s *httpServer) internalPUB(w http.ResponseWriter, req *http.Request, ps ht
 		offset := nsqd.BackendOffset(0)
 		rawSize := int32(0)
 		if asyncAction {
-			err = internalPubAsync(nil, b, topic, extContent)
+			err = internalPubAsync(nil, body, topic, extContent)
 		} else {
 			id, offset, rawSize, _, err = s.ctx.PutMessage(topic, body, extContent, traceID)
 		}

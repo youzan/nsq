@@ -324,8 +324,8 @@ func (p *protocolV2) IOLoop(conn net.Conn) error {
 	return err
 }
 
-func shouldHandleAsync(client *nsqd.ClientV2, params [][]byte) bool {
-	return bytes.Equal(params[0], []byte("PUB"))
+func shouldHandleAsync(params [][]byte) bool {
+	return bytes.Equal(params[0], []byte("PUB")) || bytes.Equal(params[0], []byte("PUB_EXT"))
 }
 
 func handleRequestReponseForClient(client *nsqd.ClientV2, response []byte, err error) error {
@@ -343,7 +343,7 @@ func handleRequestReponseForClient(client *nsqd.ClientV2, response []byte, err e
 
 		sendErr := Send(client, frameTypeError, []byte(err.Error()))
 		if sendErr != nil {
-			nsqd.NsqLogger().LogErrorf("Send response error: [%s] - %s%s", client, sendErr, ctx)
+			nsqd.NsqLogger().LogWarningf("Send response error: [%s] - %s%s", client, sendErr, ctx)
 			return err
 		}
 
@@ -1474,7 +1474,7 @@ func getTracedReponse(id nsqd.MessageID, traceID uint64, offset nsqd.BackendOffs
 	return buf, nil
 }
 
-func internalPubAsync(clientTimer *time.Timer, msgBody *bytes.Buffer, topic *nsqd.Topic, extContent ext.IExtContent) error {
+func internalPubAsync(clientTimer *time.Timer, msgBody []byte, topic *nsqd.Topic, extContent ext.IExtContent) error {
 	if topic.Exiting() {
 		return nsqd.ErrExiting
 	}
@@ -1539,7 +1539,7 @@ func (p *protocolV2) internalPubExtAndTrace(client *nsqd.ClientV2, params [][]by
 
 	messageBodyBuffer := topic.BufferPoolGet(int(bodyLen))
 	defer topic.BufferPoolPut(messageBodyBuffer)
-	asyncAction := shouldHandleAsync(client, params)
+	asyncAction := shouldHandleAsync(params)
 
 	topicName := topic.GetTopicName()
 	_, err = io.CopyN(messageBodyBuffer, client.Reader, int64(bodyLen))
@@ -1618,7 +1618,7 @@ func (p *protocolV2) internalPubExtAndTrace(client *nsqd.ClientV2, params [][]by
 	offset := nsqd.BackendOffset(0)
 	rawSize := int32(0)
 	if asyncAction {
-		err = internalPubAsync(client.PubTimeout, messageBodyBuffer, topic, extContent)
+		err = internalPubAsync(client.PubTimeout, realBody, topic, extContent)
 	} else {
 		id, offset, rawSize, _, err = p.ctx.PutMessage(topic, realBody, extContent, traceID)
 	}

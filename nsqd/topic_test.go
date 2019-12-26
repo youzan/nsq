@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/absolute8511/glog"
+	"github.com/youzan/nsq/internal/ext"
 	"github.com/youzan/nsq/internal/test"
 )
 
@@ -678,7 +679,7 @@ func TestTopicResetWithQueueStart(t *testing.T) {
 	}
 }
 
-func benchmarkTopicPut(b *testing.B, size int) {
+func benchmarkTopicPut(b *testing.B, size int, useExt bool) {
 	b.StopTimer()
 	topicName := "bench_topic_put" + strconv.Itoa(b.N)
 	opts := NewOptions()
@@ -686,25 +687,45 @@ func benchmarkTopicPut(b *testing.B, size int) {
 	opts.MemQueueSize = int64(b.N)
 	_, _, nsqd := mustStartNSQD(opts)
 	msg := NewMessage(0, make([]byte, size))
+	if useExt {
+		msg = NewMessageWithExt(0, make([]byte, size), ext.JSON_HEADER_EXT_VER, []byte("test"))
+	}
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqd.Exit()
 	b.StartTimer()
 
+	topic := nsqd.GetTopic(topicName, 0, false)
+	topic.SetDynamicInfo(TopicDynamicConf{
+		Ext: useExt,
+	}, nil)
 	for i := 0; i <= b.N; i++ {
-		topic := nsqd.GetTopic(topicName, 0, false)
 		msg.ID = 0
 		topic.PutMessage(msg)
 	}
 }
 
 func BenchmarkTopicPut16(b *testing.B) {
-	benchmarkTopicPut(b, 16)
+	benchmarkTopicPut(b, 16, false)
 }
 
 func BenchmarkTopicPut128(b *testing.B) {
-	benchmarkTopicPut(b, 128)
+	benchmarkTopicPut(b, 128, false)
 }
 
+func BenchmarkTopicPut1024(b *testing.B) {
+	benchmarkTopicPut(b, 1024, false)
+}
+func BenchmarkTopicExtPut16(b *testing.B) {
+	benchmarkTopicPut(b, 16, true)
+}
+
+func BenchmarkTopicExtPut128(b *testing.B) {
+	benchmarkTopicPut(b, 128, true)
+}
+
+func BenchmarkTopicExtPut1024(b *testing.B) {
+	benchmarkTopicPut(b, 1024, true)
+}
 func BenchmarkTopicToChannelPut(b *testing.B) {
 	b.StopTimer()
 	topicName := "bench_topic_to_channel_put" + strconv.Itoa(b.N)

@@ -2000,7 +2000,7 @@ func TestChannelCreateSync(t *testing.T) {
 	test.Equal(t, c1, t3ch1.GetConfirmed())
 }
 
-func benchmarkNsqdCoordPubWithArg(b *testing.B, replica int, size int) {
+func benchmarkNsqdCoordPubWithArg(b *testing.B, replica int, size int, useExt bool) {
 	b.StopTimer()
 	topicBase := "coordBenchTestTopic"
 	partition := 1
@@ -2040,77 +2040,82 @@ func benchmarkNsqdCoordPubWithArg(b *testing.B, replica int, size int) {
 
 	}
 
-	topicDataList := make([]*nsqdNs.Topic, 0)
-	for tnum := 0; tnum < 20; tnum++ {
-		var topicInitInfo RpcAdminTopicInfo
-		topicInitInfo.Name = topicBase + "-" + strconv.Itoa(tnum)
-		topic := topicInitInfo.Name
-		topicInitInfo.Partition = partition
-		topicInitInfo.Epoch = 1
-		topicInitInfo.EpochForWrite = 1
-		topicInitInfo.ISR = append(topicInitInfo.ISR, nsqdCoord1.myNode.GetID())
-		if replica >= 2 {
-			topicInitInfo.ISR = append(topicInitInfo.ISR, nsqdCoord2.myNode.GetID())
-		}
-		if replica >= 3 {
-			topicInitInfo.ISR = append(topicInitInfo.ISR, nsqdCoord3.myNode.GetID())
-		}
-		topicInitInfo.Leader = nsqdCoord1.myNode.GetID()
-		topicInitInfo.Replica = replica
-		ensureTopicOnNsqdCoord(nsqdCoord1, topicInitInfo)
-		if replica >= 2 {
-			ensureTopicOnNsqdCoord(nsqdCoord2, topicInitInfo)
-		}
-		if replica >= 3 {
-			ensureTopicOnNsqdCoord(nsqdCoord3, topicInitInfo)
-		}
-		leaderSession := &TopicLeaderSession{
-			LeaderNode:  nodeInfo1,
-			LeaderEpoch: 1,
-			Session:     "fake123",
-		}
-		// normal test
-		ensureTopicLeaderSession(nsqdCoord1, topic, partition, leaderSession)
-		ensureTopicDisableWrite(nsqdCoord1, topic, partition, false)
-		if replica >= 2 {
-			ensureTopicLeaderSession(nsqdCoord2, topic, partition, leaderSession)
-			ensureTopicDisableWrite(nsqdCoord2, topic, partition, false)
-		}
-		if replica >= 3 {
-			ensureTopicLeaderSession(nsqdCoord3, topic, partition, leaderSession)
-			ensureTopicDisableWrite(nsqdCoord3, topic, partition, false)
-		}
-		msg := make([]byte, size)
-		// check if write ok
-		topicData := nsqd1.GetTopic(topic, partition, false)
-		_, _, _, _, err := nsqdCoord1.PutMessageBodyToCluster(topicData, msg, 0)
-		if err != nil {
-			b.Logf("test put failed: %v", err)
-			b.Fail()
-		} else {
-			topicDataList = append(topicDataList, topicData)
-		}
+	var topicInitInfo RpcAdminTopicInfo
+	topicInitInfo.Name = topicBase + "-" + strconv.Itoa(0)
+	topic := topicInitInfo.Name
+	topicInitInfo.Partition = partition
+	topicInitInfo.Epoch = 1
+	topicInitInfo.EpochForWrite = 1
+	topicInitInfo.Ext = useExt
+	topicInitInfo.ISR = append(topicInitInfo.ISR, nsqdCoord1.myNode.GetID())
+	if replica >= 2 {
+		topicInitInfo.ISR = append(topicInitInfo.ISR, nsqdCoord2.myNode.GetID())
+	}
+	if replica >= 3 {
+		topicInitInfo.ISR = append(topicInitInfo.ISR, nsqdCoord3.myNode.GetID())
+	}
+	topicInitInfo.Leader = nsqdCoord1.myNode.GetID()
+	topicInitInfo.Replica = replica
+	ensureTopicOnNsqdCoord(nsqdCoord1, topicInitInfo)
+	if replica >= 2 {
+		ensureTopicOnNsqdCoord(nsqdCoord2, topicInitInfo)
+	}
+	if replica >= 3 {
+		ensureTopicOnNsqdCoord(nsqdCoord3, topicInitInfo)
+	}
+	leaderSession := &TopicLeaderSession{
+		LeaderNode:  nodeInfo1,
+		LeaderEpoch: 1,
+		Session:     "fake123",
+	}
+	// normal test
+	ensureTopicLeaderSession(nsqdCoord1, topic, partition, leaderSession)
+	ensureTopicDisableWrite(nsqdCoord1, topic, partition, false)
+	if replica >= 2 {
+		ensureTopicLeaderSession(nsqdCoord2, topic, partition, leaderSession)
+		ensureTopicDisableWrite(nsqdCoord2, topic, partition, false)
+	}
+	if replica >= 3 {
+		ensureTopicLeaderSession(nsqdCoord3, topic, partition, leaderSession)
+		ensureTopicDisableWrite(nsqdCoord3, topic, partition, false)
 	}
 	msg := make([]byte, size)
+	// check if write ok
+	topicData := nsqd1.GetTopic(topic, partition, false)
+	_, _, _, _, err := nsqdCoord1.PutMessageBodyToCluster(topicData, msg, 0)
+	if err != nil {
+		b.Logf("test put failed: %v", err)
+		b.Fail()
+	}
 	//b.SetParallelism(1)
-	var wg sync.WaitGroup
 	b.SetBytes(int64(len(msg)))
 	b.StartTimer()
 
-	num := b.N / len(topicDataList)
-
-	for tnum := 0; tnum < len(topicDataList); tnum++ {
+	num := b.N
+	var wg sync.WaitGroup
+	for i := 0; i < 30; i++ {
 		wg.Add(1)
-		topicData := topicDataList[tnum]
-		go func(localTopic *nsqdNs.Topic) {
+		go func() {
 			defer wg.Done()
-			for i := 0; i < num; i++ {
-				_, _, _, _, err := nsqdCoord1.PutMessageBodyToCluster(localTopic, msg, 0)
-				if err != nil {
-					b.Errorf("put error: %v", err)
+			var msgExt *nsqdNs.Message
+			if useExt {
+				msgExt = nsqdNs.NewMessageWithExt(0, msg, ext.JSON_HEADER_EXT_VER, []byte("{\"tk\":\"tv\"}"))
+			}
+			for j := 0; j < num; j++ {
+				if useExt {
+					msgExt.ID = 0
+					_, _, _, _, err := nsqdCoord1.PutMessageToCluster(topicData, msgExt)
+					if err != nil {
+						b.Errorf("put error: %v", err)
+					}
+				} else {
+					_, _, _, _, err := nsqdCoord1.PutMessageBodyToCluster(topicData, msg, 0)
+					if err != nil {
+						b.Errorf("put error: %v", err)
+					}
 				}
 			}
-		}(topicData)
+		}()
 	}
 	wg.Wait()
 	b.StopTimer()
@@ -2118,25 +2123,49 @@ func benchmarkNsqdCoordPubWithArg(b *testing.B, replica int, size int) {
 }
 
 func BenchmarkNsqdCoordPub1Replicator128(b *testing.B) {
-	benchmarkNsqdCoordPubWithArg(b, 1, 128)
+	benchmarkNsqdCoordPubWithArg(b, 1, 128, false)
 }
 
 func BenchmarkNsqdCoordPub2Replicator128(b *testing.B) {
-	benchmarkNsqdCoordPubWithArg(b, 2, 128)
+	benchmarkNsqdCoordPubWithArg(b, 2, 128, false)
 }
 
 func BenchmarkNsqdCoordPub3Replicator128(b *testing.B) {
-	benchmarkNsqdCoordPubWithArg(b, 3, 128)
+	benchmarkNsqdCoordPubWithArg(b, 3, 128, false)
 }
 
 func BenchmarkNsqdCoordPub1Replicator1024(b *testing.B) {
-	benchmarkNsqdCoordPubWithArg(b, 1, 1024)
+	benchmarkNsqdCoordPubWithArg(b, 1, 1024, false)
 }
 
 func BenchmarkNsqdCoordPub2Replicator1024(b *testing.B) {
-	benchmarkNsqdCoordPubWithArg(b, 2, 1024)
+	benchmarkNsqdCoordPubWithArg(b, 2, 1024, false)
 }
 
 func BenchmarkNsqdCoordPub3Replicator1024(b *testing.B) {
-	benchmarkNsqdCoordPubWithArg(b, 3, 1024)
+	benchmarkNsqdCoordPubWithArg(b, 3, 1024, false)
+}
+
+func BenchmarkNsqdCoordExtPub1Replicator128(b *testing.B) {
+	benchmarkNsqdCoordPubWithArg(b, 1, 128, true)
+}
+
+func BenchmarkNsqdCoordExtPub2Replicator128(b *testing.B) {
+	benchmarkNsqdCoordPubWithArg(b, 2, 128, true)
+}
+
+func BenchmarkNsqdCoordExtPub3Replicator128(b *testing.B) {
+	benchmarkNsqdCoordPubWithArg(b, 3, 128, true)
+}
+
+func BenchmarkNsqdCoordExtPub1Replicator1024(b *testing.B) {
+	benchmarkNsqdCoordPubWithArg(b, 1, 1024, true)
+}
+
+func BenchmarkNsqdCoordExtPub2Replicator1024(b *testing.B) {
+	benchmarkNsqdCoordPubWithArg(b, 2, 1024, true)
+}
+
+func BenchmarkNsqdCoordExtPub3Replicator1024(b *testing.B) {
+	benchmarkNsqdCoordPubWithArg(b, 3, 1024, true)
 }
