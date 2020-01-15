@@ -14,6 +14,7 @@
 broadcast_interface = // 监听的网卡名称
 cluster_id = // 集群id, 用于区分不同集群
 cluster_leadership_addresses = // etcd集群地址
+rpc_port = "12345"  // 用于集群内部通信
 log_dir=
 data_path=
 </pre>

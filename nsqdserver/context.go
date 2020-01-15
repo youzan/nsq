@@ -18,7 +18,8 @@ const (
 )
 
 var (
-	serverPubFailedCnt int64
+	serverPubFailedCnt  int64
+	testPopQueueTimeout bool
 )
 
 func incrServerPubFailed() {
@@ -397,6 +398,14 @@ func (c *context) internalPubLoop(topic *nsqd.Topic) {
 			if len(info.MsgBody) <= 0 {
 				nsqd.NsqLogger().Logf("empty msg body")
 			}
+			if time.Since(info.StartPub) >= pubWaitTimeout || testPopQueueTimeout {
+				topic.IncrPubFailed()
+				incrServerPubFailed()
+				info.Err = ErrPubPopQueueTimeout
+				close(info.Done)
+				nsqd.NsqLogger().LogErrorf("topic %v put message timeout while pop queue, pub start: %s", topic.GetFullName(), info.StartPub)
+				continue
+			}
 			if !topic.IsExt() {
 				messages = append(messages, nsqd.NewMessage(0, info.MsgBody))
 			} else {
@@ -410,6 +419,14 @@ func (c *context) internalPubLoop(topic *nsqd.Topic) {
 				case <-quitChan:
 					return
 				case info := <-infoChan:
+					if time.Since(info.StartPub) >= pubWaitTimeout || testPopQueueTimeout {
+						topic.IncrPubFailed()
+						incrServerPubFailed()
+						info.Err = ErrPubPopQueueTimeout
+						close(info.Done)
+						nsqd.NsqLogger().LogErrorf("topic %v put message timeout while pop queue, pub start: %s", topic.GetFullName(), info.StartPub)
+						continue
+					}
 					if !topic.IsExt() {
 						messages = append(messages, nsqd.NewMessage(0, info.MsgBody))
 					} else {

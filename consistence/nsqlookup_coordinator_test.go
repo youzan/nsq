@@ -2142,18 +2142,20 @@ func TestNsqLookupMovePartitionAndSlaveTimeoutWhileReadWrite(t *testing.T) {
 							continue
 						}
 						select {
-						case msg := <-ch.GetClientMsgChan():
-							ch.StartInFlightTimeout(msg, NewFakeConsumer(1), "", time.Second)
-							time.Sleep(time.Millisecond * time.Duration(rand.Intn(10)))
-							err := node.nsqdCoord.FinishMessageToCluster(ch, 1, "", msg.ID)
-							if err == nil {
-								cnt++
-								atomic.AddInt32(&totalSub, 1)
-							} else {
-								//t.Logf("fin error: %v", err.Error())
-							}
-							if cnt%50000 == 0 {
-								t.Logf("consumed %v cnt, depth: %v, stats: %v", cnt, ch.Depth(), ch.GetChannelDebugStats())
+						case msg, ok := <-ch.GetClientMsgChan():
+							if ok {
+								ch.StartInFlightTimeout(msg, NewFakeConsumer(1), "", time.Second)
+								time.Sleep(time.Millisecond * time.Duration(rand.Intn(10)))
+								err := node.nsqdCoord.FinishMessageToCluster(ch, 1, "", msg.ID)
+								if err == nil {
+									cnt++
+									atomic.AddInt32(&totalSub, 1)
+								} else {
+									//t.Logf("fin error: %v", err.Error())
+								}
+								if cnt%50000 == 0 {
+									t.Logf("consumed %v cnt, depth: %v, stats: %v", cnt, ch.Depth(), ch.GetChannelDebugStats())
+								}
 							}
 						default:
 						}

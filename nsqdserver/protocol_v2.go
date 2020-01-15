@@ -66,6 +66,7 @@ var offsetMsgCountType = "msgcount"
 var (
 	ErrOrderChannelOnSampleRate = errors.New("order consume is not allowed while sample rate is not 0")
 	ErrPubToWaitTimeout         = errors.New("pub to wait channel timeout")
+	ErrPubPopQueueTimeout       = errors.New("pub timeout while pop wait queue")
 )
 
 func isNetErr(err error) bool {
