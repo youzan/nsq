@@ -414,6 +414,7 @@ func (p *protocolV2) Exec(client *nsqd.ClientV2, params [][]byte) ([]byte, error
 	if err != nil {
 		return nil, err
 	}
+	// notice: any client.Reader will change the content for params since the params is returned by ReadSlice
 	switch {
 	case bytes.Equal(params[0], []byte("FIN")):
 		return p.FIN(client, params)
@@ -1523,6 +1524,8 @@ pub ext or pub trace or pub, if pubExt is true, traceEnable is ignored.
 */
 func (p *protocolV2) internalPubExtAndTrace(client *nsqd.ClientV2, params [][]byte, pubExt bool, traceEnable bool) ([]byte, error) {
 	startPub := time.Now().UnixNano()
+	asyncAction := shouldHandleAsync(params)
+	// notice: any client.Reader will change the content for params since the params is returned by ReadSlice
 	bodyLen, topic, err := p.preparePub(client, params, p.ctx.getOpts().MaxMsgSize, false)
 	if err != nil {
 		return nil, err
@@ -1540,7 +1543,6 @@ func (p *protocolV2) internalPubExtAndTrace(client *nsqd.ClientV2, params [][]by
 
 	messageBodyBuffer := topic.BufferPoolGet(int(bodyLen))
 	defer topic.BufferPoolPut(messageBodyBuffer)
-	asyncAction := shouldHandleAsync(params)
 
 	topicName := topic.GetTopicName()
 	_, err = io.CopyN(messageBodyBuffer, client.Reader, int64(bodyLen))

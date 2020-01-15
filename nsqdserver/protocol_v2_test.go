@@ -2543,9 +2543,9 @@ func TestTcpPub(t *testing.T) {
 }
 
 func TestTcpPubPopQueueTimeout(t *testing.T) {
-	testPopQueueTimeout = true
+	atomic.StoreInt32(&testPopQueueTimeout, 1)
 	defer func() {
-		testPopQueueTimeout = false
+		atomic.StoreInt32(&testPopQueueTimeout, 0)
 	}()
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
@@ -2559,13 +2559,15 @@ func TestTcpPubPopQueueTimeout(t *testing.T) {
 
 	conn, err := mustConnectNSQD(tcpAddr)
 	test.Equal(t, err, nil)
+	defer conn.Close()
 
 	topicName := "test_tcp_pub_timeout" + strconv.Itoa(int(time.Now().Unix()))
 	nsqd.GetTopicIgnPart(topicName).GetChannel("ch")
 
 	identify(t, conn, nil, frameTypeResponse)
+	time.Sleep(time.Millisecond)
 
-	cmd := nsq.Publish(topicName, make([]byte, 5))
+	cmd := nsq.Publish(topicName, []byte("12345"))
 	cmd.WriteTo(conn)
 	resp, _ := nsq.ReadResponse(conn)
 	frameType, data, _ := nsq.UnpackResponse(resp)
@@ -2573,9 +2575,9 @@ func TestTcpPubPopQueueTimeout(t *testing.T) {
 	test.Equal(t, frameType, frameTypeError)
 	test.Equal(t, true, strings.Contains(string(data), ErrPubPopQueueTimeout.Error()))
 
-	testPopQueueTimeout = false
+	atomic.StoreInt32(&testPopQueueTimeout, 0)
 	time.Sleep(time.Second)
-	cmd = nsq.Publish(topicName, make([]byte, 5))
+	cmd = nsq.Publish(topicName, []byte("22345"))
 	cmd.WriteTo(conn)
 	resp, _ = nsq.ReadResponse(conn)
 	frameType, data, err = nsq.UnpackResponse(resp)

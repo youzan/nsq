@@ -19,7 +19,7 @@ const (
 
 var (
 	serverPubFailedCnt  int64
-	testPopQueueTimeout bool
+	testPopQueueTimeout int32
 )
 
 func incrServerPubFailed() {
@@ -398,7 +398,7 @@ func (c *context) internalPubLoop(topic *nsqd.Topic) {
 			if len(info.MsgBody) <= 0 {
 				nsqd.NsqLogger().Logf("empty msg body")
 			}
-			if time.Since(info.StartPub) >= pubWaitTimeout || testPopQueueTimeout {
+			if time.Since(info.StartPub) >= pubWaitTimeout || atomic.LoadInt32(&testPopQueueTimeout) == 1 {
 				topic.IncrPubFailed()
 				incrServerPubFailed()
 				info.Err = ErrPubPopQueueTimeout
@@ -419,7 +419,7 @@ func (c *context) internalPubLoop(topic *nsqd.Topic) {
 				case <-quitChan:
 					return
 				case info := <-infoChan:
-					if time.Since(info.StartPub) >= pubWaitTimeout || testPopQueueTimeout {
+					if time.Since(info.StartPub) >= pubWaitTimeout || atomic.LoadInt32(&testPopQueueTimeout) == 1 {
 						topic.IncrPubFailed()
 						incrServerPubFailed()
 						info.Err = ErrPubPopQueueTimeout
