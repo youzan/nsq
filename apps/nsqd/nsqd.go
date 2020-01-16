@@ -174,6 +174,7 @@ func nsqdFlagSet(opts *nsqd.Options) *flag.FlagSet {
 	flagSet.Int("default-commit-buf", int(opts.DefaultCommitBuf), "the default commit buffer for topic data")
 	flagSet.Int("max-commit-buf", int(opts.MaxCommitBuf), "the max commit buffer for topic data")
 	flagSet.Bool("use-fsync", opts.UseFsync, "use fsync while flush data")
+	flagSet.Int("max-conn-for-client", int(opts.MaxConnForClient), "the max connections for all clients")
 	return flagSet
 }
 

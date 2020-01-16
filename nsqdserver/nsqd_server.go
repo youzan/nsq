@@ -35,6 +35,10 @@ const (
 	TLSRequired
 )
 
+const (
+	reservedFDNum = 10000
+)
+
 func buildTLSConfig(opts *nsqd.Options) (*tls.Config, error) {
 	var tlsConfig *tls.Config
 
@@ -94,6 +98,17 @@ func NewNsqdServer(opts *nsqd.Options) (*nsqd.NSQD, *NsqdServer) {
 	if opts.MaxCommitBuf > 0 {
 		consistence.MAX_COMMIT_BUF_SIZE = int(opts.MaxCommitBuf)
 	}
+
+	// check max open file limit
+	fl, err := FDLimit()
+	if err == nil {
+		if fl <= reservedFDNum {
+			nsqd.NsqLogger().Errorf("file limit is too low: %v", fl)
+			os.Exit(1)
+		}
+		opts.MaxConnForClient = int64(fl - reservedFDNum)
+	}
+	nsqd.NsqLogger().Logf("current max conn for client is: %v", opts.MaxConnForClient)
 
 	nsqdInstance := nsqd.New(opts)
 

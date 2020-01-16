@@ -1374,6 +1374,13 @@ func (s *httpServer) doConfig(w http.ResponseWriter, req *http.Request, ps httpr
 				return nil, http_api.Err{400, "INVALID_VALUE"}
 			}
 			nsqd.NsqLogger().Logf("sub ext compatible set to : %v", opts.AllowSubExtCompatible)
+		case "max_conn_for_client":
+			err := json.Unmarshal(body, &opts.MaxConnForClient)
+			if err != nil {
+				nsqd.NsqLogger().Logf("invalid value : %v", string(body))
+				return nil, http_api.Err{400, "INVALID_VALUE"}
+			}
+			nsqd.NsqLogger().Logf("max conn for client set to : %v", opts.MaxConnForClient)
 		default:
 			return nil, http_api.Err{400, "INVALID_OPTION"}
 		}
