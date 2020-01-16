@@ -49,7 +49,6 @@ const (
 	stateClosing
 )
 
-var clientConnNum int64
 var separatorBytes = []byte(" ")
 var heartbeatBytes = []byte("_heartbeat_")
 var okBytes = []byte("OK")
@@ -93,7 +92,8 @@ func isNetErr(err error) bool {
 }
 
 type protocolV2 struct {
-	ctx *context
+	ctx           *context
+	clientConnNum int64
 }
 
 type ConsumeOffset struct {
@@ -146,11 +146,12 @@ func (self *ConsumeOffset) FromBytes(s []byte) error {
 }
 
 func (p *protocolV2) IOLoop(conn net.Conn) error {
-	fdn := atomic.AddInt64(&clientConnNum, 1)
-	defer atomic.AddInt64(&clientConnNum, -1)
+	fdn := atomic.AddInt64(&p.clientConnNum, 1)
+	defer atomic.AddInt64(&p.clientConnNum, -1)
 	if fdn > p.ctx.getOpts().MaxConnForClient {
 		protocol.SendFramedResponse(conn, frameTypeError, []byte(errTooMuchClientConns.Error()))
 		conn.Close()
+		nsqd.NsqLogger().LogWarningf("PROTOCOL(V2) too much clients: %v", fdn)
 		return errTooMuchClientConns
 	}
 

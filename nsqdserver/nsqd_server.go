@@ -29,6 +29,8 @@ type NsqdServer struct {
 	exitChan      chan int
 }
 
+var testMode bool
+
 const (
 	TLSNotRequired = iota
 	TLSRequiredExceptHTTP
@@ -36,7 +38,7 @@ const (
 )
 
 const (
-	reservedFDNum = 10000
+	reservedFDNum = 50000
 )
 
 func buildTLSConfig(opts *nsqd.Options) (*tls.Config, error) {
@@ -85,7 +87,7 @@ func buildTLSConfig(opts *nsqd.Options) (*tls.Config, error) {
 	return tlsConfig, nil
 }
 
-func NewNsqdServer(opts *nsqd.Options) (*nsqd.NSQD, *NsqdServer) {
+func NewNsqdServer(opts *nsqd.Options) (*nsqd.NSQD, *NsqdServer, error) {
 	ip := opts.DecideBroadcast()
 	if opts.StartAsFixMode {
 		consistence.ForceFixLeaderData = true
@@ -101,10 +103,10 @@ func NewNsqdServer(opts *nsqd.Options) (*nsqd.NSQD, *NsqdServer) {
 
 	// check max open file limit
 	fl, err := FDLimit()
-	if err == nil {
-		if fl <= reservedFDNum {
-			nsqd.NsqLogger().Errorf("file limit is too low: %v", fl)
-			os.Exit(1)
+	if err == nil && !testMode {
+		if fl < reservedFDNum*2 {
+			nsqd.NsqLogger().Errorf("file limit is too low: %v, at least: %v", fl, reservedFDNum*2)
+			return nil, nil, errors.New("file limit too low")
 		}
 		opts.MaxConnForClient = int64(fl - reservedFDNum)
 	}
@@ -129,7 +131,7 @@ func NewNsqdServer(opts *nsqd.Options) (*nsqd.NSQD, *NsqdServer) {
 		l, err := consistence.NewNsqdEtcdMgr(opts.ClusterLeadershipAddresses, opts.ClusterLeadershipUsername, opts.ClusterLeadershipPassword)
 		if err != nil {
 			nsqd.NsqLogger().LogErrorf("FATAL: failed to init etcd leadership - %s", err)
-			os.Exit(1)
+			return nil, nil, err
 		}
 		coord.SetLeadershipMgr(l)
 		ctx.nsqdCoord = coord
@@ -145,11 +147,11 @@ func NewNsqdServer(opts *nsqd.Options) (*nsqd.NSQD, *NsqdServer) {
 	tlsConfig, err := buildTLSConfig(opts)
 	if err != nil {
 		nsqd.NsqLogger().LogErrorf("FATAL: failed to build TLS config - %s", err)
-		os.Exit(1)
+		return nil, nil, err
 	}
 	if tlsConfig == nil && opts.TLSRequired != TLSNotRequired {
 		nsqd.NsqLogger().LogErrorf("FATAL: cannot require TLS client connections without TLS key and cert")
-		os.Exit(1)
+		return nil, nil, errors.New("FATAL: cannot require TLS client connections without TLS key and cert")
 	}
 	s.ctx.tlsConfig = tlsConfig
 	s.ctx.nsqd.SetPubLoop(s.ctx.internalPubLoop)
@@ -158,7 +160,7 @@ func NewNsqdServer(opts *nsqd.Options) (*nsqd.NSQD, *NsqdServer) {
 	nsqd.NsqLogger().Logf(version.String("nsqd"))
 	nsqd.NsqLogger().Logf("ID: %d", opts.ID)
 
-	return nsqdInstance, s
+	return nsqdInstance, s, nil
 }
 
 func (s *NsqdServer) GetNsqdInstance() *nsqd.NSQD {
