@@ -6192,8 +6192,8 @@ func BenchmarkProtocolV2Exec(b *testing.B) {
 	_, _, nsqd, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqdServer.Exit()
-	ctx := &context{0, nsqd, nil, nil, nil, nil, ""}
-	p := &protocolV2{ctx, 0}
+	ctx := &context{0, nsqd, nil, nil, nil, nil, "", 0}
+	p := &protocolV2{ctx}
 	c := nsqdNs.NewClientV2(0, nil, ctx.getOpts(), nil)
 	params := [][]byte{[]byte("NOP")}
 	b.StartTimer()

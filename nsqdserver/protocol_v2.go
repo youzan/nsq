@@ -92,8 +92,7 @@ func isNetErr(err error) bool {
 }
 
 type protocolV2 struct {
-	ctx           *context
-	clientConnNum int64
+	ctx *context
 }
 
 type ConsumeOffset struct {
@@ -146,8 +145,8 @@ func (self *ConsumeOffset) FromBytes(s []byte) error {
 }
 
 func (p *protocolV2) IOLoop(conn net.Conn) error {
-	fdn := atomic.AddInt64(&p.clientConnNum, 1)
-	defer atomic.AddInt64(&p.clientConnNum, -1)
+	fdn := atomic.AddInt64(&p.ctx.clientConnNum, 1)
+	defer atomic.AddInt64(&p.ctx.clientConnNum, -1)
 	if fdn > p.ctx.getOpts().MaxConnForClient {
 		protocol.SendFramedResponse(conn, frameTypeError, []byte(errTooMuchClientConns.Error()))
 		conn.Close()
