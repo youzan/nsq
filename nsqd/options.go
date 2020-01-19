@@ -106,6 +106,7 @@ type Options struct {
 	DefaultCommitBuf      int32 `flag:"default-commit-buf" cfg:"default_commit_buf"`
 	MaxCommitBuf          int32 `flag:"max-commit-buf" cfg:"max_commit_buf"`
 	UseFsync              bool  `flag:"use-fsync"`
+	MaxConnForClient      int64 `flag:"max-conn-for-client" cfg:"max_conn_for_client"`
 }
 
 func NewOptions() *Options {
@@ -177,7 +178,8 @@ func NewOptions() *Options {
 		LogDir:   "",
 		Logger:   &levellogger.GLogger{},
 
-		RetentionDays: int32(DEFAULT_RETENTION_DAYS),
+		RetentionDays:    int32(DEFAULT_RETENTION_DAYS),
+		MaxConnForClient: 500000,
 	}
 
 	return opts

@@ -63,6 +63,12 @@ POST /topic/tombstone?topic=xxx&node=ip:httpport&restore=true
 </pre>
 此操作可以用于当某个节点磁盘不足时临时禁止写入.
 
+### 动态调整客户端连接数限制
+1.9.8之后的新版本nsqd服务端会限制客户端连接数, 初始化启动时会设置成操作系统fd限制数-5w(预留给内部使用), 超过限制后, 新建连的客户端会失败, 发生限制时, 也可以动态调整此参数, 注意先调整操作系统的最大打开文件数, 然后调整此连接数限制(注意预留一部分给内部使用)
+<pre>
+PUT -d '10000' /config/max_conn_for_client 
+</pre>
+
 ### 动态调整服务端日志级别
 <pre>
 nsqd: curl -X POST "http://127.0.0.1:4151/loglevel/set?loglevel=3"

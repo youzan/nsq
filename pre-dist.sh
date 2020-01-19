@@ -20,8 +20,6 @@ rm -rf   $DIR/dist/docker
 mkdir -p $DIR/dist/docker
 rm -rf   $DIR/.godeps
 mkdir -p $DIR/.godeps
-#export GOPATH=$DIR/.godeps:$GOPATH
-#GOPATH=$DIR/.godeps gpm install
 dep ensure
 
 arch=$(go env GOARCH)

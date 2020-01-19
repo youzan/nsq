@@ -38,6 +38,7 @@ type context struct {
 	httpAddr         *net.TCPAddr
 	tcpAddr          *net.TCPAddr
 	reverseProxyPort string
+	clientConnNum    int64
 }
 
 func (c *context) getOpts() *nsqd.Options {

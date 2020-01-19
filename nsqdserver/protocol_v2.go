@@ -67,6 +67,7 @@ var (
 	ErrOrderChannelOnSampleRate = errors.New("order consume is not allowed while sample rate is not 0")
 	ErrPubToWaitTimeout         = errors.New("pub to wait channel timeout")
 	ErrPubPopQueueTimeout       = errors.New("pub timeout while pop wait queue")
+	errTooMuchClientConns       = errors.New("too much client connections")
 )
 
 func isNetErr(err error) bool {
@@ -144,6 +145,15 @@ func (self *ConsumeOffset) FromBytes(s []byte) error {
 }
 
 func (p *protocolV2) IOLoop(conn net.Conn) error {
+	fdn := atomic.AddInt64(&p.ctx.clientConnNum, 1)
+	defer atomic.AddInt64(&p.ctx.clientConnNum, -1)
+	if fdn > p.ctx.getOpts().MaxConnForClient {
+		protocol.SendFramedResponse(conn, frameTypeError, []byte(errTooMuchClientConns.Error()))
+		conn.Close()
+		nsqd.NsqLogger().LogWarningf("PROTOCOL(V2) too much clients: %v", fdn)
+		return errTooMuchClientConns
+	}
+
 	var err error
 	var line []byte
 	var zeroTime time.Time

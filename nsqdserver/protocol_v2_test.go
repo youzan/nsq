@@ -2552,7 +2552,6 @@ func TestTcpPubPopQueueTimeout(t *testing.T) {
 	opts.LogLevel = 3
 	opts.MaxMsgSize = 100
 	opts.MaxBodySize = 1000
-	nsqdNs.SetLogger(opts.Logger)
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqdServer.Exit()
@@ -3883,8 +3882,8 @@ func TestDelayMessageToQueueEndAgainAndAgain(t *testing.T) {
 	opts.LogLevel = 2
 	if testing.Verbose() {
 		opts.LogLevel = 3
+		nsqdNs.SetLogger(opts.Logger)
 	}
-	nsqdNs.SetLogger(opts.Logger)
 	opts.SyncEvery = 1
 	opts.QueueScanInterval = time.Millisecond * 10
 	opts.MsgTimeout = time.Second * 10
@@ -6084,6 +6083,70 @@ func TestResetChannelToOld(t *testing.T) {
 	conn.Close()
 }
 
+func TestTooMuchClient(t *testing.T) {
+	opts := nsqdNs.NewOptions()
+	opts.Logger = newTestLogger(t)
+	opts.LogLevel = 3
+	opts.MaxMsgSize = 100
+	opts.MaxBodySize = 1000
+	opts.MaxConnForClient = 2
+	if testing.Verbose() {
+		opts.LogLevel = 4
+		nsqdNs.SetLogger(opts.Logger)
+	}
+	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
+	defer os.RemoveAll(opts.DataPath)
+	defer nsqdServer.Exit()
+
+	conn, err := mustConnectNSQD(tcpAddr)
+	test.Equal(t, err, nil)
+	defer conn.Close()
+
+	topicName := "test_tcp_pub_timeout" + strconv.Itoa(int(time.Now().Unix()))
+	nsqd.GetTopicIgnPart(topicName).GetChannel("ch")
+	ropts := *nsqd.GetOpts()
+	ropts.MaxConnForClient = 2
+	nsqd.SwapOpts(&ropts)
+
+	identify(t, conn, nil, frameTypeResponse)
+	time.Sleep(time.Millisecond)
+
+	cmd := nsq.Publish(topicName, []byte("12345"))
+	cmd.WriteTo(conn)
+	resp, _ := nsq.ReadResponse(conn)
+	frameType, data, err := nsq.UnpackResponse(resp)
+	t.Logf("frameType: %d, data: %s, err: %v", frameType, data, err)
+	test.Equal(t, frameType, frameTypeResponse)
+	test.Equal(t, len(data), 2)
+	test.Equal(t, data[:], []byte("OK"))
+
+	conn2, err := mustConnectNSQD(tcpAddr)
+	test.Nil(t, err)
+	defer conn2.Close()
+	t.Logf("second connection should ok")
+	identify(t, conn2, nil, frameTypeResponse)
+
+	conn3, err := mustConnectNSQD(tcpAddr)
+	if err != nil {
+		test.Equal(t, errTooMuchClientConns.Error(), err.Error())
+		return
+	}
+	t.Logf("3rd connection should fail")
+	data = identify(t, conn3, nil, frameTypeError)
+	test.Equal(t, errTooMuchClientConns.Error(), string(data))
+	conn3.Close()
+
+	ropts = *nsqd.GetOpts()
+	ropts.MaxConnForClient = 3
+	nsqd.SwapOpts(&ropts)
+
+	conn4, err := mustConnectNSQD(tcpAddr)
+	test.Nil(t, err)
+	defer conn4.Close()
+	t.Logf("4th connection should ok after changed options")
+	identify(t, conn4, nil, frameTypeResponse)
+}
+
 func TestIOLoopReturnsClientErrWhenSendFails(t *testing.T) {
 	fakeConn := test.NewFakeNetConn()
 	fakeConn.WriteFunc = func(b []byte) (int, error) {
@@ -6129,7 +6192,7 @@ func BenchmarkProtocolV2Exec(b *testing.B) {
 	_, _, nsqd, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqdServer.Exit()
-	ctx := &context{0, nsqd, nil, nil, nil, nil, ""}
+	ctx := &context{0, nsqd, nil, nil, nil, nil, "", 0}
 	p := &protocolV2{ctx}
 	c := nsqdNs.NewClientV2(0, nil, ctx.getOpts(), nil)
 	params := [][]byte{[]byte("NOP")}
