@@ -6,7 +6,7 @@ require (
 	github.com/BurntSushi/toml v0.3.1
 	github.com/Workiva/go-datastructures v1.0.50
 	github.com/absolute8511/bolt v1.4.0
-	github.com/absolute8511/glog v0.2.0
+	github.com/absolute8511/glog v0.3.1
 	github.com/absolute8511/gorpc v0.0.0-20161203145636-60ee7d4359cb
 	github.com/absolute8511/goskiplist v0.0.0-20170727031420-3ba6f667c3df
 	github.com/astaxie/beego v1.11.1
