@@ -6,8 +6,10 @@ github.com/Workiva/go-datastructures v1.0.50 h1:slDmfW6KCHcC7U+LP3DDBbm4fqTwZGn1
 github.com/Workiva/go-datastructures v1.0.50/go.mod h1:Z+F2Rca0qCsVYDS8z7bAGm8f3UkzuWYS/oBZz5a7VVA=
 github.com/absolute8511/bolt v1.4.0 h1:zUYThSMscaM1l6EQ0/y7LIehfW3uBBPuKqtHk1e86J8=
 github.com/absolute8511/bolt v1.4.0/go.mod h1:EVP4S2vXefVq1C1xn1vTa2xd1UHXkwxmB1sAtverGdE=
-github.com/absolute8511/glog v0.2.0 h1:w2e2bM145+2cgOB6bUPL/khH0R25T65bcB6NxuqmaXU=
-github.com/absolute8511/glog v0.2.0/go.mod h1:T44AH/EtS/Grr3Ujq6U0Lhk1y4960FC9i06pxXblZ2I=
+github.com/absolute8511/glog v0.3.0 h1:HKD+NaGMtMUOPFyvGnuJbVStlVoLgJsGuTxFJKKcQdk=
+github.com/absolute8511/glog v0.3.0/go.mod h1:T44AH/EtS/Grr3Ujq6U0Lhk1y4960FC9i06pxXblZ2I=
+github.com/absolute8511/glog v0.3.1 h1:oTuACTGSouUxi7CWuya5azGQ9s7WnsAxrAxAZPKevRk=
+github.com/absolute8511/glog v0.3.1/go.mod h1:T44AH/EtS/Grr3Ujq6U0Lhk1y4960FC9i06pxXblZ2I=
 github.com/absolute8511/gorpc v0.0.0-20161203145636-60ee7d4359cb h1:F8aNeq5n+KBvboy1eAlpCcZ+DqdJ4a3g+CQ7L0jwt4o=
 github.com/absolute8511/gorpc v0.0.0-20161203145636-60ee7d4359cb/go.mod h1:PjNRfcxNGdDHKsjOwvm3QSXPsL1PCSCPkI0qqIbL9Fs=
 github.com/absolute8511/goskiplist v0.0.0-20170727031420-3ba6f667c3df h1:7iX7qyzKpDQ5ymyZrrlhK99T9phGo44DBhg9muteGXs=
