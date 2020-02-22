@@ -19,11 +19,17 @@ const (
 	RPC_TIMEOUT_FOR_LOOKUP = time.Duration(time.Second * 3)
 )
 
+var nsqdClientDispatcher *gorpc.Dispatcher
+
+func init() {
+	nsqdClientDispatcher = gorpc.NewDispatcher()
+	nsqdClientDispatcher.AddService("NsqdCoordRpcServer", &NsqdCoordRpcServer{})
+}
+
 type NsqdRpcClient struct {
 	sync.Mutex
 	remote     string
 	timeout    time.Duration
-	d          *gorpc.Dispatcher
 	c          *gorpc.Client
 	dc         *gorpc.DispatcherClient
 	grpcClient pb.NsqdCoordRpcV2Client
@@ -61,8 +67,6 @@ func NewNsqdRpcClient(addr string, timeout time.Duration) (*NsqdRpcClient, error
 	c.RequestTimeout = timeout
 	c.DisableCompression = true
 	c.Start()
-	d := gorpc.NewDispatcher()
-	d.AddService("NsqdCoordRpcServer", &NsqdCoordRpcServer{})
 	var grpcClient pb.NsqdCoordRpcV2Client
 	//ip, port, _ := net.SplitHostPort(addr)
 	//portNum, _ := strconv.Atoi(port)
@@ -80,9 +84,8 @@ func NewNsqdRpcClient(addr string, timeout time.Duration) (*NsqdRpcClient, error
 	return &NsqdRpcClient{
 		remote:     addr,
 		timeout:    timeout,
-		d:          d,
 		c:          c,
-		dc:         d.NewServiceClient("NsqdCoordRpcServer", c),
+		dc:         nsqdClientDispatcher.NewServiceClient("NsqdCoordRpcServer", c),
 		grpcClient: grpcClient,
 		grpcConn:   nil,
 	}, nil
@@ -122,7 +125,7 @@ func (nrpc *NsqdRpcClient) Reconnect() error {
 	nrpc.c = gorpc.NewTCPClient(nrpc.remote)
 	nrpc.c.RequestTimeout = nrpc.timeout
 	nrpc.c.DisableCompression = true
-	nrpc.dc = nrpc.d.NewServiceClient("NsqdCoordRpcServer", nrpc.c)
+	nrpc.dc = nsqdClientDispatcher.NewServiceClient("NsqdCoordRpcServer", nrpc.c)
 	nrpc.c.Start()
 
 	//ip, port, _ := net.SplitHostPort(nrpc.remote)

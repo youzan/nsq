@@ -22,11 +22,17 @@ type INsqlookupRemoteProxy interface {
 
 type nsqlookupRemoteProxyCreateFunc func(string, time.Duration) (INsqlookupRemoteProxy, error)
 
+var lookupClientDispatcher *gorpc.Dispatcher
+
+func init() {
+	lookupClientDispatcher = gorpc.NewDispatcher()
+	lookupClientDispatcher.AddService("NsqLookupCoordRpcServer", &NsqLookupCoordRpcServer{})
+}
+
 type NsqLookupRpcClient struct {
 	sync.Mutex
 	remote  string
 	timeout time.Duration
-	d       *gorpc.Dispatcher
 	c       *gorpc.Client
 	dc      *gorpc.DispatcherClient
 }
@@ -36,15 +42,12 @@ func NewNsqLookupRpcClient(addr string, timeout time.Duration) (INsqlookupRemote
 	c.RequestTimeout = timeout
 	c.DisableCompression = true
 	c.Start()
-	d := gorpc.NewDispatcher()
-	d.AddService("NsqLookupCoordRpcServer", &NsqLookupCoordRpcServer{})
 
 	return &NsqLookupRpcClient{
 		remote:  addr,
 		timeout: timeout,
-		d:       d,
 		c:       c,
-		dc:      d.NewServiceClient("NsqLookupCoordRpcServer", c),
+		dc:      lookupClientDispatcher.NewServiceClient("NsqLookupCoordRpcServer", c),
 	}, nil
 }
 
@@ -80,7 +83,7 @@ func (nlrpc *NsqLookupRpcClient) Reconnect() error {
 	nlrpc.c.RequestTimeout = nlrpc.timeout
 	nlrpc.c.DisableCompression = true
 	nlrpc.c.Start()
-	nlrpc.dc = nlrpc.d.NewServiceClient("NsqLookupCoordRpcServer", nlrpc.c)
+	nlrpc.dc = lookupClientDispatcher.NewServiceClient("NsqLookupCoordRpcServer", nlrpc.c)
 	nlrpc.Unlock()
 	return nil
 }
