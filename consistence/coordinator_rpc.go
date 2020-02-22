@@ -515,7 +515,7 @@ func (self *NsqdCoordRpcServer) DisableTopicWrite(rpcTopicReq *RpcAdminTopicInfo
 		} else {
 			// we force sync topic channels while disable write because we may transfer or lose the leader, so
 			// try sync channels anyway.
-			isMeLeader := tp.GetLeader() == self.nsqdCoord.GetMyID()
+			isMeLeader := tcData.GetLeader() == self.nsqdCoord.GetMyID()
 			if isMeLeader {
 				self.nsqdCoord.trySyncTopicChannels(tcData, false, true, true)
 			}
