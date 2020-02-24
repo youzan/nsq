@@ -145,6 +145,18 @@ type ClientPubStats struct {
 	LastPubTs     int64  `json:"last_pub_ts"`
 }
 
+func (cps *ClientPubStats) Copy() ClientPubStats {
+	s := ClientPubStats{
+		RemoteAddress: cps.RemoteAddress,
+		UserAgent:     cps.UserAgent,
+		Protocol:      cps.Protocol,
+		PubCount:      atomic.LoadInt64(&cps.PubCount),
+		ErrCount:      atomic.LoadInt64(&cps.ErrCount),
+		LastPubTs:     atomic.LoadInt64(&cps.LastPubTs),
+	}
+	return s
+}
+
 func (cps *ClientPubStats) IncrCounter(count int64, hasErr bool) {
 	if hasErr {
 		atomic.AddInt64(&cps.ErrCount, count)
@@ -481,7 +493,7 @@ func (self *DetailStatsInfo) GetPubClientStats() []ClientPubStats {
 	self.Lock()
 	stats := make([]ClientPubStats, 0, len(self.clientPubStats))
 	for _, s := range self.clientPubStats {
-		stats = append(stats, *s)
+		stats = append(stats, s.Copy())
 	}
 	self.Unlock()
 	return stats

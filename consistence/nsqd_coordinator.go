@@ -139,7 +139,7 @@ type NsqdCoordinator struct {
 	coordMutex             sync.RWMutex
 	myNode                 NsqdNodeInfo
 	rpcClientMutex         sync.Mutex
-	nsqdRpcClients         map[string]*NsqdRpcClient
+	nsqdRpcClients         sync.Map
 	flushNotifyChan        chan TopicPartitionID
 	stopChan               chan struct{}
 	dataRootPath           string
@@ -166,7 +166,6 @@ func NewNsqdCoordinator(cluster, ip, tcpport, rpcport, httpport, extraID string,
 		leadership:             nil,
 		topicCoords:            make(map[string]map[int]*TopicCoordinator),
 		myNode:                 nodeInfo,
-		nsqdRpcClients:         make(map[string]*NsqdRpcClient),
 		flushNotifyChan:        make(chan TopicPartitionID, 2),
 		stopChan:               make(chan struct{}),
 		dataRootPath:           rootPath,
@@ -195,15 +194,57 @@ func (ncoord *NsqdCoordinator) SetLeadershipMgr(l NSQDLeadership) {
 	}
 }
 
+func (ncoord *NsqdCoordinator) getExistRpcClient(nid string) (*NsqdRpcClient, bool) {
+	v, ok := ncoord.nsqdRpcClients.Load(nid)
+	if !ok {
+		return nil, false
+	}
+	c, ok := v.(*NsqdRpcClient)
+	if ok && !c.ShouldRemoved() {
+		return c, ok
+	}
+	return nil, false
+}
+
+func (ncoord *NsqdCoordinator) cleanRpcClients(all bool) {
+	removed := make([]string, 0)
+	ncoord.rpcClientMutex.Lock()
+	ncoord.nsqdRpcClients.Range(func(key interface{}, value interface{}) bool {
+		if all {
+			removed = append(removed, key.(string))
+			return true
+		}
+		c, ok := value.(*NsqdRpcClient)
+		if ok && c.ShouldRemoved() {
+			removed = append(removed, key.(string))
+		}
+		return true
+	})
+	for _, nid := range removed {
+		v, ok := ncoord.nsqdRpcClients.Load(nid)
+		if ok {
+			c := v.(*NsqdRpcClient)
+			ncoord.nsqdRpcClients.Delete(nid)
+			c.Close()
+		}
+	}
+	ncoord.rpcClientMutex.Unlock()
+}
+
 func (ncoord *NsqdCoordinator) acquireRpcClient(nid string) (*NsqdRpcClient, *CoordErr) {
+	c, ok := ncoord.getExistRpcClient(nid)
+	if ok {
+		return c, nil
+	}
 	ncoord.rpcClientMutex.Lock()
 	defer ncoord.rpcClientMutex.Unlock()
-	c, ok := ncoord.nsqdRpcClients[nid]
+	v, ok := ncoord.nsqdRpcClients.Load(nid)
 	if ok {
-		if c.ShouldRemoved() {
+		c, ok = v.(*NsqdRpcClient)
+		if ok && c.ShouldRemoved() {
 			coordLog.Infof("rpc removing removed client: %v", nid)
+			ncoord.nsqdRpcClients.Delete(nid)
 			c.Close()
-			delete(ncoord.nsqdRpcClients, nid)
 			ok = false
 		}
 	}
@@ -214,7 +255,7 @@ func (ncoord *NsqdCoordinator) acquireRpcClient(nid string) (*NsqdRpcClient, *Co
 		if err != nil {
 			return nil, NewCoordErr(err.Error(), CoordNetErr)
 		}
-		ncoord.nsqdRpcClients[nid] = c
+		ncoord.nsqdRpcClients.Store(nid, c)
 	}
 	return c, nil
 }
@@ -286,11 +327,7 @@ func (ncoord *NsqdCoordinator) Stop() {
 	ncoord.rpcServer = nil
 	//ncoord.grpcServer.stop()
 	//ncoord.grpcServer = nil
-	ncoord.rpcClientMutex.Lock()
-	for _, c := range ncoord.nsqdRpcClients {
-		c.Close()
-	}
-	ncoord.rpcClientMutex.Unlock()
+	ncoord.cleanRpcClients(true)
 	ncoord.wg.Wait()
 
 	ncoord.lookupMutex.Lock()
@@ -1065,14 +1102,7 @@ func (ncoord *NsqdCoordinator) checkForUnsyncedTopics() {
 			}
 		}
 		// clean unused client connections
-		ncoord.rpcClientMutex.Lock()
-		for nid, c := range ncoord.nsqdRpcClients {
-			if c.c != nil && c.ShouldRemoved() {
-				c.Close()
-				delete(ncoord.nsqdRpcClients, nid)
-			}
-		}
-		ncoord.rpcClientMutex.Unlock()
+		ncoord.cleanRpcClients(false)
 
 		ncoord.lookupMutex.Lock()
 		for addr, c := range ncoord.lookupRemoteClients {
@@ -2338,8 +2368,8 @@ func (ncoord *NsqdCoordinator) switchStateForMaster(topicCoord *TopicCoordinator
 				coordLog.Infof("no commit last log data : %v", err)
 			}
 		} else {
-			coordLog.Infof("current topic %v log: %v:%v, %v, pid: %v, %v",
-				tcData.topicInfo.GetTopicDesp(), logIndex, logOffset, logData, tcData.logMgr.pLogID, tcData.logMgr.nLogID)
+			coordLog.Infof("current topic %v log: %v:%v, %v, pid: %v",
+				tcData.topicInfo.GetTopicDesp(), logIndex, logOffset, logData, tcData.logMgr.GetLastCommitLogID())
 		}
 		localTopic.DisableForSlave()
 	}

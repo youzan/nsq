@@ -229,14 +229,15 @@ func (self *NsqdCoordRpcServer) NotifyTopicLeaderSession(rpcTopicReq *RpcTopicLe
 		return &ret
 	}
 	if !topicCoord.IsWriteDisabled() {
+		tcData := topicCoord.GetData()
 		if rpcTopicReq.JoinSession != "" {
-			if FindSlice(topicCoord.topicInfo.ISR, self.nsqdCoord.myNode.GetID()) != -1 {
+			if FindSlice(tcData.topicInfo.ISR, self.nsqdCoord.myNode.GetID()) != -1 {
 				coordLog.Errorf("join session should disable write first")
 				ret = *ErrTopicCoordStateInvalid
 				return &ret
 			}
 		}
-		if rpcTopicReq.LeaderNode.ID != topicCoord.topicInfo.Leader {
+		if rpcTopicReq.LeaderNode.ID != tcData.topicInfo.Leader {
 			// Not allow to change the leader session to another during write
 			// but we can be notified to know the lost leader session
 			if rpcTopicReq.TopicLeaderSession != "" {
@@ -514,7 +515,7 @@ func (self *NsqdCoordRpcServer) DisableTopicWrite(rpcTopicReq *RpcAdminTopicInfo
 		} else {
 			// we force sync topic channels while disable write because we may transfer or lose the leader, so
 			// try sync channels anyway.
-			isMeLeader := tp.GetLeader() == self.nsqdCoord.GetMyID()
+			isMeLeader := tcData.GetLeader() == self.nsqdCoord.GetMyID()
 			if isMeLeader {
 				self.nsqdCoord.trySyncTopicChannels(tcData, false, true, true)
 			}
