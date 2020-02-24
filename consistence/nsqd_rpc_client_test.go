@@ -265,3 +265,38 @@ func TestNsqdRPCClient(t *testing.T) {
 	time.Sleep(time.Second * 3)
 	client.Close()
 }
+
+func TestNsqdRPCClientConcurrentCreate(t *testing.T) {
+	// try reproduce the data race issue which may cause a fatal: morestack on g0
+	SetCoordLogger(newTestLogger(t), 2)
+	tmpDir, err := ioutil.TempDir("", fmt.Sprintf("nsq-test-%d", time.Now().UnixNano()))
+	if err != nil {
+		panic(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	nsqdCoord := startNsqdCoord(t, "0", tmpDir, "", nil, true)
+	nsqdCoord.Start()
+	defer nsqdCoord.Stop()
+	time.Sleep(time.Second * 2)
+	var wg sync.WaitGroup
+	for i := 0; i < 18; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for l := 0; l < 100; l++ {
+				client, err := NewNsqdRpcClient(nsqdCoord.rpcServer.rpcServer.Listener.ListenAddr().String(), time.Second*5)
+				test.Nil(t, err)
+				coordErr := client.CallRpcTestCoordErr("coorderr")
+				test.NotNil(t, coordErr)
+				client.CallRpcTest("reqdata")
+				client.Close()
+				lookupClient, err := NewNsqLookupRpcClient(nsqdCoord.rpcServer.rpcServer.Listener.ListenAddr().String(), time.Second*5)
+				test.Nil(t, err)
+				lookupClient.RequestNotifyNewTopicInfo("test", 0, "nid")
+				lookupClient.Close()
+			}
+		}()
+	}
+	wg.Wait()
+}

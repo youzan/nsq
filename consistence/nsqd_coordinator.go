@@ -2368,8 +2368,8 @@ func (ncoord *NsqdCoordinator) switchStateForMaster(topicCoord *TopicCoordinator
 				coordLog.Infof("no commit last log data : %v", err)
 			}
 		} else {
-			coordLog.Infof("current topic %v log: %v:%v, %v, pid: %v, %v",
-				tcData.topicInfo.GetTopicDesp(), logIndex, logOffset, logData, tcData.logMgr.pLogID, tcData.logMgr.nLogID)
+			coordLog.Infof("current topic %v log: %v:%v, %v, pid: %v",
+				tcData.topicInfo.GetTopicDesp(), logIndex, logOffset, logData, tcData.logMgr.GetLastCommitLogID())
 		}
 		localTopic.DisableForSlave()
 	}
