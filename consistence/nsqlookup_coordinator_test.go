@@ -1848,7 +1848,7 @@ func TestNsqLookupMovePartition(t *testing.T) {
 func TestNsqLookupMovePartitionRetryWhileLocalRemoved(t *testing.T) {
 	// it can happen that the new inited catchup node is removed while check unsynced topic,
 	// so we need retry move again
-	if !testing.Verbose() {
+	if testing.Verbose() {
 		SetCoordLogger(levellogger.NewSimpleLog(), levellogger.LOG_INFO)
 		glog.SetFlags(0, "", "", true, true, 1)
 		glog.StartWorker(time.Second)
