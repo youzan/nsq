@@ -1845,6 +1845,176 @@ func TestNsqLookupMovePartition(t *testing.T) {
 	SetCoordLogger(newTestLogger(t), levellogger.LOG_ERR)
 }
 
+func TestNsqLookupMovePartitionRetryWhileLocalRemoved(t *testing.T) {
+	// it can happen that the new inited catchup node is removed while check unsynced topic,
+	// so we need retry move again
+	if testing.Verbose() {
+		SetCoordLogger(levellogger.NewSimpleLog(), levellogger.LOG_INFO)
+		glog.SetFlags(0, "", "", true, true, 1)
+		glog.StartWorker(time.Second)
+	} else {
+		SetCoordLogger(newTestLogger(t), levellogger.LOG_WARN)
+	}
+
+	idList := []string{"id1", "id2", "id3", "id4"}
+	lookupCoord, nodeInfoList := prepareCluster(t, idList, false)
+	for _, n := range nodeInfoList {
+		defer os.RemoveAll(n.dataPath)
+		defer n.localNsqd.Exit()
+		defer n.nsqdCoord.Stop()
+	}
+
+	topic_ordered_p1_r3 := "test-nsqlookup-topic-unit-test-moveretry-p1-r3"
+	lookupLeadership := lookupCoord.leadership
+	lookupCoord.dpm.SetBalanceInterval(3, 4)
+
+	checkDeleteErr(t, lookupCoord.DeleteTopic(topic_ordered_p1_r3, "**"))
+	time.Sleep(time.Second * 3)
+	defer func() {
+		waitClusterStable(lookupCoord, time.Second*3)
+		checkDeleteErr(t, lookupCoord.DeleteTopic(topic_ordered_p1_r3, "**"))
+		time.Sleep(time.Second * 3)
+		lookupCoord.Stop()
+	}()
+
+	err := lookupCoord.CreateTopic(topic_ordered_p1_r3, TopicMetaInfo{4, 3, 0, 0, 0, 0, true, false})
+	test.Nil(t, err)
+	waitClusterStable(lookupCoord, time.Second*5)
+
+	lookupCoord.triggerCheckTopics("", 0, 0)
+	waitClusterStable(lookupCoord, time.Second*5)
+	t.Log("=========== begin check move partition =======")
+	// write to cluster
+	leaderNode := getTopicLeaderNode(t, lookupLeadership, topic_ordered_p1_r3, 0, nodeInfoList)
+	localT, _ := leaderNode.nsqdCoord.localNsqd.GetExistingTopic(topic_ordered_p1_r3, 0)
+	for i := 0; i < 10000; i++ {
+		_, _, _, _, err = leaderNode.nsqdCoord.PutMessageBodyToCluster(localT, []byte("committed"), 0)
+		test.Nil(t, err)
+	}
+
+	// test move ordered topic
+	t0, err := lookupLeadership.GetTopicInfo(topic_ordered_p1_r3, 0)
+	test.Nil(t, err)
+	test.Equal(t, len(t0.ISR), 3)
+
+	toNode := ""
+	for _, node := range nodeInfoList {
+		if FindSlice(t0.ISR, node.nodeInfo.GetID()) != -1 {
+			continue
+		}
+		toNode = node.nodeInfo.GetID()
+		break
+	}
+	if toNode == "" {
+		t.Fatalf("toNode error: %v, %v", t0, nodeInfoList)
+	}
+	test.Equal(t, true, toNode != "")
+	t.Logf("move leader to %v", toNode)
+
+	oldLeader := t0.Leader
+	removeCh := make(chan bool, 1)
+	go func() {
+		for {
+			t, err := lookupLeadership.GetTopicInfo(topic_ordered_p1_r3, 0)
+			if err == nil && FindSlice(t.CatchupList, toNode) != -1 {
+				nodeInfoList[toNode].nsqdCoord.removeTopicCoord(t0.Name, t0.Partition, true)
+			}
+			select {
+			case <-removeCh:
+				return
+			default:
+				time.Sleep(time.Microsecond)
+			}
+		}
+	}()
+	err = lookupCoord.MoveTopicPartitionDataByManual(topic_ordered_p1_r3, t0.Partition, true, t0.Leader, toNode)
+	test.Equal(t, errMoveTopicWaitTimeout, err)
+	t0, err = lookupLeadership.GetTopicInfo(topic_ordered_p1_r3, 0)
+	test.Nil(t, err)
+	t.Log(t0)
+	test.Equal(t, true, FindSlice(t0.ISR, toNode) == -1)
+	test.Equal(t, true, FindSlice(t0.CatchupList, toNode) != -1)
+	close(removeCh)
+	// try again
+	err = lookupCoord.MoveTopicPartitionDataByManual(topic_ordered_p1_r3, t0.Partition, true, t0.Leader, toNode)
+	test.Nil(t, err)
+
+	waitClusterStable(lookupCoord, time.Second*3)
+	t0, err = lookupLeadership.GetTopicInfo(topic_ordered_p1_r3, 0)
+	test.Nil(t, err)
+	test.NotEqual(t, t0.Leader, oldLeader)
+	test.Equal(t, len(t0.ISR) >= t0.Replica, true)
+	t.Log(t0)
+	test.Equal(t, true, FindSlice(t0.ISR, toNode) != -1)
+
+	for len(t0.ISR) > t0.Replica {
+		lookupCoord.triggerCheckTopics("", 0, 0)
+		time.Sleep(time.Second * 3)
+	}
+	waitClusterStable(lookupCoord, time.Second*3)
+	// move non-leader to other non-isr node
+	toNode = ""
+	fromNode := ""
+	for _, nid := range t0.ISR {
+		if nid != t0.Leader {
+			fromNode = nid
+		}
+	}
+	for _, node := range nodeInfoList {
+		if FindSlice(t0.ISR, node.nodeInfo.GetID()) != -1 {
+			continue
+		}
+		toNode = node.nodeInfo.GetID()
+		break
+	}
+	if toNode == "" {
+		t.Fatalf("toNode error: %v, %v", t0, nodeInfoList)
+	}
+	t.Logf("move from %v to %v", fromNode, toNode)
+	leaderNode = getTopicLeaderNode(t, lookupLeadership, topic_ordered_p1_r3, 0, nodeInfoList)
+	localT, _ = leaderNode.nsqdCoord.localNsqd.GetExistingTopic(topic_ordered_p1_r3, 0)
+	for i := 0; i < 10000; i++ {
+		_, _, _, _, err = leaderNode.nsqdCoord.PutMessageBodyToCluster(localT, []byte("committed"), 0)
+		test.Nil(t, err)
+	}
+	test.Equal(t, true, toNode != "")
+	removeCh = make(chan bool, 1)
+	go func() {
+		for {
+			t0, err = lookupLeadership.GetTopicInfo(topic_ordered_p1_r3, 0)
+			if err == nil && FindSlice(t0.CatchupList, toNode) != -1 {
+				nodeInfoList[toNode].nsqdCoord.removeTopicCoord(t0.Name, t0.Partition, true)
+			}
+			select {
+			case <-removeCh:
+				return
+			default:
+				time.Sleep(time.Microsecond)
+			}
+		}
+	}()
+	err = lookupCoord.MoveTopicPartitionDataByManual(topic_ordered_p1_r3, 0, false, fromNode, toNode)
+	test.Equal(t, errMoveTopicWaitTimeout, err)
+	t0, err = lookupLeadership.GetTopicInfo(topic_ordered_p1_r3, 0)
+	test.Nil(t, err)
+	t.Log(t0)
+	test.Equal(t, true, FindSlice(t0.ISR, toNode) == -1)
+	test.Equal(t, true, FindSlice(t0.CatchupList, toNode) != -1)
+	close(removeCh)
+	// try again
+	err = lookupCoord.MoveTopicPartitionDataByManual(topic_ordered_p1_r3, 0, false, fromNode, toNode)
+	test.Nil(t, err)
+	waitClusterStable(lookupCoord, time.Second*3)
+	t0, err = lookupLeadership.GetTopicInfo(topic_ordered_p1_r3, 0)
+	test.Nil(t, err)
+	t.Log(t0)
+	test.Equal(t, len(t0.ISR) >= t0.Replica, true)
+	test.Equal(t, FindSlice(t0.ISR, toNode) != -1, true)
+	test.Equal(t, -1, FindSlice(t0.ISR, fromNode))
+
+	SetCoordLogger(newTestLogger(t), levellogger.LOG_ERR)
+}
+
 func getTopicLeaderNode(t *testing.T, lookupLeadership NSQLookupdLeadership, topic string, pid int, nodeInfoList map[string]*testClusterNodeInfo) *testClusterNodeInfo {
 	ti, err := lookupLeadership.GetTopicInfo(topic, pid)
 	assert.Nil(t, err)

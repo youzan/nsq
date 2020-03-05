@@ -64,6 +64,7 @@ var (
 
 var topicTopNLimit = 100
 var topNBalanceDiff = 3
+var moveWaitTimeout = time.Minute * 10
 
 const (
 	RATIO_BETWEEN_LEADER_FOLLOWER = 0.7
@@ -1063,7 +1064,8 @@ func (dpm *DataPlacement) tryMoveTopicPartition(monitorChan chan struct{}, srcNo
 	if FindSlice(topicInfo.ISR, toNode) == -1 {
 		// add destination to catchup and wait
 		if FindSlice(topicInfo.CatchupList, toNode) != -1 {
-			// wait ready
+			// just notify to allow restart and wait ready
+			dpm.lookupCoord.notifyCatchupTopicMetaInfo(topicInfo)
 		} else {
 			excludeNodes, commonErr := dpm.getExcludeNodesForTopic(topicInfo, true)
 			if commonErr != nil {
@@ -1073,6 +1075,7 @@ func (dpm *DataPlacement) tryMoveTopicPartition(monitorChan chan struct{}, srcNo
 				coordLog.Infof("current node: %v is excluded for topic: %v-%v", toNode, topicName, partitionID)
 				return ErrNodeIsExcludedForTopicData
 			}
+			// TODO: greedy clean topic leader data to speed up catchup
 			coordErr := dpm.lookupCoord.addCatchupNode(topicInfo, toNode)
 			if coordErr != nil {
 				return coordErr.ToErrorType()
@@ -1098,7 +1101,7 @@ func (dpm *DataPlacement) tryMoveTopicPartition(monitorChan chan struct{}, srcNo
 					return errors.New("catchup changed while wait moving")
 				}
 			}
-			if time.Since(waitStart) > time.Minute*10 {
+			if time.Since(waitStart) > moveWaitTimeout {
 				return errMoveTopicWaitTimeout
 			}
 

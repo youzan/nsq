@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	ETCD_TTL = 30
+	ETCD_TTL = 20
 )
 
 type MasterChanInfo struct {

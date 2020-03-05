@@ -1095,8 +1095,24 @@ func (ncoord *NsqdCoordinator) checkForUnsyncedTopics() {
 					go ncoord.catchupFromLeader(*topicMeta, "")
 				} else if FindSlice(topicMeta.ISR, ncoord.myNode.GetID()) == -1 {
 					if len(topicMeta.ISR)+len(topicMeta.CatchupList) >= topicMeta.Replica {
-						coordLog.Infof("the topic should be clean since not relevance to me: %v", topicMeta)
-						ncoord.removeTopicCoord(topicMeta.Name, topicMeta.Partition, true)
+						coordData, err := ncoord.getTopicCoordData(topic, pid)
+						canRemove := true
+						if err == nil {
+							// check whether the topic info is out of date
+							isr := coordData.topicInfo.ISR
+							catchups := coordData.topicInfo.CatchupList
+							if FindSlice(isr, ncoord.myNode.GetID()) != -1 || FindSlice(catchups, ncoord.myNode.GetID()) != -1 {
+								canRemove = false
+								coordLog.Infof("the topic not relevance to me: %v, but found in topic coordinator %v", topicMeta, coordData.topicInfo)
+							}
+						}
+						if canRemove {
+							coordLog.Infof("the topic should be clean since not relevance to me: %v", topicMeta)
+							// TODO: we need handle if this topic is init while got update topic info
+							ncoord.removeTopicCoord(topicMeta.Name, topicMeta.Partition, true)
+						}
+						// removed or not we need check the newest topic info from lookup if we do the wrong thing because of the isr changed while removing
+						ncoord.requestNotifyNewTopicInfo(topicMeta.Name, topicMeta.Partition)
 					}
 				}
 			}
