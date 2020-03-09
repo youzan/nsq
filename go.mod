@@ -5,7 +5,7 @@ go 1.13
 require (
 	github.com/BurntSushi/toml v0.3.1
 	github.com/Workiva/go-datastructures v1.0.50
-	github.com/absolute8511/bolt v1.4.0
+	github.com/absolute8511/bolt v1.5.0
 	github.com/absolute8511/glog v0.3.1
 	github.com/absolute8511/gorpc v0.0.0-20161203145636-60ee7d4359cb
 	github.com/absolute8511/goskiplist v0.0.0-20170727031420-3ba6f667c3df
@@ -40,7 +40,6 @@ require (
 	github.com/youzan/go-nsq v1.3.2-HA
 	golang.org/x/net v0.0.0-20190311183353-d8887717615a
 	golang.org/x/sync v0.0.0-20190911185100-cd5d95a43a6e
-	golang.org/x/sys v0.0.0-20200117145432-59e60aa80a0c // indirect
 	google.golang.org/grpc v1.26.0
 	gopkg.in/stretchr/testify.v1 v1.2.2 // indirect
 )
