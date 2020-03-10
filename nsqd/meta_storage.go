@@ -189,8 +189,9 @@ type dbMetaStorage struct {
 
 func NewDBMetaStorage(p string) (*dbMetaStorage, error) {
 	ro := &bolt.Options{
-		Timeout:  time.Second,
-		ReadOnly: false,
+		Timeout:      time.Second,
+		ReadOnly:     false,
+		FreelistType: bolt.FreelistMapType,
 	}
 	os.MkdirAll(p, 0755)
 	db, err := bolt.Open(path.Join(p, "meta.db"), 0644, ro)

@@ -248,8 +248,9 @@ type DelayQueue struct {
 func NewDelayQueueForRead(topicName string, part int, dataPath string, opt *Options,
 	idGen MsgIDGenerator, isExt bool) (*DelayQueue, error) {
 	ro := &bolt.Options{
-		Timeout:  time.Second,
-		ReadOnly: true,
+		Timeout:      time.Second,
+		ReadOnly:     true,
+		FreelistType: bolt.FreelistMapType,
 	}
 	return newDelayQueue(topicName, part, dataPath, opt, idGen, isExt, ro)
 }
@@ -290,8 +291,9 @@ func newDelayQueue(topicName string, part int, dataPath string, opt *Options,
 	q.backend = queue.(*diskQueueWriter)
 	if ro == nil {
 		ro = &bolt.Options{
-			Timeout:  time.Second,
-			ReadOnly: false,
+			Timeout:      time.Second,
+			ReadOnly:     false,
+			FreelistType: bolt.FreelistMapType,
 		}
 	}
 	q.kvStore, err = bolt.Open(path.Join(q.dataPath, getDelayQueueDBName(q.tname, q.partition)), 0644, ro)
@@ -360,8 +362,9 @@ func (q *DelayQueue) Stats() string {
 func (q *DelayQueue) reOpenStore() error {
 	var err error
 	ro := &bolt.Options{
-		Timeout:  time.Second,
-		ReadOnly: false,
+		Timeout:      time.Second,
+		ReadOnly:     false,
+		FreelistType: bolt.FreelistMapType,
 	}
 	q.kvStore, err = bolt.Open(path.Join(q.dataPath, getDelayQueueDBName(q.tname, q.partition)), 0644, ro)
 	if err != nil {
@@ -1392,8 +1395,9 @@ func (q *DelayQueue) compactStore(force bool) error {
 	tmpPath := fmt.Sprintf("%s-tmp.compact.%d", src.Path(), time.Now().UnixNano())
 	// Open destination database.
 	ro := &bolt.Options{
-		Timeout:  time.Second,
-		ReadOnly: false,
+		Timeout:      time.Second,
+		ReadOnly:     false,
+		FreelistType: bolt.FreelistMapType,
 	}
 	dst, err := bolt.Open(tmpPath, 0644, ro)
 	if err != nil {
