@@ -18,12 +18,12 @@
   version = "v1.0.50"
 
 [[projects]]
-  digest = "1:4a5fc71fffd5ba419b6beccebaa62831bf9908bd562ebe27fa55a3bf9135a962"
+  digest = "1:7ba8e8085bf6fe000d931667b4229ac853321e1aa02081373f3571f72b120562"
   name = "github.com/absolute8511/bolt"
   packages = ["."]
   pruneopts = "UT"
-  revision = "542c5384f7db8dcbfe50f7bf023672c1fb2e99e4"
-  version = "v1.4.0"
+  revision = "3dc293be17a25a9642db0256078805964b0f2ea9"
+  version = "v1.5.0"
 
 [[projects]]
   digest = "1:68854f47091d4b87190d6a59955e83dcec64a3a7c9a1f63d5c11d0f1340224df"
