@@ -82,17 +82,19 @@ type ChannelStats struct {
 	DepthTimestamp string `json:"depth_ts"`
 	BackendDepth   int64  `json:"backend_depth"`
 	// total size sub past hour on this channel
-	HourlySubSize  int64         `json:"hourly_subsize"`
-	InFlightCount  int           `json:"in_flight_count"`
-	DeferredCount  int           `json:"deferred_count"`
-	MessageCount   uint64        `json:"message_count"`
-	RequeueCount   uint64        `json:"requeue_count"`
-	TimeoutCount   uint64        `json:"timeout_count"`
-	Clients        []ClientStats `json:"clients"`
-	ClientNum      int64         `json:"client_num"`
-	Paused         bool          `json:"paused"`
-	Skipped        bool          `json:"skipped"`
-	ZanTestSkipped bool          `json:"zan_test_skipped"`
+	HourlySubSize int64 `json:"hourly_subsize"`
+	InFlightCount int   `json:"in_flight_count"`
+	DeferredCount int   `json:"deferred_count"`
+	// the waiting messages count which is timeouted and peeked from delayed queue
+	DeferredFromDelayCount int           `json:"deferred_from_delay_count"`
+	MessageCount           uint64        `json:"message_count"`
+	RequeueCount           uint64        `json:"requeue_count"`
+	TimeoutCount           uint64        `json:"timeout_count"`
+	Clients                []ClientStats `json:"clients"`
+	ClientNum              int64         `json:"client_num"`
+	Paused                 bool          `json:"paused"`
+	Skipped                bool          `json:"skipped"`
+	ZanTestSkipped         bool          `json:"zan_test_skipped"`
 
 	DelayedQueueCount  uint64 `json:"delayed_queue_count"`
 	DelayedQueueRecent string `json:"delayed_queue_recent"`
@@ -118,17 +120,18 @@ func NewChannelStats(c *Channel, clients []ClientStats, clientNum int) ChannelSt
 		InFlightCount: inflightCnt,
 		// this is total message count need consume.
 		// may diff with topic total size since some is in buffer.
-		MessageCount:       uint64(c.backend.GetQueueReadEnd().TotalMsgCnt()),
-		RequeueCount:       atomic.LoadUint64(&c.requeueCount),
-		DeferredCount:      int(atomic.LoadInt64(&c.deferredCount)),
-		TimeoutCount:       atomic.LoadUint64(&c.timeoutCount),
-		Clients:            clients,
-		ClientNum:          int64(clientNum),
-		Paused:             c.IsPaused(),
-		Skipped:            c.IsSkipped(),
-		ZanTestSkipped:     c.IsZanTestSkipped(),
-		DelayedQueueCount:  dqCnt,
-		DelayedQueueRecent: time.Unix(0, recentTs).String(),
+		MessageCount:           uint64(c.backend.GetQueueReadEnd().TotalMsgCnt()),
+		RequeueCount:           atomic.LoadUint64(&c.requeueCount),
+		DeferredCount:          int(atomic.LoadInt64(&c.deferredCount)),
+		DeferredFromDelayCount: int(atomic.LoadInt64(&c.deferredFromDelay)),
+		TimeoutCount:           atomic.LoadUint64(&c.timeoutCount),
+		Clients:                clients,
+		ClientNum:              int64(clientNum),
+		Paused:                 c.IsPaused(),
+		Skipped:                c.IsSkipped(),
+		ZanTestSkipped:         c.IsZanTestSkipped(),
+		DelayedQueueCount:      dqCnt,
+		DelayedQueueRecent:     time.Unix(0, recentTs).String(),
 
 		E2eProcessingLatency:    c.e2eProcessingLatencyStream.Result(),
 		MsgConsumeLatencyStats:  c.channelStatsInfo.GetChannelLatencyStats(),
