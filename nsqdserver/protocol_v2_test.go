@@ -1504,7 +1504,7 @@ func TestConsumeDelayedMessageWhileSample(t *testing.T) {
 	}
 	conn1.Close()
 	t.Logf("fin %v messages", cnt)
-	test.Assert(t, cnt >= 50, "should consume enough messages")
+	test.Assert(t, cnt >= 40, "should consume enough messages")
 	chStats = nsqdNs.NewChannelStats(ch, nil, 0)
 	t.Log(chStats)
 	test.Assert(t, chStats.DelayedQueueCount == 0, "should consume all delayed messages")
@@ -1723,6 +1723,11 @@ func TestRemoveTagClientWhileConsuming(t *testing.T) {
 
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
+	opts.MsgTimeout = time.Second * 5
+	if testing.Verbose() {
+		opts.LogLevel = 4
+		nsqdNs.SetLogger(opts.Logger)
+	}
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqdServer.Exit()
@@ -1803,7 +1808,7 @@ func TestRemoveTagClientWhileConsuming(t *testing.T) {
 	client2Params := make(map[string]interface{})
 	client2Params["client_id"] = "client_w_tag2"
 	client2Params["hostname"] = "client_w_tag2"
-	client2Params["desired_tag"] = "TAG"
+	client2Params["desired_tag"] = tagName
 	client2Params["extend_support"] = true
 	identify(t, conn2, client2Params, frameTypeResponse)
 	sub(t, conn2, topicName, "ch")
