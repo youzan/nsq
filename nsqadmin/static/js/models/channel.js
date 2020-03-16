@@ -16,10 +16,10 @@ var Channel = Backbone.Model.extend({
             encodeURIComponent(this.get('name')));
     },
 
-    adminUrl: function() {
+    clientUrl: function() {
         return AppState.url('/topics/' +
                     encodeURIComponent(this.get('topic')) + '/' +
-                    encodeURIComponent(this.get('name'))) + '/admin';
+                    encodeURIComponent(this.get('name'))) + '/client';
     },
 
     parse: function(response) {

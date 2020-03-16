@@ -72,7 +72,7 @@ var ChannelView = BaseView.extend({
                            if(msgId && msgId<=0) {
                                this.showError("Invalid message internal ID");
                            } else if(msgId) {
-                               $.post(this.model.adminUrl(), JSON.stringify({'action': action, 'node': node, 'msgid': msgId, 'partition': partition}))
+                               $.post(this.model.clientUrl(), JSON.stringify({'action': action, 'node': node, 'msgid': msgId, 'partition': partition}))
                                    .done(function() { window.location.reload(true); })
                                    .fail(this.handleAJAXError.bind(this));
                            }
@@ -114,12 +114,6 @@ var ChannelView = BaseView.extend({
                $.post(this.model.url(), JSON.stringify({'action': action, 'timestamp': '' + ts}))
                                    .done(function() { window.location.reload(true); })
                                    .fail(this.handleAJAXError.bind(this));
-//            } else if(action === 'finish'){
-//                var msgId = $('input[name=msgIdForFin]').val();
-//                var nodePar_sel = $('select[name=nodeParSelect]').val();
-//                $.post(this.model.adminUrl(), JSON.stringify({'action': action, 'nodePartition': nodePar_sel, 'msgid': msgId}))
-//                                    .done(function() { window.location.reload(true); })
-//                                    .fail(this.handleAJAXError.bind(this));
             } else {
                 $.post(this.model.url(), JSON.stringify({'action': action}))
                     .done(function() { window.location.reload(true); })
