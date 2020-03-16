@@ -9,7 +9,7 @@ var taskListing = require('gulp-task-listing');
 var uglify = require('gulp-uglify');
 var sourcemaps = require('gulp-sourcemaps');
 var buffer = require('vinyl-buffer');
-
+const { series } = require('gulp');
 
 var ROOT = 'static';
 
@@ -47,78 +47,77 @@ function logBundle(filename, watching) {
 }
 
 
-function sassTask(root, inputFile) {
-    return function() {
-        var onError = function(err) {
-            notify({'title': 'Sass Compile Error'}).write(err);
-        };
-        gulp.src(path.join(root, 'css', inputFile))
-            .pipe(sass({
-                'sourceComments': 'map',
-                'onError': onError
-            }))
-            .pipe(gulp.dest(path.join(root, 'build/')));
+function sassTask(cb) {
+    root = ROOT; 
+    inputFile = '*.*css';
+    var onError = function(err) {
+        notify({'title': 'Sass Compile Error'}).write(err);
     };
+    gulp.src(path.join(root, 'css', inputFile), { allowEmpty: true })
+        .pipe(sass({
+            'sourceComments': 'map',
+            'onError': onError
+        }))
+        .pipe(gulp.dest(path.join(root, 'build/')));
+    cb();
+}
+
+function browserifyTask(cb) {
+    root = ROOT;
+    inputFile = 'main.js';
+
+    var onError = function() {
+        var args = Array.prototype.slice.call(arguments);
+        notify.onError({
+            'title': 'JS Compile Error',
+            'message': '<%= error.message %>'
+        }).apply(this, args);
+        // Keep gulp from hanging on this task
+        this.emit('end');
+    };
+
+    // Browserify needs a node module to import as its arg, so we need to
+    // force the leading "./" to be included.
+    var b = browserify({
+        entries: './' + path.join(root, 'js', inputFile),
+        debug: true
+    })
+
+    excludeVendor(b);
+
+    b.bundle()
+        .pipe(source(inputFile))
+        .pipe(buffer())
+        .pipe(sourcemaps.init({'loadMaps': true, 'debug': true}))
+            // Add transformation tasks to the pipeline here.
+            .pipe(uglify())
+            .on('error', onError)
+        .pipe(sourcemaps.write('./'))
+        .pipe(gulp.dest(path.join(root, 'build/')));
+    cb();
+}
+
+function watchTask(cb) {
+    root = ROOT
+    gulp.watch([path.join(root, 'sass/**/*.scss')], sassTask);
+    gulp.watch([
+        path.join(root, 'js/**/*.js'),
+        path.join(root, 'js/**/*.hbs')
+    ], browserifyTask);
+    gulp.watch([
+        path.join(root, 'html/**'),
+        path.join(root, 'fonts/**')
+    ], syncStaticAssets)
+    cb();
 }
 
 
-function browserifyTask(root, inputFile) {
-    return function() {
-        var onError = function() {
-            var args = Array.prototype.slice.call(arguments);
-            notify.onError({
-                'title': 'JS Compile Error',
-                'message': '<%= error.message %>'
-            }).apply(this, args);
-            // Keep gulp from hanging on this task
-            this.emit('end');
-        };
-
-        // Browserify needs a node module to import as its arg, so we need to
-        // force the leading "./" to be included.
-        var b = browserify({
-            entries: './' + path.join(root, 'js', inputFile),
-            debug: true
-        })
-
-        excludeVendor(b);
-
-        return b.bundle()
-            .pipe(source(inputFile))
-            .pipe(buffer())
-            .pipe(sourcemaps.init({'loadMaps': true, 'debug': true}))
-                // Add transformation tasks to the pipeline here.
-                .pipe(uglify())
-                .on('error', onError)
-            .pipe(sourcemaps.write('./'))
-            .pipe(gulp.dest(path.join(root, 'build/')));
-    };
+function cleanTask(cb){
+    gulp.src([ROOT + '/build/*/*.*']).pipe(clean());
+    cb();
 }
 
-
-function watchTask(root) {
-    return function() {
-        gulp.watch(path.join(root, 'sass/**/*.scss'), ['sass']);
-        gulp.watch([
-            path.join(root, 'js/**/*.js'),
-            path.join(root, 'js/**/*.hbs')
-        ], ['browserify']);
-        gulp.watch([
-          path.join(root, 'html/**'),
-          path.join(root, 'fonts/**')
-        ], ['sync-static-assets'])
-    };
-}
-
-
-function cleanTask(){
-    var paths = Array.prototype.slice.apply(arguments);
-    return function () {
-        gulp.src(paths).pipe(clean());
-    };
-}
-
-gulp.task('vendor-build-js', function() {
+gulp.task('vendor-build-js', function(cb) {
     var onError = function() {
         var args = Array.prototype.slice.call(arguments);
         notify.onError({
@@ -132,31 +131,35 @@ gulp.task('vendor-build-js', function() {
     var b = browserify()
         .require(VENDOR_CONFIG.src);
 
-    return b.bundle(logBundle(VENDOR_CONFIG.target))
+    b.bundle(logBundle(VENDOR_CONFIG.target))
         .pipe(source(VENDOR_CONFIG.target))
         .pipe(buffer())
             // Add transformation tasks to the pipeline here.
             .pipe(uglify())
             .on('error', onError)
         .pipe(gulp.dest(VENDOR_CONFIG.targetDir));
+    cb();
 });
 
 gulp.task('help', taskListing);
 
-gulp.task('sync-static-assets', function() {
-    return gulp.src([
+function syncStaticAssets(cb) {
+    gulp.src([
         path.join(ROOT, 'html/**'),
         path.join(ROOT, 'fonts/**'),
         path.join(ROOT, 'img/**'),
         path.join(ROOT, 'js/jquery.tablesorter.js'),
         path.join(ROOT, 'js/jquery-latest.js')
-    ]).pipe(gulp.dest(path.join(ROOT, 'build')));
-});
+    ], { allowEmpty: true }).pipe(gulp.dest(path.join(ROOT, 'build')));
+    cb();
+}
 
-gulp.task('sass', sassTask(ROOT, '*.*css'));
-gulp.task('browserify', browserifyTask(ROOT, 'main.js'));
-gulp.task('build', ['sass', 'browserify', 'sync-static-assets', 'vendor-build-js']);
-gulp.task('watch', ['build'], watchTask(ROOT));
-gulp.task('clean', cleanTask(path.join(ROOT, 'build')));
+gulp.task('sync-static-assets', syncStaticAssets);
 
-gulp.task('default', ['help']);
+gulp.task('sass', sassTask);
+gulp.task('browserify', browserifyTask);
+gulp.task('build', series('sass', 'browserify', 'sync-static-assets', 'vendor-build-js'));
+gulp.task('watch', series('build', watchTask));
+gulp.task('clean', cleanTask);
+
+exports.default = series('help');

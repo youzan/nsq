@@ -862,7 +862,7 @@ func (s *httpServer) searchMessageTrace(w http.ResponseWriter, req *http.Request
 	var tracelogFilteredLock sync.Mutex
 	tracelogFiltered := &TraceLog{
 		LogDataDtos: make([]TraceLogData, 0),
-		TotalCount: 0,
+		TotalCount:  0,
 	}
 
 	needGetRequestMsg := true
@@ -1173,12 +1173,8 @@ func (s *httpServer) channelClientActionHandler(w http.ResponseWriter, req *http
 
 func (s *httpServer) topicChannelClientAction(req *http.Request, topicName string, channelName string) (interface{}, error) {
 	var messages []string
+	var body ChannelActionRequest
 
-	var body struct {
-		Action    string `json:"action"`
-		Timestamp string `json:"timestamp"`
-		Order     bool   `json:"order"`
-	}
 	err := json.NewDecoder(req.Body).Decode(&body)
 	if err != nil {
 		return nil, http_api.Err{400, err.Error()}
@@ -1193,6 +1189,31 @@ func (s *httpServer) topicChannelClientAction(req *http.Request, topicName strin
 		if channelName != "" {
 			s.notifyAdminActionWithUserAndOrder("sink_removal", topicName, channelName, "", body.Order, req)
 
+		}
+	case "finish":
+		if channelName != "" {
+			//parse dc
+			node := body.Node
+			//parse node and partition
+			if node == "" {
+				return nil, http_api.Err{400, fmt.Sprintf("INVALID_NSQD_NODE")}
+			}
+			partition := body.Partition
+
+			//parse msgId
+			var msgid int64
+			msgid, err = strconv.ParseInt(body.MsgId, 10, 64)
+			if err != nil {
+				return nil, http_api.Err{400, fmt.Sprintf("INVALID_MSGID: %s", err)}
+			}
+			if msgid <= 0 {
+				return nil, http_api.Err{400, fmt.Sprintf("INVALID_MSGID")}
+			}
+			err = s.ci.FinishMessage(topicName, channelName, node, partition, msgid)
+			if err != nil && strings.Contains(err.Error(), "Message ID not in flight") {
+				return nil, http_api.Err{400, fmt.Sprintf("INVALID_MSGID: Message ID not in flight")}
+			}
+			s.notifyAdminActionWithUser("finish_message", topicName, channelName, node, req)
 		}
 	default:
 		return nil, http_api.Err{400, "INVALID_ACTION"}
@@ -1231,6 +1252,7 @@ type ChannelActionRequest struct {
 	Node      string `json:"node"`
 	Partition int    `json:"partition"`
 	MsgId     string `json:"msgid"`
+	Order     bool   `json:"order"`
 }
 
 func (s *httpServer) topicChannelAdminAction(req *http.Request, topicName string, channelName string) (interface{}, error) {
@@ -1243,31 +1265,6 @@ func (s *httpServer) topicChannelAdminAction(req *http.Request, topicName string
 	}
 
 	switch body.Action {
-	case "finish":
-		if channelName != "" {
-			//parse dc
-			node := body.Node
-			//parse node and partition
-			if node == "" {
-				return nil, http_api.Err{400, fmt.Sprintf("INVALID_NSQD_NODE")}
-			}
-			partition := body.Partition
-
-			//parse msgId
-			var msgid int64
-			msgid, err = strconv.ParseInt(body.MsgId, 10, 64)
-			if err != nil {
-				return nil, http_api.Err{400, fmt.Sprintf("INVALID_MSGID: %s", err)}
-			}
-			if msgid <= 0 {
-				return nil, http_api.Err{400, fmt.Sprintf("INVALID_MSGID")}
-			}
-			err = s.ci.FinishMessage(topicName, channelName, node, partition, msgid)
-			if err != nil && strings.Contains(err.Error(), "Message ID not in flight") {
-				return nil, http_api.Err{400, fmt.Sprintf("INVALID_MSGID: Message ID not in flight")}
-			}
-			s.notifyAdminActionWithUser("finish_message", topicName, channelName, node, req)
-		}
 	default:
 		return nil, http_api.Err{400, "INVALID_ACTION"}
 	}
