@@ -1714,7 +1714,7 @@ func (dpm *DataPlacement) chooseNewLeaderFromISRForOrderedTopic(topicInfo *Topic
 	if newLeader == "" {
 		newLeader = newestReplicas[0]
 		coordLog.Infof("all the balanced isr is not in the newest log list: %v, %v",
-			partitionNodes[topicInfo.Partition], newestReplicas)
+			partitionNodes, newestReplicas)
 	}
 
 	return newLeader
