@@ -598,7 +598,7 @@ func (c *Channel) skipChannelToEnd() (BackendQueueEnd, error) {
 	defer c.Unlock()
 	e, err := c.backend.SkipReadToEnd()
 	if err != nil {
-		nsqLog.Warningf("failed to reset reader to end %v", err)
+		nsqLog.Infof("failed to reset reader to end %v", err)
 	} else {
 		c.drainChannelWaiting(true, nil, nil)
 	}

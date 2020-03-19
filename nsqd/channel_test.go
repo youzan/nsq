@@ -212,7 +212,7 @@ func TestChannelEmptyWhileConfirmDelayMsg(t *testing.T) {
 	opts.QueueScanInterval = time.Millisecond
 	opts.MsgTimeout = time.Second
 	if testing.Verbose() {
-		opts.LogLevel = 4
+		opts.LogLevel = 2
 		SetLogger(opts.Logger)
 	}
 	_, _, nsqd := mustStartNSQD(opts)
@@ -225,7 +225,7 @@ func TestChannelEmptyWhileConfirmDelayMsg(t *testing.T) {
 	dq, err := topic.GetOrCreateDelayedQueueNoLock(nil)
 	equal(t, err, nil)
 	stopC := make(chan bool)
-	for i := 0; i < 500; i++ {
+	for i := 0; i < 100; i++ {
 		msg := NewMessage(0, []byte("test"))
 		id, _, _, _, err := topic.PutMessage(msg)
 		equal(t, err, nil)
@@ -260,7 +260,7 @@ func TestChannelEmptyWhileConfirmDelayMsg(t *testing.T) {
 			t.Logf("consume %v", outputMsg)
 			channel.StartInFlightTimeout(outputMsg, NewFakeConsumer(0), "", opts.MsgTimeout)
 			channel.FinishMessageForce(0, "", outputMsg.ID, true)
-			time.Sleep(time.Microsecond * 10)
+			time.Sleep(time.Millisecond)
 		}
 	}()
 
@@ -272,6 +272,11 @@ func TestChannelEmptyWhileConfirmDelayMsg(t *testing.T) {
 			default:
 			}
 			channel.skipChannelToEnd()
+			_, dqCnt := channel.GetDelayedQueueConsumedState()
+			if int64(dqCnt) == 0 && atomic.LoadInt64(&channel.deferredFromDelay) == 0 && channel.Depth() == 0 {
+				close(stopC)
+				return
+			}
 			time.Sleep(time.Millisecond * 10)
 		}
 	}()
@@ -297,7 +302,7 @@ func TestChannelEmptyWhileConfirmDelayMsg(t *testing.T) {
 		select {
 		case <-stopC:
 			done = true
-		case <-time.After(time.Second * 5):
+		case <-time.After(time.Second * 3):
 			_, dqCnt := channel.GetDelayedQueueConsumedState()
 			if int64(dqCnt) == 0 && atomic.LoadInt64(&channel.deferredFromDelay) == 0 && channel.Depth() == 0 {
 				close(stopC)
