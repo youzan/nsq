@@ -1553,6 +1553,9 @@ func (c *Channel) pushInFlightMessage(msg *Message) (*Message, error) {
 	c.inFlightMutex.Lock()
 	defer c.inFlightMutex.Unlock()
 	if c.IsConsumeDisabled() {
+		// we should clean req message if it is not go into inflight, if not
+		// we leave a orphen message not in requeue chan and not in inflight
+		c.cleanWaitingRequeueChanNoLock(msg)
 		return nil, ErrConsumeDisabled
 	}
 	m, ok := c.inFlightMessages[msg.ID]

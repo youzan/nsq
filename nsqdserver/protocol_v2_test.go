@@ -1416,22 +1416,20 @@ func TestConsumeDelayedMessageWhileUpgrade(t *testing.T) {
 func prepareTestOptsForDelayedMsg(t *testing.T, reqToEnd time.Duration) *nsqdNs.Options {
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
-	if testing.Verbose() {
-		opts.LogLevel = 3
-		nsqdNs.SetLogger(opts.Logger)
-	}
-	opts.QueueScanInterval = time.Millisecond * 100
+	opts.LogLevel = 3
+	nsqdNs.SetLogger(opts.Logger)
+	opts.QueueScanInterval = time.Millisecond * 200
 	opts.ReqToEndThreshold = reqToEnd
-	opts.MsgTimeout = time.Second * 5
+	opts.MsgTimeout = time.Second * 10
 	opts.MaxConfirmWin = 50
-	opts.MaxReqTimeout = reqToEnd * 5
+	opts.MaxReqTimeout = reqToEnd * 3
 	return opts
 }
 
 func TestConsumeDelayedMessageWhileSample(t *testing.T) {
 	topicName := "test_consume_delayed_sample" + strconv.Itoa(int(time.Now().Unix()))
 
-	opts := prepareTestOptsForDelayedMsg(t, time.Second)
+	opts := prepareTestOptsForDelayedMsg(t, time.Millisecond*200)
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqdServer.Exit()
@@ -1473,6 +1471,7 @@ func TestConsumeDelayedMessageWhileSample(t *testing.T) {
 	t.Log(chStats)
 	test.Assert(t, chStats.DelayedQueueCount > 0, "should have disk delayed msgs")
 	test.Assert(t, chStats.DeferredFromDelayCount > 0, "should have defer message in mem")
+	conn1.Close()
 
 	time.Sleep(time.Second * 2)
 	// make sure we can consume delayed message even sampled
@@ -1483,9 +1482,9 @@ func TestConsumeDelayedMessageWhileSample(t *testing.T) {
 	sub(t, conn1, topicName, "ch")
 	_, err = nsq.Ready(1).WriteTo(conn1)
 	test.Equal(t, err, nil)
-	conn1.SetDeadline(time.Now().Add(time.Second * 10))
-	conn1.SetReadDeadline(time.Now().Add(time.Second * 10))
-	conn1.SetWriteDeadline(time.Now().Add(time.Second * 10))
+	conn1.SetDeadline(time.Now().Add(time.Second * 30))
+	conn1.SetReadDeadline(time.Now().Add(time.Second * 30))
+	conn1.SetWriteDeadline(time.Now().Add(time.Second * 30))
 	for {
 		msgOut := recvNextMsgAndCheck(t, conn1, len(msgBody), 0, false)
 		test.NotNil(t, msgOut)
@@ -1514,19 +1513,12 @@ func TestConsumeDelayedMessageWhileSample(t *testing.T) {
 func TestConsumeDelayedMessageWhileDisableEnableSwitch(t *testing.T) {
 	topicName := "test_consume_delayed_switch_master" + strconv.Itoa(int(time.Now().Unix()))
 
-	opts := prepareTestOptsForDelayedMsg(t, time.Second)
+	opts := prepareTestOptsForDelayedMsg(t, time.Millisecond*100)
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqdServer.Exit()
 	topic := nsqd.GetTopicIgnPart(topicName)
 	ch := topic.GetChannel("ch")
-
-	conn1, err := mustConnectNSQD(tcpAddr)
-	test.Equal(t, err, nil)
-	identify(t, conn1, nil, frameTypeResponse)
-	sub(t, conn1, topicName, "ch")
-	_, err = nsq.Ready(1).WriteTo(conn1)
-	test.Equal(t, err, nil)
 
 	msgBody := []byte("test body")
 	traceID := uint64((0))
@@ -1537,6 +1529,9 @@ func TestConsumeDelayedMessageWhileDisableEnableSwitch(t *testing.T) {
 		_, _, _, _, putErr := topic.PutMessage(msg)
 		test.Nil(t, putErr)
 	}
+	conn1, err := mustConnectAndSub(t, tcpAddr, topicName, "ch")
+	defer conn1.Close()
+	test.Equal(t, err, nil)
 	_, err = topic.GetOrCreateDelayedQueueNoLock(nil)
 	test.Nil(t, err)
 	for i := 0; i < 100; i++ {
@@ -1546,16 +1541,33 @@ func TestConsumeDelayedMessageWhileDisableEnableSwitch(t *testing.T) {
 		_, err := nsq.Requeue(nsq.MessageID(msgOut.GetFullMsgID()), opts.ReqToEndThreshold*2).WriteTo(conn1)
 		test.Nil(t, err)
 		chStats := nsqdNs.NewChannelStats(ch, nil, 0)
-		if chStats.DelayedQueueCount > 10 && chStats.DeferredFromDelayCount > 0 {
+		if chStats.DelayedQueueCount > 50 && chStats.DeferredFromDelayCount > 0 {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	// wait delayed message peek from db
+	start := time.Now()
+	for {
+		time.Sleep(opts.ReqToEndThreshold)
+		chStats := nsqdNs.NewChannelStats(ch, nil, 0)
+		t.Log(chStats)
+		test.Assert(t, chStats.DelayedQueueCount > 0, "should have disk delayed msgs")
+		if chStats.ClientNum == 0 {
+			// the client connection is closed by accident, we reconnect
+			conn1, err = mustConnectAndSub(t, tcpAddr, topicName, "ch")
+			test.Equal(t, err, nil)
+		}
+		if chStats.DeferredFromDelayCount > 0 {
+			break
+		}
+		if time.Since(start) > time.Minute {
 			break
 		}
 	}
-	time.Sleep(opts.ReqToEndThreshold * 3)
-	chStats := nsqdNs.NewChannelStats(ch, nil, 0)
-	t.Log(chStats)
-	test.Assert(t, chStats.DelayedQueueCount > 0, "should have disk delayed msgs")
-	test.Assert(t, chStats.DeferredFromDelayCount > 0, "should have defer message in mem")
 
+	chStats := nsqdNs.NewChannelStats(ch, nil, 0)
+	test.Assert(t, chStats.DeferredFromDelayCount > 0, "should have defer message in mem")
 	ch.DisableConsume(true)
 
 	time.Sleep(time.Second * 2)
@@ -1564,16 +1576,14 @@ func TestConsumeDelayedMessageWhileDisableEnableSwitch(t *testing.T) {
 	t.Log(chStats)
 	test.Assert(t, chStats.DelayedQueueCount > 0, "should have disk delayed msgs")
 	test.Assert(t, chStats.DeferredCount == 0, "should have no defer message in mem while disable")
+	// push inflight may fail due to consume disabled, so the requeued messages should be removed from
+	// waiting list
 	test.Assert(t, chStats.DeferredFromDelayCount == 0, "should have no delayed queue message while disable")
 
 	ch.DisableConsume(false)
 	// make sure we can consume all after enable consume
 	cnt := 0
-	conn1, err = mustConnectNSQD(tcpAddr)
-	test.Equal(t, err, nil)
-	identify(t, conn1, nil, frameTypeResponse)
-	sub(t, conn1, topicName, "ch")
-	_, err = nsq.Ready(1).WriteTo(conn1)
+	conn1, err = mustConnectAndSub(t, tcpAddr, topicName, "ch")
 	test.Equal(t, err, nil)
 	conn1.SetDeadline(time.Now().Add(time.Second * 10))
 	conn1.SetReadDeadline(time.Now().Add(time.Second * 10))
@@ -1594,7 +1604,6 @@ func TestConsumeDelayedMessageWhileDisableEnableSwitch(t *testing.T) {
 			break
 		}
 	}
-	conn1.Close()
 	t.Logf("fin %v messages", cnt)
 	test.Assert(t, cnt >= 100, "should consume enough messages")
 	chStats = nsqdNs.NewChannelStats(ch, nil, 0)
@@ -2493,15 +2502,9 @@ func TestPausing(t *testing.T) {
 	topic := nsqd.GetTopicIgnPart(topicName)
 	topic.GetChannel("ch")
 
-	conn, err := mustConnectNSQD(tcpAddr)
+	conn, err := mustConnectAndSub(t, tcpAddr, topicName, "ch")
 	test.Equal(t, err, nil)
 	defer conn.Close()
-
-	identify(t, conn, nil, frameTypeResponse)
-	sub(t, conn, topicName, "ch")
-
-	_, err = nsq.Ready(1).WriteTo(conn)
-	test.Equal(t, err, nil)
 
 	msg := nsqdNs.NewMessage(0, []byte("test body"))
 	channel := topic.GetChannel("ch")
@@ -2570,15 +2573,13 @@ func TestTcpPUBTRACE(t *testing.T) {
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqdServer.Exit()
 
-	conn, err := mustConnectNSQD(tcpAddr)
-	test.Equal(t, err, nil)
-	defer conn.Close()
-
 	topicName := "test_tcp_pubtrace" + strconv.Itoa(int(time.Now().Unix()))
 	nsqd.GetTopicIgnPart(topicName).GetChannel("ch")
 
+	conn, err := mustConnectNSQD(tcpAddr)
+	test.Equal(t, err, nil)
+	defer conn.Close()
 	identify(t, conn, nil, frameTypeResponse)
-	sub(t, conn, topicName, "ch")
 
 	// PUBTRACE that's valid
 	cmd, _ := nsq.PublishTrace(topicName, "0", 123, make([]byte, 5))
@@ -2600,12 +2601,8 @@ func TestTcpPUBTRACE(t *testing.T) {
 	// note: the trace body length should include the trace id
 	test.Equal(t, string(data), fmt.Sprintf("E_BAD_MESSAGE message too big 113 > 100"))
 
-	conn, err = mustConnectNSQD(tcpAddr)
-	test.Equal(t, err, nil)
-	identify(t, conn, nil, frameTypeResponse)
-	test.Equal(t, err, nil)
-	sub(t, conn, topicName, "ch")
-	_, err = nsq.Ready(1).WriteTo(conn)
+	conn.Close()
+	conn, err = mustConnectAndSub(t, tcpAddr, topicName, "ch")
 	test.Equal(t, err, nil)
 
 	// sleep to allow the RDY state to take effect
@@ -2684,11 +2681,8 @@ func TestTcpPub(t *testing.T) {
 	// note: the trace body length should include the trace id
 	test.Equal(t, string(data), fmt.Sprintf("E_BAD_MESSAGE message too big 105 > 100"))
 
-	conn, err = mustConnectNSQD(tcpAddr)
-	identify(t, conn, nil, frameTypeResponse)
-	test.Equal(t, err, nil)
-	sub(t, conn, topicName, "ch")
-	_, err = nsq.Ready(1).WriteTo(conn)
+	conn.Close()
+	conn, err = mustConnectAndSub(t, tcpAddr, topicName, "ch")
 	test.Equal(t, err, nil)
 
 	// sleep to allow the RDY state to take effect
@@ -2723,11 +2717,7 @@ func TestTcpPub(t *testing.T) {
 		test.Equal(t, data[:], []byte("OK"))
 	}
 
-	conn, err = mustConnectNSQD(tcpAddr)
-	identify(t, conn, nil, frameTypeResponse)
-	test.Equal(t, err, nil)
-	sub(t, conn, topicName, "ch")
-	_, err = nsq.Ready(1).WriteTo(conn)
+	conn, err = mustConnectAndSub(t, tcpAddr, topicName, "ch")
 	test.Equal(t, err, nil)
 
 	for i := 0; i < len(connList); i++ {
@@ -2926,11 +2916,7 @@ func testTcpPubExtToNonExtTopic(t *testing.T, allow bool) {
 	test.Equal(t, data[:], []byte("OK"))
 	conn.Close()
 
-	conn, err = mustConnectNSQD(tcpAddr)
-	identify(t, conn, nil, frameTypeResponse)
-	test.Equal(t, err, nil)
-	sub(t, conn, topicName, "ch")
-	_, err = nsq.Ready(1).WriteTo(conn)
+	conn, err = mustConnectAndSub(t, tcpAddr, topicName, "ch")
 	test.Equal(t, err, nil)
 
 	for {

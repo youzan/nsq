@@ -2,6 +2,13 @@ package nsqdserver
 
 import (
 	"fmt"
+	"io/ioutil"
+	"net"
+	"os"
+	"strconv"
+	"testing"
+	"time"
+
 	"github.com/absolute8511/glog"
 	"github.com/bitly/go-simplejson"
 	"github.com/youzan/go-nsq"
@@ -11,12 +18,6 @@ import (
 	"github.com/youzan/nsq/internal/test"
 	nsqdNs "github.com/youzan/nsq/nsqd"
 	"github.com/youzan/nsq/nsqlookupd"
-	"io/ioutil"
-	"net"
-	"os"
-	"strconv"
-	"testing"
-	"time"
 )
 
 func newTestLogger(tbl test.TbLog) levellogger.Logger {
@@ -75,12 +76,24 @@ func mustStartNSQD(opts *nsqdNs.Options) (*net.TCPAddr, *net.TCPAddr, *nsqdNs.NS
 }
 
 func mustConnectNSQD(tcpAddr *net.TCPAddr) (net.Conn, error) {
-	conn, err := net.DialTimeout("tcp", tcpAddr.String(), time.Second)
+	conn, err := net.DialTimeout("tcp", tcpAddr.String(), time.Second*3)
 	if err != nil {
 		return nil, err
 	}
 	conn.Write(nsq.MagicV2)
 	return conn, nil
+}
+
+func mustConnectAndSub(t *testing.T, tcpAddr *net.TCPAddr, topicName string, ch string) (net.Conn, error) {
+	conn, err := mustConnectNSQD(tcpAddr)
+	if err != nil {
+		return conn, err
+	}
+	identify(t, conn, nil, frameTypeResponse)
+	sub(t, conn, topicName, ch)
+	_, err = nsq.Ready(1).WriteTo(conn)
+	test.Equal(t, err, nil)
+	return conn, err
 }
 
 func API(endpoint string) (data *simplejson.Json, err error) {
