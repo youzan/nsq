@@ -210,6 +210,7 @@ func TestChannelEmptyWhileConfirmDelayMsg(t *testing.T) {
 	opts.SyncEvery = 1
 	opts.Logger = newTestLogger(t)
 	opts.QueueScanInterval = time.Millisecond
+	opts.MsgTimeout = time.Second
 	if testing.Verbose() {
 		opts.LogLevel = 4
 		SetLogger(opts.Logger)
@@ -224,7 +225,7 @@ func TestChannelEmptyWhileConfirmDelayMsg(t *testing.T) {
 	dq, err := topic.GetOrCreateDelayedQueueNoLock(nil)
 	equal(t, err, nil)
 	stopC := make(chan bool)
-	for i := 0; i < 1000; i++ {
+	for i := 0; i < 500; i++ {
 		msg := NewMessage(0, []byte("test"))
 		id, _, _, _, err := topic.PutMessage(msg)
 		equal(t, err, nil)
@@ -291,12 +292,20 @@ func TestChannelEmptyWhileConfirmDelayMsg(t *testing.T) {
 			time.Sleep(time.Microsecond * 10)
 		}
 	}()
-	select {
-	case <-stopC:
-	case <-time.After(time.Second * 5):
-		close(stopC)
+	done := false
+	for done {
+		select {
+		case <-stopC:
+			done = true
+		case <-time.After(time.Second * 5):
+			_, dqCnt := channel.GetDelayedQueueConsumedState()
+			if int64(dqCnt) == 0 && atomic.LoadInt64(&channel.deferredFromDelay) == 0 && channel.Depth() == 0 {
+				close(stopC)
+				done = true
+			}
+		}
 	}
-	t.Logf("stopped ")
+	t.Logf("stopped %v, %v", atomic.LoadInt64(&channel.deferredFromDelay), channel.GetChannelDebugStats())
 	time.Sleep(time.Second * 3)
 	// make sure all delayed counter is not more or less
 	equal(t, atomic.LoadInt64(&channel.deferredFromDelay) == int64(0), true)

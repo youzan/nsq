@@ -1420,7 +1420,7 @@ func prepareTestOptsForDelayedMsg(t *testing.T, reqToEnd time.Duration) *nsqdNs.
 		opts.LogLevel = 3
 		nsqdNs.SetLogger(opts.Logger)
 	}
-	opts.QueueScanInterval = time.Second
+	opts.QueueScanInterval = time.Millisecond * 100
 	opts.ReqToEndThreshold = reqToEnd
 	opts.MsgTimeout = time.Second * 5
 	opts.MaxConfirmWin = 50
@@ -1550,7 +1550,7 @@ func TestConsumeDelayedMessageWhileDisableEnableSwitch(t *testing.T) {
 			break
 		}
 	}
-	time.Sleep(opts.ReqToEndThreshold * 2)
+	time.Sleep(opts.ReqToEndThreshold * 3)
 	chStats := nsqdNs.NewChannelStats(ch, nil, 0)
 	t.Log(chStats)
 	test.Assert(t, chStats.DelayedQueueCount > 0, "should have disk delayed msgs")
