@@ -117,7 +117,7 @@ func New(opts *Options) *NSQD {
 		startTime:            time.Now(),
 		topicMap:             make(map[string]map[int]*Topic),
 		exitChan:             make(chan int),
-		MetaNotifyChan:       make(chan interface{}),
+		MetaNotifyChan:       make(chan interface{}, 128),
 		OptsNotificationChan: make(chan struct{}, 1),
 		ci:                   clusterinfo.New(opts.Logger, http_api.NewClient(nil)),
 		dl:                   dirlock.New(dataPath),
@@ -745,6 +745,17 @@ func (n *NSQD) NotifyStateChanged(v interface{}, needPersist bool) {
 	// should not persist metadata while loading it.
 	// nsqd will call `PersistMetadata` it after loading
 	persist := atomic.LoadInt32(&n.isLoading) == 0
+	// we try unblock first to avoid use a new goroutine
+	select {
+	case n.MetaNotifyChan <- v:
+		if !persist || !needPersist {
+			return
+		}
+		n.NotifyPersistMetadata()
+		return
+	default:
+		// full, we try in a goroutine
+	}
 	n.waitGroup.Wrap(func() {
 		// by selecting on exitChan we guarantee that
 		// we do not block exit, see issue #123

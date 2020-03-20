@@ -488,16 +488,18 @@ func (c *Channel) initPQ() {
 		pqSize = memSizeForSmall
 	}
 
-	c.inFlightMutex.Lock()
 	for _, m := range c.inFlightMessages {
 		if m.belongedConsumer != nil {
 			m.belongedConsumer.Empty()
+		}
+
+		if m.DelayedType == ChannelDelayed {
+			atomic.AddInt64(&c.deferredFromDelay, -1)
 		}
 	}
 	c.inFlightMessages = make(map[MessageID]*Message, pqSize)
 	c.inFlightPQ = newInFlightPqueue(pqSize)
 	atomic.StoreInt64(&c.deferredCount, 0)
-	c.inFlightMutex.Unlock()
 }
 
 // Exiting returns a boolean indicating if this channel is closed/exiting
@@ -596,7 +598,7 @@ func (c *Channel) skipChannelToEnd() (BackendQueueEnd, error) {
 	defer c.Unlock()
 	e, err := c.backend.SkipReadToEnd()
 	if err != nil {
-		nsqLog.Warningf("failed to reset reader to end %v", err)
+		nsqLog.Infof("failed to reset reader to end %v", err)
 	} else {
 		c.drainChannelWaiting(true, nil, nil)
 	}
@@ -813,13 +815,43 @@ func (c *Channel) ConfirmBackendQueueOnSlave(offset BackendOffset, cnt int64, al
 
 // if a message confirmed without goto inflight first, then we
 // should clean the waiting state from requeue
-func (c *Channel) CleanWaitingRequeueChan(msg *Message) {
+func (c *Channel) ConfirmMsgWithoutGoInflight(msg *Message) (BackendOffset, int64, bool) {
+	var offset BackendOffset
+	var cnt int64
+	var changed bool
 	c.inFlightMutex.Lock()
+	if msg.DelayedType == ChannelDelayed {
+		offset, cnt, changed = c.ConfirmDelayedMessage(msg)
+	} else {
+		offset, cnt, changed = c.ConfirmBackendQueue(msg)
+	}
 	if _, ok := c.waitingRequeueChanMsgs[msg.ID]; ok {
 		c.waitingRequeueChanMsgs[msg.ID] = nil
 		delete(c.waitingRequeueChanMsgs, msg.ID)
 	}
 	c.inFlightMutex.Unlock()
+	c.TryRefreshChannelEnd()
+	c.ContinueConsumeForOrder()
+	return offset, cnt, changed
+}
+
+func (c *Channel) cleanWaitingRequeueChan(msg *Message) {
+	c.inFlightMutex.Lock()
+	c.cleanWaitingRequeueChanNoLock(msg)
+	c.inFlightMutex.Unlock()
+}
+
+func (c *Channel) cleanWaitingRequeueChanNoLock(msg *Message) {
+	if _, ok := c.waitingRequeueChanMsgs[msg.ID]; ok {
+		c.waitingRequeueChanMsgs[msg.ID] = nil
+		delete(c.waitingRequeueChanMsgs, msg.ID)
+	}
+	if msg.DelayedType == ChannelDelayed {
+		atomic.AddInt64(&c.deferredFromDelay, -1)
+		if c.isTracedOrDebugTraceLog(msg) {
+			nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "CLEAN_DELAYED", msg.TraceID, msg, "", 0)
+		}
+	}
 }
 
 func (c *Channel) ConfirmDelayedMessage(msg *Message) (BackendOffset, int64, bool) {
@@ -830,6 +862,9 @@ func (c *Channel) ConfirmDelayedMessage(msg *Message) (BackendOffset, int64, boo
 	if msg.DelayedOrigID > 0 && msg.DelayedType == ChannelDelayed && c.GetDelayedQueue() != nil {
 		c.GetDelayedQueue().ConfirmedMessage(msg)
 		c.delayedConfirmedMsgs[msg.ID] = *msg
+		if c.isTracedOrDebugTraceLog(msg) {
+			nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "FIN_DELAYED", msg.TraceID, msg, "", 0)
+		}
 		if atomic.AddInt64(&c.deferredFromDelay, -1) <= 0 {
 			c.nsqdNotify.NotifyScanDelayed(c)
 			needNotify = true
@@ -1518,6 +1553,9 @@ func (c *Channel) pushInFlightMessage(msg *Message) (*Message, error) {
 	c.inFlightMutex.Lock()
 	defer c.inFlightMutex.Unlock()
 	if c.IsConsumeDisabled() {
+		// we should clean req message if it is not go into inflight, if not
+		// we leave a orphen message not in requeue chan and not in inflight
+		c.cleanWaitingRequeueChanNoLock(msg)
 		return nil, ErrConsumeDisabled
 	}
 	m, ok := c.inFlightMessages[msg.ID]
@@ -1605,16 +1643,10 @@ func (c *Channel) DisableConsume(disable bool) {
 						break
 					}
 					nsqLog.Logf("ignored a read message %v at offset %v while enable consume", m.ID, m.Offset)
-					c.CleanWaitingRequeueChan(m)
-					if m.DelayedType == ChannelDelayed {
-						atomic.AddInt64(&c.deferredFromDelay, -1)
-					}
+					c.cleanWaitingRequeueChan(m)
 				case m := <-c.requeuedMsgChan:
 					nsqLog.Logf("ignored a requeued message %v at offset %v while enable consume", m.ID, m.Offset)
-					c.CleanWaitingRequeueChan(m)
-					if m.DelayedType == ChannelDelayed {
-						atomic.AddInt64(&c.deferredFromDelay, -1)
-					}
+					c.cleanWaitingRequeueChan(m)
 				default:
 					done = true
 				}
@@ -1630,8 +1662,11 @@ func (c *Channel) DisableConsume(disable bool) {
 
 // should not drain outside of the messagepump loop
 // if drain outside loop, readerChanged channel should be triggered
+// TODO: check the counter for deferredFromDelay, should make sure not concurrent with client ack
 func (c *Channel) drainChannelWaiting(clearConfirmed bool, lastDataNeedRead *bool, origReadChan chan ReadResult) error {
 	nsqLog.Logf("draining channel %v waiting %v", c.GetName(), clearConfirmed)
+	c.inFlightMutex.Lock()
+	defer c.inFlightMutex.Unlock()
 	c.initPQ()
 	c.confirmMutex.Lock()
 	if clearConfirmed {
@@ -1659,28 +1694,28 @@ func (c *Channel) drainChannelWaiting(clearConfirmed bool, lastDataNeedRead *boo
 				clientMsgChan = nil
 				continue
 			}
-			nsqLog.Logf("ignored a read message %v at Offset %v while drain channel", m.ID, m.Offset)
+			nsqLog.Logf("ignored a read message %v (%v) at Offset %v while drain channel", m.ID, m.DelayedType, m.Offset)
+			c.cleanWaitingRequeueChanNoLock(m)
 		case m := <-c.requeuedMsgChan:
-			nsqLog.Logf("ignored a message %v at Offset %v while drain channel", m.ID, m.Offset)
+			nsqLog.Logf("ignored a message %v (%v) at Offset %v while drain channel", m.ID, m.DelayedType, m.Offset)
+			c.cleanWaitingRequeueChanNoLock(m)
 		default:
 			done = true
 		}
 	}
-	reqCnt := 0
-	c.inFlightMutex.Lock()
-	reqCnt += len(c.waitingRequeueMsgs) + len(c.waitingRequeueChanMsgs)
+	reqCnt := len(c.waitingRequeueMsgs)
 	for k := range c.waitingRequeueMsgs {
 		c.waitingRequeueMsgs[k] = nil
 		delete(c.waitingRequeueMsgs, k)
 	}
-	for k := range c.waitingRequeueChanMsgs {
-		c.waitingRequeueChanMsgs[k] = nil
-		delete(c.waitingRequeueChanMsgs, k)
-	}
-	c.inFlightMutex.Unlock()
-	nsqLog.Logf("drained channel %v waiting req %v, delay: %v", c.GetName(), reqCnt,
+
+	nsqLog.Logf("drained channel %v waiting req %v, %v, delay: %v", c.GetName(), reqCnt,
+		len(c.waitingRequeueChanMsgs),
 		atomic.LoadInt64(&c.deferredFromDelay))
-	atomic.StoreInt64(&c.deferredFromDelay, 0)
+	// should in inFlightMutex to avoid concurrent with confirming from client
+	// we can not set it to 0, because there may be a message read out from req chan but still not
+	// begin start inflight.
+	atomic.AddInt64(&c.deferredFromDelay, -1*int64(reqCnt))
 
 	if lastDataNeedRead != nil {
 		*lastDataNeedRead = false
@@ -1982,6 +2017,7 @@ LOOP:
 		}
 
 		if c.IsConsumeDisabled() {
+			c.cleanWaitingRequeueChan(msg)
 			continue
 		}
 		if c.IsOrdered() {
@@ -2001,19 +2037,7 @@ LOOP:
 			needSkip = isZanTestSkip
 		}
 		if needSkip {
-			if msg.DelayedType == ChannelDelayed {
-				c.ConfirmDelayedMessage(msg)
-			} else {
-				c.ConfirmBackendQueue(msg)
-				if isZanTestSkip {
-					c.TryRefreshChannelEnd()
-				}
-			}
-			c.CleanWaitingRequeueChan(msg)
-			// while the ordered message is timeouted and requeued, the
-			// readBackendWait and needNotifyRead need reset to notify
-			// the requeued message has been acked.
-			c.ContinueConsumeForOrder()
+			c.ConfirmMsgWithoutGoInflight(msg)
 			continue LOOP
 		}
 
@@ -2053,14 +2077,14 @@ LOOP:
 				select {
 				case tagMsgChan <- msg:
 					msg = nil
-					continue
+					continue LOOP
 				case <-c.tagChanRemovedChan:
 					//do not go to msgDefaultLoop, as tag chan remove event may invoked from previously deleted client
 					goto tagMsgLoop
 				case resetOffset := <-c.readerChanged:
 					nsqLog.Infof("got reader reset notify while dispatch message:%v ", resetOffset)
 					c.resetChannelReader(resetOffset, &lastDataNeedRead, origReadChan, &lastMsg, &needReadBackend, &readBackendWait)
-					continue
+					continue LOOP
 				case <-c.exitChan:
 					goto exit
 				}
@@ -2322,7 +2346,7 @@ exit:
 	checkFast := false
 	waitingDelayCnt := atomic.LoadInt64(&c.deferredFromDelay)
 	if waitingDelayCnt < 0 {
-		nsqLog.Logf("delayed waiting count error %v ", waitingDelayCnt)
+		nsqLog.Logf("%v-%v delayed waiting count error %v ", c.GetTopicName(), c.GetName(), waitingDelayCnt)
 	}
 	// Since all messages in delayed queue stored in sorted by delayed timestamp,
 	// all old unconfirmed messages in delayed queue will be peeked at each time.
@@ -2404,9 +2428,13 @@ func (c *Channel) peekAndReqDelayedMessages(tnow int64, delayedQueue *DelayQueue
 	if err != nil {
 		return newAdded, 0, err
 	}
+	c.inFlightMutex.Lock()
+	defer c.inFlightMutex.Unlock()
+	if c.IsConsumeDisabled() {
+		return 0, 0, nil
+	}
 	for _, tmpMsg := range peekedMsgs[:cnt] {
 		m := tmpMsg
-		c.inFlightMutex.Lock()
 		c.confirmMutex.Lock()
 		oldMsg, cok := c.delayedConfirmedMsgs[m.DelayedOrigID]
 		c.confirmMutex.Unlock()
@@ -2479,7 +2507,6 @@ func (c *Channel) peekAndReqDelayedMessages(tnow int64, delayedQueue *DelayQueue
 				c.doRequeue(&m, "")
 			}
 		}
-		c.inFlightMutex.Unlock()
 	}
 	c.confirmMutex.Lock()
 	c.delayedConfirmedMsgs = make(map[MessageID]Message, MaxWaitingDelayed)

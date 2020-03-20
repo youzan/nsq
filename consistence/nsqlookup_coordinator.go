@@ -36,7 +36,7 @@ var (
 	ErrLeadershipServerUnstable = NewCoordErr("the leadership server is unstable", CoordTmpErr)
 )
 
-const (
+var (
 	waitMigrateInterval          = time.Minute * 10
 	waitEmergencyMigrateInterval = time.Second * 10
 	waitRemovingNodeInterval     = time.Second * 30

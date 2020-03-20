@@ -3,6 +3,7 @@ package nsqd
 import (
 	"bytes"
 	"encoding/binary"
+
 	//"github.com/youzan/nsq/internal/levellogger"
 	"encoding/json"
 	"fmt"
@@ -225,7 +226,9 @@ func TestDelayQueueEmptyAll(t *testing.T) {
 	opts := NewOptions()
 	opts.Logger = newTestLogger(t)
 	opts.SyncEvery = 1
-	SetLogger(opts.Logger)
+	if testing.Verbose() {
+		SetLogger(opts.Logger)
+	}
 
 	dq, err := NewDelayQueue("test", 0, tmpDir, opts, nil, false)
 	test.Nil(t, err)
@@ -288,7 +291,9 @@ func TestDelayQueueEmptyUntil(t *testing.T) {
 	opts := NewOptions()
 	opts.Logger = newTestLogger(t)
 	opts.SyncEvery = 1
-	SetLogger(opts.Logger)
+	if testing.Verbose() {
+		SetLogger(opts.Logger)
+	}
 
 	dq, err := NewDelayQueue("test", 0, tmpDir, opts, nil, false)
 	test.Nil(t, err)
@@ -411,7 +416,9 @@ func TestDelayQueueConfirmMsg(t *testing.T) {
 	opts := NewOptions()
 	opts.Logger = newTestLogger(t)
 	opts.SyncEvery = 1
-	SetLogger(opts.Logger)
+	if testing.Verbose() {
+		SetLogger(opts.Logger)
+	}
 
 	dq, err := NewDelayQueue("test", 0, tmpDir, opts, nil, false)
 	test.Nil(t, err)
@@ -521,7 +528,9 @@ func TestDelayQueueBackupRestore(t *testing.T) {
 	opts := NewOptions()
 	opts.Logger = newTestLogger(t)
 	opts.SyncEvery = 1
-	SetLogger(opts.Logger)
+	if testing.Verbose() {
+		SetLogger(opts.Logger)
+	}
 
 	dq, err := NewDelayQueue("test-backup", 0, tmpDir, opts, nil, false)
 	test.Nil(t, err)
@@ -612,7 +621,9 @@ func TestDelayQueueCompactStore(t *testing.T) {
 	opts := NewOptions()
 	opts.Logger = newTestLogger(t)
 	opts.SyncEvery = 1
-	SetLogger(opts.Logger)
+	if testing.Verbose() {
+		SetLogger(opts.Logger)
+	}
 
 	dq, err := NewDelayQueue("test-compact", 0, tmpDir, opts, nil, false)
 	test.Nil(t, err)

@@ -28,6 +28,20 @@ const (
 	TEST_NSQ_CLUSTER_NAME = "test-nsq-cluster-unit-test"
 )
 
+func ChangeIntervalForTest() {
+	moveWaitTimeout = time.Second * 10
+	waitMigrateInterval = time.Second * 10
+	waitEmergencyMigrateInterval = time.Second * 1
+	waitRemovingNodeInterval = time.Second * 3
+	balanceInterval = time.Second * 6
+	doCheckInterval = time.Second * 6
+}
+func TestMain(m *testing.M) {
+	ChangeIntervalForTest()
+	ret := m.Run()
+	os.Exit(ret)
+}
+
 type fakeTopicData struct {
 	metaInfo      *TopicPartitionMetaInfo
 	leaderSession *TopicLeaderSession

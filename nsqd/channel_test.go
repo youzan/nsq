@@ -4,6 +4,7 @@ import (
 	//"github.com/youzan/nsq/internal/levellogger"
 	"os"
 	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -201,6 +202,118 @@ func TestChannelEmpty(t *testing.T) {
 	equal(t, len(channel.inFlightMessages), 0)
 	equal(t, len(channel.inFlightPQ), 0)
 	equal(t, channel.Depth(), int64(0))
+}
+
+func TestChannelEmptyWhileConfirmDelayMsg(t *testing.T) {
+	// test confirm delay counter while empty channel
+	opts := NewOptions()
+	opts.SyncEvery = 1
+	opts.Logger = newTestLogger(t)
+	opts.QueueScanInterval = time.Millisecond
+	opts.MsgTimeout = time.Second
+	if testing.Verbose() {
+		opts.LogLevel = 2
+		SetLogger(opts.Logger)
+	}
+	_, _, nsqd := mustStartNSQD(opts)
+	defer os.RemoveAll(opts.DataPath)
+	defer nsqd.Exit()
+
+	topicName := "test_channel_empty_delay" + strconv.Itoa(int(time.Now().Unix()))
+	topic := nsqd.GetTopicIgnPart(topicName)
+	channel := topic.GetChannel("channel")
+	dq, err := topic.GetOrCreateDelayedQueueNoLock(nil)
+	equal(t, err, nil)
+	stopC := make(chan bool)
+	for i := 0; i < 100; i++ {
+		msg := NewMessage(0, []byte("test"))
+		id, _, _, _, err := topic.PutMessage(msg)
+		equal(t, err, nil)
+		newMsg := msg.GetCopy()
+		newMsg.ID = 0
+		newMsg.DelayedType = ChannelDelayed
+
+		newTimeout := time.Now().Add(time.Millisecond)
+		newMsg.DelayedTs = newTimeout.UnixNano()
+
+		newMsg.DelayedOrigID = id
+		newMsg.DelayedChannel = channel.GetName()
+
+		_, _, _, _, err = dq.PutDelayMessage(newMsg)
+		equal(t, err, nil)
+	}
+
+	channel.skipChannelToEnd()
+	channel.AddClient(1, NewFakeConsumer(1))
+	go func() {
+		for {
+			select {
+			case <-stopC:
+				return
+			default:
+			}
+			outputMsg, ok := <-channel.clientMsgChan
+
+			if !ok {
+				return
+			}
+			t.Logf("consume %v", outputMsg)
+			channel.StartInFlightTimeout(outputMsg, NewFakeConsumer(0), "", opts.MsgTimeout)
+			channel.FinishMessageForce(0, "", outputMsg.ID, true)
+			time.Sleep(time.Millisecond)
+		}
+	}()
+
+	go func() {
+		for {
+			select {
+			case <-stopC:
+				return
+			default:
+			}
+			channel.skipChannelToEnd()
+			_, dqCnt := channel.GetDelayedQueueConsumedState()
+			if int64(dqCnt) == 0 && atomic.LoadInt64(&channel.deferredFromDelay) == 0 && channel.Depth() == 0 {
+				close(stopC)
+				return
+			}
+			time.Sleep(time.Millisecond * 10)
+		}
+	}()
+
+	go func() {
+		for {
+			select {
+			case <-stopC:
+				return
+			default:
+			}
+			checkOK := atomic.LoadInt64(&channel.deferredFromDelay) >= int64(0)
+			equal(t, checkOK, true)
+			if !checkOK {
+				close(stopC)
+				return
+			}
+			time.Sleep(time.Microsecond * 10)
+		}
+	}()
+	done := false
+	for done {
+		select {
+		case <-stopC:
+			done = true
+		case <-time.After(time.Second * 3):
+			_, dqCnt := channel.GetDelayedQueueConsumedState()
+			if int64(dqCnt) == 0 && atomic.LoadInt64(&channel.deferredFromDelay) == 0 && channel.Depth() == 0 {
+				close(stopC)
+				done = true
+			}
+		}
+	}
+	t.Logf("stopped %v, %v", atomic.LoadInt64(&channel.deferredFromDelay), channel.GetChannelDebugStats())
+	time.Sleep(time.Second * 3)
+	// make sure all delayed counter is not more or less
+	equal(t, atomic.LoadInt64(&channel.deferredFromDelay) == int64(0), true)
 }
 
 func TestChannelHealth(t *testing.T) {
