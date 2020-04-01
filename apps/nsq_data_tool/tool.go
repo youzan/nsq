@@ -225,7 +225,12 @@ func main() {
 	log.Printf("topic last commit log at %v:%v is : %v\n", logIndex, lastOffset, lastLogData)
 
 	backendName := getBackendName(*topic, *partition)
-	backendWriter, err := nsqd.NewDiskQueueWriterForRead(backendName, topicDataPath, 1024*1024*1024, 1, 1024*1024*100, 1)
+	metaStorage, err := nsqd.NewShardedDBMetaStorage(path.Join(*dataPath, "shared_meta"))
+	if err != nil {
+		log.Fatalf("init disk writer failed: %v", err)
+		return
+	}
+	backendWriter, err := nsqd.NewDiskQueueWriterForRead(backendName, topicDataPath, 1024*1024*1024, 1, 1024*1024*100, 1, metaStorage)
 	if err != nil {
 		if *view != "commitlog" {
 			log.Fatalf("init disk writer failed: %v", err)

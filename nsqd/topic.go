@@ -206,12 +206,14 @@ func NewTopicWithExt(topicName string, part int, ext bool, ordered bool, opt *Op
 	}
 
 	backendName := getBackendName(t.tname, t.partition)
-	queue, err := NewDiskQueueWriter(backendName,
+	queue, err := newDiskQueueWriterWithMetaStorage(backendName,
 		t.dataPath,
 		opt.MaxBytesPerFile,
 		int32(minValidMsgLength),
 		int32(opt.MaxMsgSize)+minValidMsgLength,
-		opt.SyncEvery)
+		opt.SyncEvery,
+		t.metaStorage,
+	)
 
 	if err != nil {
 		nsqLog.LogErrorf("topic(%v) failed to init disk queue: %v ", t.fullName, err)

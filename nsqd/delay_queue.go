@@ -278,11 +278,11 @@ func newDelayQueue(topicName string, part int, dataPath string, opt *Options,
 	q.fullName = GetTopicFullName(q.tname, q.partition)
 	backendName := getDelayQueueBackendName(q.tname, q.partition)
 	// max delay message size need add the delay ts and channel name
-	queue, err := NewDiskQueueWriter(backendName,
+	queue, err := newDiskQueueWriterWithMetaStorage(backendName,
 		q.dataPath,
 		opt.MaxBytesPerFile,
 		int32(minValidMsgLength),
-		int32(opt.MaxMsgSize)+minValidMsgLength+8+255, 0)
+		int32(opt.MaxMsgSize)+minValidMsgLength+8+255, 0, nil)
 
 	if err != nil {
 		nsqLog.LogErrorf("topic(%v) failed to init delayed disk queue: %v , %v ", q.fullName, err, backendName)

@@ -125,18 +125,6 @@ func newDiskQueueReaderWithFileMeta(readFrom string, metaname string, dataPath s
 		syncTimeout, readEnd, autoSkip, metaStorage)
 }
 
-func newDiskQueueReaderWithMetaStorage(readFrom string, metaname string, dataPath string, maxBytesPerFile int64,
-	minMsgSize int32, maxMsgSize int32,
-	syncEvery int64, syncTimeout time.Duration, readEnd BackendQueueEnd, autoSkip bool) BackendQueueReader {
-	p := path.Join(dataPath, metaname)
-	metaStorage, err := NewDBMetaStorage(p)
-	if err != nil {
-		panic(err)
-	}
-	return newDiskQueueReader(readFrom, metaname, dataPath, maxBytesPerFile, minMsgSize, maxMsgSize, syncEvery,
-		syncTimeout, readEnd, autoSkip, metaStorage)
-}
-
 // newDiskQueue instantiates a new instance of diskQueueReader, retrieving metadata
 // from the filesystem and starting the read ahead goroutine
 func newDiskQueueReader(readFrom string, metaname string,

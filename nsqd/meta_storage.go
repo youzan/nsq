@@ -6,14 +6,17 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand"
 	"os"
 	"path"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/absolute8511/bolt"
 	"github.com/spaolacci/murmur3"
+	"github.com/youzan/nsq/internal/util"
 )
 
 const (
@@ -27,7 +30,8 @@ type IMetaStorage interface {
 	RetrieveReader(key string) (diskQueueEndInfo, diskQueueEndInfo, error)
 	Remove(key string)
 	PersistWriter(key string, fsync bool, wend diskQueueEndInfo) error
-	RetrieveWriter(key string) (diskQueueEndInfo, error)
+	RetrieveWriter(key string, readOnly bool) (diskQueueEndInfo, error)
+	RemoveWriter(key string)
 	Sync()
 	Close()
 }
@@ -127,6 +131,12 @@ func (fs *fileMetaStorage) Remove(fileName string) {
 	os.Remove(fileName)
 }
 
+func (fs *fileMetaStorage) RemoveWriter(fileName string) {
+	fs.metaLock.Lock()
+	defer fs.metaLock.Unlock()
+	os.Remove(fileName)
+}
+
 // persistMetaData atomically writes state to the filesystem
 func (fs *fileMetaStorage) PersistReader(fileName string, fsync bool, confirmed diskQueueEndInfo, queueEndInfo diskQueueEndInfo) error {
 	var f *os.File
@@ -166,13 +176,97 @@ func (fs *fileMetaStorage) PersistReader(fileName string, fsync bool, confirmed 
 	return err
 }
 
-func (fs *fileMetaStorage) RetrieveWriter(fileName string) (diskQueueEndInfo, error) {
-	var queueEnd diskQueueEndInfo
-	return queueEnd, nil
+func (fs *fileMetaStorage) RetrieveWriter(fileName string, readOnly bool) (diskQueueEndInfo, error) {
+	var qend diskQueueEndInfo
+	var f *os.File
+	var err error
+
+	f, err = os.OpenFile(fileName, os.O_RDONLY, 0644)
+	if err != nil {
+		return qend, err
+	}
+	defer f.Close()
+
+	var totalCnt int64
+	_, err = fmt.Fscanf(f, "%d\n%d,%d,%d\n",
+		&totalCnt,
+		&qend.EndOffset.FileNum, &qend.EndOffset.Pos, &qend.virtualEnd)
+	if err != nil {
+		return qend, err
+	}
+	atomic.StoreInt64(&qend.totalMsgCnt, totalCnt)
+	err = checkMetaFileEnd(f)
+	if err != nil && !readOnly {
+		// recovery from tmp meta file
+		tmpFileName := fmt.Sprintf("%s.tmp", fileName)
+		badFileName := fmt.Sprintf("%s.%d.corrupt", fileName, rand.Int())
+		nsqLog.Errorf("meta file corrupt to %v, try recover meta from file %v ", badFileName, tmpFileName)
+		err2 := util.AtomicRename(fileName, badFileName)
+		if err2 != nil {
+			nsqLog.Warningf("%v failed rename to %v : %v", fileName, badFileName, err2.Error())
+		} else {
+			err2 = util.AtomicRename(tmpFileName, fileName)
+			if err2 != nil {
+				nsqLog.Errorf("%v failed recover to %v : %v", tmpFileName, fileName, err2.Error())
+				util.AtomicRename(badFileName, fileName)
+			}
+		}
+	}
+	return qend, err
 }
 
-func (fs *fileMetaStorage) PersistWriter(fileName string, fsync bool, queueEndInfo diskQueueEndInfo) error {
-	return nil
+func (fs *fileMetaStorage) persistTmpMetaData(fileName string, writeEnd diskQueueEndInfo) error {
+	tmpFileName := fmt.Sprintf("%s.tmp", fileName)
+	f, err := os.OpenFile(tmpFileName, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(f, "%d\n%d,%d,%d\n",
+		atomic.LoadInt64(&writeEnd.totalMsgCnt),
+		writeEnd.EndOffset.FileNum, writeEnd.EndOffset.Pos, writeEnd.Offset())
+
+	f.Close()
+	return err
+}
+
+func (fs *fileMetaStorage) PersistWriter(fileName string, fsync bool, writeEnd diskQueueEndInfo) error {
+	fs.metaLock.Lock()
+	defer fs.metaLock.Unlock()
+	var f *os.File
+	var err error
+	var n int
+	pos := 0
+	s := time.Now()
+	err = fs.persistTmpMetaData(fileName, writeEnd)
+	if err != nil {
+		return err
+	}
+
+	cost1 := time.Since(s)
+	f, err = os.OpenFile(fileName, os.O_RDWR|os.O_CREATE, 0644)
+	if err != nil {
+		return err
+	}
+	cost2 := time.Since(s)
+	err = preWriteMetaEnd(f)
+
+	cost3 := time.Since(s)
+	n, err = fmt.Fprintf(f, "%d\n%d,%d,%d\n",
+		writeEnd.totalMsgCnt,
+		writeEnd.EndOffset.FileNum, writeEnd.EndOffset.Pos, writeEnd.Offset())
+	pos += n
+
+	_, err = writeMetaEnd(f, err, pos)
+	if fsync && err == nil {
+		f.Sync()
+	}
+
+	f.Close()
+	cost4 := time.Since(s)
+	if cost4 >= slowCost {
+		nsqLog.Logf("writer (%v) meta perist cost: %v,%v,%v,%v", fileName, cost1, cost2, cost3, cost4)
+	}
+	return err
 }
 
 type dbMetaData struct {
@@ -314,13 +408,70 @@ func (dbs *dbMetaStorage) RetrieveReader(key string) (diskQueueEndInfo, diskQueu
 	return confirmed, queueEnd, err
 }
 
-func (dbs *dbMetaStorage) PersistWriter(key string, fsync bool, queueEndInfo diskQueueEndInfo) error {
-	return nil
+func (dbs *dbMetaStorage) RemoveWriter(key string) {
+	dbs.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(metaDataBucket))
+		ek := []byte(key + "-writer")
+		b.Delete(ek)
+		return nil
+	})
+	dbs.fileMeta.RemoveWriter(key)
 }
 
-func (dbs *dbMetaStorage) RetrieveWriter(key string) (diskQueueEndInfo, error) {
+func (dbs *dbMetaStorage) PersistWriter(key string, fsync bool, queueEndInfo diskQueueEndInfo) error {
+	var metaQueueEnd dbMetaData
+	metaQueueEnd.EndOffset = queueEndInfo.EndOffset
+	metaQueueEnd.TotalMsgCnt = queueEndInfo.totalMsgCnt
+	metaQueueEnd.VirtualEnd = queueEndInfo.virtualEnd
+	err := dbs.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(metaDataBucket))
+		ek := []byte(key + "-writer")
+		newV, _ := json.Marshal(metaQueueEnd)
+		oldV := b.Get(ek)
+		exists := oldV != nil
+		if exists && bytes.Equal(oldV, newV) {
+		} else {
+			err := b.Put(ek, newV)
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if fsync && err == nil {
+		dbs.Sync()
+	}
+	if err != nil {
+		nsqLog.LogErrorf("failed to save meta key %v from db: %v , %v ", key, dbs.dataPath, err)
+	}
+	return err
+}
+
+func (dbs *dbMetaStorage) RetrieveWriter(key string, readOnly bool) (diskQueueEndInfo, error) {
 	var queueEnd diskQueueEndInfo
-	return queueEnd, nil
+	var metaEnd dbMetaData
+	fallback := false
+	err := dbs.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(metaDataBucket))
+		ek := []byte(key + "-writer")
+		v := b.Get(ek)
+		if v == nil {
+			fallback = true
+			return errMetaNotFound
+		}
+		return json.Unmarshal(v, &metaEnd)
+	})
+	if err != nil {
+		nsqLog.Warningf("failed to read meta key %v from db: %v , %v ", key, dbs.dataPath, err)
+	}
+	if fallback || err != nil {
+		nsqLog.Logf("fallback to read meta key %v from file meta", key)
+		return dbs.fileMeta.RetrieveWriter(key, readOnly)
+	}
+	queueEnd.EndOffset = metaEnd.EndOffset
+	queueEnd.totalMsgCnt = metaEnd.TotalMsgCnt
+	queueEnd.virtualEnd = metaEnd.VirtualEnd
+	return queueEnd, err
 }
 
 func (dbs *dbMetaStorage) Sync() {
@@ -369,6 +520,12 @@ func (ss *shardedDBMetaStorage) Remove(key string) {
 	d.Remove(key)
 }
 
+func (ss *shardedDBMetaStorage) RemoveWriter(key string) {
+	h := int(murmur3.Sum32([]byte(key))) % len(ss.dbShards)
+	d := ss.dbShards[h]
+	d.RemoveWriter(key)
+}
+
 func (ss *shardedDBMetaStorage) PersistReader(key string, fsync bool, confirmed diskQueueEndInfo, queueEndInfo diskQueueEndInfo) error {
 	h := int(murmur3.Sum32([]byte(key))) % len(ss.dbShards)
 	d := ss.dbShards[h]
@@ -381,10 +538,10 @@ func (ss *shardedDBMetaStorage) PersistWriter(key string, fsync bool, queueEndIn
 	return d.PersistWriter(key, fsync, queueEndInfo)
 }
 
-func (ss *shardedDBMetaStorage) RetrieveWriter(key string) (diskQueueEndInfo, error) {
+func (ss *shardedDBMetaStorage) RetrieveWriter(key string, readOnly bool) (diskQueueEndInfo, error) {
 	h := int(murmur3.Sum32([]byte(key))) % len(ss.dbShards)
 	d := ss.dbShards[h]
-	return d.RetrieveWriter(key)
+	return d.RetrieveWriter(key, readOnly)
 }
 
 func (ss *shardedDBMetaStorage) Sync() {
