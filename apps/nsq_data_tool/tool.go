@@ -218,16 +218,6 @@ func main() {
 	}
 
 	topicDataPath := path.Join(*dataPath, *topic)
-	topicCommitLogPath := consistence.GetTopicPartitionBasePath(*dataPath, *topic, *partition)
-	tpLogMgr, err := consistence.InitTopicCommitLogMgr(*topic, *partition, topicCommitLogPath, 0)
-	if err != nil {
-		log.Fatalf("loading commit log %v failed: %v\n", topicCommitLogPath, err)
-	}
-	logIndex, lastOffset, lastLogData, err := tpLogMgr.GetLastCommitLogOffsetV2()
-	if err != nil {
-		log.Fatalf("loading last commit log failed: %v\n", err)
-	}
-	log.Printf("topic last commit log at %v:%v is : %v\n", logIndex, lastOffset, lastLogData)
 
 	backendName := getBackendName(*topic, *partition)
 	metaStorage, err := nsqd.NewShardedDBMetaStorageForRead(path.Join(*dataPath, "shared_meta"))
@@ -278,7 +268,28 @@ func main() {
 			nsqd.NsqLogger().Infof("peeked msg : %v", m)
 		}
 		return
+	} else if *view == "channelstats" {
+		k := metaReaderKey(topicDataPath, backendName+":"+*channelName)
+		confirmed, end, err := metaStorage.RetrieveReader(k)
+		if err != nil {
+			log.Fatalf("meta data error: %v for %v", err, k)
+			return
+		}
+		log.Printf("channel: %v, %v, %v", k, confirmed, end)
+		return
 	}
+	topicCommitLogPath := consistence.GetTopicPartitionBasePath(*dataPath, *topic, *partition)
+	tpLogMgr, err := consistence.InitTopicCommitLogMgr(*topic, *partition, topicCommitLogPath, 0)
+	if err != nil {
+		log.Fatalf("loading commit log %v failed: %v\n", topicCommitLogPath, err)
+	}
+	logIndex, lastOffset, lastLogData, err := tpLogMgr.GetLastCommitLogOffsetV2()
+	if err != nil {
+		log.Printf("loading last commit log failed: %v\n", err)
+	} else {
+		log.Printf("topic last commit log at %v:%v is : %v\n", logIndex, lastOffset, lastLogData)
+	}
+
 	// note: since there may be exist group commit. It is not simple to do the direct position of log.
 	// we need to search in the ordered log data.
 	searchOffset := int64(0)
@@ -351,13 +362,5 @@ func main() {
 			}
 			fmt.Printf("%v:%v:%v:%v, body: %v\n", msg.ID, msg.TraceID, msg.Timestamp, msg.Attempts, string(msg.Body))
 		}
-	} else if *view == "channelstats" {
-		k := metaReaderKey(topicDataPath, backendName+":"+*channelName)
-		confirmed, end, err := metaStorage.RetrieveReader(k)
-		if err != nil {
-			log.Fatalf("meta data error: %v for %v", err, k)
-			return
-		}
-		log.Printf("channel: %v, %v, %v", k, confirmed, end)
 	}
 }
