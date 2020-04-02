@@ -278,6 +278,7 @@ type dbMetaData struct {
 type dbMetaStorage struct {
 	dataPath string
 	db       *bolt.DB
+	readOnly bool
 	fileMeta *fileMetaStorage
 }
 
@@ -302,18 +303,21 @@ func newDBMetaStorage(p string, readOnly bool) (*dbMetaStorage, error) {
 		return nil, err
 	}
 	db.NoSync = true
-	err = db.Update(func(tx *bolt.Tx) error {
-		_, errC := tx.CreateBucketIfNotExists([]byte(metaDataBucket))
-		return errC
-	})
-	if err != nil {
-		nsqLog.LogErrorf("failed to init bucket: %v , %v ", p, err)
-		return nil, err
+	if !readOnly {
+		err = db.Update(func(tx *bolt.Tx) error {
+			_, errC := tx.CreateBucketIfNotExists([]byte(metaDataBucket))
+			return errC
+		})
+		if err != nil {
+			nsqLog.LogErrorf("failed to init bucket: %v , %v ", p, err)
+			return nil, err
+		}
 	}
 	return &dbMetaStorage{
 		db:       db,
 		dataPath: p,
 		fileMeta: &fileMetaStorage{},
+		readOnly: readOnly,
 	}, nil
 }
 
@@ -483,6 +487,9 @@ func (dbs *dbMetaStorage) RetrieveWriter(key string, readOnly bool) (diskQueueEn
 }
 
 func (dbs *dbMetaStorage) Sync() {
+	if dbs.readOnly {
+		return
+	}
 	if dbs.db != nil {
 		dbs.db.Sync()
 	}
@@ -491,7 +498,9 @@ func (dbs *dbMetaStorage) Sync() {
 
 func (dbs *dbMetaStorage) Close() {
 	if dbs.db != nil {
-		dbs.db.Sync()
+		if !dbs.readOnly {
+			dbs.db.Sync()
+		}
 		dbs.db.Close()
 	}
 	dbs.fileMeta.Close()

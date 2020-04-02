@@ -72,6 +72,7 @@ type diskQueueWriter struct {
 	bufSize       int64
 	metaFlushLock sync.RWMutex
 	metaStorage   IMetaStorage
+	readOnly      bool
 }
 
 type extraMeta struct {
@@ -113,6 +114,7 @@ func newDiskQueueWriter(name string, dataPath string, maxBytesPerFile int64,
 		d.metaStorage = &fileMetaStorage{}
 	}
 
+	d.readOnly = readOnly
 	// no need to lock here, nothing else could possibly be touching this instance
 	err := d.retrieveMetaData(readOnly)
 	if err != nil && !os.IsNotExist(err) {
@@ -836,6 +838,9 @@ func (d *diskQueueWriter) FlushBuffer() bool {
 
 func (d *diskQueueWriter) sync(fsync bool, metaSync bool) error {
 	d.needSync = false
+	if d.readOnly {
+		return nil
+	}
 	if d.bufferWriter != nil {
 		d.bufferWriter.Flush()
 	}
@@ -959,6 +964,9 @@ func (d *diskQueueWriter) loadExtraMeta() error {
 }
 
 func (d *diskQueueWriter) saveExtraMeta() error {
+	if d.readOnly {
+		return nil
+	}
 	var err error
 
 	fileName := d.extraMetaFileName()
@@ -991,6 +999,9 @@ func (d *diskQueueWriter) retrieveMetaData(readOnly bool) error {
 
 // persistMetaData atomically writes state to the filesystem
 func (d *diskQueueWriter) persistMetaData(fsync bool, writeEnd diskQueueEndInfo) error {
+	if d.readOnly {
+		return nil
+	}
 	fileName := d.metaDataFileName()
 	return d.metaStorage.PersistWriter(fileName, fsync, writeEnd)
 }
