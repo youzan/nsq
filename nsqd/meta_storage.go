@@ -281,10 +281,18 @@ type dbMetaStorage struct {
 	fileMeta *fileMetaStorage
 }
 
+func NewDBMetaStorageForRead(p string) (*dbMetaStorage, error) {
+	return newDBMetaStorage(p, true)
+}
+
 func NewDBMetaStorage(p string) (*dbMetaStorage, error) {
+	return newDBMetaStorage(p, false)
+}
+
+func newDBMetaStorage(p string, readOnly bool) (*dbMetaStorage, error) {
 	ro := &bolt.Options{
 		Timeout:      time.Second,
-		ReadOnly:     false,
+		ReadOnly:     readOnly,
 		FreelistType: bolt.FreelistMapType,
 	}
 	os.MkdirAll(p, 0755)
@@ -492,6 +500,20 @@ func (dbs *dbMetaStorage) Close() {
 type shardedDBMetaStorage struct {
 	dataPath string
 	dbShards [8]*dbMetaStorage
+}
+
+func NewShardedDBMetaStorageForRead(p string) (*shardedDBMetaStorage, error) {
+	d := &shardedDBMetaStorage{
+		dataPath: p,
+	}
+	var err error
+	for i := 0; i < len(d.dbShards); i++ {
+		d.dbShards[i], err = NewDBMetaStorageForRead(path.Join(p, strconv.Itoa(i)))
+		if err != nil {
+			return nil, err
+		}
+	}
+	return d, nil
 }
 
 func NewShardedDBMetaStorage(p string) (*shardedDBMetaStorage, error) {

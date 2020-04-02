@@ -22,10 +22,11 @@ var (
 
 	topic              = flag.String("topic", "", "NSQ topic")
 	partition          = flag.Int("partition", -1, "NSQ topic partition")
+	channelName        = flag.String("channel_name", "", "name for channel")
 	dataPath           = flag.String("data_path", "", "the data path of nsqd")
 	srcNsqLookupd      = flag.String("src_nsqlookupd", "", "")
 	dstNsqLookupd      = flag.String("dest_nsqlookupd", "", "")
-	view               = flag.String("view", "commitlog", "commitlog | topicdata | delayedqueue")
+	view               = flag.String("view", "commitlog", "commitlog | topicdata | delayedqueue | channelstats")
 	searchMode         = flag.String("search_mode", "count", "the view start of mode. (count|id|timestamp|virtual_offset|check_channels|check_topics)")
 	viewStart          = flag.Int64("view_start", 0, "the start count of message.")
 	viewStartID        = flag.Int64("view_start_id", 0, "the start id of message.")
@@ -177,6 +178,10 @@ func checkChannelStats() {
 			ch.Paused, ch.Skipped)
 	}
 }
+func metaReaderKey(dataPath string, metaName string) string {
+	return fmt.Sprintf(path.Join(dataPath, "%s.diskqueue.meta.v2.reader.dat"),
+		metaName)
+}
 
 func main() {
 	flag.Parse()
@@ -225,7 +230,7 @@ func main() {
 	log.Printf("topic last commit log at %v:%v is : %v\n", logIndex, lastOffset, lastLogData)
 
 	backendName := getBackendName(*topic, *partition)
-	metaStorage, err := nsqd.NewShardedDBMetaStorage(path.Join(*dataPath, "shared_meta"))
+	metaStorage, err := nsqd.NewShardedDBMetaStorageForRead(path.Join(*dataPath, "shared_meta"))
 	if err != nil {
 		log.Fatalf("init disk writer failed: %v", err)
 		return
@@ -237,6 +242,10 @@ func main() {
 			return
 		}
 	}
+	defer backendWriter.Close()
+	log.Printf("disk queue %v-%v meta: %v, %v, %v",
+		topicDataPath, backendName,
+		backendWriter.GetQueueWriteEnd(), backendWriter.GetQueueReadStart(), backendWriter.GetQueueReadEnd())
 	if *view == "delayedqueue" {
 		opts := &nsqd.Options{
 			MaxBytesPerFile: 1024 * 1024 * 100,
@@ -342,5 +351,13 @@ func main() {
 			}
 			fmt.Printf("%v:%v:%v:%v, body: %v\n", msg.ID, msg.TraceID, msg.Timestamp, msg.Attempts, string(msg.Body))
 		}
+	} else if *view == "channelstats" {
+		k := metaReaderKey(topicDataPath, backendName+":"+*channelName)
+		confirmed, end, err := metaStorage.RetrieveReader(k)
+		if err != nil {
+			log.Fatalf("meta data error: %v for %v", err, k)
+			return
+		}
+		log.Printf("channel: %v, %v, %v", k, confirmed, end)
 	}
 }
