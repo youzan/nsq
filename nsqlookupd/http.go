@@ -263,6 +263,7 @@ func (s *httpServer) doTopics(w http.ResponseWriter, req *http.Request, ps httpr
 				TopicName:  topic,
 				ExtSupport: topicMeta.Ext,
 				Ordered:    topicMeta.OrderedMulti,
+				MultiPart:  topicMeta.MultiPart,
 			}
 			topicsInfo = append(topicsInfo, info)
 		}
@@ -469,6 +470,7 @@ func (s *httpServer) doLookup(w http.ResponseWriter, req *http.Request, ps httpr
 				"replica":        meta.Replica,
 				"extend_support": meta.Ext,
 				"ordered":        meta.OrderedMulti,
+				"multi_part":     meta.MultiPart,
 			},
 			"producers":  peers,
 			"partitions": partitionProducers,
@@ -558,6 +560,7 @@ func (s *httpServer) doCreateTopic(w http.ResponseWriter, req *http.Request, ps 
 		return nil, http_api.Err{400, err.Error()}
 	}
 	allowMultiOrdered := reqParams.Get("orderedmulti")
+	multiPart := reqParams.Get("multipart")
 	allowExt := reqParams.Get("extend")
 
 	if s.ctx.nsqlookupd.coordinator == nil {
@@ -579,6 +582,9 @@ func (s *httpServer) doCreateTopic(w http.ResponseWriter, req *http.Request, ps 
 	meta.RetentionDay = int32(retentionDays)
 	if allowMultiOrdered == "true" {
 		meta.OrderedMulti = true
+	}
+	if multiPart == "true" {
+		meta.MultiPart = true
 	}
 	if allowExt == "true" {
 		meta.Ext = true

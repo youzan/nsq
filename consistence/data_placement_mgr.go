@@ -639,7 +639,7 @@ func (dpm *DataPlacement) DoBalance(monitorChan chan struct{}) {
 			// if min load is 4 times less than avg load, we can move some
 			// leader to this min load node.
 			coordLog.Infof("begin checking balance of topic data...")
-			moved, _ := dpm.rebalanceOrderedTopic(monitorChan)
+			moved, _ := dpm.rebalanceMultiPartTopic(monitorChan)
 			if moved {
 				continue
 			}
@@ -940,7 +940,7 @@ func (dpm *DataPlacement) checkAndPrepareMove(monitorChan chan struct{}, fromNod
 		return false
 	}
 	checkMoveOK := false
-	if topicInfo.OrderedMulti {
+	if topicInfo.AllowMulti() {
 		coordLog.Debugf("topic %v is configured as multi ordered, no balance", topicName)
 		return false
 	}
@@ -1135,8 +1135,8 @@ func (dpm *DataPlacement) addToCatchupAndWaitISRReady(monitorChan chan struct{},
 		return err
 	}
 	moveLeader := fromNode == topicInfo.Leader
-	if topicInfo.OrderedMulti && len(addTryFirstNodes) == 0 {
-		return dpm.addToCatchupAndWaitISRReadyForOrderedTopic(monitorChan, srcNodeRemoving, fromNode,
+	if topicInfo.AllowMulti() && len(addTryFirstNodes) == 0 {
+		return dpm.addToCatchupAndWaitISRReadyForMultiPartTopic(monitorChan, srcNodeRemoving, fromNode,
 			topicInfo, sortedNodes)
 	}
 	filteredNodes := make([]string, 0)
@@ -1178,7 +1178,7 @@ func (dpm *DataPlacement) addToCatchupAndWaitISRReady(monitorChan chan struct{},
 	return nil
 }
 
-func (dpm *DataPlacement) addToCatchupAndWaitISRReadyForOrderedTopic(monitorChan chan struct{}, srcNodeRemoving bool,
+func (dpm *DataPlacement) addToCatchupAndWaitISRReadyForMultiPartTopic(monitorChan chan struct{}, srcNodeRemoving bool,
 	fromNode string, topicInfo *TopicPartitionMetaInfo,
 	nodeNameList []string) error {
 	if len(nodeNameList) == 0 {
@@ -1188,11 +1188,11 @@ func (dpm *DataPlacement) addToCatchupAndWaitISRReadyForOrderedTopic(monitorChan
 	currentSelect := 0
 	topicName := topicInfo.Name
 	partitionID := topicInfo.Partition
-	// since we need add new catchup, we make the replica as replica+1
-	partitionNodes, err := dpm.getRebalancedOrderedTopicPartitionsFromNameList(
+	// we need add new catchup, choose from the the diff between the new isr and old isr
+	partitionNodes, err := dpm.getRebalancedMultiTopicPartitionsFromNameList(
 		topicInfo.Name,
 		topicInfo.PartitionNum,
-		topicInfo.Replica+1, nodeNameList)
+		topicInfo.Replica, nodeNameList)
 	if err != nil {
 		return err
 	}
@@ -1237,7 +1237,7 @@ func (dpm *DataPlacement) getTopNTopics(currentNodes map[string]NsqdNodeInfo) (L
 }
 
 func (dpm *DataPlacement) isTopNTopic(topicInfo *TopicPartitionMetaInfo, sortedTopics LFListT) bool {
-	if topicInfo.OrderedMulti {
+	if topicInfo.AllowMulti() {
 		return false
 	}
 	for _, t := range sortedTopics {
@@ -1275,7 +1275,7 @@ func (dpm *DataPlacement) getExcludeNodesForTopic(topicInfo *TopicPartitionMetaI
 		coordLog.Infof("failed get the meta info: %v", err)
 		return excludeNodes, err
 	}
-	if checkMulti && meta.OrderedMulti {
+	if checkMulti && meta.AllowMulti() {
 		// we allow this topic multi partitions on the same node
 		return excludeNodes, nil
 	}
@@ -1301,8 +1301,8 @@ func (dpm *DataPlacement) getExcludeNodesForTopic(topicInfo *TopicPartitionMetaI
 }
 
 func (dpm *DataPlacement) getExpectedAllocNodesForTopic(topicInfo *TopicPartitionMetaInfo, currentNodes map[string]NsqdNodeInfo) ([]string, error) {
-	if topicInfo.OrderedMulti {
-		partitionNodes, err := dpm.getRebalancedOrderedTopicPartitions(
+	if topicInfo.AllowMulti() {
+		partitionNodes, err := dpm.getRebalancedMultiTopicPartitions(
 			topicInfo.Name,
 			topicInfo.PartitionNum,
 			topicInfo.Replica, currentNodes)
@@ -1340,7 +1340,7 @@ func (dpm *DataPlacement) allocNodeForTopic(topicInfo *TopicPartitionMetaInfo, c
 	var chosenNode NsqdNodeInfo
 	var chosenStat *NodeTopicStats
 
-	excludeNodes, commonErr := dpm.getExcludeNodesForTopic(topicInfo, topicInfo.OrderedMulti)
+	excludeNodes, commonErr := dpm.getExcludeNodesForTopic(topicInfo, topicInfo.AllowMulti())
 	if commonErr != nil {
 		return nil, commonErr
 	}
@@ -1384,7 +1384,7 @@ func (dpm *DataPlacement) allocNodeForTopic(topicInfo *TopicPartitionMetaInfo, c
 func (dpm *DataPlacement) checkTopicNodeConflict(topicInfo *TopicPartitionMetaInfo) bool {
 	existLeaders := make(map[string]struct{})
 	existSlaves := make(map[string]struct{})
-	if !topicInfo.OrderedMulti {
+	if !topicInfo.AllowMulti() {
 		for i := 0; i < topicInfo.PartitionNum; i++ {
 			if i == topicInfo.Partition {
 				continue
@@ -1425,11 +1425,11 @@ func (dpm *DataPlacement) checkTopicNodeConflict(topicInfo *TopicPartitionMetaIn
 }
 
 // init leader node and isr list for the empty topic
-func (dpm *DataPlacement) allocTopicLeaderAndISR(topicName string, orderedMulti bool, currentNodes map[string]NsqdNodeInfo,
+func (dpm *DataPlacement) allocTopicLeaderAndISR(topicName string, multi bool, currentNodes map[string]NsqdNodeInfo,
 	replica int, partitionNum int, existPart map[int]*TopicPartitionMetaInfo) ([]string, [][]string, error) {
 
-	if orderedMulti {
-		return dpm.allocOrderedTopicLeaderAndISR(topicName, currentNodes, replica, partitionNum, existPart)
+	if multi {
+		return dpm.allocMultiPartTopicLeaderAndISR(topicName, currentNodes, replica, partitionNum, existPart)
 	}
 
 	if len(currentNodes) < replica || len(currentNodes) < partitionNum {
@@ -1550,11 +1550,11 @@ func (dpm *DataPlacement) allocTopicLeaderAndISR(topicName string, orderedMulti 
 	return leaders, isrlist, nil
 }
 
-func (dpm *DataPlacement) allocOrderedTopicLeaderAndISR(topicName string, currentNodes map[string]NsqdNodeInfo,
+func (dpm *DataPlacement) allocMultiPartTopicLeaderAndISR(topicName string, currentNodes map[string]NsqdNodeInfo,
 	replica int, partitionNum int, existPart map[int]*TopicPartitionMetaInfo) ([]string, [][]string, error) {
 	leaders := make([]string, partitionNum)
 	isrlist := make([][]string, partitionNum)
-	partitionNodes, err := dpm.getRebalancedOrderedTopicPartitions(
+	partitionNodes, err := dpm.getRebalancedMultiTopicPartitions(
 		topicName,
 		partitionNum,
 		replica, currentNodes)
@@ -1613,8 +1613,8 @@ func (dpm *DataPlacement) chooseNewLeaderFromISR(topicInfo *TopicPartitionMetaIn
 		coordLog.Infof("topic %v new leader %v found with commit id: %v in only one candidate", topicInfo.GetTopicDesp(), newLeader, newestLogID)
 		return newLeader, newestLogID, nil
 	}
-	if topicInfo.OrderedMulti {
-		newLeader = dpm.chooseNewLeaderFromISRForOrderedTopic(topicInfo, currentNodes, newestReplicas)
+	if topicInfo.AllowMulti() {
+		newLeader = dpm.chooseNewLeaderFromISRForMultiPartTopic(topicInfo, currentNodes, newestReplicas)
 	} else {
 		sortedTopN, topicList, err := dpm.getTopNTopics(currentNodes)
 		if err == nil && dpm.isTopNTopic(topicInfo, sortedTopN) {
@@ -1682,14 +1682,14 @@ func (dpm *DataPlacement) chooseNewLeaderFromISRForTopN(topicInfo *TopicPartitio
 	return newLeader
 }
 
-func (dpm *DataPlacement) chooseNewLeaderFromISRForOrderedTopic(topicInfo *TopicPartitionMetaInfo,
+func (dpm *DataPlacement) chooseNewLeaderFromISRForMultiPartTopic(topicInfo *TopicPartitionMetaInfo,
 	currentNodes map[string]NsqdNodeInfo,
 	newestReplicas []string) string {
 	newLeader := ""
 	if len(newestReplicas) == 0 {
 		return newLeader
 	}
-	partitionNodes, err := dpm.getRebalancedOrderedTopicPartitions(
+	partitionNodes, err := dpm.getRebalancedMultiTopicPartitions(
 		topicInfo.Name,
 		topicInfo.PartitionNum,
 		topicInfo.Replica, currentNodes)
@@ -1735,7 +1735,7 @@ func getTopNTopicsStats(nodeTopicStats []NodeTopicStats, topicInfoList []TopicPa
 			if !ok {
 				continue
 			}
-			if tinfo.OrderedMulti {
+			if tinfo.AllowMulti() {
 				continue
 			}
 			if filterNonmove {
@@ -2224,8 +2224,8 @@ func (dpm *DataPlacement) balanceTopicToExpectedISR(monitorChan chan struct{}, t
 			topicInfo.GetTopicDesp(), topicInfo.ISR, expectedISR)
 		var err error
 		if len(topicInfo.ISR) <= topicInfo.Replica {
-			if topicInfo.OrderedMulti {
-				err = dpm.addToCatchupAndWaitISRReadyForOrderedTopic(monitorChan, false, nid, &topicInfo,
+			if topicInfo.AllowMulti() {
+				err = dpm.addToCatchupAndWaitISRReadyForMultiPartTopic(monitorChan, false, nid, &topicInfo,
 					nodeNameList)
 			} else {
 				err = dpm.addToCatchupAndWaitISRReady(monitorChan, false, nid, topicInfo.Name, topicInfo.Partition,
@@ -2261,7 +2261,7 @@ func (dpm *DataPlacement) balanceTopicToExpectedISR(monitorChan chan struct{}, t
 	return needMove, moved, nil
 }
 
-func (dpm *DataPlacement) rebalanceOrderedTopic(monitorChan chan struct{}) (bool, bool) {
+func (dpm *DataPlacement) rebalanceMultiPartTopic(monitorChan chan struct{}) (bool, bool) {
 	moved := false
 	isAllBalanced := false
 	if !atomic.CompareAndSwapInt32(&dpm.lookupCoord.balanceWaiting, 0, 1) {
@@ -2279,7 +2279,7 @@ func (dpm *DataPlacement) rebalanceOrderedTopic(monitorChan chan struct{}) (bool
 	movedTopic := ""
 	isAllBalanced = true
 	for _, topicInfo := range topicList {
-		if !topicInfo.OrderedMulti {
+		if !topicInfo.AllowMulti() {
 			continue
 		}
 		select {
@@ -2303,7 +2303,7 @@ func (dpm *DataPlacement) rebalanceOrderedTopic(monitorChan chan struct{}) (bool
 			nodeNameList = append(nodeNameList, n.ID)
 		}
 
-		partitionNodes, err := dpm.getRebalancedOrderedTopicPartitions(
+		partitionNodes, err := dpm.getRebalancedMultiTopicPartitions(
 			topicInfo.Name,
 			topicInfo.PartitionNum,
 			topicInfo.Replica, currentNodes)
@@ -2343,7 +2343,7 @@ func (s SortableStrings) Swap(l, r int) {
 	s[l], s[r] = s[r], s[l]
 }
 
-func (dpm *DataPlacement) getRebalancedOrderedTopicPartitions(
+func (dpm *DataPlacement) getRebalancedMultiTopicPartitions(
 	topicName string,
 	partitionNum int, replica int,
 	currentNodes map[string]NsqdNodeInfo) ([][]string, error) {
@@ -2388,9 +2388,9 @@ func (dpm *DataPlacement) getRebalancedOrderedTopicPartitions(
 	for nid := range currentNodes {
 		nodeNameList = append(nodeNameList, nid)
 	}
-	return dpm.getRebalancedOrderedTopicPartitionsFromNameList(topicName, partitionNum, replica, nodeNameList)
+	return dpm.getRebalancedMultiTopicPartitionsFromNameList(topicName, partitionNum, replica, nodeNameList)
 }
-func (dpm *DataPlacement) getRebalancedOrderedTopicPartitionsFromNameList(
+func (dpm *DataPlacement) getRebalancedMultiTopicPartitionsFromNameList(
 	topicName string,
 	partitionNum int, replica int,
 	nodeNameList SortableStrings) ([][]string, error) {
@@ -2418,7 +2418,7 @@ func (dpm *DataPlacement) getRebalancedOrderedTopicPartitionsFromNameList(
 func (dpm *DataPlacement) decideUnwantedISRNode(topicInfo *TopicPartitionMetaInfo, currentNodes map[string]NsqdNodeInfo) string {
 	unwantedNode := ""
 	//remove the unwanted node in isr
-	if !topicInfo.OrderedMulti {
+	if !topicInfo.AllowMulti() {
 		maxLF := 0.0
 		for _, nodeID := range topicInfo.ISR {
 			if nodeID == topicInfo.Leader {
@@ -2440,7 +2440,7 @@ func (dpm *DataPlacement) decideUnwantedISRNode(topicInfo *TopicPartitionMetaInf
 			}
 		}
 	} else {
-		partitionNodes, err := dpm.getRebalancedOrderedTopicPartitions(
+		partitionNodes, err := dpm.getRebalancedMultiTopicPartitions(
 			topicInfo.Name,
 			topicInfo.PartitionNum,
 			topicInfo.Replica, currentNodes)

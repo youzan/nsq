@@ -420,6 +420,7 @@ type TopicInfo struct {
 	TopicName  string `json:"topic_name"`
 	ExtSupport bool   `json:"extend_support"`
 	Ordered    bool   `json:"ordered"`
+	MultiPart  bool   `json:"multi_part"`
 }
 
 type TopicInfoSortByName []*TopicInfo
@@ -448,6 +449,7 @@ func (c *ClusterInfo) GetNSQDTopics(nsqdHTTPAddrs []string) ([]*TopicInfo, error
 			Name       string `json:"topic_name"`
 			Ordered    bool   `json:"is_multi_ordered"`
 			ExtSupport bool   `json:"is_ext"`
+			MultiPart  bool   `json:"multi_part"`
 		} `json:"topics"`
 	}
 
@@ -474,6 +476,7 @@ func (c *ClusterInfo) GetNSQDTopics(nsqdHTTPAddrs []string) ([]*TopicInfo, error
 				topics = append(topics, &TopicInfo{
 					TopicName:  topic.Name,
 					Ordered:    topic.Ordered,
+					MultiPart:  topic.MultiPart,
 					ExtSupport: topic.ExtSupport,
 				})
 			}
