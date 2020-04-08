@@ -296,7 +296,9 @@ func newDBMetaStorage(p string, readOnly bool) (*dbMetaStorage, error) {
 		ReadOnly:     readOnly,
 		FreelistType: bolt.FreelistMapType,
 	}
-	os.MkdirAll(p, 0755)
+	if !readOnly {
+		os.MkdirAll(p, 0755)
+	}
 	db, err := bolt.Open(path.Join(p, "meta.db"), 0644, ro)
 	if err != nil {
 		nsqLog.LogErrorf("failed to init bolt db meta storage: %v , %v ", p, err)
@@ -507,8 +509,9 @@ func (dbs *dbMetaStorage) Close() {
 }
 
 type shardedDBMetaStorage struct {
-	dataPath string
-	dbShards [8]*dbMetaStorage
+	dataPath      string
+	dbShards      [8]*dbMetaStorage
+	writedbShards [32]*dbMetaStorage
 }
 
 func NewShardedDBMetaStorageForRead(p string) (*shardedDBMetaStorage, error) {
@@ -518,6 +521,12 @@ func NewShardedDBMetaStorageForRead(p string) (*shardedDBMetaStorage, error) {
 	var err error
 	for i := 0; i < len(d.dbShards); i++ {
 		d.dbShards[i], err = NewDBMetaStorageForRead(path.Join(p, strconv.Itoa(i)))
+		if err != nil {
+			return nil, err
+		}
+	}
+	for i := 0; i < len(d.writedbShards); i++ {
+		d.writedbShards[i], err = NewDBMetaStorageForRead(path.Join(p, "writer", strconv.Itoa(i)))
 		if err != nil {
 			return nil, err
 		}
@@ -532,6 +541,12 @@ func NewShardedDBMetaStorage(p string) (*shardedDBMetaStorage, error) {
 	var err error
 	for i := 0; i < len(d.dbShards); i++ {
 		d.dbShards[i], err = NewDBMetaStorage(path.Join(p, strconv.Itoa(i)))
+		if err != nil {
+			return nil, err
+		}
+	}
+	for i := 0; i < len(d.writedbShards); i++ {
+		d.writedbShards[i], err = NewDBMetaStorage(path.Join(p, "writer", strconv.Itoa(i)))
 		if err != nil {
 			return nil, err
 		}
@@ -552,8 +567,8 @@ func (ss *shardedDBMetaStorage) Remove(key string) {
 }
 
 func (ss *shardedDBMetaStorage) RemoveWriter(key string) {
-	h := int(murmur3.Sum32([]byte(key))) % len(ss.dbShards)
-	d := ss.dbShards[h]
+	h := int(murmur3.Sum32([]byte(key))) % len(ss.writedbShards)
+	d := ss.writedbShards[h]
 	d.RemoveWriter(key)
 }
 
@@ -564,14 +579,14 @@ func (ss *shardedDBMetaStorage) PersistReader(key string, fsync bool, confirmed 
 }
 
 func (ss *shardedDBMetaStorage) PersistWriter(key string, fsync bool, queueEndInfo diskQueueEndInfo) error {
-	h := int(murmur3.Sum32([]byte(key))) % len(ss.dbShards)
-	d := ss.dbShards[h]
+	h := int(murmur3.Sum32([]byte(key))) % len(ss.writedbShards)
+	d := ss.writedbShards[h]
 	return d.PersistWriter(key, fsync, queueEndInfo)
 }
 
 func (ss *shardedDBMetaStorage) RetrieveWriter(key string, readOnly bool) (diskQueueEndInfo, error) {
-	h := int(murmur3.Sum32([]byte(key))) % len(ss.dbShards)
-	d := ss.dbShards[h]
+	h := int(murmur3.Sum32([]byte(key))) % len(ss.writedbShards)
+	d := ss.writedbShards[h]
 	return d.RetrieveWriter(key, readOnly)
 }
 
@@ -579,11 +594,17 @@ func (ss *shardedDBMetaStorage) Sync() {
 	for _, d := range ss.dbShards {
 		d.Sync()
 	}
+	for _, d := range ss.writedbShards {
+		d.Sync()
+	}
 }
 
 func (ss *shardedDBMetaStorage) Close() {
 	ss.Sync()
 	for _, d := range ss.dbShards {
+		d.Close()
+	}
+	for _, d := range ss.writedbShards {
 		d.Close()
 	}
 }
