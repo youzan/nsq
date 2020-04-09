@@ -132,6 +132,19 @@ func newDiskQueueWriter(name string, dataPath string, maxBytesPerFile int64,
 			d.diskQueueStart.Offset() > d.diskWriteEnd.Offset() {
 			nsqLog.LogErrorf("diskqueue(%s) queue start invalid: %v, write end: %v",
 				d.name, d.diskQueueStart, d.diskWriteEnd)
+
+			// check if the data file exist, the disk write meta may be lost
+			_, err := os.Stat(d.fileName(d.diskWriteEnd.EndOffset.FileNum))
+			if err != nil {
+				if d.diskWriteEnd.EndOffset.FileNum <= 0 || d.diskWriteEnd.EndOffset.Pos > 0 {
+					return &d, err
+				}
+				// may at the start of segment file, so we check last segment
+				_, err := os.Stat(d.fileName(d.diskWriteEnd.EndOffset.FileNum - 1))
+				if err != nil {
+					return &d, err
+				}
+			}
 			if d.diskWriteEnd.EndOffset.FileNum == 0 &&
 				d.diskWriteEnd.EndOffset.Pos == 0 {
 				// auto fix this case
