@@ -465,6 +465,20 @@ func (q *DelayQueue) ResetBackendEndNoLock(vend BackendOffset, totalCnt int64) e
 	return err
 }
 
+func (q *DelayQueue) TryFixQueueEnd(vend BackendOffset, totalCnt int64) error {
+	old := q.backend.GetQueueWriteEnd()
+	if old.Offset() == vend && old.TotalMsgCnt() == totalCnt {
+		return nil
+	}
+	nsqLog.Logf("topic %v try fix the backend end from %v to : %v, %v", q.GetFullName(), old, vend, totalCnt)
+	_, err := q.backend.TryFixWriteEnd(vend, totalCnt)
+	if err != nil {
+		nsqLog.LogErrorf("fix backend to %v error: %v", vend, err)
+	}
+	atomic.StoreInt32(&q.needFlush, 1)
+	return err
+}
+
 func (q *DelayQueue) ResetBackendWithQueueStartNoLock(queueStartOffset int64, queueStartCnt int64) error {
 	if queueStartOffset < 0 || queueStartCnt < 0 {
 		return errors.New("queue start should not less than 0")

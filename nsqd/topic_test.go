@@ -670,6 +670,87 @@ func TestTopicResetWithQueueStart(t *testing.T) {
 	}
 }
 
+func TestTopicFixQueueEnd(t *testing.T) {
+	opts := NewOptions()
+	opts.Logger = newTestLogger(t)
+	if testing.Verbose() {
+		opts.LogLevel = 3
+		glog.SetFlags(0, "", "", true, true, 1)
+		glog.StartWorker(time.Second)
+	}
+	opts.MaxBytesPerFile = 1024 * 1024
+	_, _, nsqd := mustStartNSQD(opts)
+	defer os.RemoveAll(opts.DataPath)
+	defer nsqd.Exit()
+
+	topic := nsqd.GetTopic("test", 0, false)
+	changeDynamicConfAutCommit(topic.dynamicConf)
+
+	msgNum := 5000
+	channel := topic.GetChannel("ch")
+	test.NotNil(t, channel)
+	msg := NewMessage(0, make([]byte, 1000))
+	msg.Timestamp = time.Now().Add(-1 * time.Hour * time.Duration(24*4)).UnixNano()
+
+	topic.PutMessage(msg)
+	topic.ForceFlush()
+	// test fix end while only one message
+	oldEnd := topic.backend.GetQueueWriteEnd().(*diskQueueEndInfo)
+	// fix end should only work to expand current
+	err := topic.TryFixQueueEnd(oldEnd.Offset()/2, oldEnd.TotalMsgCnt()/2)
+	test.NotNil(t, err)
+
+	topic.backend.diskWriteEnd = diskQueueEndInfo{}
+	err = topic.TryFixQueueEnd(oldEnd.Offset(), oldEnd.TotalMsgCnt())
+	test.Nil(t, err)
+	newEnd := topic.backend.GetQueueWriteEnd().(*diskQueueEndInfo)
+
+	test.Equal(t, oldEnd.Offset(), newEnd.Offset())
+	test.Equal(t, oldEnd, newEnd)
+
+	var dend BackendQueueEnd
+	for i := 0; i <= msgNum; i++ {
+		msg.ID = 0
+		_, _, _, dend, _ = topic.PutMessage(msg)
+		msg.Timestamp = time.Now().Add(-1 * time.Hour * 24 * time.Duration(4-dend.(*diskQueueEndInfo).EndOffset.FileNum)).UnixNano()
+	}
+	topic.ForceFlush()
+
+	fileNum := topic.backend.diskWriteEnd.EndOffset.FileNum
+	test.Equal(t, int64(0), topic.backend.GetQueueReadStart().(*diskQueueEndInfo).EndOffset.FileNum)
+
+	test.Equal(t, true, fileNum >= 4)
+	topic.dynamicConf.RetentionDay = 2
+
+	oldEnd = topic.backend.GetQueueWriteEnd().(*diskQueueEndInfo)
+	// fix end should only work to expand current
+	err = topic.TryFixQueueEnd(oldEnd.Offset()/2, oldEnd.TotalMsgCnt()/2)
+	test.NotNil(t, err)
+
+	topic.backend.diskWriteEnd = diskQueueEndInfo{}
+	err = topic.TryFixQueueEnd(oldEnd.Offset(), oldEnd.TotalMsgCnt())
+	test.Nil(t, err)
+	newEnd = topic.backend.GetQueueWriteEnd().(*diskQueueEndInfo)
+
+	test.Equal(t, oldEnd.Offset(), newEnd.Offset())
+	test.Equal(t, oldEnd, newEnd)
+
+	// test reopen
+	nsqd.CloseExistingTopic("test", 0)
+	topic = nsqd.GetTopic("test", 0, false)
+	changeDynamicConfAutCommit(topic.dynamicConf)
+	newEnd2 := topic.backend.GetQueueWriteEnd().(*diskQueueEndInfo)
+	test.Equal(t, true, newEnd.IsSame(newEnd2))
+
+	for i := 0; i < msgNum; i++ {
+		msg.ID = 0
+		topic.PutMessage(msg)
+	}
+	topic.ForceFlush()
+	newEnd = topic.backend.GetQueueWriteEnd().(*diskQueueEndInfo)
+	test.Equal(t, oldEnd.TotalMsgCnt()+int64(msgNum), newEnd.TotalMsgCnt())
+}
+
 func benchmarkTopicPut(b *testing.B, size int, useExt bool) {
 	b.StopTimer()
 	topicName := "bench_topic_put" + strconv.Itoa(b.N)

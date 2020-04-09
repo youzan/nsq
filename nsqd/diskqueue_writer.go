@@ -478,6 +478,52 @@ func (d *diskQueueWriter) truncateDiskQueueToWriteEnd() {
 	}
 }
 
+// TryFixWriteEnd should only be used to expand current write end, for truncate use resetwrite end instead
+func (d *diskQueueWriter) TryFixWriteEnd(offset BackendOffset, totalCnt int64) (diskQueueEndInfo, error) {
+	d.Lock()
+	defer d.Unlock()
+	if offset < d.diskQueueStart.virtualEnd || totalCnt < d.diskQueueStart.TotalMsgCnt() {
+		nsqLog.Logf("reset write end to %v:%v invalid, less than queue start %v", offset, totalCnt, d.diskQueueStart)
+		return d.diskWriteEnd, ErrInvalidOffset
+	}
+	if offset < d.diskWriteEnd.Offset() {
+		// only expand end allowed
+		return d.diskWriteEnd, ErrInvalidOffset
+	}
+	if d.needSync {
+		d.syncAll(true)
+	}
+	nsqLog.Logf("fix write end from %v to %v, reset to totalCnt: %v", d.diskWriteEnd.Offset(), offset, totalCnt)
+	newEnd := d.diskQueueStart.Offset()
+	newWriteFileNum := d.diskQueueStart.EndOffset.FileNum
+	newWritePos := d.diskQueueStart.EndOffset.Pos
+	for {
+		f, err := os.Stat(d.fileName(newWriteFileNum))
+		if err != nil {
+			nsqLog.LogErrorf("stat data file error %v, %v", offset, newWriteFileNum)
+			return d.diskWriteEnd, err
+		}
+		diff := offset - newEnd
+		if newWritePos+int64(diff) <= f.Size() {
+			newWritePos += int64(diff)
+			newEnd = offset
+			break
+		}
+		newEnd += BackendOffset(f.Size() - newWritePos)
+		newWritePos = 0
+		newWriteFileNum++
+	}
+	d.diskWriteEnd.EndOffset.FileNum = newWriteFileNum
+	d.diskWriteEnd.EndOffset.Pos = newWritePos
+	d.diskWriteEnd.virtualEnd = offset
+	atomic.StoreInt64(&d.diskWriteEnd.totalMsgCnt, int64(totalCnt))
+	d.diskReadEnd = d.diskWriteEnd
+	d.closeCurrentFile()
+	nsqLog.Logf("fix write end result : %v", d.diskWriteEnd)
+	d.truncateDiskQueueToWriteEnd()
+	return d.diskWriteEnd, nil
+}
+
 func (d *diskQueueWriter) ResetWriteEndV2(offset BackendOffset, totalCnt int64) (diskQueueEndInfo, error) {
 	d.Lock()
 	defer d.Unlock()
