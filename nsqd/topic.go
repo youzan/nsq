@@ -1461,6 +1461,22 @@ func (t *Topic) TryCleanOldData(retentionSize int64, noRealClean bool, maxCleanO
 	return t.backend.CleanOldDataByRetention(cleanEndInfo, noRealClean, maxCleanOffset)
 }
 
+func (t *Topic) TryFixQueueEnd(vend BackendOffset, totalCnt int64) error {
+	old := t.backend.GetQueueWriteEnd()
+	if old.Offset() == vend && old.TotalMsgCnt() == totalCnt {
+		return nil
+	}
+	nsqLog.Logf("topic %v try fix the backend end from %v to : %v, %v", t.GetFullName(), old, vend, totalCnt)
+	dend, err := t.backend.TryFixWriteEnd(vend, totalCnt)
+	if err != nil {
+		nsqLog.LogErrorf("fix backend to %v error: %v", vend, err)
+	} else {
+		t.UpdateCommittedOffset(&dend)
+		t.updateChannelsEnd(true, true)
+	}
+	return err
+}
+
 func (t *Topic) ResetBackendWithQueueStartNoLock(queueStartOffset int64, queueStartCnt int64) error {
 	if !t.IsWriteDisabled() {
 		nsqLog.Warningf("reset the topic %v backend only allow while write disabled", t.GetFullName())
