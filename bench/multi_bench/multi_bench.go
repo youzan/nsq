@@ -1259,6 +1259,10 @@ func pubWorker(td time.Duration, globalPubMgr *nsq.TopicProducerMgr, topicName s
 		addLatencyCounter(cost)
 		msgCount += int64(len(batch))
 		atomic.AddInt64(&currentMsgCount, int64(len(batch)))
+		if len(batch) == 0 {
+			msgCount++
+			atomic.AddInt64(&currentMsgCount, 1)
+		}
 		if time.Now().After(endTime) {
 			break
 		}
