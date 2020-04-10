@@ -35,7 +35,7 @@ type Producer struct {
 	VersionObj       semver.Version `json:"-"`
 	Topics           ProducerTopics `json:"topics"`
 	OutOfDate        bool           `json:"out_of_date"`
-	DC		 string		`json:"dc"`
+	DC               string         `json:"dc"`
 }
 
 // UnmarshalJSON implements json.Unmarshaler and postprocesses of ProducerTopics and VersionObj
@@ -115,7 +115,7 @@ type NodeStat struct {
 type ClusterNodeInfo struct {
 	Stable       bool        `json:"stable"`
 	NodeStatList []*NodeStat `json:"node_stat_list"`
-	DC	     string	`json:"dc,omitempty"`
+	DC           string      `json:"dc,omitempty"`
 }
 
 type TopicStats struct {
@@ -126,6 +126,7 @@ type TopicStats struct {
 	StatsdName     string        `json:"statsd_name"`
 	IsLeader       bool          `json:"is_leader"`
 	IsMultiOrdered bool          `json:"is_multi_ordered"`
+	IsMultiPart    bool          `json:"is_multi_part"`
 	IsExt          bool          `json:"is_ext"`
 	SyncingNum     int           `json:"syncing_num"`
 	ISRStats       []ISRStat     `json:"isr_stats"`
@@ -148,7 +149,7 @@ type TopicStats struct {
 
 	E2eProcessingLatency *quantile.E2eProcessingLatencyAggregate `json:"e2e_processing_latency"`
 
-	DC 		  	string		`json:"dc,omitempty"`
+	DC string `json:"dc,omitempty"`
 }
 
 type TopicMsgStatsInfo struct {
@@ -160,7 +161,7 @@ type TopicMsgStatsInfo struct {
 
 func (t *TopicStats) Add(a *TopicStats) {
 	t.Node = "*"
-	if t.IsMultiOrdered || a.IsMultiOrdered {
+	if t.IsMultiOrdered || a.IsMultiOrdered || t.IsMultiPart || a.IsMultiPart {
 		// for multi ordered partitions, it may have several partitions on the single node,
 		// so in order to get all the partitions, we should query "topic.*" to get all partitions
 		t.StatsdName = t.TopicName + ".*"
@@ -224,20 +225,21 @@ type ChannelStats struct {
 	Clients                 []*ClientStats                          `json:"clients"`
 	Paused                  bool                                    `json:"paused"`
 	Skipped                 bool                                    `json:"skipped"`
-	ZanTestSkipped          bool					`json:"zan_test_skipped"`
+	ZanTestSkipped          bool                                    `json:"zan_test_skipped"`
 	IsMultiOrdered          bool                                    `json:"is_multi_ordered"`
+	IsMultiPart             bool                                    `json:"is_multi_part"`
 	IsExt                   bool                                    `json:"is_ext"`
 	MsgConsumeLatencyStats  []int64                                 `json:"msg_consume_latency_stats"`
 	MsgDeliveryLatencyStats []int64                                 `json:"msg_delivery_latency_stats"`
 	E2eProcessingLatency    *quantile.E2eProcessingLatencyAggregate `json:"e2e_processing_latency"`
 	//indicate whether current channel is ths only channel under topic
-	OnlyChannel		bool					`json:"only_channel"`
-	DC 			string					`json:"dc,omitempty"`
+	OnlyChannel bool   `json:"only_channel"`
+	DC          string `json:"dc,omitempty"`
 }
 
 /**
 merge channelStats from another dc to current channel stats
- */
+*/
 func (c *ChannelStats) Merge(a *ChannelStats) {
 	c.Node = "*"
 	c.DC = "*"
@@ -546,7 +548,7 @@ type TopicCoordStat struct {
 	Partition    int           `json:"partition"`
 	ISRStats     []ISRStat     `json:"isr_stats"`
 	CatchupStats []CatchupStat `json:"catchup_stats"`
-	DC		string 		`json:"dc,omitempty"`
+	DC           string        `json:"dc,omitempty"`
 }
 
 type CoordStats struct {
@@ -567,7 +569,7 @@ type NsqLookupdNodeInfo struct {
 type LookupdNodes struct {
 	LeaderNode NsqLookupdNodeInfo   `json:"lookupdleader"`
 	AllNodes   []NsqLookupdNodeInfo `json:"lookupdnodes"`
-	DC         string		`json:"dc,omitempty"`
+	DC         string               `json:"dc,omitempty"`
 }
 
 type NodeHourlyPubsize struct {
