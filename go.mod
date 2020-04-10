@@ -22,7 +22,7 @@ require (
 	github.com/gobwas/glob v0.2.3
 	github.com/gogo/protobuf v1.2.1
 	github.com/golang/protobuf v1.3.2
-	github.com/golang/snappy v0.0.0-20180518054509-2e65f85255db
+	github.com/golang/snappy v0.0.1
 	github.com/gorilla/sessions v1.1.3
 	github.com/hashicorp/golang-lru v0.5.3
 	github.com/judwhite/go-svc v1.0.0
@@ -30,14 +30,14 @@ require (
 	github.com/kr/pretty v0.2.0 // indirect
 	github.com/mreiferson/go-options v0.0.0-20161229190002-77551d20752b
 	github.com/myesui/uuid v1.0.0 // indirect
-	github.com/spaolacci/murmur3 v0.0.0-20170819071325-9f5d223c6079
-	github.com/stretchr/testify v1.3.0
+	github.com/spaolacci/murmur3 v1.1.0
+	github.com/stretchr/testify v1.4.0
 	github.com/tidwall/gjson v1.1.3
 	github.com/tidwall/match v1.0.1 // indirect
 	github.com/twinj/uuid v1.0.0
 	github.com/viki-org/dnscache v0.0.0-20130720023526-c70c1f23c5d8
 	github.com/wendal/errors v0.0.0-20181209125328-7f31f4b264ec // indirect
-	github.com/youzan/go-nsq v1.3.2-HA
+	github.com/youzan/go-nsq v1.6.0-HA
 	golang.org/x/net v0.0.0-20190311183353-d8887717615a
 	golang.org/x/sync v0.0.0-20190911185100-cd5d95a43a6e
 	google.golang.org/grpc v1.26.0
