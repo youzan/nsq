@@ -283,6 +283,7 @@ func recvNextMsgAndCheckExtTimeout(t *testing.T, conn io.ReadWriter,
 		}
 		test.Equal(t, frameTypeMessage, frameType)
 		msgOut, err := nsq.DecodeMessageWithExt(data, ext)
+		t.Logf(string(data))
 		test.Nil(t, err)
 		if expLen > 0 {
 			test.Equal(t, expLen, len(msgOut.Body))
@@ -2809,7 +2810,7 @@ func TestTcpMpubExt(t *testing.T) {
 			msgExtList = append(msgExtList, &nsq.MsgExt{
 				TraceID:     123,
 				DispatchTag: "desiredTag",
-				Custom:      map[string]string{"key1": "val1", "key2": "val2"},
+				Custom:      map[string]interface{}{"key1": "val1", "key2": "val2"},
 			})
 			msgBody = append(msgBody, []byte("msg has ext"))
 		}
@@ -2972,7 +2973,7 @@ func testConsumeWithFilter(t *testing.T, inverse bool) {
 	identify(t, conn, nil, frameTypeResponse)
 
 	var jext nsq.MsgExt
-	jext.Custom = make(map[string]string)
+	jext.Custom = make(map[string]interface{})
 	filterExtKey := "my_filter_key"
 	pubTotal := 6 * 10
 	for i := 0; i < 10; i++ {
@@ -3390,6 +3391,7 @@ func testConsumeWithFilterComplex(t *testing.T, inverse bool) {
 	time.AfterFunc(time.Second, func() {
 		conn.Close()
 	})
+	t.Logf("check filter1")
 	for {
 		msgOut := recvNextMsgAndCheckExt(t, conn, 0, 0, true, true)
 		if msgOut != nil {
@@ -3468,6 +3470,7 @@ func testConsumeWithFilterComplex(t *testing.T, inverse bool) {
 	test.Equal(t, err, nil)
 	msgPrefix = "this is message Multi"
 	cnt = int32(0)
+	t.Logf("check filter2")
 	for {
 		msgOut := recvNextMsgAndCheckExt(t, conn1, 0, 0, true, true)
 		test.NotNil(t, msgOut)
@@ -3728,14 +3731,14 @@ func TestZanTestSkip(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		if i%2 == 0 {
 			msgExtList = append(msgExtList, &nsq.MsgExt{
-				Custom: map[string]string{"key1": "val1", "key2": "val2"},
+				Custom: map[string]interface{}{"key1": "val1", "key2": "val2"},
 			})
 			msgBody = append(msgBody, []byte("msg has no zan_test ext"))
 		} else {
 			msgExtList = append(msgExtList, &nsq.MsgExt{
 				TraceID:     123,
 				DispatchTag: "desiredTag",
-				Custom:      map[string]string{"zan_test": "true", "key1": "val1"},
+				Custom:      map[string]interface{}{"zan_test": "true", "key1": "val1"},
 			})
 			msgBody = append(msgBody, []byte("msg has zan_test ext"))
 		}

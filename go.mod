@@ -37,7 +37,7 @@ require (
 	github.com/twinj/uuid v1.0.0
 	github.com/viki-org/dnscache v0.0.0-20130720023526-c70c1f23c5d8
 	github.com/wendal/errors v0.0.0-20181209125328-7f31f4b264ec // indirect
-	github.com/youzan/go-nsq v1.6.0-HA
+	github.com/youzan/go-nsq v1.6.1-HA
 	golang.org/x/net v0.0.0-20190311183353-d8887717615a
 	golang.org/x/sync v0.0.0-20190911185100-cd5d95a43a6e
 	google.golang.org/grpc v1.26.0
