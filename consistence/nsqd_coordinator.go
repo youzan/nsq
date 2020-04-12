@@ -2874,10 +2874,6 @@ func (ncoord *NsqdCoordinator) updateLocalTopic(topicInfo *TopicPartitionMetaInf
 	if t == nil {
 		return nil, ErrLocalInitTopicFailed
 	}
-	localErr := ncoord.localNsqd.SetTopicMagicCode(t, topicInfo.MagicCode)
-	if localErr != nil {
-		return t, ErrLocalInitTopicFailed
-	}
 	dyConf := &nsqd.TopicDynamicConf{SyncEvery: int64(topicInfo.SyncEvery),
 		AutoCommit:   0,
 		RetentionDay: topicInfo.RetentionDay,
@@ -2885,12 +2881,24 @@ func (ncoord *NsqdCoordinator) updateLocalTopic(topicInfo *TopicPartitionMetaInf
 		MultiPart:    topicInfo.MultiPart,
 		Ext:          topicInfo.Ext,
 	}
+	t.SetDynamicInfo(*dyConf, tcData.logMgr)
+
+	if t.IsDataNeedFix() {
+		endFixErr := checkAndFixLocalLogQueueEnd(tcData, t, tcData.logMgr, true, ForceFixLeaderData)
+		if endFixErr != nil {
+			t.SetDataFixState(true)
+		}
+	}
+	localErr := ncoord.localNsqd.SetTopicMagicCode(t, topicInfo.MagicCode)
+	if localErr != nil {
+		return t, ErrLocalInitTopicFailed
+	}
+
 	tcData.updateBufferSize(int(dyConf.SyncEvery - 1))
 	localErr = maybeInitDelayedQ(tcData, t)
 	if localErr != nil {
 		return t, ErrLocalInitTopicFailed
 	}
-	t.SetDynamicInfo(*dyConf, tcData.logMgr)
 
 	return t, nil
 }

@@ -218,7 +218,7 @@ func NewTopicWithExt(topicName string, part int, ext bool, ordered bool, opt *Op
 
 	if err != nil {
 		nsqLog.LogErrorf("topic(%v) failed to init disk queue: %v ", t.fullName, err)
-		if err == ErrNeedFixQueueStart {
+		if err == ErrNeedFixQueueStart || err == ErrNeedFixQueueEnd {
 			t.SetDataFixState(true)
 		} else {
 			return nil
@@ -226,7 +226,9 @@ func NewTopicWithExt(topicName string, part int, ext bool, ordered bool, opt *Op
 	}
 	t.backend = queue.(*diskQueueWriter)
 
-	t.UpdateCommittedOffset(t.backend.GetQueueWriteEnd())
+	if err != ErrNeedFixQueueEnd {
+		t.UpdateCommittedOffset(t.backend.GetQueueWriteEnd())
+	}
 	err = t.loadMagicCode()
 	if err != nil {
 		nsqLog.LogErrorf("topic %v failed to load magic code: %v", t.fullName, err)

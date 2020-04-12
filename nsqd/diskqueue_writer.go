@@ -24,6 +24,7 @@ const (
 var (
 	ErrInvalidOffset     = errors.New("invalid offset")
 	ErrNeedFixQueueStart = errors.New("init queue start should be fixed")
+	ErrNeedFixQueueEnd   = errors.New("init queue end should be fixed")
 	writeBufSize         = 1024 * 128
 )
 
@@ -137,12 +138,12 @@ func newDiskQueueWriter(name string, dataPath string, maxBytesPerFile int64,
 			_, err := os.Stat(d.fileName(d.diskWriteEnd.EndOffset.FileNum))
 			if err != nil {
 				if d.diskWriteEnd.EndOffset.FileNum <= 0 || d.diskWriteEnd.EndOffset.Pos > 0 {
-					return &d, err
+					return &d, ErrNeedFixQueueEnd
 				}
 				// may at the start of segment file, so we check last segment
 				_, err := os.Stat(d.fileName(d.diskWriteEnd.EndOffset.FileNum - 1))
 				if err != nil {
-					return &d, err
+					return &d, ErrNeedFixQueueEnd
 				}
 			}
 			if d.diskWriteEnd.EndOffset.FileNum == 0 &&
