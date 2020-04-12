@@ -180,7 +180,8 @@ func newDiskQueueReader(readFrom string, metaname string,
 			d.readFrom, d.readerMetaName, err)
 	}
 	// need update queue end with new readEnd, since it may read old from meta file
-	d.UpdateQueueEnd(readEnd, false)
+	// force reload end should be true if the topic end is fixed by fix mode.
+	d.UpdateQueueEnd(readEnd, true)
 
 	return &d
 }
@@ -1149,11 +1150,10 @@ func (d *diskQueueReader) internalUpdateEnd(endPos *diskQueueEndInfo, forceReloa
 	}
 	d.needSync = true
 	if d.readQueueInfo.EndOffset.GreatThan(&endPos.EndOffset) || d.readQueueInfo.Offset() > endPos.Offset() {
-		nsqLog.LogWarningf("%v new end old than the read end: %v, %v, %v",
-			d.readerMetaName, d.readQueueInfo.EndOffset,
-			endPos, d.queueEndInfo)
-
 		if d.readQueueInfo.Offset() <= endPos.Offset() {
+			nsqLog.Logf("%v new end old than the read end: %v, %v, %v",
+				d.readerMetaName, d.readQueueInfo.EndOffset,
+				endPos, d.queueEndInfo)
 			// reader for file position is great than end but the virtual offset is smaller,
 			// something is wrong. (the file position should be fixed using the virtual offset)
 			// The confirmed offset should be fixed together.
@@ -1180,6 +1180,9 @@ func (d *diskQueueReader) internalUpdateEnd(endPos *diskQueueEndInfo, forceReloa
 		} else {
 			if !forceReload {
 				// if rollback or reset, should set the force reload flag
+				nsqLog.Logf("%v new end old than the read end: %v, %v, %v",
+					d.readerMetaName, d.readQueueInfo.EndOffset,
+					endPos, d.queueEndInfo)
 				return false, nil
 			}
 			d.readQueueInfo = *endPos
