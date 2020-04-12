@@ -69,6 +69,7 @@ type ILocalLogQueue interface {
 	GetDiskQueueSnapshot() *nsqd.DiskQueueSnapshot
 	TotalMessageCnt() uint64
 	TotalDataSize() int64
+	TryFixQueueEnd(nsqd.BackendOffset, int64) error
 
 	PutRawDataOnReplica(rawData []byte, offset nsqd.BackendOffset, checkSize int64, msgNum int32) (nsqd.BackendQueueEnd, error)
 	PutMessageOnReplica(msgs *nsqd.Message, offset nsqd.BackendOffset, checkSize int64) (nsqd.BackendQueueEnd, error)
@@ -821,6 +822,7 @@ func (ncoord *NsqdCoordinator) loadLocalTopicData() error {
 			AutoCommit:   0,
 			RetentionDay: topicInfo.RetentionDay,
 			OrderedMulti: topicInfo.OrderedMulti,
+			MultiPart:    topicInfo.MultiPart,
 			Ext:          topicInfo.Ext,
 		}
 		tc.GetData().updateBufferSize(int(dyConf.SyncEvery - 1))
@@ -908,6 +910,10 @@ func checkAndFixLocalLogQueueEnd(tc *coordData,
 		return localErr
 	}
 	realEnd := localLogQ.TotalDataSize()
+	if realEnd == 0 {
+		localLogQ.TryFixQueueEnd(commitEndOffset, commitEndCnt)
+		realEnd = localLogQ.TotalDataSize()
+	}
 	cntNum, _ := logMgr.ConvertToCountIndex(logIndex, logOffset)
 	for {
 		cntNum--
@@ -937,6 +943,28 @@ func checkAndFixLocalLogQueueEnd(tc *coordData,
 					return nil
 				}
 			}
+		} else {
+			localErr = localLogQ.TryFixQueueEnd(nsqd.BackendOffset(logData.MsgOffset+int64(logData.MsgSize)),
+				logData.MsgCnt+int64(logData.MsgNum)-1)
+			if localErr != nil {
+				continue
+			}
+			snap := localLogQ.GetDiskQueueSnapshot()
+			seekCnt := int64(0)
+			if logData.MsgCnt > 0 {
+				seekCnt = logData.MsgCnt - 1
+			}
+			localErr = snap.SeekTo(nsqd.BackendOffset(logData.MsgOffset), seekCnt)
+			if localErr != nil {
+				coordLog.Errorf("topic %v try fix end failed: %v , %v:%v", tname, localErr, logIndex, logOffset)
+				break
+			}
+			r := snap.ReadOne()
+			if r.Err != nil {
+				coordLog.Errorf("topic %v try fix end failed: %v , %v:%v", tname, r.Err, logIndex, logOffset)
+				break
+			}
+			return nil
 		}
 	}
 	return localErr
@@ -1959,6 +1987,7 @@ func (ncoord *NsqdCoordinator) catchupFromLeader(topicInfo TopicPartitionMetaInf
 		AutoCommit:   0,
 		RetentionDay: topicInfo.RetentionDay,
 		OrderedMulti: topicInfo.OrderedMulti,
+		MultiPart:    topicInfo.MultiPart,
 		Ext:          topicInfo.Ext,
 	}
 	tc.GetData().updateBufferSize(int(dyConf.SyncEvery - 1))
@@ -2470,6 +2499,7 @@ func (ncoord *NsqdCoordinator) updateTopicLeaderSession(topicCoord *TopicCoordin
 		AutoCommit:   0,
 		RetentionDay: tcData.topicInfo.RetentionDay,
 		OrderedMulti: tcData.topicInfo.OrderedMulti,
+		MultiPart:    tcData.topicInfo.MultiPart,
 		Ext:          tcData.topicInfo.Ext,
 	}
 	tcData.updateBufferSize(int(dyConf.SyncEvery - 1))
@@ -2852,6 +2882,7 @@ func (ncoord *NsqdCoordinator) updateLocalTopic(topicInfo *TopicPartitionMetaInf
 		AutoCommit:   0,
 		RetentionDay: topicInfo.RetentionDay,
 		OrderedMulti: topicInfo.OrderedMulti,
+		MultiPart:    topicInfo.MultiPart,
 		Ext:          topicInfo.Ext,
 	}
 	tcData.updateBufferSize(int(dyConf.SyncEvery - 1))

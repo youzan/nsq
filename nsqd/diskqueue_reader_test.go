@@ -362,10 +362,10 @@ func TestDiskQueueReaderUpdateEnd(t *testing.T) {
 	_, hasData := dqReaderWithEnd.TryReadOne()
 	equal(t, hasData, false)
 	dqReaderWithEnd.Close()
-	// should not rollback with less init read end
+	// channel end should init read end to queue end
 	dqReaderWithEnd = newDiskQueueReaderWithMetaStorage(dqName, dqName+"-meta1", tmpDir, 1024, 4, 1<<10, 1, 2*time.Second, midEnd, true)
-	test.Equal(t, dqReaderWithEnd.GetQueueReadEnd(), end)
-	test.Equal(t, dqReaderWithEnd.GetQueueConfirmed(), end)
+	test.Equal(t, dqReaderWithEnd.GetQueueReadEnd(), midEnd)
+	test.Equal(t, dqReaderWithEnd.GetQueueConfirmed(), midEnd)
 	_, hasData = dqReaderWithEnd.TryReadOne()
 	equal(t, hasData, false)
 

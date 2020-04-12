@@ -503,7 +503,7 @@ func (nlcoord *NsqLookupCoordinator) updateTopicMeta(currentNodes map[string]Nsq
 	}
 	coordLog.Infof("update topic: %v, with meta: %v", topic, meta)
 
-	if meta.OrderedMulti {
+	if meta.AllowMulti() {
 		if len(currentNodes) < meta.Replica {
 			coordLog.Infof("nodes %v is less than replica %v", len(currentNodes), meta)
 			return ErrNodeUnavailable.ToErrorType()
@@ -597,11 +597,11 @@ func (nlcoord *NsqLookupCoordinator) CreateTopic(topic string, meta TopicMetaInf
 		coordLog.Infof("nodes %v is less than replica %v", len(currentNodes), meta)
 		return ErrNodeUnavailable.ToErrorType()
 	}
-	if !meta.OrderedMulti && len(currentNodes) < meta.PartitionNum {
+	if !meta.AllowMulti() && len(currentNodes) < meta.PartitionNum {
 		coordLog.Infof("nodes %v is less than partition %v", len(currentNodes), meta)
 		return ErrNodeUnavailable.ToErrorType()
 	}
-	if !meta.OrderedMulti && len(currentNodes) < meta.Replica*meta.PartitionNum {
+	if !meta.AllowMulti() && len(currentNodes) < meta.Replica*meta.PartitionNum {
 		coordLog.Infof("nodes is less than replica*partition")
 		return ErrNodeUnavailable.ToErrorType()
 	}
@@ -678,7 +678,7 @@ func (nlcoord *NsqLookupCoordinator) checkAndUpdateTopicPartitions(currentNodes 
 		nlcoord.triggerCheckTopics("", 0, time.Millisecond*500)
 		return nil
 	}
-	leaders, isrList, err := nlcoord.dpm.allocTopicLeaderAndISR(topic, meta.OrderedMulti, currentNodes, meta.Replica, meta.PartitionNum, existPart)
+	leaders, isrList, err := nlcoord.dpm.allocTopicLeaderAndISR(topic, meta.AllowMulti(), currentNodes, meta.Replica, meta.PartitionNum, existPart)
 	if err != nil {
 		coordLog.Infof("failed to alloc nodes for topic: %v", err)
 		return err

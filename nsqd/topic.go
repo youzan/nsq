@@ -68,6 +68,7 @@ type TopicDynamicConf struct {
 	RetentionDay int32
 	SyncEvery    int64
 	OrderedMulti bool
+	MultiPart    bool
 	Ext          bool
 }
 
@@ -648,6 +649,8 @@ func (t *Topic) SetDynamicInfo(dynamicConf TopicDynamicConf, idGen MsgIDGenerato
 	} else {
 		atomic.StoreInt32(&t.isOrdered, 0)
 	}
+	t.dynamicConf.MultiPart = dynamicConf.MultiPart
+
 	dq := t.GetDelayedQueue()
 	if dq != nil {
 		atomic.StoreInt64(&dq.SyncEvery, dynamicConf.SyncEvery)
@@ -1456,6 +1459,22 @@ func (t *Topic) TryCleanOldData(retentionSize int64, noRealClean bool, maxCleanO
 	nsqLog.Infof("clean topic %v data from %v under retention %v, %v",
 		t.GetFullName(), cleanEndInfo, cleanTime, retentionSize)
 	return t.backend.CleanOldDataByRetention(cleanEndInfo, noRealClean, maxCleanOffset)
+}
+
+func (t *Topic) TryFixQueueEnd(vend BackendOffset, totalCnt int64) error {
+	old := t.backend.GetQueueWriteEnd()
+	if old.Offset() == vend && old.TotalMsgCnt() == totalCnt {
+		return nil
+	}
+	nsqLog.Logf("topic %v try fix the backend end from %v to : %v, %v", t.GetFullName(), old, vend, totalCnt)
+	dend, err := t.backend.TryFixWriteEnd(vend, totalCnt)
+	if err != nil {
+		nsqLog.LogErrorf("fix backend to %v error: %v", vend, err)
+	} else {
+		t.UpdateCommittedOffset(&dend)
+		t.updateChannelsEnd(true, true)
+	}
+	return err
 }
 
 func (t *Topic) ResetBackendWithQueueStartNoLock(queueStartOffset int64, queueStartCnt int64) error {

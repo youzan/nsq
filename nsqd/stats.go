@@ -36,6 +36,7 @@ type TopicStats struct {
 	MsgSizeStats         []int64          `json:"msg_size_stats"`
 	MsgWriteLatencyStats []int64          `json:"msg_write_latency_stats"`
 	IsMultiOrdered       bool             `json:"is_multi_ordered"`
+	IsMultiPart          bool             `json:"is_multi_part"`
 	IsExt                bool             `json:"is_ext"`
 	StatsdName           string           `json:"statsd_name"`
 	PubFailedCnt         int64            `json:"pub_failed_cnt"`
@@ -45,7 +46,7 @@ type TopicStats struct {
 
 func NewTopicStats(t *Topic, channels []ChannelStats, filterClients bool) TopicStats {
 	statsdName := t.GetTopicName()
-	if t.IsOrdered() {
+	if t.IsOrdered() || t.GetDynamicInfo().MultiPart {
 		statsdName += "." + strconv.Itoa(t.GetTopicPart())
 	}
 	var clients []ClientPubStats
@@ -66,6 +67,7 @@ func NewTopicStats(t *Topic, channels []ChannelStats, filterClients bool) TopicS
 		MsgSizeStats:         t.detailStats.GetMsgSizeStats(),
 		MsgWriteLatencyStats: t.detailStats.GetMsgWriteLatencyStats(),
 		IsMultiOrdered:       t.IsOrdered(),
+		IsMultiPart:          t.GetDynamicInfo().MultiPart,
 		IsExt:                t.IsExt(),
 		PubFailedCnt:         t.PubFailed(),
 		StatsdName:           statsdName,

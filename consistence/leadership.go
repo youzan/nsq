@@ -80,8 +80,14 @@ type TopicMetaInfo struct {
 	// used for ordered multi partition topic
 	// allow multi partitions on the same node
 	OrderedMulti bool
+	// whether allow multi partitions on the same node for unordered topic
+	MultiPart bool
 	//used for message ext
 	Ext bool
+}
+
+func (tmi *TopicMetaInfo) AllowMulti() bool {
+	return tmi.OrderedMulti || tmi.MultiPart
 }
 
 type TopicPartitionReplicaInfo struct {
