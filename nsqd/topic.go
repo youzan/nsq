@@ -68,6 +68,7 @@ type TopicDynamicConf struct {
 	RetentionDay int32
 	SyncEvery    int64
 	OrderedMulti bool
+	MultiPart    bool
 	Ext          bool
 }
 
@@ -650,6 +651,8 @@ func (t *Topic) SetDynamicInfo(dynamicConf TopicDynamicConf, idGen MsgIDGenerato
 	} else {
 		atomic.StoreInt32(&t.isOrdered, 0)
 	}
+	t.dynamicConf.MultiPart = dynamicConf.MultiPart
+
 	dq := t.GetDelayedQueue()
 	if dq != nil {
 		atomic.StoreInt64(&dq.SyncEvery, dynamicConf.SyncEvery)

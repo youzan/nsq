@@ -232,10 +232,7 @@ func (self *NsqLookupdEtcdMgr) GetTopicsMetaInfoMap(topics []string) (map[string
 		for _, topic := range topics {
 			topicMeta, exist := self.topicMetaMap[topic]
 			if !exist {
-				topicMetaInfoCache[topic] = TopicMetaInfo{
-					OrderedMulti: false,
-					Ext:          false,
-				}
+				topicMetaInfoCache[topic] = TopicMetaInfo{}
 			} else {
 				topicMetaInfoCache[topic] = topicMeta
 			}

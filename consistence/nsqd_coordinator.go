@@ -822,6 +822,7 @@ func (ncoord *NsqdCoordinator) loadLocalTopicData() error {
 			AutoCommit:   0,
 			RetentionDay: topicInfo.RetentionDay,
 			OrderedMulti: topicInfo.OrderedMulti,
+			MultiPart:    topicInfo.MultiPart,
 			Ext:          topicInfo.Ext,
 		}
 		tc.GetData().updateBufferSize(int(dyConf.SyncEvery - 1))
@@ -1986,6 +1987,7 @@ func (ncoord *NsqdCoordinator) catchupFromLeader(topicInfo TopicPartitionMetaInf
 		AutoCommit:   0,
 		RetentionDay: topicInfo.RetentionDay,
 		OrderedMulti: topicInfo.OrderedMulti,
+		MultiPart:    topicInfo.MultiPart,
 		Ext:          topicInfo.Ext,
 	}
 	tc.GetData().updateBufferSize(int(dyConf.SyncEvery - 1))
@@ -2497,6 +2499,7 @@ func (ncoord *NsqdCoordinator) updateTopicLeaderSession(topicCoord *TopicCoordin
 		AutoCommit:   0,
 		RetentionDay: tcData.topicInfo.RetentionDay,
 		OrderedMulti: tcData.topicInfo.OrderedMulti,
+		MultiPart:    tcData.topicInfo.MultiPart,
 		Ext:          tcData.topicInfo.Ext,
 	}
 	tcData.updateBufferSize(int(dyConf.SyncEvery - 1))
@@ -2879,6 +2882,7 @@ func (ncoord *NsqdCoordinator) updateLocalTopic(topicInfo *TopicPartitionMetaInf
 		AutoCommit:   0,
 		RetentionDay: topicInfo.RetentionDay,
 		OrderedMulti: topicInfo.OrderedMulti,
+		MultiPart:    topicInfo.MultiPart,
 		Ext:          topicInfo.Ext,
 	}
 	tcData.updateBufferSize(int(dyConf.SyncEvery - 1))

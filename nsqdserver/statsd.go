@@ -62,7 +62,7 @@ func (n *NsqdServer) statsdLoop() {
 				}
 				statdName := topic.StatsdName
 				diff := topic.MessageCount - lastTopic.MessageCount
-				if topic.IsMultiOrdered && !topic.IsLeader {
+				if (topic.IsMultiOrdered || topic.IsMultiPart) && !topic.IsLeader {
 					diff = 0
 				}
 				stat := fmt.Sprintf("topic.%s.message_count", statdName)
@@ -94,7 +94,7 @@ func (n *NsqdServer) statsdLoop() {
 						}
 					}
 					diff := channel.MessageCount - lastChannel.MessageCount
-					if topic.IsMultiOrdered && !topic.IsLeader {
+					if (topic.IsMultiOrdered || topic.IsMultiPart) && !topic.IsLeader {
 						diff = 0
 					}
 
@@ -103,14 +103,14 @@ func (n *NsqdServer) statsdLoop() {
 
 					var cnt int64
 					cnt = channel.Depth
-					if topic.IsMultiOrdered && !topic.IsLeader {
+					if (topic.IsMultiOrdered || topic.IsMultiPart) && !topic.IsLeader {
 						cnt = 0
 					}
 					stat = fmt.Sprintf("topic.%s.channel.%s.depth", statdName, channel.ChannelName)
 					client.Gauge(stat, cnt)
 
 					cnt = channel.BackendDepth
-					if topic.IsMultiOrdered && !topic.IsLeader {
+					if (topic.IsMultiOrdered || topic.IsMultiPart) && !topic.IsLeader {
 						cnt = 0
 					}
 					stat = fmt.Sprintf("topic.%s.channel.%s.backend_depth", statdName, channel.ChannelName)

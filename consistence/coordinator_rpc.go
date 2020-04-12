@@ -307,7 +307,7 @@ func (self *NsqdCoordRpcServer) prepareUpdateTopicInfo(rpcTopicReq *RpcAdminTopi
 	coords, ok := self.nsqdCoord.topicCoords[rpcTopicReq.Name]
 	myID := self.nsqdCoord.myNode.GetID()
 	// the ordered topic can have multi master partitions on the same node
-	if rpcTopicReq.Leader == myID && !rpcTopicReq.TopicMetaInfo.OrderedMulti {
+	if rpcTopicReq.Leader == myID && !rpcTopicReq.TopicMetaInfo.AllowMulti() {
 		for pid, tc := range coords {
 			if tc.GetData().GetLeader() != myID {
 				continue
