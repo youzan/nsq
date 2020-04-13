@@ -17,7 +17,7 @@ func newDiskQueueReaderWithMetaStorage(readFrom string, metaname string, dataPat
 	syncEvery int64, syncTimeout time.Duration, readEnd BackendQueueEnd, autoSkip bool) BackendQueueReader {
 
 	return newDiskQueueReader(readFrom, metaname, dataPath, maxBytesPerFile, minMsgSize, maxMsgSize, syncEvery,
-		syncTimeout, readEnd, autoSkip, testMetaStorage)
+		syncTimeout, readEnd, autoSkip, testMetaStorage, true)
 }
 
 func TestDiskQueueReaderResetConfirmed(t *testing.T) {
