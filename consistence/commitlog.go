@@ -358,6 +358,7 @@ func (tcl *TopicCommitLogMgr) loadCommitLogMeta(fixMode bool) error {
 			coordLog.Infof("load file error: %v", err)
 			return err
 		}
+		coordLog.Infof("%v commit log init with last log: %v at %v", tcl.path, l, roundOffset)
 		if l.LastMsgLogID < l.LogID {
 			coordLog.Errorf("%v invalid last log data: %v, file: %v, %v, %v", tcl.path, l, fsize, num, roundOffset)
 			for i := 0; i < int(num)-1; i++ {
@@ -414,7 +415,14 @@ func (tcl *TopicCommitLogMgr) loadCommitLogMeta(fixMode bool) error {
 						tcl.path, i, err, roundOffset)
 					return err
 				}
+				needFix := false
+				if lastLog != nil && firstLog.LogID <= lastLog.LogID {
+					needFix = true
+				}
 				if lastLog != nil && firstLog.MsgOffset <= lastLog.MsgOffset {
+					needFix = true
+				}
+				if needFix {
 					coordLog.Errorf("%v invalid log data %v: %v, %v at offset:%v",
 						tcl.path, i, firstLog, lastLog, roundOffset)
 					_, err = tcl.TruncateToOffsetV2(tcl.currentStart, roundOffset-int64(GetLogDataSize()))
@@ -432,17 +440,17 @@ func (tcl *TopicCommitLogMgr) loadCommitLogMeta(fixMode bool) error {
 		tcl.pLogID = l.LogID
 		tcl.nLogID = l.LastMsgLogID + 1
 		if tcl.pLogID < int64(uint64(tcl.partition)<<MAX_INCR_ID_BIT) {
-			coordLog.Errorf("log id init less than expected: %v", tcl.pLogID)
+			coordLog.Errorf("log id init less than expected: %v, %v", tcl.pLogID, l)
 			return errors.New("init commit log id failed")
 		} else if tcl.pLogID > int64(uint64(tcl.partition+1)<<MAX_INCR_ID_BIT+1) {
-			coordLog.Errorf("log id init large than expected: %v", tcl.pLogID)
+			coordLog.Errorf("log id init large than expected: %v, %v", tcl.pLogID, l)
 			return errors.New("init commit log id failed")
 		}
 		if tcl.nLogID < int64(uint64(tcl.partition)<<MAX_INCR_ID_BIT) {
-			coordLog.Errorf("log id init less than expected: %v", tcl.pLogID)
+			coordLog.Errorf("log id init less than expected: %v, %v", tcl.pLogID, l)
 			return errors.New("init commit log id failed")
 		} else if tcl.nLogID > int64(uint64(tcl.partition+1)<<MAX_INCR_ID_BIT+1) {
-			coordLog.Errorf("log id init large than expected: %v", tcl.pLogID)
+			coordLog.Errorf("log id init large than expected: %v, %v", tcl.pLogID, l)
 			return errors.New("init commit log id failed")
 		}
 		coordLog.Infof("%v commit log init with last log: %v", tcl.path, l)
