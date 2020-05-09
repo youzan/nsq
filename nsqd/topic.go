@@ -918,7 +918,9 @@ func (t *Topic) flushForChannels(forceUpdate bool) {
 		hasData = t.backend.FlushBuffer()
 	}
 	if hasData || forceUpdate {
-		t.updateChannelsEnd(false, forceUpdate)
+		// any channel which trigged the flush need force update the end for all channels, or it may miss
+		// the end update event since no more data to be flush until next message come.
+		t.updateChannelsEnd(false, true)
 	}
 }
 
