@@ -1914,7 +1914,7 @@ LOOP:
 		case msg = <-c.requeuedMsgChan:
 			if msg.TraceID != 0 || c.IsTraced() || nsqLog.Level() >= levellogger.LOG_DETAIL {
 				nsqLog.LogDebugf("read message %v from requeue", msg.ID)
-				nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "READ_REQ", msg.TraceID, msg, "0", 0)
+				nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "READ_REQ", msg.TraceID, msg, "0", time.Now().UnixNano() - msg.Timestamp)
 			}
 		default:
 			select {
@@ -1923,7 +1923,7 @@ LOOP:
 			case msg = <-c.requeuedMsgChan:
 				if msg.TraceID != 0 || c.IsTraced() || nsqLog.Level() >= levellogger.LOG_DETAIL {
 					nsqLog.LogDebugf("read message %v from requeue", msg.ID)
-					nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "READ_REQ", msg.TraceID, msg, "0", 0)
+					nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "READ_REQ", msg.TraceID, msg, "0", time.Now().UnixNano() - msg.Timestamp)
 				}
 			case data = <-readChan:
 				lastDataNeedRead = false
@@ -1966,7 +1966,7 @@ LOOP:
 				msg.RawMoveSize = data.MovedSize
 				msg.queueCntIndex = data.CurCnt
 				if msg.TraceID != 0 || c.IsTraced() || nsqLog.Level() >= levellogger.LOG_DETAIL {
-					nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "READ_QUEUE", msg.TraceID, msg, "0", 0)
+					nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "READ_QUEUE", msg.TraceID, msg, "0", time.Now().UnixNano() - msg.Timestamp)
 				}
 
 				if lastMsg.ID > 0 && msg.ID < lastMsg.ID {
@@ -2493,7 +2493,7 @@ func (c *Channel) peekAndReqDelayedMessages(tnow int64, delayedQueue *DelayQueue
 						c.GetName(), tnow, m)
 				}
 
-				nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "DELAY_QUEUE_TIMEOUT", m.TraceID, &m, "", 0)
+				nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "DELAY_QUEUE_TIMEOUT", m.TraceID, &m, "", time.Now().UnixNano() - m.Timestamp)
 
 				newAdded++
 				if m.belongedConsumer != nil {
