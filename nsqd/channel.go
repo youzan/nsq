@@ -1992,7 +1992,7 @@ LOOP:
 				}
 				if resumedFirst {
 					if nsqLog.Level() > levellogger.LOG_DEBUG || c.IsTraced() {
-						nsqLog.LogDebugf("channel %v resumed first messsage %v at Offset: %v", c.GetName(), msg.ID, msg.Offset)
+						nsqLog.LogDebugf("channel %v resumed first message %v at Offset: %v", c.GetName(), msg.ID, msg.Offset)
 					}
 					resumedFirst = false
 				}
@@ -2493,7 +2493,7 @@ func (c *Channel) peekAndReqDelayedMessages(tnow int64, delayedQueue *DelayQueue
 						c.GetName(), tnow, m)
 				}
 
-				nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "DELAY_QUEUE_TIMEOUT", m.TraceID, &m, "", time.Now().UnixNano() - m.Timestamp)
+				nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "DELAY_QUEUE_TIMEOUT", m.TraceID, &m, "", tnow - m.Timestamp)
 
 				newAdded++
 				if m.belongedConsumer != nil {
