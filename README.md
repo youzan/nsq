@@ -10,6 +10,7 @@
 </ul>
 </p>
 
+![Go](https://github.com/youzan/nsq/workflows/Go/badge.svg)
 [![Build Status](https://travis-ci.com/youzan/nsq.svg?branch=master)](https://travis-ci.com/youzan/nsq) [![GitHub release](https://img.shields.io/github/release/youzan/nsq.svg)](https://github.com/youzan/nsq/releases/latest)
 [![Go Report Card](https://goreportcard.com/badge/github.com/youzan/nsq)](https://goreportcard.com/report/github.com/youzan/nsq)
 [![codecov](https://codecov.io/gh/youzan/nsq/branch/master/graph/badge.svg)](https://codecov.io/gh/youzan/nsq)
