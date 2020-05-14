@@ -801,7 +801,7 @@ func (d *diskQueueWriter) writeOne(data []byte, isRaw bool, msgCnt int32) (Backe
 				d.writeFile.Close()
 				d.writeFile = nil
 			}
-			nsqLog.Logf("DISKQUEUE(%s): writeOne() faled %s", d.name, err)
+			nsqLog.Logf("DISKQUEUE(%s): writeOne() failed %s", d.name, err)
 			return 0, 0, nil, err
 		}
 	}
@@ -812,7 +812,7 @@ func (d *diskQueueWriter) writeOne(data []byte, isRaw bool, msgCnt int32) (Backe
 			d.writeFile.Close()
 			d.writeFile = nil
 		}
-		nsqLog.Logf("DISKQUEUE(%s): writeOne() faled %s", d.name, err)
+		nsqLog.Logf("DISKQUEUE(%s): writeOne() failed %s", d.name, err)
 		return 0, 0, nil, err
 	}
 
