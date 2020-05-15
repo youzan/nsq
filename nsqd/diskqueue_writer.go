@@ -1001,21 +1001,36 @@ func (d *diskQueueWriter) initQueueReadStart() error {
 	return nil
 }
 
-func (d *diskQueueWriter) loadExtraMeta() error {
-	fileName := d.extraMetaFileName()
+func getQueueStart(dataPath string, name string) (diskQueueEndInfo, error) {
+	fileName := fmt.Sprintf(path.Join(dataPath, "%s.diskqueue.meta.extra.dat"), name)
+	return getQueueStartFromFile(fileName)
+}
+
+func getQueueStartFromFile(fileName string) (diskQueueEndInfo, error) {
+	var startQ diskQueueEndInfo
 	data, err := ioutil.ReadFile(fileName)
 	if err != nil {
-		return err
+		return startQ, err
 	}
 	var tmp extraMeta
 	err = json.Unmarshal(data, &tmp)
 	if err != nil {
+		return startQ, err
+	}
+	startQ.EndOffset = tmp.SegOffset
+	startQ.virtualEnd = tmp.VirtualOffset
+	startQ.totalMsgCnt = tmp.TotalMsgCnt
+	nsqLog.Infof(" %v load extra meta: %v", fileName, tmp)
+	return startQ, nil
+}
+
+func (d *diskQueueWriter) loadExtraMeta() error {
+	fileName := d.extraMetaFileName()
+	startQ, err := getQueueStartFromFile(fileName)
+	if err != nil {
 		return err
 	}
-	d.diskQueueStart.EndOffset = tmp.SegOffset
-	d.diskQueueStart.virtualEnd = tmp.VirtualOffset
-	d.diskQueueStart.totalMsgCnt = tmp.TotalMsgCnt
-	nsqLog.Infof("topic : %v load extra meta: %v", d.name, tmp)
+	d.diskQueueStart = startQ
 	return nil
 }
 
