@@ -36,6 +36,9 @@ var (
 	ErrCommitLogSegmentSizeInvalid   = errors.New("commit log segment size is invalid")
 	ErrCommitLogLessThanSegmentStart = errors.New("commit log read index is less than segment start")
 	ErrCommitLogCleanKeepMin         = errors.New("commit log clean should keep some data")
+
+	errCommitLogInitIDInvalid      = errors.New("init commit log id failed")
+	errCommitLogInitInvalidLogSize = errors.New("invalid commit log file size")
 )
 
 var LOGROTATE_NUM = 500000
@@ -338,6 +341,23 @@ func InitTopicCommitLogMgrWithFixMode(t string, p int, basepath string, commitBu
 	return mgr, nil
 }
 
+func cleanTopicCommitLogFiles(t string, p int, basepath string) {
+	fullpath := GetTopicPartitionLogPath(basepath, t, p)
+	current, err := loadCurrentStartFromFile(fullpath)
+	if err != nil {
+		return
+	}
+	err = os.Remove(fullpath)
+	if err != nil && !os.IsNotExist(err) {
+		coordLog.Warningf("failed to remove the commit log for topic: %v", fullpath)
+	}
+	for i := int64(0); i < current; i++ {
+		os.Remove(getSegmentFilename(fullpath, int64(i)))
+	}
+	os.Remove(fullpath + ".current")
+	os.Remove(fullpath + ".start")
+}
+
 func InitTopicCommitLogMgr(t string, p int, basepath string, commitBufSize int) (*TopicCommitLogMgr, error) {
 	return InitTopicCommitLogMgrWithFixMode(t, p, basepath, commitBufSize, false)
 }
@@ -388,17 +408,15 @@ func (tcl *TopicCommitLogMgr) loadCommitLogMeta(fixMode bool) error {
 
 		if fsize%int64(GetLogDataSize()) != 0 {
 			coordLog.Warningf("%v invalid log file size: %v, %v", tcl.path, fsize, int64(GetLogDataSize()))
-			if fixMode {
-				roundOffset := (num - 1) * int64(GetLogDataSize())
-				_, err = tcl.TruncateToOffsetV2(tcl.currentStart, roundOffset)
-				if err != nil {
-					return err
-				}
-				coordLog.Warningf("%v fixed commit log data to offset:%v",
-					tcl.path, roundOffset)
+			roundOffset := (num - 1) * int64(GetLogDataSize())
+			_, err = tcl.TruncateToOffsetV2(tcl.currentStart, roundOffset)
+			if err != nil {
+				return err
 			}
+			coordLog.Warningf("%v fixed commit log data to offset:%v",
+				tcl.path, roundOffset)
 			// return error for next retry if fixed by fixmode
-			return errors.New("invalid commit log file size")
+			return errCommitLogInitInvalidLogSize
 		}
 		if fixMode {
 			// check if all logs in current segment is increased
@@ -441,17 +459,17 @@ func (tcl *TopicCommitLogMgr) loadCommitLogMeta(fixMode bool) error {
 		tcl.nLogID = l.LastMsgLogID + 1
 		if tcl.pLogID < int64(uint64(tcl.partition)<<MAX_INCR_ID_BIT) {
 			coordLog.Errorf("log id init less than expected: %v, %v", tcl.pLogID, l)
-			return errors.New("init commit log id failed")
+			return errCommitLogInitIDInvalid
 		} else if tcl.pLogID > int64(uint64(tcl.partition+1)<<MAX_INCR_ID_BIT+1) {
 			coordLog.Errorf("log id init large than expected: %v, %v", tcl.pLogID, l)
-			return errors.New("init commit log id failed")
+			return errCommitLogInitIDInvalid
 		}
 		if tcl.nLogID < int64(uint64(tcl.partition)<<MAX_INCR_ID_BIT) {
 			coordLog.Errorf("log id init less than expected: %v, %v", tcl.pLogID, l)
-			return errors.New("init commit log id failed")
+			return errCommitLogInitIDInvalid
 		} else if tcl.nLogID > int64(uint64(tcl.partition+1)<<MAX_INCR_ID_BIT+1) {
 			coordLog.Errorf("log id init large than expected: %v, %v", tcl.pLogID, l)
-			return errors.New("init commit log id failed")
+			return errCommitLogInitIDInvalid
 		}
 		coordLog.Infof("%v commit log init with last log: %v", tcl.path, l)
 	} else {
@@ -579,19 +597,26 @@ func (self *TopicCommitLogMgr) saveLogSegStartInfo() error {
 	return util.AtomicRename(tmpFileName, self.path+".start")
 }
 
-func (self *TopicCommitLogMgr) loadCurrentStart() error {
-	file, err := os.OpenFile(self.path+".current", os.O_RDONLY, 0644)
+func loadCurrentStartFromFile(path string) (int64, error) {
+	file, err := os.OpenFile(path+".current", os.O_RDONLY, 0644)
 	if err != nil {
 		if os.IsNotExist(err) {
-			self.currentStart = 0
-			return nil
+			return 0, nil
 		}
 		coordLog.Errorf("open commit log current file error: %v", err)
-		return err
+		return 0, err
 	}
 	defer file.Close()
 	var data int64
 	_, err = fmt.Fscanf(file, "%d\n", &data)
+	if err != nil {
+		return 0, err
+	}
+	return data, nil
+}
+
+func (self *TopicCommitLogMgr) loadCurrentStart() error {
+	data, err := loadCurrentStartFromFile(self.path)
 	if err != nil {
 		return err
 	}
