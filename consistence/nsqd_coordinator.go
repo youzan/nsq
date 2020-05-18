@@ -606,25 +606,7 @@ func (ncoord *NsqdCoordinator) checkLocalTopicMagicCode(topicInfo *TopicPartitio
 // pub loop may hold the coordinator lock.
 func (ncoord *NsqdCoordinator) forceCleanTopicData(topicName string, partition int) *CoordErr {
 	// check if any data on local and try remove
-	basepath := GetTopicPartitionBasePath(ncoord.dataRootPath, topicName, partition)
-	tmpLogMgr, err := InitTopicCommitLogMgr(topicName, partition, basepath, 1)
-	coordLog.Infof("topic %v is cleaning topic data: %v", topicName, basepath)
-	if err != nil {
-		coordLog.Warningf("topic %v failed to init tmp log manager: %v", topicName, err)
-	} else {
-		tmpLogMgr.Delete()
-	}
-	dqPath := path.Join(basepath, "delayed_queue")
-	if _, err := os.Stat(dqPath); err == nil {
-		delayedLogMgr, err := InitTopicCommitLogMgr(topicName, partition,
-			dqPath, 1)
-		if err != nil {
-			coordLog.Errorf("topic(%v) failed to init delayed queue log: %v ", topicName, err)
-		} else {
-			delayedLogMgr.Delete()
-		}
-	}
-
+	ncoord.forceCleanTopicCommitLogs(topicName, partition)
 	localErr := ncoord.localNsqd.ForceDeleteTopicData(topicName, partition)
 	if localErr != nil {
 		if !os.IsNotExist(localErr) {
@@ -633,6 +615,16 @@ func (ncoord *NsqdCoordinator) forceCleanTopicData(topicName string, partition i
 		}
 	}
 	return nil
+}
+
+func (ncoord *NsqdCoordinator) forceCleanTopicCommitLogs(topicName string, partition int) {
+	basepath := GetTopicPartitionBasePath(ncoord.dataRootPath, topicName, partition)
+	cleanTopicCommitLogFiles(topicName, partition, basepath)
+	coordLog.Infof("topic %v is cleaning topic data: %v", topicName, basepath)
+	dqPath := path.Join(basepath, "delayed_queue")
+	if _, err := os.Stat(dqPath); err == nil {
+		cleanTopicCommitLogFiles(topicName, partition, dqPath)
+	}
 }
 
 func (ncoord *NsqdCoordinator) initLocalTopicCoord(topicInfo *TopicPartitionMetaInfo,
@@ -657,6 +649,10 @@ func (ncoord *NsqdCoordinator) initLocalTopicCoord(topicInfo *TopicPartitionMeta
 		topicInfo.SyncEvery, topicInfo.OrderedMulti, forceFixCommitLog)
 	if err != nil {
 		coordLog.Infof("failed to get topic coordinator:%v-%v, err:%v", topicName, partition, err)
+		if err == errCommitLogInitIDInvalid {
+			// the commit log is old, we should clean it
+			ncoord.forceCleanTopicCommitLogs(topicInfo.Name, topicInfo.Partition)
+		}
 		return nil, nil, err
 	}
 
