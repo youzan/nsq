@@ -779,9 +779,16 @@ func (ncoord *NsqdCoordinator) loadLocalTopicData() error {
 		// here we will check the last commit log data logid is equal with the disk queue message
 		// this can avoid data corrupt, if not equal we need rollback and find backward for the right data.
 		// and check the first log commit log is valid on the disk queue, so that we can fix the wrong start of the commit log
-		forceFixLeader := false
-		if ForceFixLeaderData && ncoord.GetMyID() == topicInfo.Leader && len(topicInfo.ISR) <= 1 {
-			forceFixLeader = true
+		forceFix := false
+		canAutoForceFix := false
+		if ncoord.GetMyID() != topicInfo.Leader ||
+			(topicInfo.Replica <= 1 && len(topicInfo.ISR) <= 1) {
+			// we can always fix non-leader since we will catchup new from leader
+			// if the replica is 1, we can fix since no other data
+			canAutoForceFix = true
+		}
+		if ForceFixLeaderData || canAutoForceFix {
+			forceFix = true
 		}
 		if shouldLoad {
 			basepath := GetTopicPartitionBasePath(ncoord.dataRootPath, topicInfo.Name, topicInfo.Partition)
@@ -789,8 +796,7 @@ func (ncoord *NsqdCoordinator) loadLocalTopicData() error {
 			if err != nil {
 				coordLog.Infof("failed to get topic leader info:%v-%v, err:%v", topicName, partition, err)
 			}
-			fixCommitLog := ForceFixLeaderData
-			_, _, loadErr := ncoord.initLocalTopicCoord(topicInfo, topicLeaderSession, basepath, fixCommitLog, true, false)
+			_, _, loadErr := ncoord.initLocalTopicCoord(topicInfo, topicLeaderSession, basepath, forceFix, true, false)
 			if loadErr != nil {
 				coordLog.Infof("topic %v coord init error: %v", topicInfo.GetTopicDesp(), loadErr.Error())
 				continue
@@ -825,14 +831,14 @@ func (ncoord *NsqdCoordinator) loadLocalTopicData() error {
 		maybeInitDelayedQ(tc.GetData(), topic)
 		topic.SetDynamicInfo(*dyConf, tc.GetData().logMgr)
 
-		localErr := checkAndFixLocalLogQueueData(tc.GetData(), topic, tc.GetData().logMgr, forceFixLeader)
+		localErr := checkAndFixLocalLogQueueData(tc.GetData(), topic, tc.GetData().logMgr, forceFix)
 		if localErr != nil {
 			coordLog.Errorf("check local topic %v data need to be fixed:%v", topicInfo.GetTopicDesp(), localErr)
 			topic.SetDataFixState(true)
 			go ncoord.requestLeaveFromISR(topicInfo.Name, topicInfo.Partition)
 		} else if !topicInfo.OrderedMulti {
 			delayQ := topic.GetDelayedQueue()
-			localErr = checkAndFixLocalLogQueueData(tc.GetData(), delayQ, tc.GetData().delayedLogMgr, forceFixLeader)
+			localErr = checkAndFixLocalLogQueueData(tc.GetData(), delayQ, tc.GetData().delayedLogMgr, forceFix)
 			if localErr != nil {
 				coordLog.Errorf("check local topic %v delayed queue data need to be fixed:%v", topicInfo.GetTopicDesp(), localErr)
 				delayQ.SetDataFixState(true)
