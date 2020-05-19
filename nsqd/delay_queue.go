@@ -552,6 +552,24 @@ func (q *DelayQueue) BackupKVStoreTo(w io.Writer) (int64, error) {
 	return totalSize, err
 }
 
+func (q *DelayQueue) ReopenWithEmpty() error {
+	q.compactMutex.Lock()
+	defer q.compactMutex.Unlock()
+	kvPath := path.Join(q.dataPath, getDelayQueueDBName(q.tname, q.partition))
+	nsqLog.Logf("topic(%v) reopen empty delayed db: %v", q.fullName, kvPath)
+	q.dbLock.Lock()
+	defer q.dbLock.Unlock()
+	q.kvStore.Close()
+	os.Remove(kvPath)
+	err := q.reOpenStore()
+	if err != nil {
+		nsqLog.LogErrorf("topic(%v) failed to reopen empty delayed db: %v , %v ", q.fullName, err, kvPath)
+		return err
+	}
+	atomic.StoreInt64(&q.changedTs, time.Now().UnixNano())
+	return nil
+}
+
 func (q *DelayQueue) RestoreKVStoreFrom(body io.Reader) error {
 	buf := make([]byte, 8)
 	n, err := body.Read(buf)

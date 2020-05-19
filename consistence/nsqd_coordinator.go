@@ -2017,6 +2017,16 @@ func (ncoord *NsqdCoordinator) catchupFromLeader(topicInfo TopicPartitionMetaInf
 			}
 			// ignore error if delayed queue is not enabled
 		} else {
+			if needFullSync {
+				// remove old to avoid old is large
+				dq := localTopic.GetDelayedQueue()
+				if dq != nil {
+					localErr := dq.ReopenWithEmpty()
+					if localErr != nil {
+						return NewCoordErr(localErr.Error(), CoordLocalErr)
+					}
+				}
+			}
 			coordErr = ncoord.pullCatchupDataFromLeader(tc, topicInfo, localTopic, tc.GetData().delayedLogMgr, true, logIndex, offset)
 			if coordErr == nil && needFullSync {
 				coordErr = ncoord.pullDelayedQueueFromLeader(tc, topicInfo, localTopic, c)
