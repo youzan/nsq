@@ -741,3 +741,96 @@ func TestDelayQueueCompactStore(t *testing.T) {
 		time.Sleep(time.Millisecond)
 	}
 }
+
+func TestDelayQueueReopenWithEmpty(t *testing.T) {
+	tmpDir, err := ioutil.TempDir("", fmt.Sprintf("nsq-test-delay-%d", time.Now().UnixNano()))
+	if err != nil {
+		panic(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	opts := NewOptions()
+	opts.Logger = newTestLogger(t)
+	opts.SyncEvery = 1
+	if testing.Verbose() {
+		SetLogger(opts.Logger)
+	}
+
+	dq, err := NewDelayQueue("test", 0, tmpDir, opts, nil, false)
+	test.Nil(t, err)
+	defer dq.Close()
+	cnt := 2
+	for i := 0; i < cnt; i++ {
+		msg := NewMessage(0, []byte("body"))
+		msg.DelayedType = ChannelDelayed
+		msg.DelayedTs = time.Now().Add(time.Second).UnixNano()
+		msg.DelayedChannel = "test"
+		msg.DelayedOrigID = MessageID(i + 1)
+		_, _, _, _, err := dq.PutDelayMessage(msg)
+		test.Nil(t, err)
+		msg = NewMessage(0, []byte("body"))
+		msg.DelayedType = ChannelDelayed
+		msg.DelayedTs = time.Now().Add(time.Second).UnixNano()
+		msg.DelayedChannel = "test2"
+		msg.DelayedOrigID = MessageID(i + 1)
+		_, _, _, _, err = dq.PutDelayMessage(msg)
+		test.Nil(t, err)
+		time.Sleep(time.Millisecond * 100)
+	}
+
+	newCnt, _ := dq.GetCurrentDelayedCnt(ChannelDelayed, "test")
+	test.Equal(t, cnt, int(newCnt))
+	newCnt, _ = dq.GetCurrentDelayedCnt(ChannelDelayed, "test2")
+	test.Equal(t, cnt, int(newCnt))
+	// should at most empty one max batch size
+	dq.ReopenWithEmpty()
+
+	newCnt, _ = dq.GetCurrentDelayedCnt(ChannelDelayed, "test2")
+	test.Equal(t, 0, int(newCnt))
+	newCnt, _ = dq.GetCurrentDelayedCnt(ChannelDelayed, "test")
+	test.Equal(t, 0, int(newCnt))
+
+	time.Sleep(time.Second * 2)
+	ret := make([]Message, cnt*2)
+	n, err := dq.PeekRecentChannelTimeout(time.Now().UnixNano(), ret, "test")
+	test.Nil(t, err)
+	test.Equal(t, 0, int(n))
+	n, err = dq.PeekRecentChannelTimeout(time.Now().UnixNano(), ret, "test2")
+	test.Nil(t, err)
+	test.Equal(t, 0, int(n))
+
+	// put new
+	for i := cnt; i < cnt+cnt; i++ {
+		msg := NewMessage(0, []byte("body_new"))
+		msg.DelayedType = ChannelDelayed
+		msg.DelayedTs = time.Now().Add(time.Second).UnixNano()
+		msg.DelayedChannel = "test"
+		msg.DelayedOrigID = MessageID(i + 1)
+		_, _, _, _, err := dq.PutDelayMessage(msg)
+		test.Nil(t, err)
+		msg = NewMessage(0, []byte("body_new2"))
+		msg.DelayedType = ChannelDelayed
+		msg.DelayedTs = time.Now().Add(time.Second).UnixNano()
+		msg.DelayedChannel = "test2"
+		msg.DelayedOrigID = MessageID(i + 1)
+		_, _, _, _, err = dq.PutDelayMessage(msg)
+		test.Nil(t, err)
+		time.Sleep(time.Millisecond * 100)
+	}
+	newCnt, _ = dq.GetCurrentDelayedCnt(ChannelDelayed, "test2")
+	test.Equal(t, cnt, int(newCnt))
+	newCnt, _ = dq.GetCurrentDelayedCnt(ChannelDelayed, "test")
+	test.Equal(t, cnt, int(newCnt))
+
+	time.Sleep(time.Second * 2)
+	n, err = dq.PeekRecentChannelTimeout(time.Now().UnixNano(), ret, "test")
+	test.Nil(t, err)
+	test.Equal(t, cnt, int(n))
+	test.Equal(t, "body_new", string(ret[0].Body))
+	test.Equal(t, "body_new", string(ret[1].Body))
+	n, err = dq.PeekRecentChannelTimeout(time.Now().UnixNano(), ret, "test2")
+	test.Nil(t, err)
+	test.Equal(t, cnt, int(n))
+	test.Equal(t, "body_new2", string(ret[0].Body))
+	test.Equal(t, "body_new2", string(ret[1].Body))
+}
