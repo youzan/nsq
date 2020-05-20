@@ -2576,6 +2576,18 @@ func (ncoord *NsqdCoordinator) TryCleanUnusedTopicOnLocal(topic string, partitio
 	if ncoord.leadership == nil {
 		return nil
 	}
+	meta, _, err := ncoord.leadership.GetTopicMetaInfo(topic)
+	if err != nil {
+		if err == ErrKeyNotFound {
+			// we continue check if local exist
+		} else {
+			return err
+		}
+	} else {
+		if partition >= meta.PartitionNum {
+			return nil
+		}
+	}
 	tinfo, err := ncoord.leadership.GetTopicInfo(topic, partition)
 	if err != nil {
 		if err == ErrKeyNotFound {

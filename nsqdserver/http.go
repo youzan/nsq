@@ -1484,7 +1484,9 @@ func (s *httpServer) doCleanUnusedTopicData(w http.ResponseWriter, req *http.Req
 			return nil, http_api.Err{400, "INVALID_REQUEST"}
 		}
 	}
-	localTopics = append(localTopics, topicName)
+	if topicName != "" {
+		localTopics = append(localTopics, topicName)
+	}
 	// find all topic path
 	if len(localTopics) == 0 && checkAll == "true" {
 		files, _ := ioutil.ReadDir(s.ctx.getOpts().DataPath)
