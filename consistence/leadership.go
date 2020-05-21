@@ -230,6 +230,7 @@ type NSQDLeadership interface {
 	// get the newest lookup leader and watch the change of it.
 	WatchLookupdLeader(leader chan *NsqLookupdNodeInfo, stop chan struct{}) error
 	GetTopicInfo(topic string, partition int) (*TopicPartitionMetaInfo, error)
+	GetTopicMetaInfo(topic string) (TopicMetaInfo, EpochType, error)
 	// get leadership information, if not exist should return ErrLeaderSessionNotExist as error
 	GetTopicLeaderSession(topic string, partition int) (*TopicLeaderSession, error)
 	IsTopicRealDeleted(topic string) (bool, error)

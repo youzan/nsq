@@ -629,7 +629,7 @@ func (ncoord *NsqdCoordinator) forceCleanTopicCommitLogs(topicName string, parti
 
 func (ncoord *NsqdCoordinator) initLocalTopicCoord(topicInfo *TopicPartitionMetaInfo,
 	topicLeaderSession *TopicLeaderSession,
-	basepath string, forceFixCommitLog bool, updateCoordInfo bool, initDisable bool) (*TopicCoordinator, *nsqd.Topic, error) {
+	basepath string, updateCoordInfo bool, initDisable bool) (*TopicCoordinator, *nsqd.Topic, error) {
 	ncoord.coordMutex.Lock()
 	defer ncoord.coordMutex.Unlock()
 	coords, ok := ncoord.topicCoords[topicInfo.Name]
@@ -646,7 +646,7 @@ func (ncoord *NsqdCoordinator) initLocalTopicCoord(topicInfo *TopicPartitionMeta
 	topicName := topicInfo.Name
 	partition := topicInfo.Partition
 	tc, err = NewTopicCoordinatorWithFixMode(topicInfo.Name, topicInfo.Partition, basepath,
-		topicInfo.SyncEvery, topicInfo.OrderedMulti, forceFixCommitLog)
+		topicInfo.SyncEvery, topicInfo.OrderedMulti, ForceFixLeaderData)
 	if err != nil {
 		coordLog.Infof("failed to get topic coordinator:%v-%v, err:%v", topicName, partition, err)
 		if err == errCommitLogInitIDInvalid {
@@ -796,7 +796,7 @@ func (ncoord *NsqdCoordinator) loadLocalTopicData() error {
 			if err != nil {
 				coordLog.Infof("failed to get topic leader info:%v-%v, err:%v", topicName, partition, err)
 			}
-			_, _, loadErr := ncoord.initLocalTopicCoord(topicInfo, topicLeaderSession, basepath, forceFix, true, false)
+			_, _, loadErr := ncoord.initLocalTopicCoord(topicInfo, topicLeaderSession, basepath, true, false)
 			if loadErr != nil {
 				coordLog.Infof("topic %v coord init error: %v", topicInfo.GetTopicDesp(), loadErr.Error())
 				continue
@@ -2562,6 +2562,58 @@ func (ncoord *NsqdCoordinator) GetMasterTopicCoordData(topic string) (int, *coor
 		}
 	}
 	return -1, nil, ErrMissingTopicCoord.ToErrorType()
+}
+
+func (ncoord *NsqdCoordinator) isMeISR(tinfo *TopicPartitionMetaInfo) bool {
+	return FindSlice(tinfo.ISR, ncoord.GetMyID()) != -1
+}
+
+func (ncoord *NsqdCoordinator) isMeCatchup(tinfo *TopicPartitionMetaInfo) bool {
+	return FindSlice(tinfo.CatchupList, ncoord.GetMyID()) != -1
+}
+
+func (ncoord *NsqdCoordinator) TryCleanUnusedTopicOnLocal(topic string, partition int, dryRun bool) error {
+	if ncoord.leadership == nil {
+		return nil
+	}
+	meta, _, err := ncoord.leadership.GetTopicMetaInfo(topic)
+	if err != nil {
+		if err == ErrKeyNotFound {
+			// we continue check if local exist
+		} else {
+			return err
+		}
+	} else {
+		if partition >= meta.PartitionNum {
+			return nil
+		}
+	}
+	tinfo, err := ncoord.leadership.GetTopicInfo(topic, partition)
+	if err != nil {
+		if err == ErrKeyNotFound {
+			// we continue check if local exist
+		} else {
+			return err
+		}
+	} else {
+		if ncoord.isMeISR(tinfo) || ncoord.isMeCatchup(tinfo) {
+			return nil
+		}
+	}
+	c, _ := ncoord.getTopicCoord(topic, partition)
+	if c != nil {
+		return nil
+	}
+
+	coordLog.Infof("removing topic data: %v-%v", topic, partition)
+	if dryRun {
+		return nil
+	}
+	coordErr := ncoord.forceCleanTopicData(topic, partition)
+	if coordErr != nil {
+		return coordErr.ToErrorType()
+	}
+	return nil
 }
 
 func (ncoord *NsqdCoordinator) getTopicCoordData(topic string, partition int) (*coordData, *CoordErr) {

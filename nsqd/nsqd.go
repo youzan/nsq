@@ -629,6 +629,10 @@ func (n *NSQD) ForceDeleteTopicData(name string, partition int) error {
 		n.Lock()
 		topic = NewTopic(name, partition, n.GetOpts(), 1, n.metaStorage, n,
 			n.pubLoopFunc)
+		if topic != nil && !topic.IsOrdered() {
+			// init delayed so we can remove it later
+			topic.GetOrCreateDelayedQueueForReadNoLock()
+		}
 		n.Unlock()
 		if topic == nil {
 			return errors.New("failed to init new topic")

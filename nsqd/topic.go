@@ -260,6 +260,19 @@ func (t *Topic) GetDelayedQueue() *DelayQueue {
 	return t.delayedQueue.Load().(*DelayQueue)
 }
 
+func (t *Topic) GetOrCreateDelayedQueueForReadNoLock() (*DelayQueue, error) {
+	if t.delayedQueue.Load() == nil {
+		delayedQueue, err := NewDelayQueueForRead(t.tname, t.partition, t.dataPath, t.option, nil, t.IsExt())
+		if err == nil {
+			t.delayedQueue.Store(delayedQueue)
+		} else {
+			nsqLog.LogWarningf("topic %v init delayed queue error %v", t.tname, err)
+			return nil, err
+		}
+	}
+	return t.delayedQueue.Load().(*DelayQueue), nil
+}
+
 func (t *Topic) GetOrCreateDelayedQueueNoLock(idGen MsgIDGenerator) (*DelayQueue, error) {
 	if t.delayedQueue.Load() == nil {
 		delayedQueue, err := NewDelayQueue(t.tname, t.partition, t.dataPath, t.option, idGen, t.IsExt())

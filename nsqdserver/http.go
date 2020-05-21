@@ -90,6 +90,7 @@ func newHTTPServer(ctx *context, tlsEnabled bool, tlsRequired bool) *httpServer 
 	router.Handle("PUT", "/delayqueue/enable", http_api.Decorate(s.doEnableDelayedQueue, log, http_api.V1))
 	router.Handle("GET", "/delayqueue/backupto", http_api.Decorate(s.doDelayedQueueBackupTo, log, http_api.V1Stream))
 
+	router.Handle("POST", "/topic/cleanunused", http_api.Decorate(s.doCleanUnusedTopicData, log, http_api.V1))
 	router.Handle("POST", "/topic/greedyclean", http_api.Decorate(s.doGreedyCleanTopic, log, http_api.V1))
 	router.Handle("POST", "/topic/fixdata", http_api.Decorate(s.doFixTopicData, log, http_api.V1))
 	//router.Handle("POST", "/topic/delete", http_api.Decorate(s.doDeleteTopic, http_api.DeprecatedAPI, log, http_api.V1))
@@ -1457,6 +1458,72 @@ func (s *httpServer) doDelayedQueueBackupTo(w http.ResponseWriter, req *http.Req
 	if err != nil {
 		nsqd.NsqLogger().Logf("failed to backup delayed queue for topic %v: %v", topicName, err)
 		return nil, http_api.Err{500, err.Error()}
+	}
+	return nil, nil
+}
+
+func (s *httpServer) doCleanUnusedTopicData(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {
+	if s.ctx.nsqdCoord == nil {
+		return nil, nil
+	}
+	reqParams, err := url.ParseQuery(req.URL.RawQuery)
+	if err != nil {
+		return nil, http_api.Err{400, "INVALID_REQUEST"}
+	}
+
+	localTopics := make([]string, 0)
+	topicName := reqParams.Get("topic")
+	checkAll := reqParams.Get("checkall")
+	dryRunStr := reqParams.Get("dryrun")
+	topicPartStr := reqParams.Get("partition")
+	topicPart := -1
+	if topicPartStr != "" {
+		topicPart, err = strconv.Atoi(topicPartStr)
+		if err != nil {
+			nsqd.NsqLogger().LogErrorf("failed to get partition - %s", err)
+			return nil, http_api.Err{400, "INVALID_REQUEST"}
+		}
+	}
+	if topicName != "" {
+		localTopics = append(localTopics, topicName)
+	}
+	// find all topic path
+	if len(localTopics) == 0 && checkAll == "true" {
+		files, _ := ioutil.ReadDir(s.ctx.getOpts().DataPath)
+		for _, f := range files {
+			if !f.IsDir() {
+				continue
+			}
+			localTopics = append(localTopics, f.Name())
+		}
+	}
+	dryRun := true
+	if dryRunStr == "false" {
+		dryRun = false
+	}
+	for _, tn := range localTopics {
+		if topicPart >= 0 {
+			_, err := s.ctx.getExistingTopic(tn, topicPart)
+			if err == nil {
+				continue
+			}
+			err = s.ctx.nsqdCoord.TryCleanUnusedTopicOnLocal(tn, topicPart, dryRun)
+			if err != nil {
+				nsqd.NsqLogger().Logf("failed to clean topic %v: %v", tn, err)
+			}
+		} else {
+			for p := 0; p < nsqd.MAX_TOPIC_PARTITION; p++ {
+				_, err := s.ctx.getExistingTopic(tn, p)
+				if err == nil {
+					continue
+				}
+				err = s.ctx.nsqdCoord.TryCleanUnusedTopicOnLocal(tn, p, dryRun)
+				if err != nil {
+					//
+					nsqd.NsqLogger().Logf("failed to clean topic %v: %v", tn, err)
+				}
+			}
+		}
 	}
 	return nil, nil
 }

@@ -391,14 +391,12 @@ func (tcl *TopicCommitLogMgr) loadCommitLogMeta(fixMode bool) error {
 				if err != nil || firstLog.LastMsgLogID < firstLog.LogID {
 					coordLog.Errorf("%v first invalid log data %v: %v, %v, offset:%v",
 						tcl.path, i, firstLog, err, roundOffset)
-					if fixMode {
-						_, err = tcl.TruncateToOffsetV2(tcl.currentStart, roundOffset-int64(GetLogDataSize()))
-						if err != nil {
-							return err
-						}
-						coordLog.Warningf("%v fixed commit log data to offset:%v",
-							tcl.path, roundOffset-int64(GetLogDataSize()))
+					_, err = tcl.TruncateToOffsetV2(tcl.currentStart, roundOffset-int64(GetLogDataSize()))
+					if err != nil {
+						return err
 					}
+					coordLog.Warningf("%v fixed commit log data to offset:%v",
+						tcl.path, roundOffset-int64(GetLogDataSize()))
 					break
 				}
 			}

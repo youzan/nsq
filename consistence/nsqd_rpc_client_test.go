@@ -147,6 +147,19 @@ func (self *fakeNsqdLeadership) UpdateTopics(topic string, info map[int]*TopicPa
 	self.Unlock()
 }
 
+func (self *fakeNsqdLeadership) GetTopicMetaInfo(topic string) (TopicMetaInfo, EpochType, error) {
+	self.Lock()
+	self.Unlock()
+	t, ok := self.fakeTopicsInfo[topic]
+	if ok {
+		tp, ok2 := t[0]
+		if ok2 {
+			return tp.TopicMetaInfo, tp.Epoch, nil
+		}
+	}
+	return TopicMetaInfo{}, 0, errors.New("topic not exist")
+}
+
 func (self *fakeNsqdLeadership) GetTopicInfo(topic string, partition int) (*TopicPartitionMetaInfo, error) {
 	self.Lock()
 	self.Unlock()
