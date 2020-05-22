@@ -1512,7 +1512,16 @@ func (s *httpServer) doCleanUnusedTopicData(w http.ResponseWriter, req *http.Req
 				nsqd.NsqLogger().Logf("failed to clean topic %v: %v", tn, err)
 			}
 		} else {
-			for p := 0; p < nsqd.MAX_TOPIC_PARTITION; p++ {
+			meta, err := s.ctx.nsqdCoord.GetTopicMetaInfo(tn)
+			maxPart := 8
+			if err != nil {
+				if err != consistence.ErrKeyNotFound {
+					continue
+				}
+			} else {
+				maxPart = meta.PartitionNum
+			}
+			for p := 0; p < maxPart; p++ {
 				_, err := s.ctx.getExistingTopic(tn, p)
 				if err == nil {
 					continue

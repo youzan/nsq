@@ -2572,21 +2572,18 @@ func (ncoord *NsqdCoordinator) isMeCatchup(tinfo *TopicPartitionMetaInfo) bool {
 	return FindSlice(tinfo.CatchupList, ncoord.GetMyID()) != -1
 }
 
+func (ncoord *NsqdCoordinator) GetTopicMetaInfo(topic string) (TopicMetaInfo, error) {
+	meta, _, err := ncoord.leadership.GetTopicMetaInfo(topic)
+	return meta, err
+}
+
 func (ncoord *NsqdCoordinator) TryCleanUnusedTopicOnLocal(topic string, partition int, dryRun bool) error {
 	if ncoord.leadership == nil {
 		return nil
 	}
-	meta, _, err := ncoord.leadership.GetTopicMetaInfo(topic)
-	if err != nil {
-		if err == ErrKeyNotFound {
-			// we continue check if local exist
-		} else {
-			return err
-		}
-	} else {
-		if partition >= meta.PartitionNum {
-			return nil
-		}
+	c, _ := ncoord.getTopicCoord(topic, partition)
+	if c != nil {
+		return nil
 	}
 	tinfo, err := ncoord.leadership.GetTopicInfo(topic, partition)
 	if err != nil {
@@ -2599,10 +2596,6 @@ func (ncoord *NsqdCoordinator) TryCleanUnusedTopicOnLocal(topic string, partitio
 		if ncoord.isMeISR(tinfo) || ncoord.isMeCatchup(tinfo) {
 			return nil
 		}
-	}
-	c, _ := ncoord.getTopicCoord(topic, partition)
-	if c != nil {
-		return nil
 	}
 
 	coordLog.Infof("removing topic data: %v-%v", topic, partition)
