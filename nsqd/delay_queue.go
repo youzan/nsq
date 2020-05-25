@@ -263,7 +263,13 @@ func NewDelayQueue(topicName string, part int, dataPath string, opt *Options,
 func newDelayQueue(topicName string, part int, dataPath string, opt *Options,
 	idGen MsgIDGenerator, isExt bool, ro *bolt.Options) (*DelayQueue, error) {
 	dataPath = path.Join(dataPath, "delayed_queue")
-	os.MkdirAll(dataPath, 0755)
+	readOnly := false
+	if ro != nil && ro.ReadOnly {
+		readOnly = true
+	}
+	if !readOnly {
+		os.MkdirAll(dataPath, 0755)
+	}
 	q := &DelayQueue{
 		tname:                  topicName,
 		partition:              part,
@@ -278,11 +284,11 @@ func newDelayQueue(topicName string, part int, dataPath string, opt *Options,
 	q.fullName = GetTopicFullName(q.tname, q.partition)
 	backendName := getDelayQueueBackendName(q.tname, q.partition)
 	// max delay message size need add the delay ts and channel name
-	queue, err := newDiskQueueWriterWithMetaStorage(backendName,
+	queue, err := newDiskQueueWriter(backendName,
 		q.dataPath,
 		opt.MaxBytesPerFile,
 		int32(minValidMsgLength),
-		int32(opt.MaxMsgSize)+minValidMsgLength+8+255, 0, nil)
+		int32(opt.MaxMsgSize)+minValidMsgLength+8+255, 0, readOnly, nil)
 
 	if err != nil {
 		nsqLog.LogErrorf("topic(%v) failed to init delayed disk queue: %v , %v ", q.fullName, err, backendName)
@@ -302,6 +308,9 @@ func newDelayQueue(topicName string, part int, dataPath string, opt *Options,
 		return nil, err
 	}
 	q.kvStore.NoSync = true
+	if readOnly {
+		return q, nil
+	}
 	err = q.kvStore.Update(func(tx *bolt.Tx) error {
 		_, err := tx.CreateBucketIfNotExists(bucketDelayedMsg)
 		if err != nil {
