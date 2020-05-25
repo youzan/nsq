@@ -1279,6 +1279,8 @@ func (dpm *DataPlacement) getExcludeNodesForTopic(topicInfo *TopicPartitionMetaI
 		// we allow this topic multi partitions on the same node
 		return excludeNodes, nil
 	}
+	// since one topic have several partitions, here it may not atomic while check all topic partitions
+	// we need check isr again while in join session
 	num := meta.PartitionNum
 	for i := 0; i < num; i++ {
 		topicPartInfo, err := dpm.lookupCoord.leadership.GetTopicInfo(topicInfo.Name, i)
@@ -1406,18 +1408,31 @@ func (dpm *DataPlacement) checkTopicNodeConflict(topicInfo *TopicPartitionMetaIn
 					existSlaves[id] = struct{}{}
 				}
 			}
+			// should check catchup list since it may became isr
+			for _, id := range tmpInfo.CatchupList {
+				existSlaves[id] = struct{}{}
+			}
 		}
 	}
 	// isr should be different
 	for _, id := range topicInfo.ISR {
 		if _, ok := existLeaders[id]; ok {
+			coordLog.Infof("topic %v has conflict leader node: %v, %v", topicInfo.Name, id, existLeaders)
 			return false
 		}
 		if _, ok := existSlaves[id]; ok {
+			coordLog.Infof("topic %v has conflict isr nodes: %v, %v", topicInfo.Name, id, existSlaves)
 			return false
 		}
 		// add checked to map to check dup in isr
 		existLeaders[id] = struct{}{}
+		existSlaves[id] = struct{}{}
+	}
+	for _, id := range topicInfo.CatchupList {
+		if _, ok := existSlaves[id]; ok {
+			coordLog.Infof("topic %v has conflict catchup nodes: %v, %v", topicInfo.Name, id, existSlaves)
+			return false
+		}
 		existSlaves[id] = struct{}{}
 	}
 
