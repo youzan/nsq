@@ -58,6 +58,58 @@ func TestDelayQueuePutChannelDelayed(t *testing.T) {
 	test.NotNil(t, err)
 }
 
+func TestDelayQueueOpenReadOnly(t *testing.T) {
+	tmpDir, err := ioutil.TempDir("", fmt.Sprintf("nsq-test-delay-%d", time.Now().UnixNano()))
+	if err != nil {
+		panic(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	opts := NewOptions()
+	opts.Logger = newTestLogger(t)
+	opts.SyncEvery = 1
+
+	// open readonly as not exist directory
+	roDq, err := NewDelayQueueForRead("test", 0, tmpDir, opts, nil, false)
+	t.Logf("%v", err)
+	test.NotNil(t, err)
+	test.Equal(t, true, os.IsNotExist(err))
+
+	os.MkdirAll(tmpDir, 0755)
+	// open as empty file
+	roDq, err = NewDelayQueueForRead("test", 0, tmpDir, opts, nil, false)
+	t.Logf("%v", err)
+	test.NotNil(t, err)
+	test.Equal(t, true, os.IsNotExist(err))
+
+	dq, err := NewDelayQueue("test", 0, tmpDir, opts, nil, false)
+	test.Nil(t, err)
+	defer dq.Close()
+	cnt := 10
+	for i := 0; i < cnt; i++ {
+		msg := NewMessage(0, []byte("body"))
+		msg.DelayedType = ChannelDelayed
+		msg.DelayedTs = time.Now().Add(time.Second).UnixNano()
+		msg.DelayedChannel = "test"
+		msg.DelayedOrigID = MessageID(i + 1)
+		_, _, _, _, err := dq.PutDelayMessage(msg)
+		test.Nil(t, err)
+	}
+
+	roDq, err = NewDelayQueueForRead("test", 0, tmpDir, opts, nil, false)
+	t.Logf("%v", err)
+	test.Nil(t, err)
+	roDq.Close()
+
+	dq, err = NewDelayQueue("test", 0, tmpDir, opts, nil, false)
+	test.Nil(t, err)
+	dq.Delete()
+
+	roDq, err = NewDelayQueueForRead("test", 0, tmpDir, opts, nil, false)
+	t.Logf("%v", err)
+	test.Equal(t, true, os.IsNotExist(err))
+}
+
 // put raw and message mixed, put ext and non-ext mixed.
 func TestDelayQueuePutRawChannelDelayed(t *testing.T) {
 	tmpDir, err := ioutil.TempDir("", fmt.Sprintf("nsq-test-delay-%d", time.Now().UnixNano()))

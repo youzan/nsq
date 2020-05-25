@@ -302,7 +302,16 @@ func newDelayQueue(topicName string, part int, dataPath string, opt *Options,
 			FreelistType: bolt.FreelistMapType,
 		}
 	}
-	q.kvStore, err = bolt.Open(path.Join(q.dataPath, getDelayQueueDBName(q.tname, q.partition)), 0644, ro)
+	// since the bolt will fail to open in read mode if no db file, but leave the db file created.
+	// So we check here before open
+	dbFile := path.Join(q.dataPath, getDelayQueueDBName(q.tname, q.partition))
+	if readOnly {
+		_, err := os.Stat(dbFile)
+		if os.IsNotExist(err) {
+			return nil, err
+		}
+	}
+	q.kvStore, err = bolt.Open(dbFile, 0644, ro)
 	if err != nil {
 		nsqLog.LogErrorf("topic(%v) failed to init delayed db: %v , %v ", q.fullName, err, backendName)
 		return nil, err
