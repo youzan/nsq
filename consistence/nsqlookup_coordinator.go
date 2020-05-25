@@ -951,7 +951,7 @@ func (nlcoord *NsqLookupCoordinator) doCheckTopics(monitorChan chan struct{}, fa
 					}
 				}
 			} else if !hasRemovingNode {
-				if nlcoord.dpm.checkTopicNodeConflict(&topicInfo) {
+				if !nlcoord.dpm.checkTopicNodeConflict(&topicInfo) {
 					coordLog.Warningf("topic %v has conflict nodes %v, removing", topicInfo.GetTopicDesp(), topicInfo.CatchupList)
 					// remove conflict catchup
 					nlcoord.handleRemoveCatchupNodes(&topicInfo)
