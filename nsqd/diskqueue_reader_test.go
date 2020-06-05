@@ -12,6 +12,14 @@ import (
 	"github.com/youzan/nsq/internal/test"
 )
 
+func newDiskQueueReaderWithMetaStorage(readFrom string, metaname string, dataPath string, maxBytesPerFile int64,
+	minMsgSize int32, maxMsgSize int32,
+	syncEvery int64, syncTimeout time.Duration, readEnd BackendQueueEnd, autoSkip bool) BackendQueueReader {
+
+	return newDiskQueueReader(readFrom, metaname, dataPath, maxBytesPerFile, minMsgSize, maxMsgSize, syncEvery,
+		syncTimeout, readEnd, autoSkip, testMetaStorage, true)
+}
+
 func TestDiskQueueReaderResetConfirmed(t *testing.T) {
 
 	dqName := "test_disk_queue" + strconv.Itoa(int(time.Now().Unix()))

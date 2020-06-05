@@ -544,12 +544,12 @@ func (n *NSQD) internalGetTopic(topicName string, part int, ext bool, ordered bo
 	n.RUnlock()
 
 	n.Lock()
+	defer n.Unlock()
 
 	topics, ok = n.topicMap[topicName]
 	if ok {
 		t, ok := topics[part]
 		if ok {
-			n.Unlock()
 			return t
 		}
 	} else {
@@ -566,7 +566,6 @@ func (n *NSQD) internalGetTopic(topicName string, part int, ext bool, ordered bo
 		nsqLog.Logf("TOPIC(%s): created", t.GetFullName())
 
 	}
-	n.Unlock()
 	if t != nil {
 		// update messagePump state
 		t.NotifyReloadChannels()

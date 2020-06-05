@@ -22,6 +22,7 @@ var (
 	partition     = flag.Int("partition", -1, "NSQ topic partition")
 	channel       = flag.String("channel", "", "NSQ channel")
 	ordered       = flag.Bool("ordered", false, "consume in ordered way")
+	showDelayed   = flag.Bool("show_delayed", false, "consume delayed longer than 500ms")
 	maxInFlight   = flag.Int("max-in-flight", 200, "max number of messages to allow in flight")
 	totalMessages = flag.Int("n", 0, "total messages to show (will wait if starved)")
 
@@ -39,6 +40,7 @@ type TailHandler struct {
 
 func (th *TailHandler) HandleMessage(m *nsq.Message) error {
 	th.messagesShown++
+	os.Stdout.WriteString(time.Now().Local().String() + ": ")
 	_, err := os.Stdout.Write(m.Body)
 	if err != nil {
 		log.Fatalf("ERROR: failed to write to os.Stdout - %s", err)
@@ -48,7 +50,7 @@ func (th *TailHandler) HandleMessage(m *nsq.Message) error {
 		log.Fatalf("ERROR: failed to write to os.Stdout - %s", err)
 	}
 	tn := time.Now().UnixNano()
-	if tn >= m.Timestamp+time.Hour.Milliseconds()*500 {
+	if *showDelayed && tn >= m.Timestamp+time.Hour.Milliseconds()*500 {
 		os.Stdout.WriteString(fmt.Sprintf("delayed more than 500ms: %v %v\n", m.Timestamp, tn))
 	}
 	if th.totalMessages > 0 && th.messagesShown >= th.totalMessages {

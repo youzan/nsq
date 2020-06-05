@@ -16,6 +16,29 @@ import (
 	"github.com/youzan/nsq/internal/test"
 )
 
+var testMetaStorage IMetaStorage
+
+func TestMain(m *testing.M) {
+	tmpDir, err := ioutil.TempDir("", fmt.Sprintf("nsq-test-meta-%d", time.Now().UnixNano()))
+	if err != nil {
+		panic(err)
+	}
+	testMetaStorage, err = NewDBMetaStorage(tmpDir)
+	if err != nil {
+		panic(err)
+	}
+	ret := m.Run()
+	testMetaStorage.Close()
+	os.Exit(ret)
+}
+
+func NewDiskQueueWriter(name string, dataPath string, maxBytesPerFile int64,
+	minMsgSize int32, maxMsgSize int32,
+	syncEvery int64) (BackendQueueWriter, error) {
+	return newDiskQueueWriter(name, dataPath, maxBytesPerFile,
+		minMsgSize, maxMsgSize, syncEvery, false, testMetaStorage)
+}
+
 func TestDiskQueueWriter(t *testing.T) {
 	//l := newTestLogger(t)
 	//nsqLog.Logger = l
@@ -837,7 +860,7 @@ func TestDiskQueueWriterInvalidMeta(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 	// require a non-zero message length for the corrupt (len 0) test below
-	dq, _ := NewDiskQueueWriter(dqName, tmpDir, 1000, 10, 1<<10, 1)
+	dq, _ := newDiskQueueWriter(dqName, tmpDir, 1000, 10, 1<<10, 1, false, &fileMetaStorage{})
 	defer dq.Close()
 
 	msg := make([]byte, 123) // 127 bytes per message, 8 (1016 bytes) messages per file
@@ -864,18 +887,18 @@ func TestDiskQueueWriterInvalidMeta(t *testing.T) {
 	test.Equal(t, n, len(diskMagicEndBytes))
 	test.Equal(t, diskMagicEndBytes, magic)
 
-	err = dq.(*diskQueueWriter).retrieveMetaData(false)
+	err = dq.(*diskQueueWriter).retrieveMetaData(true)
 	test.Nil(t, err)
 	tmpf.Truncate(fs.Size() - 1)
-	err = dq.(*diskQueueWriter).retrieveMetaData(false)
+	err = dq.(*diskQueueWriter).retrieveMetaData(true)
 	test.NotNil(t, err)
 	tmpf.Seek(-1*int64(len(diskMagicEndBytes))+1, 2)
 	tmpf.Write([]byte("01"))
-	err = dq.(*diskQueueWriter).retrieveMetaData(false)
+	err = dq.(*diskQueueWriter).retrieveMetaData(true)
 	test.NotNil(t, err)
 	tmpf.Seek(-1*int64(len(diskMagicEndBytes)), 2)
 	tmpf.Write(diskMagicEndBytes)
-	err = dq.(*diskQueueWriter).retrieveMetaData(false)
+	err = dq.(*diskQueueWriter).retrieveMetaData(true)
 	test.Nil(t, err)
 }
 

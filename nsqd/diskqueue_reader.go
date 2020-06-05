@@ -122,19 +122,7 @@ func newDiskQueueReaderWithFileMeta(readFrom string, metaname string, dataPath s
 	syncEvery int64, syncTimeout time.Duration, readEnd BackendQueueEnd, autoSkip bool) BackendQueueReader {
 	metaStorage := &fileMetaStorage{}
 	return newDiskQueueReader(readFrom, metaname, dataPath, maxBytesPerFile, minMsgSize, maxMsgSize, syncEvery,
-		syncTimeout, readEnd, autoSkip, metaStorage)
-}
-
-func newDiskQueueReaderWithMetaStorage(readFrom string, metaname string, dataPath string, maxBytesPerFile int64,
-	minMsgSize int32, maxMsgSize int32,
-	syncEvery int64, syncTimeout time.Duration, readEnd BackendQueueEnd, autoSkip bool) BackendQueueReader {
-	p := path.Join(dataPath, metaname)
-	metaStorage, err := NewDBMetaStorage(p)
-	if err != nil {
-		panic(err)
-	}
-	return newDiskQueueReader(readFrom, metaname, dataPath, maxBytesPerFile, minMsgSize, maxMsgSize, syncEvery,
-		syncTimeout, readEnd, autoSkip, metaStorage)
+		syncTimeout, readEnd, autoSkip, metaStorage, true)
 }
 
 // newDiskQueue instantiates a new instance of diskQueueReader, retrieving metadata
@@ -144,7 +132,7 @@ func newDiskQueueReader(readFrom string, metaname string,
 	minMsgSize int32, maxMsgSize int32,
 	syncEvery int64, syncTimeout time.Duration,
 	readEnd BackendQueueEnd, autoSkip bool,
-	metaStorage IMetaStorage) BackendQueueReader {
+	metaStorage IMetaStorage, forceReload bool) BackendQueueReader {
 
 	d := diskQueueReader{
 		readFrom:        readFrom,
@@ -180,8 +168,9 @@ func newDiskQueueReader(readFrom string, metaname string,
 			d.readFrom, d.readerMetaName, err)
 	}
 	// need update queue end with new readEnd, since it may read old from meta file
-	// force reload end should be true if the topic end is fixed by fix mode.
-	d.UpdateQueueEnd(readEnd, true)
+	// force reload end should be true after the topic end is fixed by fix mode.
+	// Do not force update if under need fix state since the end may be wrong.
+	d.UpdateQueueEnd(readEnd, forceReload)
 
 	return &d
 }

@@ -288,7 +288,7 @@ func newDelayQueue(topicName string, part int, dataPath string, opt *Options,
 		q.dataPath,
 		opt.MaxBytesPerFile,
 		int32(minValidMsgLength),
-		int32(opt.MaxMsgSize)+minValidMsgLength+8+255, 0, readOnly)
+		int32(opt.MaxMsgSize)+minValidMsgLength+8+255, 0, readOnly, nil)
 
 	if err != nil {
 		nsqLog.LogErrorf("topic(%v) failed to init delayed disk queue: %v , %v ", q.fullName, err, backendName)

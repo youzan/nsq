@@ -162,7 +162,7 @@ type Channel struct {
 // NewChannel creates a new instance of the Channel type and returns a pointer
 func NewChannel(topicName string, part int, topicOrdered bool, channelName string, chEnd BackendQueueEnd, opt *Options,
 	deleteCallback func(*Channel), moreDataCallback func(*Channel), consumeDisabled int32,
-	notify INsqdNotify, ext int32, queueStart BackendQueueEnd, metaStorage IMetaStorage) *Channel {
+	notify INsqdNotify, ext int32, queueStart BackendQueueEnd, metaStorage IMetaStorage, forceReload bool) *Channel {
 
 	c := &Channel{
 		topicName:          topicName,
@@ -233,6 +233,7 @@ func NewChannel(topicName string, part int, topicOrdered bool, channelName strin
 		chEnd,
 		false,
 		metaStorage,
+		forceReload,
 	)
 
 	if queueStart != nil {

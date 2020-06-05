@@ -207,16 +207,18 @@ func NewTopicWithExt(topicName string, part int, ext bool, ordered bool, opt *Op
 	}
 
 	backendName := getBackendName(t.tname, t.partition)
-	queue, err := NewDiskQueueWriter(backendName,
+	queue, err := newDiskQueueWriterWithMetaStorage(backendName,
 		t.dataPath,
 		opt.MaxBytesPerFile,
 		int32(minValidMsgLength),
 		int32(opt.MaxMsgSize)+minValidMsgLength,
-		opt.SyncEvery)
+		opt.SyncEvery,
+		t.metaStorage,
+	)
 
 	if err != nil {
 		nsqLog.LogErrorf("topic(%v) failed to init disk queue: %v ", t.fullName, err)
-		if err == ErrNeedFixQueueStart {
+		if err == ErrNeedFixQueueStart || err == ErrNeedFixQueueEnd {
 			t.SetDataFixState(true)
 		} else {
 			return nil
@@ -224,7 +226,9 @@ func NewTopicWithExt(topicName string, part int, ext bool, ordered bool, opt *Op
 	}
 	t.backend = queue.(*diskQueueWriter)
 
-	t.UpdateCommittedOffset(t.backend.GetQueueWriteEnd())
+	if err != ErrNeedFixQueueEnd {
+		t.UpdateCommittedOffset(t.backend.GetQueueWriteEnd())
+	}
 	err = t.loadMagicCode()
 	if err != nil {
 		nsqLog.LogErrorf("topic %v failed to load magic code: %v", t.fullName, err)
@@ -768,7 +772,7 @@ func (t *Topic) getOrCreateChannel(channelName string) (*Channel, bool) {
 		start := t.backend.GetQueueReadStart()
 		channel = NewChannel(t.GetTopicName(), t.GetTopicPart(), t.IsOrdered(), channelName, readEnd,
 			t.option, deleteCallback, t.flushForChannelMoreData, atomic.LoadInt32(&t.writeDisabled),
-			t.nsqdNotify, ext, start, t.metaStorage)
+			t.nsqdNotify, ext, start, t.metaStorage, !t.IsDataNeedFix())
 
 		channel.UpdateQueueEnd(readEnd, false)
 		channel.SetDelayedQueue(t.GetDelayedQueue())
