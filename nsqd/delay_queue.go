@@ -263,7 +263,13 @@ func NewDelayQueue(topicName string, part int, dataPath string, opt *Options,
 func newDelayQueue(topicName string, part int, dataPath string, opt *Options,
 	idGen MsgIDGenerator, isExt bool, ro *bolt.Options) (*DelayQueue, error) {
 	dataPath = path.Join(dataPath, "delayed_queue")
-	os.MkdirAll(dataPath, 0755)
+	readOnly := false
+	if ro != nil && ro.ReadOnly {
+		readOnly = true
+	}
+	if !readOnly {
+		os.MkdirAll(dataPath, 0755)
+	}
 	q := &DelayQueue{
 		tname:                  topicName,
 		partition:              part,
@@ -278,11 +284,11 @@ func newDelayQueue(topicName string, part int, dataPath string, opt *Options,
 	q.fullName = GetTopicFullName(q.tname, q.partition)
 	backendName := getDelayQueueBackendName(q.tname, q.partition)
 	// max delay message size need add the delay ts and channel name
-	queue, err := NewDiskQueueWriter(backendName,
+	queue, err := newDiskQueueWriter(backendName,
 		q.dataPath,
 		opt.MaxBytesPerFile,
 		int32(minValidMsgLength),
-		int32(opt.MaxMsgSize)+minValidMsgLength+8+255, 0)
+		int32(opt.MaxMsgSize)+minValidMsgLength+8+255, 0, readOnly)
 
 	if err != nil {
 		nsqLog.LogErrorf("topic(%v) failed to init delayed disk queue: %v , %v ", q.fullName, err, backendName)
@@ -296,12 +302,24 @@ func newDelayQueue(topicName string, part int, dataPath string, opt *Options,
 			FreelistType: bolt.FreelistMapType,
 		}
 	}
-	q.kvStore, err = bolt.Open(path.Join(q.dataPath, getDelayQueueDBName(q.tname, q.partition)), 0644, ro)
+	// since the bolt will fail to open in read mode if no db file, but leave the db file created.
+	// So we check here before open
+	dbFile := path.Join(q.dataPath, getDelayQueueDBName(q.tname, q.partition))
+	if readOnly {
+		_, err := os.Stat(dbFile)
+		if os.IsNotExist(err) {
+			return nil, err
+		}
+	}
+	q.kvStore, err = bolt.Open(dbFile, 0644, ro)
 	if err != nil {
 		nsqLog.LogErrorf("topic(%v) failed to init delayed db: %v , %v ", q.fullName, err, backendName)
 		return nil, err
 	}
 	q.kvStore.NoSync = true
+	if readOnly {
+		return q, nil
+	}
 	err = q.kvStore.Update(func(tx *bolt.Tx) error {
 		_, err := tx.CreateBucketIfNotExists(bucketDelayedMsg)
 		if err != nil {
@@ -550,6 +568,24 @@ func (q *DelayQueue) BackupKVStoreTo(w io.Writer) (int64, error) {
 		return err
 	})
 	return totalSize, err
+}
+
+func (q *DelayQueue) ReopenWithEmpty() error {
+	q.compactMutex.Lock()
+	defer q.compactMutex.Unlock()
+	kvPath := path.Join(q.dataPath, getDelayQueueDBName(q.tname, q.partition))
+	nsqLog.Logf("topic(%v) reopen empty delayed db: %v", q.fullName, kvPath)
+	q.dbLock.Lock()
+	defer q.dbLock.Unlock()
+	q.kvStore.Close()
+	os.Remove(kvPath)
+	err := q.reOpenStore()
+	if err != nil {
+		nsqLog.LogErrorf("topic(%v) failed to reopen empty delayed db: %v , %v ", q.fullName, err, kvPath)
+		return err
+	}
+	atomic.StoreInt64(&q.changedTs, time.Now().UnixNano())
+	return nil
 }
 
 func (q *DelayQueue) RestoreKVStoreFrom(body io.Reader) error {

@@ -47,6 +47,10 @@ func (th *TailHandler) HandleMessage(m *nsq.Message) error {
 	if err != nil {
 		log.Fatalf("ERROR: failed to write to os.Stdout - %s", err)
 	}
+	tn := time.Now().UnixNano()
+	if tn >= m.Timestamp+time.Hour.Milliseconds()*500 {
+		os.Stdout.WriteString(fmt.Sprintf("delayed more than 500ms: %v %v\n", m.Timestamp, tn))
+	}
 	if th.totalMessages > 0 && th.messagesShown >= th.totalMessages {
 		os.Exit(0)
 	}

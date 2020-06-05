@@ -41,7 +41,7 @@ func (nlcoord *NsqLookupCoordinator) GetTopicsMetaInfoMap(topics []string) (map[
 func (nlcoord *NsqLookupCoordinator) GetTopicLeaderNodes(topicName string) (map[string]string, error) {
 	meta, cached, err := nlcoord.leadership.GetTopicMetaInfoTryCache(topicName)
 	if err != nil {
-		coordLog.Infof("failed to get topic %v meta: %v", topicName, err)
+		coordLog.Debugf("failed to get topic %v meta: %v", topicName, err)
 		return nil, err
 	}
 	if !cached {

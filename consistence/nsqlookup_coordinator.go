@@ -950,6 +950,22 @@ func (nlcoord *NsqLookupCoordinator) doCheckTopics(monitorChan chan struct{}, fa
 						coordLog.Infof("node %v removed by plan from topic : %v", failedNodes, t)
 					}
 				}
+			} else if !hasRemovingNode {
+				if !nlcoord.dpm.checkTopicNodeConflict(&topicInfo) {
+					coordLog.Warningf("topic %v has conflict nodes %v, removing", topicInfo.GetTopicDesp(), topicInfo.CatchupList)
+					// remove conflict catchup
+					nlcoord.handleRemoveCatchupNodes(&topicInfo)
+				} else {
+					// check catchup list to retry
+					for _, replica := range topicInfo.CatchupList {
+						if _, ok := currentNodes[replica]; ok {
+							// alive catchup, just notify node to catchup again
+							coordLog.Infof("topic %v has alive catchup node %v, notify catchup now", topicInfo.GetTopicDesp(), replica)
+							nlcoord.notifyCatchupTopicMetaInfo(&topicInfo)
+							break
+						}
+					}
+				}
 			}
 		}
 	}
@@ -1093,6 +1109,22 @@ func (nlcoord *NsqLookupCoordinator) handleRemoveFailedISRNodes(failedNodes []st
 	return nlcoord.handleRemoveISRNodes(failedNodes, topicInfo, true)
 }
 
+func (nlcoord *NsqLookupCoordinator) handleRemoveCatchupNodes(origTopicInfo *TopicPartitionMetaInfo) {
+	topicInfo := origTopicInfo.Copy()
+	catchupChanged := len(topicInfo.CatchupList) > 0
+	if catchupChanged {
+		topicInfo.CatchupList = topicInfo.CatchupList[:0]
+		err := nlcoord.leadership.UpdateTopicNodeInfo(topicInfo.Name, topicInfo.Partition,
+			&topicInfo.TopicPartitionReplicaInfo, topicInfo.Epoch)
+		if err != nil {
+			coordLog.Infof("update topic node info failed: %v", err.Error())
+			return
+		}
+		*origTopicInfo = *topicInfo
+		nlcoord.notifyTopicMetaInfo(topicInfo)
+	}
+}
+
 func (nlcoord *NsqLookupCoordinator) handleTopicMigrate(origTopicInfo *TopicPartitionMetaInfo,
 	currentNodes map[string]NsqdNodeInfo, currentNodesEpoch int64) {
 	if currentNodesEpoch != atomic.LoadInt64(&nlcoord.nodesEpoch) {
@@ -1138,6 +1170,10 @@ func (nlcoord *NsqLookupCoordinator) handleTopicMigrate(origTopicInfo *TopicPart
 		}
 	}
 	if catchupChanged {
+		if !nlcoord.dpm.checkTopicNodeConflict(topicInfo) {
+			coordLog.Warningf("this topic info update is conflict : %v", topicInfo)
+			return
+		}
 		err := nlcoord.leadership.UpdateTopicNodeInfo(topicInfo.Name, topicInfo.Partition,
 			&topicInfo.TopicPartitionReplicaInfo, topicInfo.Epoch)
 		if err != nil {
@@ -1159,6 +1195,10 @@ func (nlcoord *NsqLookupCoordinator) addCatchupNode(origTopicInfo *TopicPartitio
 		catchupChanged = true
 	}
 	if catchupChanged {
+		if !nlcoord.dpm.checkTopicNodeConflict(topicInfo) {
+			coordLog.Warningf("this topic info update is conflict : %v", topicInfo)
+			return ErrTopicNodeConflict
+		}
 		err := nlcoord.leadership.UpdateTopicNodeInfo(topicInfo.Name, topicInfo.Partition,
 			&topicInfo.TopicPartitionReplicaInfo, topicInfo.Epoch)
 		if err != nil {
@@ -1486,8 +1526,13 @@ func (nlcoord *NsqLookupCoordinator) handleRequestJoinCatchup(topic string, part
 		return ErrTopicISRCatchupEnough
 	}
 	coordLog.Infof("node %v try join catchup for topic: %v", nid, topicInfo.GetTopicDesp())
+
 	if FindSlice(topicInfo.CatchupList, nid) == -1 {
 		topicInfo.CatchupList = append(topicInfo.CatchupList, nid)
+		if !nlcoord.dpm.checkTopicNodeConflict(topicInfo) {
+			coordLog.Warningf("this topic info update is conflict : %v", topicInfo)
+			return ErrTopicNodeConflict
+		}
 		err = nlcoord.leadership.UpdateTopicNodeInfo(topic, partition, &topicInfo.TopicPartitionReplicaInfo, topicInfo.Epoch)
 		if err != nil {
 			coordLog.Infof("failed to update catchup list: %v", err)

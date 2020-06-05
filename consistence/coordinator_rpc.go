@@ -402,7 +402,7 @@ func (self *NsqdCoordRpcServer) UpdateTopicInfo(rpcTopicReq *RpcAdminTopicInfo) 
 	// init should not update topic coordinator topic info, since we need do some check while update topic info
 	tpCoord, _, initErr := self.nsqdCoord.initLocalTopicCoord(&rpcTopicReq.TopicPartitionMetaInfo, nil,
 		GetTopicPartitionBasePath(self.dataRootPath, rpcTopicReq.Name, rpcTopicReq.Partition),
-		ForceFixLeaderData, false, true,
+		false, true,
 	)
 	if tpCoord == nil {
 		ret = *ErrLocalInitTopicCoordFailed
@@ -790,7 +790,8 @@ func (self *NsqdCoordinator) checkWriteForRpcCall(rpcData RpcTopicData) (*TopicC
 		return nil, ErrNotTopicLeader
 	}
 	if rpcData.TopicLeaderSession != tcData.GetLeaderSession() {
-		coordLog.Warningf("call write with mismatch session: %v, loca %v", rpcData, tcData.GetLeaderSession())
+		// maybe running catchup
+		coordLog.Warningf("call write with mismatch session: %v, local %v", rpcData, tcData.GetLeaderSession())
 	}
 	return topicCoord, nil
 }

@@ -606,25 +606,7 @@ func (ncoord *NsqdCoordinator) checkLocalTopicMagicCode(topicInfo *TopicPartitio
 // pub loop may hold the coordinator lock.
 func (ncoord *NsqdCoordinator) forceCleanTopicData(topicName string, partition int) *CoordErr {
 	// check if any data on local and try remove
-	basepath := GetTopicPartitionBasePath(ncoord.dataRootPath, topicName, partition)
-	tmpLogMgr, err := InitTopicCommitLogMgr(topicName, partition, basepath, 1)
-	coordLog.Infof("topic %v is cleaning topic data: %v", topicName, basepath)
-	if err != nil {
-		coordLog.Warningf("topic %v failed to init tmp log manager: %v", topicName, err)
-	} else {
-		tmpLogMgr.Delete()
-	}
-	dqPath := path.Join(basepath, "delayed_queue")
-	if _, err := os.Stat(dqPath); err == nil {
-		delayedLogMgr, err := InitTopicCommitLogMgr(topicName, partition,
-			dqPath, 1)
-		if err != nil {
-			coordLog.Errorf("topic(%v) failed to init delayed queue log: %v ", topicName, err)
-		} else {
-			delayedLogMgr.Delete()
-		}
-	}
-
+	ncoord.forceCleanTopicCommitLogs(topicName, partition)
 	localErr := ncoord.localNsqd.ForceDeleteTopicData(topicName, partition)
 	if localErr != nil {
 		if !os.IsNotExist(localErr) {
@@ -635,9 +617,19 @@ func (ncoord *NsqdCoordinator) forceCleanTopicData(topicName string, partition i
 	return nil
 }
 
+func (ncoord *NsqdCoordinator) forceCleanTopicCommitLogs(topicName string, partition int) {
+	basepath := GetTopicPartitionBasePath(ncoord.dataRootPath, topicName, partition)
+	cleanTopicCommitLogFiles(topicName, partition, basepath)
+	coordLog.Infof("topic %v is cleaning topic data: %v", topicName, basepath)
+	dqPath := path.Join(basepath, "delayed_queue")
+	if _, err := os.Stat(dqPath); err == nil {
+		cleanTopicCommitLogFiles(topicName, partition, dqPath)
+	}
+}
+
 func (ncoord *NsqdCoordinator) initLocalTopicCoord(topicInfo *TopicPartitionMetaInfo,
 	topicLeaderSession *TopicLeaderSession,
-	basepath string, forceFixCommitLog bool, updateCoordInfo bool, initDisable bool) (*TopicCoordinator, *nsqd.Topic, error) {
+	basepath string, updateCoordInfo bool, initDisable bool) (*TopicCoordinator, *nsqd.Topic, error) {
 	ncoord.coordMutex.Lock()
 	defer ncoord.coordMutex.Unlock()
 	coords, ok := ncoord.topicCoords[topicInfo.Name]
@@ -654,9 +646,13 @@ func (ncoord *NsqdCoordinator) initLocalTopicCoord(topicInfo *TopicPartitionMeta
 	topicName := topicInfo.Name
 	partition := topicInfo.Partition
 	tc, err = NewTopicCoordinatorWithFixMode(topicInfo.Name, topicInfo.Partition, basepath,
-		topicInfo.SyncEvery, topicInfo.OrderedMulti, forceFixCommitLog)
+		topicInfo.SyncEvery, topicInfo.OrderedMulti, ForceFixLeaderData)
 	if err != nil {
 		coordLog.Infof("failed to get topic coordinator:%v-%v, err:%v", topicName, partition, err)
+		if err == errCommitLogInitIDInvalid {
+			// the commit log is old, we should clean it
+			ncoord.forceCleanTopicCommitLogs(topicInfo.Name, topicInfo.Partition)
+		}
 		return nil, nil, err
 	}
 
@@ -783,9 +779,16 @@ func (ncoord *NsqdCoordinator) loadLocalTopicData() error {
 		// here we will check the last commit log data logid is equal with the disk queue message
 		// this can avoid data corrupt, if not equal we need rollback and find backward for the right data.
 		// and check the first log commit log is valid on the disk queue, so that we can fix the wrong start of the commit log
-		forceFixLeader := false
-		if ForceFixLeaderData && ncoord.GetMyID() == topicInfo.Leader && len(topicInfo.ISR) <= 1 {
-			forceFixLeader = true
+		forceFix := false
+		canAutoForceFix := false
+		if ncoord.GetMyID() != topicInfo.Leader ||
+			(topicInfo.Replica <= 1 && len(topicInfo.ISR) <= 1) {
+			// we can always fix non-leader since we will catchup new from leader
+			// if the replica is 1, we can fix since no other data
+			canAutoForceFix = true
+		}
+		if ForceFixLeaderData || canAutoForceFix {
+			forceFix = true
 		}
 		if shouldLoad {
 			basepath := GetTopicPartitionBasePath(ncoord.dataRootPath, topicInfo.Name, topicInfo.Partition)
@@ -793,8 +796,7 @@ func (ncoord *NsqdCoordinator) loadLocalTopicData() error {
 			if err != nil {
 				coordLog.Infof("failed to get topic leader info:%v-%v, err:%v", topicName, partition, err)
 			}
-			fixCommitLog := ForceFixLeaderData
-			_, _, loadErr := ncoord.initLocalTopicCoord(topicInfo, topicLeaderSession, basepath, fixCommitLog, true, false)
+			_, _, loadErr := ncoord.initLocalTopicCoord(topicInfo, topicLeaderSession, basepath, true, false)
 			if loadErr != nil {
 				coordLog.Infof("topic %v coord init error: %v", topicInfo.GetTopicDesp(), loadErr.Error())
 				continue
@@ -829,14 +831,14 @@ func (ncoord *NsqdCoordinator) loadLocalTopicData() error {
 		maybeInitDelayedQ(tc.GetData(), topic)
 		topic.SetDynamicInfo(*dyConf, tc.GetData().logMgr)
 
-		localErr := checkAndFixLocalLogQueueData(tc.GetData(), topic, tc.GetData().logMgr, forceFixLeader)
+		localErr := checkAndFixLocalLogQueueData(tc.GetData(), topic, tc.GetData().logMgr, forceFix)
 		if localErr != nil {
 			coordLog.Errorf("check local topic %v data need to be fixed:%v", topicInfo.GetTopicDesp(), localErr)
 			topic.SetDataFixState(true)
 			go ncoord.requestLeaveFromISR(topicInfo.Name, topicInfo.Partition)
 		} else if !topicInfo.OrderedMulti {
 			delayQ := topic.GetDelayedQueue()
-			localErr = checkAndFixLocalLogQueueData(tc.GetData(), delayQ, tc.GetData().delayedLogMgr, forceFixLeader)
+			localErr = checkAndFixLocalLogQueueData(tc.GetData(), delayQ, tc.GetData().delayedLogMgr, forceFix)
 			if localErr != nil {
 				coordLog.Errorf("check local topic %v delayed queue data need to be fixed:%v", topicInfo.GetTopicDesp(), localErr)
 				delayQ.SetDataFixState(true)
@@ -2017,6 +2019,16 @@ func (ncoord *NsqdCoordinator) catchupFromLeader(topicInfo TopicPartitionMetaInf
 			}
 			// ignore error if delayed queue is not enabled
 		} else {
+			if needFullSync {
+				// remove old to avoid old is large
+				dq := localTopic.GetDelayedQueue()
+				if dq != nil {
+					localErr := dq.ReopenWithEmpty()
+					if localErr != nil {
+						return NewCoordErr(localErr.Error(), CoordLocalErr)
+					}
+				}
+			}
 			coordErr = ncoord.pullCatchupDataFromLeader(tc, topicInfo, localTopic, tc.GetData().delayedLogMgr, true, logIndex, offset)
 			if coordErr == nil && needFullSync {
 				coordErr = ncoord.pullDelayedQueueFromLeader(tc, topicInfo, localTopic, c)
@@ -2550,6 +2562,51 @@ func (ncoord *NsqdCoordinator) GetMasterTopicCoordData(topic string) (int, *coor
 		}
 	}
 	return -1, nil, ErrMissingTopicCoord.ToErrorType()
+}
+
+func (ncoord *NsqdCoordinator) isMeISR(tinfo *TopicPartitionMetaInfo) bool {
+	return FindSlice(tinfo.ISR, ncoord.GetMyID()) != -1
+}
+
+func (ncoord *NsqdCoordinator) isMeCatchup(tinfo *TopicPartitionMetaInfo) bool {
+	return FindSlice(tinfo.CatchupList, ncoord.GetMyID()) != -1
+}
+
+func (ncoord *NsqdCoordinator) GetTopicMetaInfo(topic string) (TopicMetaInfo, error) {
+	meta, _, err := ncoord.leadership.GetTopicMetaInfo(topic)
+	return meta, err
+}
+
+func (ncoord *NsqdCoordinator) TryCleanUnusedTopicOnLocal(topic string, partition int, dryRun bool) error {
+	if ncoord.leadership == nil {
+		return nil
+	}
+	c, _ := ncoord.getTopicCoord(topic, partition)
+	if c != nil {
+		return nil
+	}
+	tinfo, err := ncoord.leadership.GetTopicInfo(topic, partition)
+	if err != nil {
+		if err == ErrKeyNotFound {
+			// we continue check if local exist
+		} else {
+			return err
+		}
+	} else {
+		if ncoord.isMeISR(tinfo) || ncoord.isMeCatchup(tinfo) {
+			return nil
+		}
+	}
+
+	coordLog.Infof("removing topic data: %v-%v", topic, partition)
+	if dryRun {
+		return nil
+	}
+	coordErr := ncoord.forceCleanTopicData(topic, partition)
+	if coordErr != nil {
+		return coordErr.ToErrorType()
+	}
+	return nil
 }
 
 func (ncoord *NsqdCoordinator) getTopicCoordData(topic string, partition int) (*coordData, *CoordErr) {

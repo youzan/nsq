@@ -307,6 +307,23 @@ func (nem *NsqdEtcdMgr) WatchLookupdLeader(leader chan *NsqLookupdNodeInfo, stop
 	}
 }
 
+func (nem *NsqdEtcdMgr) GetTopicMetaInfo(topic string) (TopicMetaInfo, EpochType, error) {
+	var metaInfo TopicMetaInfo
+	rsp, err := nem.client.Get(nem.createTopicMetaPath(topic), false, false)
+	if err != nil {
+		if client.IsKeyNotFound(err) {
+			return metaInfo, 0, ErrKeyNotFound
+		}
+		return metaInfo, 0, err
+	}
+	err = json.Unmarshal([]byte(rsp.Node.Value), &metaInfo)
+	if err != nil {
+		return metaInfo, 0, err
+	}
+	epoch := EpochType(rsp.Node.ModifiedIndex)
+	return metaInfo, epoch, nil
+}
+
 func (nem *NsqdEtcdMgr) GetTopicInfo(topic string, partition int) (*TopicPartitionMetaInfo, error) {
 	var topicInfo TopicPartitionMetaInfo
 	rsp, err := nem.client.Get(nem.createTopicMetaPath(topic), false, false)
