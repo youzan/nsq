@@ -937,6 +937,7 @@ func (q *DelayQueue) emptyDelayedUntil(dt int, peekTs int64, id MessageID, ch st
 				if delayedTs > peekTs {
 					break
 				}
+				// only check equal for timestamp since all ts older should be cleaned on all message ids
 				if delayedTs == peekTs && delayedID >= id {
 					break
 				}
