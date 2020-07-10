@@ -3032,3 +3032,169 @@ func TestNsqLookupTopNTopicBalance(t *testing.T) {
 	assert.True(t, maxAllNum-minAllNum <= topNBalanceDiff+3)
 	SetCoordLogger(newTestLogger(t), levellogger.LOG_ERR)
 }
+
+func TestNsqLookupConsumeTopicWhileNodeStop(t *testing.T) {
+	idList := []string{"id1", "id2"}
+	lookupCoord1, nodeInfoList := prepareCluster(t, idList, false)
+	defer func() {
+		for _, n := range nodeInfoList {
+			n.nsqdCoord.Stop()
+			n.localNsqd.Exit()
+			os.RemoveAll(n.dataPath)
+		}
+	}()
+	test.Equal(t, 2, len(nodeInfoList))
+
+	topic_p1_r2 := "test-nsqlookup-topic-unit-p1r2"
+
+	lookupLeadership := lookupCoord1.leadership
+	time.Sleep(time.Second)
+	checkDeleteErr(t, lookupCoord1.DeleteTopic(topic_p1_r2, "**"))
+	time.Sleep(time.Second)
+	defer func() {
+		waitClusterStable(lookupCoord1, time.Second*3)
+		checkDeleteErr(t, lookupCoord1.DeleteTopic(topic_p1_r2, "**"))
+		time.Sleep(time.Second)
+		lookupCoord1.Stop()
+	}()
+
+	err := lookupCoord1.CreateTopic(topic_p1_r2, TopicMetaInfo{1, 2, 0, 0, 0, 0, false, false, false})
+	test.Nil(t, err)
+	waitClusterStable(lookupCoord1, time.Second*10)
+	topicInfo, err := lookupLeadership.GetTopicInfo(topic_p1_r2, 0)
+	test.Nil(t, err)
+	topicLeaderSession, err := lookupLeadership.GetTopicLeaderSession(topic_p1_r2, 0)
+	test.Nil(t, err)
+	lostNode := topicInfo.Leader
+	leaderNode := getTopicLeaderNode(t, lookupLeadership, topic_p1_r2, 0, nodeInfoList)
+	localT, _ := leaderNode.nsqdCoord.localNsqd.GetExistingTopic(topic_p1_r2, 0)
+	var nonLeaderNode *testClusterNodeInfo
+	for _, n := range nodeInfoList {
+		if n != leaderNode {
+			nonLeaderNode = n
+			break
+		}
+	}
+
+	test.Equal(t, leaderNode.nsqdCoord.GetMyID(), topicInfo.Leader)
+	leaderCh := localT.GetChannel("ch1")
+	nonLeaderLocal, _ := nonLeaderNode.nsqdCoord.localNsqd.GetExistingTopic(topic_p1_r2, 0)
+	nonLeaderCh := nonLeaderLocal.GetChannel("ch1")
+	for i := 0; i < 10; i++ {
+		_, _, _, _, err = leaderNode.nsqdCoord.PutMessageBodyToCluster(localT, []byte("committed"), 0)
+		test.Nil(t, err)
+	}
+
+	t.Logf("stopping leader node: %v", lostNode)
+	atomic.StoreInt32(&nodeInfoList[lostNode].nsqdCoord.stopping, 1)
+	nodeInfoList[lostNode].nsqdCoord.leadership.UnregisterNsqd(nodeInfoList[lostNode].nodeInfo)
+	nodeInfoList[lostNode].nsqdCoord.leadership.ReleaseTopicLeader(topic_p1_r2, 0, topicLeaderSession)
+
+	time.Sleep(time.Second)
+
+	newInfo, err := lookupLeadership.GetTopicInfo(topic_p1_r2, 0)
+	test.Nil(t, err)
+	test.Equal(t, nonLeaderNode.nsqdCoord.GetMyID(), newInfo.Leader)
+	test.Equal(t, false, nonLeaderCh.IsConsumeDisabled())
+	// try consume
+	for i := 0; i < 5; i++ {
+		select {
+		case msg := <-nonLeaderCh.GetClientMsgChan():
+			nonLeaderCh.StartInFlightTimeout(msg, NewFakeConsumer(1), "", time.Second)
+			time.Sleep(time.Millisecond * time.Duration(rand.Intn(10)))
+			t.Logf("consume : %v", string(msg.Body))
+			assert.NotEqual(t, []byte("uncommitted"), msg.Body)
+			assert.False(t, bytes.HasPrefix(msg.Body, []byte("uncommitted")))
+			assert.True(t, bytes.HasPrefix(msg.Body, []byte("committed")))
+			err := nonLeaderNode.nsqdCoord.FinishMessageToCluster(nonLeaderCh, 1, "", msg.ID)
+			if err != nil {
+				t.Errorf("fin error: %v", err.Error())
+			}
+			time.Sleep(time.Millisecond * 10)
+		default:
+			t.Error("failed to consume message")
+		}
+	}
+	time.Sleep(time.Second)
+	newInfo, err = lookupLeadership.GetTopicInfo(topic_p1_r2, 0)
+	test.Nil(t, err)
+	test.Equal(t, nonLeaderNode.nsqdCoord.GetMyID(), newInfo.Leader)
+
+	test.NotEqual(t, int(nonLeaderCh.Depth()), 0)
+	test.NotEqual(t, int(nonLeaderCh.GetConfirmed().Offset()), 0)
+	test.NotEqual(t, nonLeaderCh.Depth(), leaderCh.Depth())
+	test.NotEqual(t, nonLeaderCh.GetConfirmed(), leaderCh.GetConfirmed())
+
+	t.Logf("starting leader node: %v", lostNode)
+	atomic.StoreInt32(&nodeInfoList[lostNode].nsqdCoord.stopping, 0)
+	nodeInfoList[lostNode].nsqdCoord.leadership.RegisterNsqd(nodeInfoList[lostNode].nodeInfo)
+	waitClusterStable(lookupCoord1, time.Second*5)
+	// check failed leader can have the newest consume offset
+	test.Equal(t, nonLeaderCh.GetChannelEnd(), leaderCh.GetChannelEnd())
+	test.Equal(t, nonLeaderCh.Depth(), leaderCh.Depth())
+	test.Equal(t, nonLeaderCh.GetConfirmed(), leaderCh.GetConfirmed())
+	// stop non-leader
+	leaderNode = getTopicLeaderNode(t, lookupLeadership, topic_p1_r2, 0, nodeInfoList)
+	for _, n := range nodeInfoList {
+		if n != leaderNode {
+			nonLeaderNode = n
+			break
+		}
+	}
+	topicInfo, err = lookupLeadership.GetTopicInfo(topic_p1_r2, 0)
+	test.Nil(t, err)
+	test.Equal(t, leaderNode.nsqdCoord.GetMyID(), topicInfo.Leader)
+
+	localT, _ = leaderNode.nsqdCoord.localNsqd.GetExistingTopic(topic_p1_r2, 0)
+	leaderCh = localT.GetChannel("ch1")
+	nonLeaderLocal, _ = nonLeaderNode.nsqdCoord.localNsqd.GetExistingTopic(topic_p1_r2, 0)
+	nonLeaderCh = nonLeaderLocal.GetChannel("ch1")
+	lostNode = nonLeaderNode.nsqdCoord.GetMyID()
+
+	topicLeaderSession, err = lookupLeadership.GetTopicLeaderSession(topic_p1_r2, 0)
+	test.Nil(t, err)
+	t.Logf("stopping non-leader node: %v", lostNode)
+	atomic.StoreInt32(&nodeInfoList[lostNode].nsqdCoord.stopping, 1)
+	nodeInfoList[lostNode].nsqdCoord.leadership.UnregisterNsqd(nodeInfoList[lostNode].nodeInfo)
+	nodeInfoList[lostNode].nsqdCoord.leadership.ReleaseTopicLeader(topic_p1_r2, 0, topicLeaderSession)
+
+	time.Sleep(time.Second)
+	newInfo, err = lookupLeadership.GetTopicInfo(topic_p1_r2, 0)
+	test.Nil(t, err)
+	test.Equal(t, leaderNode.nsqdCoord.GetMyID(), newInfo.Leader)
+	test.Equal(t, false, leaderCh.IsConsumeDisabled())
+	// try consume
+	for i := 0; i < 5; i++ {
+		select {
+		case msg := <-leaderCh.GetClientMsgChan():
+			leaderCh.StartInFlightTimeout(msg, NewFakeConsumer(1), "", time.Second)
+			time.Sleep(time.Millisecond * time.Duration(rand.Intn(10)))
+			t.Logf("consume : %v", string(msg.Body))
+			assert.NotEqual(t, []byte("uncommitted"), msg.Body)
+			assert.False(t, bytes.HasPrefix(msg.Body, []byte("uncommitted")))
+			assert.True(t, bytes.HasPrefix(msg.Body, []byte("committed")))
+			err := leaderNode.nsqdCoord.FinishMessageToCluster(leaderCh, 1, "", msg.ID)
+			if err != nil {
+				t.Errorf("fin error: %v", err.Error())
+			}
+			time.Sleep(time.Millisecond * 10)
+		default:
+			t.Error("failed to consume message")
+		}
+	}
+	time.Sleep(time.Second)
+	newInfo, err = lookupLeadership.GetTopicInfo(topic_p1_r2, 0)
+	test.Nil(t, err)
+	test.Equal(t, leaderNode.nsqdCoord.GetMyID(), newInfo.Leader)
+
+	test.NotEqual(t, nonLeaderCh.Depth(), leaderCh.Depth())
+	test.NotEqual(t, nonLeaderCh.GetConfirmed(), leaderCh.GetConfirmed())
+	t.Logf("starting non-leader node: %v", lostNode)
+	atomic.StoreInt32(&nodeInfoList[lostNode].nsqdCoord.stopping, 0)
+	nodeInfoList[lostNode].nsqdCoord.leadership.RegisterNsqd(nodeInfoList[lostNode].nodeInfo)
+	waitClusterStable(lookupCoord1, time.Second*5)
+	// check failed leader can have the newest consume offset
+	test.Equal(t, nonLeaderCh.GetChannelEnd(), leaderCh.GetChannelEnd())
+	test.Equal(t, nonLeaderCh.Depth(), leaderCh.Depth())
+	test.Equal(t, nonLeaderCh.GetConfirmed(), leaderCh.GetConfirmed())
+}

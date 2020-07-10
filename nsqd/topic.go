@@ -1228,14 +1228,15 @@ func (t *Topic) IsWriteDisabled() bool {
 	return atomic.LoadInt32(&t.writeDisabled) == 1
 }
 
-func (t *Topic) DisableForSlave() {
+// for leader, we can continue consume on disabled leader
+func (t *Topic) DisableForSlave(keepConsume bool) {
 	if atomic.CompareAndSwapInt32(&t.writeDisabled, 0, 1) {
 		nsqLog.Logf("[TRACE_DATA] while disable topic %v end: %v, cnt: %v, queue start: %v", t.GetFullName(),
 			t.TotalDataSize(), t.TotalMessageCnt(), t.backend.GetQueueReadStart())
 	}
 	t.channelLock.RLock()
 	for _, c := range t.channelMap {
-		c.DisableConsume(true)
+		c.DisableConsume(!keepConsume)
 		d, ok := c.backend.(*diskQueueReader)
 		var curRead BackendQueueEnd
 		if ok {

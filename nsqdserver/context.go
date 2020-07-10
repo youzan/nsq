@@ -450,7 +450,7 @@ func (c *context) internalPubLoop(topic *nsqd.Topic) {
 					nsqd.NsqLogger().Logf("topic %v put messages %v to cluster slow: %v", topic.GetFullName(), len(messages), cost)
 				}
 			} else {
-				topic.DisableForSlave()
+				topic.DisableForSlave(c.checkConsumeForMasterWrite(topicName, partition))
 				nsqd.NsqLogger().LogDebugf("should put to master: %v",
 					topic.GetFullName())
 				retErr = consistence.ErrNotTopicLeader.ToErrorType()

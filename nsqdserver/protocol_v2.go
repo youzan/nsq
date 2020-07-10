@@ -1057,7 +1057,7 @@ func (p *protocolV2) internalSUB(client *nsqd.ClientV2, params [][]byte, enableT
 	if !p.ctx.checkConsumeForMasterWrite(topicName, partition) {
 		nsqd.NsqLogger().Logf("sub failed on not leader: %v-%v, remote is : %v", topicName, partition, client.String())
 		// we need disable topic here to trigger a notify, maybe we failed to notify lookup last time.
-		topic.DisableForSlave()
+		topic.DisableForSlave(false)
 		return nil, protocol.NewFatalClientErr(nil, FailedOnNotLeader, "")
 	}
 	channel := topic.GetChannel(channelName)
@@ -1635,7 +1635,6 @@ func (p *protocolV2) internalPubExtAndTrace(client *nsqd.ClientV2, params [][]by
 		}
 		nsqd.NsqLogger().LogErrorf("topic %v put message failed: %v, from: %v", topic.GetFullName(), err, client.String())
 		if !p.ctx.checkForMasterWrite(topicName, partition) {
-			topic.DisableForSlave()
 			return nil, protocol.NewClientErr(err, FailedOnNotLeader, "")
 		}
 		if clusterErr, ok := err.(*consistence.CommonCoordErr); ok {
@@ -1717,7 +1716,6 @@ func (p *protocolV2) internalMPUBEXTAndTrace(client *nsqd.ClientV2, params [][]b
 		//forward to master of topic
 		nsqd.NsqLogger().LogDebugf("should put to master: %v, from %v",
 			topic.GetFullName(), client.String())
-		topic.DisableForSlave()
 		return nil, protocol.NewClientErr(preErr, FailedOnNotLeader, "")
 	}
 }

@@ -792,67 +792,67 @@ func (nlcoord *NsqLookupCoordinator) doCheckTopics(monitorChan chan struct{}, fa
 			}
 			coordErr := nlcoord.handleTopicLeaderElection(&topicInfo, aliveNodes, aliveEpoch, false)
 			if coordErr != nil {
+				go nlcoord.triggerCheckTopics(t.Name, t.Partition, time.Second)
 				coordLog.Warningf("topic leader election failed: %v", coordErr)
 			}
 			continue
-		} else {
-			// check topic leader session key.
-			var leaderSession *TopicLeaderSession
-			var err error
-			retry := 0
-			for retry < 3 {
-				retry++
-				leaderSession, err = nlcoord.leadership.GetTopicLeaderSession(t.Name, t.Partition)
-				if err != nil {
-					coordLog.Infof("topic %v leader session failed to get: %v", t.GetTopicDesp(), err)
-					// notify the nsqd node to acquire the leader session.
-					nlcoord.notifyISRTopicMetaInfo(&topicInfo)
-					nlcoord.notifyAcquireTopicLeader(&topicInfo)
-					if err == ErrLeaderSessionNotExist {
-						break
-					}
-					time.Sleep(time.Millisecond * 100)
-					continue
-				} else {
+		}
+		// check topic leader session key.
+		var leaderSession *TopicLeaderSession
+		var err error
+		retry := 0
+		for retry < 3 {
+			retry++
+			leaderSession, err = nlcoord.leadership.GetTopicLeaderSession(t.Name, t.Partition)
+			if err != nil {
+				coordLog.Infof("topic %v leader session failed to get: %v", t.GetTopicDesp(), err)
+				// notify the nsqd node to acquire the leader session.
+				nlcoord.notifyISRTopicMetaInfo(&topicInfo)
+				nlcoord.notifyAcquireTopicLeader(&topicInfo)
+				if err == ErrLeaderSessionNotExist {
 					break
 				}
-			}
-			if leaderSession == nil {
-				checkOK = false
-				lostLeaderSessions[t.GetTopicDesp()] = true
+				time.Sleep(time.Millisecond * 100)
 				continue
+			} else {
+				break
 			}
-			if leaderSession.LeaderNode == nil || leaderSession.Session == "" {
-				checkOK = false
-				lostLeaderSessions[t.GetTopicDesp()] = true
-				coordLog.Infof("topic %v leader session node is missing.", t.GetTopicDesp())
-				nlcoord.notifyISRTopicMetaInfo(&topicInfo)
-				nlcoord.notifyAcquireTopicLeader(&topicInfo)
-				continue
-			}
-			if leaderSession.LeaderNode.ID != t.Leader {
-				checkOK = false
-				lostLeaderSessions[t.GetTopicDesp()] = true
-				coordLog.Warningf("topic %v leader session %v-%v-%v mismatch: %v", t.GetTopicDesp(),
-					leaderSession.LeaderNode, leaderSession.Session, leaderSession.LeaderEpoch, t.Leader)
-				tmpTopicInfo := t
-				tmpTopicInfo.Leader = leaderSession.LeaderNode.ID
-				nlcoord.notifyReleaseTopicLeader(&tmpTopicInfo, leaderSession.LeaderEpoch, leaderSession.Session)
-				tmpSession := *leaderSession
-				go func() {
-					err := nlcoord.waitOldLeaderRelease(&tmpTopicInfo)
+		}
+		if leaderSession == nil {
+			checkOK = false
+			lostLeaderSessions[t.GetTopicDesp()] = true
+			continue
+		}
+		if leaderSession.LeaderNode == nil || leaderSession.Session == "" {
+			checkOK = false
+			lostLeaderSessions[t.GetTopicDesp()] = true
+			coordLog.Infof("topic %v leader session node is missing.", t.GetTopicDesp())
+			nlcoord.notifyISRTopicMetaInfo(&topicInfo)
+			nlcoord.notifyAcquireTopicLeader(&topicInfo)
+			continue
+		}
+		if leaderSession.LeaderNode.ID != t.Leader {
+			checkOK = false
+			lostLeaderSessions[t.GetTopicDesp()] = true
+			coordLog.Warningf("topic %v leader session %v-%v-%v mismatch: %v", t.GetTopicDesp(),
+				leaderSession.LeaderNode, leaderSession.Session, leaderSession.LeaderEpoch, t.Leader)
+			tmpTopicInfo := t
+			tmpTopicInfo.Leader = leaderSession.LeaderNode.ID
+			nlcoord.notifyReleaseTopicLeader(&tmpTopicInfo, leaderSession.LeaderEpoch, leaderSession.Session)
+			tmpSession := *leaderSession
+			go func() {
+				err := nlcoord.waitOldLeaderRelease(&tmpTopicInfo)
+				if err != nil {
+					coordLog.Warningf("topic %v leader session release failed: %v, force release", tmpTopicInfo.GetTopicDesp(), err.Error())
+					err = nlcoord.leadership.ReleaseTopicLeader(tmpTopicInfo.Name, tmpTopicInfo.Partition, &tmpSession)
 					if err != nil {
-						coordLog.Warningf("topic %v leader session release failed: %v, force release", tmpTopicInfo.GetTopicDesp(), err.Error())
-						err = nlcoord.leadership.ReleaseTopicLeader(tmpTopicInfo.Name, tmpTopicInfo.Partition, &tmpSession)
-						if err != nil {
-							coordLog.Errorf("release session failed [%s] : %v", tmpTopicInfo.GetTopicDesp(), err)
-						}
+						coordLog.Errorf("release session failed [%s] : %v", tmpTopicInfo.GetTopicDesp(), err)
 					}
-				}()
-				nlcoord.notifyISRTopicMetaInfo(&topicInfo)
-				nlcoord.notifyAcquireTopicLeader(&topicInfo)
-				continue
-			}
+				}
+			}()
+			nlcoord.notifyISRTopicMetaInfo(&topicInfo)
+			nlcoord.notifyAcquireTopicLeader(&topicInfo)
+			continue
 		}
 
 		partitions, ok := waitingMigrateTopic[t.Name]
@@ -1312,9 +1312,10 @@ func (nlcoord *NsqLookupCoordinator) makeNewTopicLeaderAcknowledged(topicInfo *T
 			}
 			nlcoord.notifyISRTopicMetaInfo(topicInfo)
 			nlcoord.notifyAcquireTopicLeader(topicInfo)
-			time.Sleep(time.Second)
+			time.Sleep(time.Millisecond * 100)
 		} else {
 			coordLog.Infof("topic leader session found: %v", leaderSession)
+			nlcoord.notifyTopicLeaderSession(topicInfo, leaderSession, "")
 			go nlcoord.revokeEnableTopicWrite(topicInfo.Name, topicInfo.Partition, true)
 			return nil
 		}

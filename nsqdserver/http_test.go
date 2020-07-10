@@ -1058,7 +1058,7 @@ func TestNSQDStatsFilter(t *testing.T) {
 	topicNameAnother := fmt.Sprintf("test_nsqd_stats_filter_another%d", time.Now().UnixNano())
 	nsqd.GetTopic(topicNameAnother, 0, false)
 	topic_another, err := nsqd.GetExistingTopic(topicNameAnother, 0)
-	topic_another.DisableForSlave()
+	topic_another.DisableForSlave(false)
 	defer nsqd.DeleteExistingTopic(topicNameAnother, 0)
 
 	time.Sleep(500 * time.Millisecond)

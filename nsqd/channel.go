@@ -1619,14 +1619,13 @@ func (c *Channel) DisableConsume(disable bool) {
 			go c.deleter.Do(func() { c.deleteCallback(c) })
 		}
 	} else {
-		nsqLog.Logf("channel %v enabled for consume", c.name)
 		if !atomic.CompareAndSwapInt32(&c.consumeDisabled, 1, 0) {
 			select {
 			case c.tryReadBackend <- true:
 			default:
 			}
-			nsqLog.Logf("channel %v already enabled for consume", c.name)
 		} else {
+			nsqLog.Logf("channel %v enabled for consume", c.name)
 			// we need reset backend read position to confirm position
 			// since we dropped all inflight and requeue data while disable consume.
 			if nsqLog.Level() >= levellogger.LOG_DEBUG {
@@ -1915,7 +1914,7 @@ LOOP:
 		case msg = <-c.requeuedMsgChan:
 			if msg.TraceID != 0 || c.IsTraced() || nsqLog.Level() >= levellogger.LOG_DETAIL {
 				nsqLog.LogDebugf("read message %v from requeue", msg.ID)
-				nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "READ_REQ", msg.TraceID, msg, "0", time.Now().UnixNano() - msg.Timestamp)
+				nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "READ_REQ", msg.TraceID, msg, "0", time.Now().UnixNano()-msg.Timestamp)
 			}
 		default:
 			select {
@@ -1924,7 +1923,7 @@ LOOP:
 			case msg = <-c.requeuedMsgChan:
 				if msg.TraceID != 0 || c.IsTraced() || nsqLog.Level() >= levellogger.LOG_DETAIL {
 					nsqLog.LogDebugf("read message %v from requeue", msg.ID)
-					nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "READ_REQ", msg.TraceID, msg, "0", time.Now().UnixNano() - msg.Timestamp)
+					nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "READ_REQ", msg.TraceID, msg, "0", time.Now().UnixNano()-msg.Timestamp)
 				}
 			case data = <-readChan:
 				lastDataNeedRead = false
@@ -1967,7 +1966,7 @@ LOOP:
 				msg.RawMoveSize = data.MovedSize
 				msg.queueCntIndex = data.CurCnt
 				if msg.TraceID != 0 || c.IsTraced() || nsqLog.Level() >= levellogger.LOG_DETAIL {
-					nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "READ_QUEUE", msg.TraceID, msg, "0", time.Now().UnixNano() - msg.Timestamp)
+					nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "READ_QUEUE", msg.TraceID, msg, "0", time.Now().UnixNano()-msg.Timestamp)
 				}
 
 				if lastMsg.ID > 0 && msg.ID < lastMsg.ID {
@@ -2494,7 +2493,7 @@ func (c *Channel) peekAndReqDelayedMessages(tnow int64, delayedQueue *DelayQueue
 						c.GetName(), tnow, m)
 				}
 
-				nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "DELAY_QUEUE_TIMEOUT", m.TraceID, &m, "", tnow - m.Timestamp)
+				nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "DELAY_QUEUE_TIMEOUT", m.TraceID, &m, "", tnow-m.Timestamp)
 
 				newAdded++
 				if m.belongedConsumer != nil {

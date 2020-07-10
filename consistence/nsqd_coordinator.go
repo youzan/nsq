@@ -2372,7 +2372,7 @@ func (ncoord *NsqdCoordinator) switchStateForMaster(topicCoord *TopicCoordinator
 			atomic.StoreInt32(&topicCoord.disableWrite, 1)
 			isWriteDisabled = true
 			localTopic.SetDataFixState(true)
-			localTopic.DisableForSlave()
+			localTopic.DisableForSlave(master)
 		}
 		if tcData.delayedLogMgr != nil && !tcData.topicInfo.OrderedMulti {
 			localErr = checkAndFixLocalLogQueueEnd(tcData, localTopic.GetDelayedQueue(), tcData.delayedLogMgr,
@@ -2381,7 +2381,7 @@ func (ncoord *NsqdCoordinator) switchStateForMaster(topicCoord *TopicCoordinator
 				atomic.StoreInt32(&topicCoord.disableWrite, 1)
 				isWriteDisabled = true
 				localTopic.GetDelayedQueue().SetDataFixState(true)
-				localTopic.DisableForSlave()
+				localTopic.DisableForSlave(master)
 			}
 		}
 		localTopic.Unlock()
@@ -2414,7 +2414,7 @@ func (ncoord *NsqdCoordinator) switchStateForMaster(topicCoord *TopicCoordinator
 				}
 			}
 		} else {
-			localTopic.DisableForSlave()
+			localTopic.DisableForSlave(master)
 		}
 	} else {
 		logIndex, logOffset, logData, err := tcData.logMgr.GetLastCommitLogOffsetV2()
@@ -2428,7 +2428,7 @@ func (ncoord *NsqdCoordinator) switchStateForMaster(topicCoord *TopicCoordinator
 			coordLog.Infof("current topic %v log: %v:%v, %v, pid: %v",
 				tcData.topicInfo.GetTopicDesp(), logIndex, logOffset, logData, tcData.logMgr.GetLastCommitLogID())
 		}
-		localTopic.DisableForSlave()
+		localTopic.DisableForSlave(master)
 	}
 	offsetMap := make(map[string]ChannelConsumerOffset)
 	tcData.consumeMgr.Lock()
