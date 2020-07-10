@@ -461,7 +461,7 @@ func TestTopicCleanOldDataByRetentionDayWithResetStart(t *testing.T) {
 
 	readStart := *(topic.backend.GetQueueReadStart().(*diskQueueEndInfo))
 	test.Equal(t, int64(0), readStart.EndOffset.FileNum)
-	topic.DisableForSlave()
+	topic.DisableForSlave(false)
 	err := topic.ResetBackendWithQueueStartNoLock(0, 0)
 	test.Nil(t, err)
 	writeEnd := topic.backend.GetQueueWriteEnd()
@@ -580,7 +580,7 @@ func TestTopicResetWithQueueStart(t *testing.T) {
 	resetStart.totalMsgCnt = topic.backend.GetQueueWriteEnd().TotalMsgCnt() + 10
 	err := topic.ResetBackendWithQueueStartNoLock(int64(resetStart.Offset()), resetStart.TotalMsgCnt())
 	test.NotNil(t, err)
-	topic.DisableForSlave()
+	topic.DisableForSlave(false)
 	err = topic.ResetBackendWithQueueStartNoLock(int64(resetStart.Offset()), resetStart.TotalMsgCnt())
 	test.Nil(t, err)
 	topic.EnableForMaster()
@@ -625,7 +625,7 @@ func TestTopicResetWithQueueStart(t *testing.T) {
 	}
 
 	// reset with old start
-	topic.DisableForSlave()
+	topic.DisableForSlave(false)
 	err = topic.ResetBackendWithQueueStartNoLock(int64(resetStart.Offset()), resetStart.TotalMsgCnt())
 	test.Nil(t, err)
 
