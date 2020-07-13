@@ -1234,6 +1234,7 @@ func (t *Topic) DisableForSlave(keepConsume bool) {
 		nsqLog.Logf("[TRACE_DATA] while disable topic %v end: %v, cnt: %v, queue start: %v", t.GetFullName(),
 			t.TotalDataSize(), t.TotalMessageCnt(), t.backend.GetQueueReadStart())
 	}
+
 	t.channelLock.RLock()
 	for _, c := range t.channelMap {
 		c.DisableConsume(!keepConsume)

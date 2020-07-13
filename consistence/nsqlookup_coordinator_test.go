@@ -2273,7 +2273,7 @@ func TestNsqLookupMovePartitionAndSlaveTimeoutWhileReadWrite(t *testing.T) {
 			defer wg.Done()
 			wcnt := 0
 			for {
-				time.Sleep(time.Millisecond)
+				time.Sleep(time.Millisecond * 10)
 				select {
 				case <-stopC:
 					t.Logf("write %v cnt at end: %v", wcnt, time.Now())
@@ -2325,9 +2325,13 @@ func TestNsqLookupMovePartitionAndSlaveTimeoutWhileReadWrite(t *testing.T) {
 						if ch == nil {
 							continue
 						}
+						//ch.SetTrace(true)
 						select {
 						case msg, ok := <-ch.GetClientMsgChan():
 							if ok {
+								if ch.IsConfirmed(msg) {
+									continue
+								}
 								ch.StartInFlightTimeout(msg, NewFakeConsumer(1), "", time.Second)
 								time.Sleep(time.Millisecond * time.Duration(rand.Intn(10)))
 								err := node.nsqdCoord.FinishMessageToCluster(ch, 1, "", msg.ID)
@@ -2336,7 +2340,9 @@ func TestNsqLookupMovePartitionAndSlaveTimeoutWhileReadWrite(t *testing.T) {
 									atomic.AddInt32(&totalSub, 1)
 								} else {
 									//t.Logf("fin error: %v", err.Error())
+									time.Sleep(time.Second)
 								}
+								time.Sleep(time.Millisecond * time.Duration(rand.Intn(10)))
 								if cnt%50000 == 0 {
 									t.Logf("consumed %v cnt, depth: %v, stats: %v", cnt, ch.Depth(), ch.GetChannelDebugStats())
 								}
@@ -2397,6 +2403,11 @@ func TestNsqLookupMovePartitionAndSlaveTimeoutWhileReadWrite(t *testing.T) {
 		coordLog.Infof("begin move topic again")
 		waitClusterStable(lookupCoord, time.Second*30)
 		t0, err := lookupLeadership.GetTopicInfo(topic_p1_r2, 0)
+		if err != nil {
+			t.Log(err.Error())
+			time.Sleep(time.Millisecond * 10)
+			continue
+		}
 		test.Nil(t, err)
 
 		toNode := ""
@@ -2416,6 +2427,9 @@ func TestNsqLookupMovePartitionAndSlaveTimeoutWhileReadWrite(t *testing.T) {
 		}
 
 		t0, err = lookupLeadership.GetTopicInfo(topic_p1_r2, 0)
+		if err != nil {
+			continue
+		}
 		test.Nil(t, err)
 
 		// move leader to other non-isr node
@@ -2428,7 +2442,7 @@ func TestNsqLookupMovePartitionAndSlaveTimeoutWhileReadWrite(t *testing.T) {
 			break
 		}
 		if toNode == "" {
-			t.Fatalf("toNode error: %v, %v", t0, nodeInfoList)
+			t.Errorf("toNode error: %v, %v", t0, nodeInfoList)
 		}
 		test.Equal(t, true, toNode != "")
 
@@ -2465,7 +2479,7 @@ func TestNsqLookupMovePartitionAndSlaveTimeoutWhileReadWrite(t *testing.T) {
 			break
 		}
 		if toNode == "" {
-			t.Fatalf("toNode error: %v, %v", t0, nodeInfoList)
+			t.Errorf("toNode error: %v, %v", t0, nodeInfoList)
 		}
 		test.Equal(t, true, toNode != "")
 		lookupCoord.triggerCheckTopics("", 0, 0)
@@ -2478,7 +2492,7 @@ func TestNsqLookupMovePartitionAndSlaveTimeoutWhileReadWrite(t *testing.T) {
 	close(stopC)
 	t.Logf("stopped at: %v, moved: %v", time.Now(), movedCnt)
 	wg.Wait()
-	time.Sleep(time.Second * 5)
+	time.Sleep(time.Second * 10)
 	consumeGroup.Wait()
 	time.Sleep(time.Second * 5)
 

@@ -912,7 +912,8 @@ func (c *Channel) ConfirmBackendQueue(msg *Message) (BackendOffset, int64, bool)
 		err := c.backend.ConfirmRead(newConfirmed, confirmedCnt)
 		if err != nil {
 			if err != ErrExiting {
-				nsqLog.LogWarningf("channel (%v): confirm read failed: %v, msg: %v", c.GetName(), err, msg)
+				nsqLog.LogWarningf("channel (%v): confirm read failed: %v, msg: %v",
+					c.GetName(), err, msg)
 				// rollback removed confirmed messages
 				//for _, m := range c.tmpRemovedConfirmed {
 				//	c.confirmedMsgs[int64(msg.offset)] = m

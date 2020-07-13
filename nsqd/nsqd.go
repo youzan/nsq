@@ -988,7 +988,7 @@ func (n *NSQD) PushTopicJob(t *Topic, job func()) {
 		default:
 		}
 	}
-	nsqLog.Logf("%v topic job push ignored: %T", t.GetFullName(), job)
+	nsqLog.LogDebugf("%v topic job push ignored: %T", t.GetFullName(), job)
 }
 
 func doJob(job func()) {
