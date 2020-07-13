@@ -163,11 +163,20 @@ func NewNsqdServer(opts *nsqd.Options) (*nsqd.NSQD, *NsqdServer, error) {
 	return nsqdInstance, s, nil
 }
 
+func (s *NsqdServer) GetCoord() *consistence.NsqdCoordinator {
+	return s.ctx.nsqdCoord
+}
+
 func (s *NsqdServer) GetNsqdInstance() *nsqd.NSQD {
 	return s.ctx.nsqd
 }
 
 func (s *NsqdServer) Exit() {
+	select {
+	case <-s.exitChan:
+		return
+	default:
+	}
 	nsqd.NsqLogger().Logf("nsqd server stopping.")
 	if s.tcpListener != nil {
 		s.tcpListener.Close()

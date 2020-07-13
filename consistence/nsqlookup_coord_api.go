@@ -65,6 +65,14 @@ func (nlcoord *NsqLookupCoordinator) GetTopicLeaderNodes(topicName string) (map[
 	return ret, nil
 }
 
+func (nlcoord *NsqLookupCoordinator) GetTopicLeaderForConsume(topicName string, part int) (string, error) {
+	info, err := nlcoord.leadership.GetTopicInfo(topicName, part)
+	if err != nil {
+		return "", err
+	}
+	return info.Leader, nil
+}
+
 func (nlcoord *NsqLookupCoordinator) IsMineLeader() bool {
 	return nlcoord.leaderNode.GetID() == nlcoord.myNode.GetID()
 }
