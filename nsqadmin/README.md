@@ -7,6 +7,8 @@ Read the [docs](http://nsq.io/components/nsqadmin.html)
 
 ## Working Locally
 
+using https://github.com/kevinburke/go-bindata for go-bindata
+
  1. `$ npm install`
  2. `$ ./gulp clean watch` or `$ ./gulp clean build`
  3. `$ go-bindata --debug --pkg=nsqadmin --prefix=static/build static/build/...`
