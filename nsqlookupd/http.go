@@ -351,45 +351,18 @@ func (s *httpServer) doLookup(w http.ResponseWriter, req *http.Request, ps httpr
 	registrations := s.ctx.nsqlookupd.DB.FindTopicProducers(topicName, topicPartition)
 	isFoundInRegister := len(registrations) > 0
 	if len(registrations) == 0 {
-		nsqlookupLog.Logf("lookup topic %v-%v not found", topicName, topicPartition)
+		nsqlookupLog.LogDebugf("lookup topic %v-%v not found", topicName, topicPartition)
 		// try to find in cluster info
 		if accessMode == "w" && s.ctx.nsqlookupd.coordinator != nil {
-			clusterNodes, clusterErr := s.ctx.nsqlookupd.coordinator.GetTopicLeaderNodes(topicName)
-			if clusterErr != nil {
-				if clusterErr == consistence.ErrKeyNotFound {
-					return nil, http_api.Err{404, clusterErr.Error()}
-				}
-				return nil, http_api.Err{500, clusterErr.Error()}
-			}
-			if topicPartition == "*" {
-				for pid, nodeID := range clusterNodes {
-					peerInfo := s.ctx.nsqlookupd.DB.SearchPeerClientByClusterID(nodeID)
-					if peerInfo != nil {
-						var reg TopicProducerReg
-						reg.PartitionID = pid
-						reg.ProducerNode = &Producer{peerInfo: peerInfo}
-						registrations = append(registrations, reg)
-					}
-				}
-			} else {
-				nodeID, ok := clusterNodes[topicPartition]
-				if ok {
-					peerInfo := s.ctx.nsqlookupd.DB.SearchPeerClientByClusterID(nodeID)
-					if peerInfo != nil {
-						var reg TopicProducerReg
-						reg.PartitionID = topicPartition
-						reg.ProducerNode = &Producer{peerInfo: peerInfo}
-						registrations = append(registrations, reg)
-					}
-				}
+			registrations, err = s.tryFindRegsFromRegister(topicName, topicPartition, registrations)
+			if err != nil {
+				return nil, err
 			}
 			if len(registrations) > 0 {
-				nsqlookupLog.Logf("no topic %v producers found in memory, found in cluster: %v, %v", topicName, len(clusterNodes), len(registrations))
+				nsqlookupLog.Logf("no topic %v producers found in memory, found in cluster: %v", topicName, len(registrations))
 			}
 		}
 	}
-	partitionProducers := make(map[string]*PeerInfo)
-	allProducers := make(map[string]*Producer, len(registrations))
 	// note: tombstone has been changed : the tomb is used for producer.
 	// tombstone node is filter so that any new data will not be put to this node,
 	// but the consumer can still consume the old data until no data to avoid the data lost
@@ -397,44 +370,12 @@ func (s *httpServer) doLookup(w http.ResponseWriter, req *http.Request, ps httpr
 	filterTomb := true
 	if accessMode == "r" {
 		filterTomb = false
+		registrations = s.tryFindRegsForConsumer(topicName, topicPartition, registrations)
 	}
 	registrations = registrations.FilterByActive(s.ctx.nsqlookupd.opts.InactiveProducerTimeout,
 		filterTomb)
 
-	emptyChanFiltered := false
-	for _, r := range registrations {
-		var leaderProducer *Producer
-		pid, _ := strconv.Atoi(r.PartitionID)
-		if checkConsistent != "" && s.ctx.nsqlookupd.coordinator != nil {
-			// check leader only the client need consistent
-			if s.ctx.nsqlookupd.coordinator.IsTopicLeader(topicName, pid, r.ProducerNode.peerInfo.DistributedID) {
-				leaderProducer = r.ProducerNode
-			}
-		} else {
-			leaderProducer = r.ProducerNode
-		}
-		if leaderProducer != nil {
-			if accessMode == "w" {
-				// check if any channel on the specific topic producer node
-				channels := s.ctx.nsqlookupd.DB.FindChannelRegs(topicName, r.PartitionID)
-				if len(channels) == 0 && !s.ctx.nsqlookupd.opts.AllowWriteWithNoChannels {
-					nsqlookupLog.Logf("no channels under this partition node: %v, %v", topicName, r)
-					emptyChanFiltered = true
-					continue
-				}
-			}
-			if pid >= 0 {
-				// old node should be filtered since no any partition info
-				partitionProducers[r.PartitionID] = leaderProducer.peerInfo
-			}
-			allProducers[leaderProducer.peerInfo.Id] = leaderProducer
-		}
-	}
-	producers := make(Producers, 0, len(allProducers))
-	for _, p := range allProducers {
-		producers = append(producers, p)
-	}
-
+	producers, partitionProducers, emptyChanFiltered := s.genarateProducerListFromRegs(topicName, registrations, accessMode, checkConsistent)
 	peers := producers.PeerInfo()
 	if isFoundInRegister && emptyChanFiltered &&
 		len(partitionProducers) == 0 && len(peers) == 0 {
@@ -481,6 +422,137 @@ func (s *httpServer) doLookup(w http.ResponseWriter, req *http.Request, ps httpr
 		"producers":  peers,
 		"partitions": partitionProducers,
 	}, nil
+}
+
+func (s *httpServer) tryFindRegsFromRegister(topicName string, topicPartition string, registrations TopicRegistrations) (TopicRegistrations, error) {
+	clusterNodes, clusterErr := s.ctx.nsqlookupd.coordinator.GetTopicLeaderNodes(topicName)
+	if clusterErr != nil {
+		if clusterErr == consistence.ErrKeyNotFound {
+			return nil, http_api.Err{404, clusterErr.Error()}
+		}
+		return nil, http_api.Err{500, clusterErr.Error()}
+	}
+	if topicPartition == "*" {
+		for pid, nodeID := range clusterNodes {
+			peerInfo := s.ctx.nsqlookupd.DB.SearchPeerClientByClusterID(nodeID)
+			if peerInfo != nil {
+				var reg TopicProducerReg
+				reg.PartitionID = pid
+				reg.ProducerNode = &Producer{peerInfo: peerInfo}
+				registrations = append(registrations, reg)
+			}
+		}
+	} else {
+		nodeID, ok := clusterNodes[topicPartition]
+		if ok {
+			peerInfo := s.ctx.nsqlookupd.DB.SearchPeerClientByClusterID(nodeID)
+			if peerInfo != nil {
+				var reg TopicProducerReg
+				reg.PartitionID = topicPartition
+				reg.ProducerNode = &Producer{peerInfo: peerInfo}
+				registrations = append(registrations, reg)
+			}
+		}
+	}
+	return registrations, nil
+}
+
+// Normally, the registrations will not contain the node disabled(not enough isr or temporally write disabled while leader transfer),
+// the disabled node can not be writtend, but for consumer, we need consume the committed data as soon as possible to reduce
+// the latency for committed data. So we find the current leader node and add it to registrations even it is disabled.
+func (s *httpServer) tryFindRegsForConsumer(topicName string, topicPartition string, registrations TopicRegistrations) TopicRegistrations {
+	if s.ctx.nsqlookupd == nil || s.ctx.nsqlookupd.coordinator == nil {
+		return registrations
+	}
+	if topicPartition == "*" {
+		meta, err := s.ctx.nsqlookupd.coordinator.GetTopicMetaInfo(topicName)
+		if err != nil {
+			return registrations
+		}
+		if len(registrations) >= meta.PartitionNum {
+			return registrations
+		}
+		pids := make(map[string]bool)
+		for _, r := range registrations {
+			pids[r.PartitionID] = true
+		}
+		for i := 0; i < meta.PartitionNum; i++ {
+			_, ok := pids[strconv.Itoa(i)]
+			if ok {
+				continue
+			}
+			nodeID, err := s.ctx.nsqlookupd.coordinator.GetTopicLeaderForConsume(topicName, i)
+			if err != nil {
+				continue
+			}
+			peerInfo := s.ctx.nsqlookupd.DB.SearchPeerClientByClusterID(nodeID)
+			if peerInfo != nil {
+				var reg TopicProducerReg
+				reg.PartitionID = strconv.Itoa(i)
+				reg.ProducerNode = &Producer{peerInfo: peerInfo}
+				registrations = append(registrations, reg)
+			}
+		}
+	} else {
+		if len(registrations) >= 1 {
+			return registrations
+		}
+		part, err := strconv.Atoi(topicPartition)
+		if err != nil {
+			return registrations
+		}
+		nodeID, err := s.ctx.nsqlookupd.coordinator.GetTopicLeaderForConsume(topicName, part)
+		if err == nil {
+			peerInfo := s.ctx.nsqlookupd.DB.SearchPeerClientByClusterID(nodeID)
+			if peerInfo != nil {
+				var reg TopicProducerReg
+				reg.PartitionID = topicPartition
+				reg.ProducerNode = &Producer{peerInfo: peerInfo}
+				registrations = append(registrations, reg)
+			}
+		}
+	}
+	return registrations
+}
+
+func (s *httpServer) genarateProducerListFromRegs(topicName string, registrations TopicRegistrations, accessMode string, checkConsistent string) (Producers, map[string]*PeerInfo, bool) {
+	partitionProducers := make(map[string]*PeerInfo)
+	allProducers := make(map[string]*Producer, len(registrations))
+	emptyChanFiltered := false
+	for _, r := range registrations {
+		var leaderProducer *Producer
+		pid, _ := strconv.Atoi(r.PartitionID)
+		if checkConsistent != "" && s.ctx.nsqlookupd.coordinator != nil {
+			// check leader only the client need consistent
+			if s.ctx.nsqlookupd.coordinator.IsTopicLeader(topicName, pid, r.ProducerNode.peerInfo.DistributedID) {
+				leaderProducer = r.ProducerNode
+			}
+		} else {
+			leaderProducer = r.ProducerNode
+		}
+		if leaderProducer != nil {
+			if accessMode == "w" {
+				// check if any channel on the specific topic producer node
+				channels := s.ctx.nsqlookupd.DB.FindChannelRegs(topicName, r.PartitionID)
+				if len(channels) == 0 && !s.ctx.nsqlookupd.opts.AllowWriteWithNoChannels {
+					nsqlookupLog.Logf("no channels under this partition node: %v, %v", topicName, r)
+					emptyChanFiltered = true
+					continue
+				}
+			}
+			if pid >= 0 {
+				// old node should be filtered since no any partition info
+				partitionProducers[r.PartitionID] = leaderProducer.peerInfo
+			}
+			allProducers[leaderProducer.peerInfo.Id] = leaderProducer
+		}
+	}
+	producers := make(Producers, 0, len(allProducers))
+	for _, p := range allProducers {
+		producers = append(producers, p)
+	}
+
+	return producers, partitionProducers, emptyChanFiltered
 }
 
 func (s *httpServer) doSetLogLevel(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {

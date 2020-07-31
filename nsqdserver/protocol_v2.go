@@ -1057,7 +1057,7 @@ func (p *protocolV2) internalSUB(client *nsqd.ClientV2, params [][]byte, enableT
 	if !p.ctx.checkConsumeForMasterWrite(topicName, partition) {
 		nsqd.NsqLogger().Logf("sub failed on not leader: %v-%v, remote is : %v", topicName, partition, client.String())
 		// we need disable topic here to trigger a notify, maybe we failed to notify lookup last time.
-		topic.DisableForSlave()
+		topic.DisableForSlave(false)
 		return nil, protocol.NewFatalClientErr(nil, FailedOnNotLeader, "")
 	}
 	channel := topic.GetChannel(channelName)
@@ -1496,8 +1496,15 @@ func internalPubAsync(clientTimer *time.Timer, msgBody []byte, topic *nsqd.Topic
 		if clientTimer == nil {
 			clientTimer = time.NewTimer(pubWaitTimeout)
 		} else {
+			if !clientTimer.Stop() {
+				select {
+				case <-clientTimer.C:
+				default:
+				}
+			}
 			clientTimer.Reset(pubWaitTimeout)
 		}
+		defer clientTimer.Stop()
 		select {
 		case topic.GetWaitChan() <- info:
 		case <-topic.QuitChan():
@@ -1624,7 +1631,7 @@ func (p *protocolV2) internalPubExtAndTrace(client *nsqd.ClientV2, params [][]by
 	offset := nsqd.BackendOffset(0)
 	rawSize := int32(0)
 	if asyncAction {
-		err = internalPubAsync(client.PubTimeout, realBody, topic, extContent)
+		err = internalPubAsync(nil, realBody, topic, extContent)
 	} else {
 		id, offset, rawSize, _, err = p.ctx.PutMessage(topic, realBody, extContent, traceID)
 	}
@@ -1635,7 +1642,6 @@ func (p *protocolV2) internalPubExtAndTrace(client *nsqd.ClientV2, params [][]by
 		}
 		nsqd.NsqLogger().LogErrorf("topic %v put message failed: %v, from: %v", topic.GetFullName(), err, client.String())
 		if !p.ctx.checkForMasterWrite(topicName, partition) {
-			topic.DisableForSlave()
 			return nil, protocol.NewClientErr(err, FailedOnNotLeader, "")
 		}
 		if clusterErr, ok := err.(*consistence.CommonCoordErr); ok {
@@ -1717,7 +1723,6 @@ func (p *protocolV2) internalMPUBEXTAndTrace(client *nsqd.ClientV2, params [][]b
 		//forward to master of topic
 		nsqd.NsqLogger().LogDebugf("should put to master: %v, from %v",
 			topic.GetFullName(), client.String())
-		topic.DisableForSlave()
 		return nil, protocol.NewClientErr(preErr, FailedOnNotLeader, "")
 	}
 }

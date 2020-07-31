@@ -49,7 +49,6 @@ func main() {
 	signal.Notify(termChan, syscall.SIGINT, syscall.SIGTERM)
 
 	cfg.UserAgent = fmt.Sprintf("to_nsq/%s go-nsq/%s", version.Binary, nsq.VERSION)
-	cfg.PubStrategy = nsq.PubRR
 
 	// make the producers
 	producers := make(map[string]*nsq.Producer)

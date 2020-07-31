@@ -49,6 +49,7 @@ var (
 	maxDelaySecs    = flagSet.Int("max-delaysec", 30, "the max delayed message in second")
 	delayPercent    = flagSet.Int("delay-percent", 371, "the percent of delayed")
 	useSinglePubMgr = flagSet.Bool("single-pubmgr", false, "force use singe pub manager")
+	debugLog        = flagSet.Bool("debuglog", false, "log debug details")
 )
 
 func getPartitionID(msgID nsq.NewMessageID) string {
@@ -199,17 +200,12 @@ func startBenchPub(msg []byte, batch [][]byte) {
 	config.WriteTimeout = 0
 	config.ReadTimeout = 0
 	config.ProducerPoolSize = *pubPoolSize
-	pubMgr, err := nsq.NewTopicProducerMgr(topics, config)
+	pubMgr, err := initPubMgr()
 	if err != nil {
 		log.Printf("init error : %v", err)
 		return
 	}
-	pubMgr.SetLogger(log.New(os.Stderr, "", log.LstdFlags), nsq.LogLevelInfo)
-	err = pubMgr.ConnectToNSQLookupd(*lookupAddress)
-	if err != nil {
-		log.Printf("lookup connect error : %v", err)
-		return
-	}
+
 	pubIDList := make(map[string]*int64)
 	// received max continuous trace id
 	subReceivedMaxTraceIDList := make(map[string]*int64)
@@ -382,18 +378,11 @@ func startCheckData2() {
 	var wg sync.WaitGroup
 	config.EnableTrace = *trace
 	config.ProducerPoolSize = *pubPoolSize
-	pubMgr, err := nsq.NewTopicProducerMgr(topics, config)
+	pubMgr, err := initPubMgr()
 	if err != nil {
 		log.Printf("init error : %v", err)
 		return
 	}
-	pubMgr.SetLogger(log.New(os.Stderr, "", log.LstdFlags), nsq.LogLevelInfo)
-	err = pubMgr.ConnectToNSQLookupd(*lookupAddress)
-	if err != nil {
-		log.Printf("lookup connect error : %v", err)
-		return
-	}
-
 	pubIDList := make(map[string]*int64)
 	// received max continuous trace id
 	subReceivedMaxTraceIDList := make(map[string]*int64)
@@ -537,15 +526,9 @@ func startCheckData(msg []byte, batch [][]byte, testDelay bool) {
 	var wg sync.WaitGroup
 	config.EnableTrace = *trace
 	config.ProducerPoolSize = *pubPoolSize
-	pubMgr, err := nsq.NewTopicProducerMgr(topics, config)
+	pubMgr, err := initPubMgr()
 	if err != nil {
 		log.Printf("init error : %v", err)
-		return
-	}
-	pubMgr.SetLogger(log.New(os.Stderr, "", log.LstdFlags), nsq.LogLevelInfo)
-	err = pubMgr.ConnectToNSQLookupd(*lookupAddress)
-	if err != nil {
-		log.Printf("lookup connect error : %v", err)
 		return
 	}
 	pubIDList := make(map[string]*int64)
@@ -868,15 +851,9 @@ func startBenchLookupRegUnreg() {
 func startCheckSetConsumerOffset() {
 	config.EnableTrace = true
 	// offset count, timestamp
-	pubMgr, err := nsq.NewTopicProducerMgr(topics, config)
+	pubMgr, err := initPubMgr()
 	if err != nil {
 		log.Printf("init error : %v", err)
-		return
-	}
-	pubMgr.SetLogger(log.New(os.Stderr, "", log.LstdFlags), nsq.LogLevelInfo)
-	err = pubMgr.ConnectToNSQLookupd(*lookupAddress)
-	if err != nil {
-		log.Printf("lookup connect error : %v", err)
 		return
 	}
 
@@ -1014,7 +991,7 @@ func main() {
 	config.MaxInFlight = 2 * (*concurrency)
 	config.EnableTrace = *trace
 	config.EnableOrdered = *ordered
-	config.PubStrategy = nsq.PubRR
+	//config.PubStrategy = nsq.PubRR
 	config.OutputBufferSize = 1024 * 32
 	config.ProducerPoolSize = *pubPoolSize
 	if config.EnableOrdered {
@@ -1072,32 +1049,45 @@ func main() {
 	}
 }
 
-func getPubMgr(globalPubMgr *nsq.TopicProducerMgr, rdyChan chan int) *nsq.TopicProducerMgr {
+func initPubMgr() (*nsq.TopicProducerMgr, error) {
+	pubMgr, err := nsq.NewTopicProducerMgr(topics, config)
+	if err != nil {
+		log.Printf("init pub mgr error : %v", err)
+		return nil, err
+	}
+	lv := nsq.LogLevelInfo
+	if *debugLog {
+		lv = nsq.LogLevelDebug
+	}
+	pubMgr.SetLogger(log.New(os.Stderr, "", log.LstdFlags), lv)
+	err = pubMgr.ConnectToNSQLookupd(*lookupAddress)
+	if err != nil {
+		log.Printf("lookup connect error : %v", err)
+		return nil, err
+	}
+	return pubMgr, nil
+}
+
+func getPubMgr(globalPubMgr *nsq.TopicProducerMgr, rdyChan chan int) (*nsq.TopicProducerMgr, error) {
 	var pubMgr *nsq.TopicProducerMgr
 	var err error
 	if *useSinglePubMgr {
 		pubMgr = globalPubMgr
 	} else {
-		pubMgr, err = nsq.NewTopicProducerMgr(topics, config)
+		pubMgr, err = initPubMgr()
 		if err != nil {
-			log.Printf("init pub mgr error : %v", err)
-			close(rdyChan)
-			return nil
-		}
-		pubMgr.SetLogger(log.New(os.Stderr, "", log.LstdFlags), nsq.LogLevelInfo)
-		err = pubMgr.ConnectToNSQLookupd(*lookupAddress)
-		if err != nil {
-			log.Printf("lookup connect error : %v", err)
-			close(rdyChan)
-			return nil
+			if rdyChan != nil {
+				close(rdyChan)
+			}
+			return nil, err
 		}
 	}
-	return pubMgr
+	return pubMgr, nil
 }
 
 func pubPipelineWorker(td time.Duration, globalPubMgr *nsq.TopicProducerMgr, topicName string, pubIDCounter *int64,
 	rdyChan chan int, goChan chan int) {
-	pubMgr := getPubMgr(globalPubMgr, rdyChan)
+	pubMgr, _ := getPubMgr(globalPubMgr, rdyChan)
 	if pubMgr == nil {
 		return
 	}
@@ -1173,7 +1163,7 @@ func pubWorker(td time.Duration, globalPubMgr *nsq.TopicProducerMgr, topicName s
 	rdyChan chan int, goChan chan int, testDelay bool) {
 
 	var err error
-	pubMgr := getPubMgr(globalPubMgr, rdyChan)
+	pubMgr, _ := getPubMgr(globalPubMgr, rdyChan)
 	if pubMgr == nil {
 		return
 	}

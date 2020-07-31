@@ -13,7 +13,7 @@
                  [jepsen "0.1.4"]
                  [clj-http "2.3.0"]
                  [slingshot "0.12.2"]
-                 [com.youzan/NSQ-Client "2.2.1027-RELEASE"]
+                 [com.youzan/NSQ-Client "2.4.1.13-RELEASE"]
                  [org.apache.httpcomponents/httpclient "4.5.2"]
                  [org.apache.commons/commons-pool2 "2.4.2"]
                  [ch.qos.logback/logback-core "1.1.7"]

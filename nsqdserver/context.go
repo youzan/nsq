@@ -18,8 +18,9 @@ const (
 )
 
 var (
-	serverPubFailedCnt  int64
-	testPopQueueTimeout int32
+	serverPubFailedCnt    int64
+	testPopQueueTimeout   int32
+	testPutMessageTimeout int32
 )
 
 func incrServerPubFailed() {
@@ -437,6 +438,9 @@ func (c *context) internalPubLoop(topic *nsqd.Topic) {
 				}
 				continue
 			}
+			if tcnt := atomic.LoadInt32(&testPutMessageTimeout); tcnt >= 1 {
+				time.Sleep(time.Second * time.Duration(tcnt))
+			}
 			var retErr error
 			if c.checkForMasterWrite(topicName, partition) {
 				s := time.Now()
@@ -450,7 +454,7 @@ func (c *context) internalPubLoop(topic *nsqd.Topic) {
 					nsqd.NsqLogger().Logf("topic %v put messages %v to cluster slow: %v", topic.GetFullName(), len(messages), cost)
 				}
 			} else {
-				topic.DisableForSlave()
+				topic.DisableForSlave(c.checkConsumeForMasterWrite(topicName, partition))
 				nsqd.NsqLogger().LogDebugf("should put to master: %v",
 					topic.GetFullName())
 				retErr = consistence.ErrNotTopicLeader.ToErrorType()

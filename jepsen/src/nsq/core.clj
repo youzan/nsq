@@ -36,7 +36,7 @@
 (def nsqlookupd-logfile "/var/log/nsqlookupd.log")
 (def nsqlookupd-pidfile "/var/run/nsqlookupd.pid")
 (def etcd-cluster-url "http://etcd0.example.com:2379/v2/keys/NSQMetaData/test-jepsen-dev-1")
-(def nsq-package "nsq-0.3.7-HA.1.9.0.linux-amd64.go1.10.5")
+(def nsq-package "nsq-0.3.7-HA.1.10.1.linux-amd64.go1.13.12")
 
 (defn prepare-binary! 
   [test node]
@@ -157,7 +157,7 @@
       (c/su
         (meh (c/exec :killall :nsqd))
         (Thread/sleep 3000)
-        (meh (c/exec :killall :-9 :nsqd))
+        (meh (c/exec :killall :-9 :nsqd)))
       (info node "nsqd killed")
       (c/su
         (meh (c/exec :killall :nsqlookupd))

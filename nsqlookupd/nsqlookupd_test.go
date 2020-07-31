@@ -2,7 +2,10 @@ package nsqlookupd
 
 import (
 	"fmt"
+	"io/ioutil"
 	"net"
+	"net/http"
+	"os"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -12,10 +15,79 @@ import (
 
 	"github.com/bitly/go-simplejson"
 	"github.com/youzan/go-nsq"
+	"github.com/youzan/nsq/consistence"
 	"github.com/youzan/nsq/internal/clusterinfo"
 	"github.com/youzan/nsq/internal/http_api"
 	"github.com/youzan/nsq/internal/levellogger"
+	nsqdNs "github.com/youzan/nsq/nsqd"
+	nsqdServerNs "github.com/youzan/nsq/nsqdserver"
 )
+
+type testClusterNodeInfo struct {
+	localNsqd *nsqdServerNs.NsqdServer
+	dataPath  string
+}
+
+func mustStartNSQD(opts *nsqdNs.Options) *nsqdServerNs.NsqdServer {
+	if opts.TCPAddress == "" {
+		opts.TCPAddress = "127.0.0.1:4150"
+	}
+	if opts.HTTPAddress == "" {
+		opts.HTTPAddress = "127.0.0.1:4151"
+	}
+	if opts.RPCPort == "" {
+		opts.RPCPort = "4250"
+	}
+	if opts.DataPath == "" {
+		tmpDir, err := ioutil.TempDir("", fmt.Sprintf("nsq-test-%d", time.Now().UnixNano()))
+		if err != nil {
+			panic(err)
+		}
+		opts.DataPath = tmpDir
+	}
+	_, nsqd, _ := nsqdServerNs.NewNsqdServer(opts)
+	nsqdNs.SetLogger(opts.Logger)
+	nsqdNs.NsqLogger().SetLevel(3)
+	return nsqd
+}
+
+func newNsqdNode(t *testing.T, lopts Options) (*nsqdServerNs.NsqdServer, string) {
+	opts := nsqdNs.NewOptions()
+	opts.ClusterID = lopts.ClusterID
+	opts.ClusterLeadershipAddresses = lopts.ClusterLeadershipAddresses
+	opts.Logger = newTestLogger(t)
+	opts.LogLevel = 3
+	opts.MaxBytesPerFile = 1024 * 1024
+	opts.TCPAddress = lopts.TCPAddress
+	opts.HTTPAddress = lopts.HTTPAddress
+	opts.RPCPort = lopts.RPCPort
+	if t == nil {
+		opts.Logger = nil
+	}
+	nsqd := mustStartNSQD(opts)
+	return nsqd, opts.DataPath
+}
+
+func prepareClusterNode(t *testing.T, opts Options) *testClusterNodeInfo {
+	rootPath := "http://127.0.0.1:2379/v2/keys/NSQMetaData/" + opts.ClusterID + "/Topics?recursive=true"
+	req, _ := http.NewRequest("DELETE",
+		rootPath,
+		nil,
+	)
+	rsp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("init cluster failed: %v", err)
+	} else {
+		rsp.Body.Close()
+	}
+
+	var n testClusterNodeInfo
+	n.localNsqd, n.dataPath = newNsqdNode(t, opts)
+	time.Sleep(time.Second)
+	n.localNsqd.Main()
+	time.Sleep(time.Second)
+	return &n
+}
 
 func equal(t *testing.T, act, exp interface{}) {
 	if !reflect.DeepEqual(exp, act) {
@@ -107,6 +179,12 @@ func mustStartLookupd(opts *Options) (*net.TCPAddr, *net.TCPAddr, *NSQLookupd) {
 	opts.TCPAddress = "127.0.0.1:0"
 	opts.HTTPAddress = "127.0.0.1:0"
 	nsqlookupd := New(opts)
+	nsqlookupd.Main()
+	return nsqlookupd.RealTCPAddr(), nsqlookupd.RealHTTPAddr(), nsqlookupd
+}
+
+func mustStartLookupdWithCluster(opts Options) (*net.TCPAddr, *net.TCPAddr, *NSQLookupd) {
+	nsqlookupd := New(&opts)
 	nsqlookupd.Main()
 	return nsqlookupd.RealTCPAddr(), nsqlookupd.RealHTTPAddr(), nsqlookupd
 }
@@ -295,6 +373,87 @@ func TestChannelUnregister(t *testing.T) {
 	equal(t, len(returnedProducers), 1)
 }
 
+func TestChannelRegisterWithTopicUnregister(t *testing.T) {
+	opts := NewOptions()
+	opts.ClusterID = "unit-test-lookup-channel-reg"
+	opts.ClusterLeadershipAddresses = "http://127.0.0.1:2379"
+	opts.TCPAddress = "127.0.0.1:4160"
+	opts.HTTPAddress = "127.0.0.1:4161"
+	opts.RPCPort = "12340"
+	opts.Logger = newTestLogger(t)
+	opts.LogLevel = 3
+	_, httpAddr, nsqlookupd := mustStartLookupdWithCluster(*opts)
+	defer nsqlookupd.Exit()
+	SetLogger(opts.Logger, 3)
+
+	opts.TCPAddress = "127.0.0.1:4150"
+	opts.HTTPAddress = "127.0.0.1:4151"
+	opts.RPCPort = "22341"
+	nsqdNode := prepareClusterNode(t, *opts)
+	time.Sleep(time.Second * 5)
+	defer func() {
+		nsqdNode.localNsqd.Exit()
+		os.RemoveAll(nsqdNode.dataPath)
+	}()
+
+	topics := nsqlookupd.DB.FindTopics()
+	equal(t, len(topics), 0)
+
+	topicName := "channel_register"
+	err := nsqlookupd.coordinator.CreateTopic(topicName, consistence.TopicMetaInfo{
+		PartitionNum: 1,
+		Replica:      1,
+	})
+	equal(t, err, nil)
+	time.Sleep(time.Second * 5)
+	_, d, err := nsqdNode.localNsqd.GetCoord().GetMasterTopicCoordData(topicName)
+	t.Log(d)
+	equal(t, err, nil)
+	equal(t, nsqdNode.localNsqd.GetCoord().GetMyID(), d.GetLeader())
+	localTopic, _ := nsqdNode.localNsqd.GetNsqdInstance().GetExistingTopic(topicName, 0)
+	localTopic.GetChannel("ch1")
+
+	time.Sleep(time.Second)
+	t.Log(nsqlookupd.DB.registrationChannelMap)
+	t.Log(nsqlookupd.DB.registrationNodeMap)
+	topicRegs := nsqlookupd.DB.FindTopicProducers(topicName, "*")
+	equal(t, len(topicRegs), 1)
+
+	channels := nsqlookupd.DB.FindChannelRegs(topicName, "*")
+	equal(t, len(channels), 1)
+
+	_, d, err = nsqdNode.localNsqd.GetCoord().GetMasterTopicCoordData(topicName)
+	t.Log(d)
+	equal(t, err, nil)
+	equal(t, nsqdNode.localNsqd.GetCoord().GetMyID(), d.GetLeader())
+	localTopic, _ = nsqdNode.localNsqd.GetNsqdInstance().GetExistingTopic(topicName, 0)
+	localTopic.DisableForSlave(false)
+
+	nsqdNode.localNsqd.Exit()
+	time.Sleep(time.Second)
+	channels = nsqlookupd.DB.FindChannelRegs(topicName, "*")
+	equal(t, len(channels), 0)
+	time.Sleep(time.Second)
+	topicRegs = nsqlookupd.DB.FindTopicProducers(topicName, "*")
+	equal(t, len(topicRegs), 0)
+
+	endpoint := fmt.Sprintf("http://%s/lookup?topic=%s&access=r", httpAddr, topicName)
+	data, err := API(endpoint)
+	equal(t, err, nil)
+	t.Log(data)
+	returnedProducers, err := data.Get("producers").Array()
+	equal(t, err, nil)
+	equal(t, len(returnedProducers), 1)
+
+	endpoint = fmt.Sprintf("http://%s/lookup?topic=%s&access=w", httpAddr, topicName)
+	data, err = API(endpoint)
+	equal(t, err, nil)
+	t.Log(data)
+	returnedProducers, err = data.Get("producers").Array()
+	equal(t, err, nil)
+	equal(t, len(returnedProducers), 0)
+}
+
 func TestTombstoneRecover(t *testing.T) {
 	opts := NewOptions()
 	opts.Logger = newTestLogger(t)
@@ -406,7 +565,7 @@ func TestInactiveNodes(t *testing.T) {
 	defer nsqlookupd.Exit()
 
 	lookupdHTTPAddrs := []clusterinfo.LookupdAddressDC{
-		{DC: "", Addr: fmt.Sprintf("%s", httpAddr),},
+		{DC: "", Addr: fmt.Sprintf("%s", httpAddr)},
 	}
 
 	topicName := "inactive_nodes"
@@ -441,7 +600,7 @@ func TestTombstonedNodes(t *testing.T) {
 	defer nsqlookupd.Exit()
 
 	lookupdHTTPAddrs := []clusterinfo.LookupdAddressDC{
-		{DC: "", Addr: fmt.Sprintf("%s", httpAddr),},
+		{DC: "", Addr: fmt.Sprintf("%s", httpAddr)},
 	}
 	topicName := "inactive_nodes"
 
@@ -643,7 +802,7 @@ func TestTombstonedOldNodes(t *testing.T) {
 	defer nsqlookupd.Exit()
 
 	lookupdHTTPAddrs := []clusterinfo.LookupdAddressDC{
-		{DC: "", Addr: fmt.Sprintf("%s", httpAddr),},
+		{DC: "", Addr: fmt.Sprintf("%s", httpAddr)},
 	}
 
 	topicName := "inactive_nodes"

@@ -121,7 +121,7 @@ func (ncoord *NsqdCoordinator) internalPutMessageToCluster(topic *nsqd.Topic,
 		if err != nil {
 			coordLog.Infof("topic %v PutMessageToCluster msg %v error: %v", topic.GetFullName(), msg, err)
 			if coord.IsWriteDisabled() {
-				topic.DisableForSlave()
+				topic.DisableForSlave(true)
 			}
 		}
 	}
@@ -275,7 +275,7 @@ func (ncoord *NsqdCoordinator) PutMessagesToCluster(topic *nsqd.Topic,
 		if err != nil {
 			coordLog.Infof("topic %v PutMessagesToCluster error: %v", topic.GetFullName(), err)
 			if coord.IsWriteDisabled() {
-				topic.DisableForSlave()
+				topic.DisableForSlave(true)
 			}
 		}
 	}
