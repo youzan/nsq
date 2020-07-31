@@ -18,8 +18,9 @@ const (
 )
 
 var (
-	serverPubFailedCnt  int64
-	testPopQueueTimeout int32
+	serverPubFailedCnt    int64
+	testPopQueueTimeout   int32
+	testPutMessageTimeout int32
 )
 
 func incrServerPubFailed() {
@@ -436,6 +437,9 @@ func (c *context) internalPubLoop(topic *nsqd.Topic) {
 					pubInfoList = append(pubInfoList, info)
 				}
 				continue
+			}
+			if tcnt := atomic.LoadInt32(&testPutMessageTimeout); tcnt >= 1 {
+				time.Sleep(time.Second * time.Duration(tcnt))
 			}
 			var retErr error
 			if c.checkForMasterWrite(topicName, partition) {

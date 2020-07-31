@@ -2471,7 +2471,8 @@ func (c *Channel) peekAndReqDelayedMessages(tnow int64, delayedQueue *DelayQueue
 						// new leader read from disk queue (which will be treated as non delayed message)
 						if bytes.Equal(oldMsg2.Body, m.Body) {
 							// just fin it
-							nsqLog.Logf("old msg %v in flight confirmed since in delayed queue",
+							nsqLog.LogDebugf("topic %s channel %s old msg %v in flight confirmed since in delayed queue",
+								c.GetTopicName(), c.GetName(),
 								PrintMessage(oldMsg2))
 							c.ConfirmBackendQueue(oldMsg2)
 						}

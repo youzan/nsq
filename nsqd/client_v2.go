@@ -125,7 +125,7 @@ type ClientV2 struct {
 	tlsConfig   *tls.Config
 	EnableTrace bool
 
-	PubTimeout         *time.Timer
+	//PubTimeout         *time.Timer
 	remoteAddr         string
 	subErrCnt          int64
 	lastConsumeTimeout int64
@@ -177,7 +177,7 @@ func NewClientV2(id int64, conn net.Conn, opts *Options, tls *tls.Config) *Clien
 		// heartbeats are client configurable but default to 30s
 		heartbeatInterval: int64(opts.ClientTimeout / 2),
 		tlsConfig:         tls,
-		PubTimeout:        time.NewTimer(time.Second * 5),
+		//PubTimeout:        time.NewTimer(time.Second * 5),
 	}
 	if c.outputBufferTimeout > int64(opts.MaxOutputBufferTimeout) {
 		c.outputBufferTimeout = int64(opts.MaxOutputBufferTimeout)

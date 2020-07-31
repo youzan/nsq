@@ -25,7 +25,6 @@ import (
 const (
 	MAX_TOPIC_PARTITION    = 1023
 	HISTORY_STAT_FILE_NAME = ".stat.history.dat"
-	pubQueue               = 500
 	slowCost               = time.Millisecond * 50
 )
 
@@ -34,6 +33,7 @@ var (
 	ErrWriteOffsetMismatch        = errors.New("write offset mismatch")
 	ErrOperationInvalidState      = errors.New("the operation is not allowed under current state")
 	ErrMessageInvalidDelayedState = errors.New("the message is invalid for delayed")
+	PubQueue                      = 500
 )
 
 func writeMessageToBackend(writeExt bool, buf *bytes.Buffer, msg *Message, bq *diskQueueWriter) (BackendOffset, int32, diskQueueEndInfo, error) {
@@ -180,7 +180,7 @@ func NewTopicWithExt(topicName string, part int, ext bool, ordered bool, opt *Op
 		putBuffer:      bytes.Buffer{},
 		nsqdNotify:     notify,
 		writeDisabled:  writeDisabled,
-		pubWaitingChan: make(PubInfoChan, pubQueue),
+		pubWaitingChan: make(PubInfoChan, PubQueue),
 		quitChan:       make(chan struct{}),
 		pubLoopFunc:    loopFunc,
 		metaStorage:    metaStorage,

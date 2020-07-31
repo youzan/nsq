@@ -2782,6 +2782,93 @@ func TestTcpPubPopQueueTimeout(t *testing.T) {
 	test.Equal(t, data[:], []byte("OK"))
 }
 
+func TestTcpPubWaitQueueFullAndTimeout(t *testing.T) {
+	nsqdNs.PubQueue = 5
+	atomic.StoreInt32(&testPutMessageTimeout, int32(3+pubWaitTimeout.Seconds()))
+	defer func() {
+		atomic.StoreInt32(&testPutMessageTimeout, 0)
+		nsqdNs.PubQueue = 500
+	}()
+	opts := nsqdNs.NewOptions()
+	opts.Logger = newTestLogger(t)
+	opts.LogLevel = 3
+	opts.MaxMsgSize = 100
+	opts.MaxBodySize = 1000
+	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
+	defer os.RemoveAll(opts.DataPath)
+	defer nsqdServer.Exit()
+
+	topicName := "test_tcp_pub_timeout" + strconv.Itoa(int(time.Now().Unix()))
+	nsqd.GetTopicIgnPart(topicName).GetChannel("ch")
+
+	timeoutCnt := int32(0)
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			conn, err := mustConnectNSQD(tcpAddr)
+			test.Equal(t, err, nil)
+			defer conn.Close()
+			identify(t, conn, nil, frameTypeResponse)
+			time.Sleep(time.Millisecond)
+			s := time.Now()
+			cmd := nsq.Publish(topicName, []byte("12345"))
+			cmd.WriteTo(conn)
+			resp, _ := nsq.ReadResponse(conn)
+			frameType, data, _ := nsq.UnpackResponse(resp)
+			cost := time.Since(s)
+			t.Logf("frameType: %d, data: %s, cost: %s", frameType, data, cost)
+			test.Equal(t, true, cost >= pubWaitTimeout)
+			if frameType == 0 {
+				return
+			}
+			atomic.AddInt32(&timeoutCnt, 1)
+			test.Equal(t, frameType, frameTypeError)
+			timeoutErr := strings.Contains(string(data), ErrPubToWaitTimeout.Error()) || strings.Contains(string(data), ErrPubPopQueueTimeout.Error())
+			test.Equal(t, true, timeoutErr)
+		}()
+	}
+	wg.Wait()
+	t.Logf("timeout pub cnt : %v", timeoutCnt)
+	test.Equal(t, true, timeoutCnt >= 15)
+
+	atomic.StoreInt32(&testPutMessageTimeout, int32(pubWaitTimeout.Seconds()-1))
+	timeoutCnt = 0
+
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			conn, err := mustConnectNSQD(tcpAddr)
+			test.Equal(t, err, nil)
+			defer conn.Close()
+			identify(t, conn, nil, frameTypeResponse)
+			for j := 0; j < 5; j++ {
+				time.Sleep(time.Millisecond)
+				s := time.Now()
+				cmd := nsq.Publish(topicName, []byte("12345"))
+				cmd.WriteTo(conn)
+				resp, _ := nsq.ReadResponse(conn)
+				frameType, data, _ := nsq.UnpackResponse(resp)
+				cost := time.Since(s)
+				t.Logf("frameType: %d, data: %s, cost: %s", frameType, data, cost)
+				test.Equal(t, true, int32(cost.Seconds()) >= atomic.LoadInt32(&testPutMessageTimeout))
+				if frameType == 0 {
+					continue
+				}
+				atomic.AddInt32(&timeoutCnt, 1)
+				test.Equal(t, frameType, frameTypeError)
+				timeoutErr := strings.Contains(string(data), ErrPubToWaitTimeout.Error()) || strings.Contains(string(data), ErrPubPopQueueTimeout.Error())
+				test.Equal(t, true, timeoutErr)
+			}
+		}()
+	}
+	wg.Wait()
+	t.Logf("timeout pub cnt : %v", timeoutCnt)
+	test.Equal(t, int32(0), timeoutCnt)
+}
+
 func TestTcpMpubExt(t *testing.T) {
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
