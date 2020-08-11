@@ -1,6 +1,5 @@
 language: go
 go:
-  - 1.12.x
   - 1.13.x
 env:
   - GOARCH=amd64 TEST_RACE=false
@@ -9,8 +8,6 @@ env:
   - GOARCH=386 TEST_RACE=true
 sudo: false
 script:
-  - curl https://raw.githubusercontent.com/golang/dep/master/install.sh | sh
-  - dep ensure
   - travis_wait 25 ./test.sh
 notifications:
   email: false
