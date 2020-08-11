@@ -137,6 +137,10 @@ github.com/youzan/go-nsq v1.6.1-HA.0.20200730114650-586bae88cb96 h1:P6tLi4W30noy
 github.com/youzan/go-nsq v1.6.1-HA.0.20200730114650-586bae88cb96/go.mod h1:ZWS/W9xoZmE6VJnHLu2AfRaBY0DdhQrpDysAHYSsGp4=
 github.com/youzan/go-nsq v1.7.1-HA h1:HgZE+vk0B+JT6zeNdrucnqoZKQazX56z9sD/lKvISZY=
 github.com/youzan/go-nsq v1.7.1-HA/go.mod h1:ZWS/W9xoZmE6VJnHLu2AfRaBY0DdhQrpDysAHYSsGp4=
+github.com/youzan/go-nsq v1.7.1-HA.0.20200731113444-75b5465d8a91 h1:5Spnm55IFRDmtMVXkpLiNjoCHNTq/el9oAQ5s7LBiZo=
+github.com/youzan/go-nsq v1.7.1-HA.0.20200731113444-75b5465d8a91/go.mod h1:ZWS/W9xoZmE6VJnHLu2AfRaBY0DdhQrpDysAHYSsGp4=
+github.com/youzan/go-nsq v1.7.2-HA h1:6y4vjZAIlOc6FPBwMLUL4bh8k1c0Wu0LG2dBIowgCtQ=
+github.com/youzan/go-nsq v1.7.2-HA/go.mod h1:ZWS/W9xoZmE6VJnHLu2AfRaBY0DdhQrpDysAHYSsGp4=
 golang.org/x/crypto v0.0.0-20181127143415-eb0de9b17e85/go.mod h1:6SG95UA2DQfeDnfUPMdvaQW0Q7yPrPDi9nlGo2tz2b4=
 golang.org/x/crypto v0.0.0-20190308221718-c2843e01d9a2/go.mod h1:djNgcEr1/C05ACkg1iLfiJU5Ep61QUkGW8qpdssI0+w=
 golang.org/x/exp v0.0.0-20190121172915-509febef88a4/go.mod h1:CJ0aWSM057203Lf6IL+f9T1iT9GByDxfZKAQTCR3kQA=
