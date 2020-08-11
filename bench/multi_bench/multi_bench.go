@@ -28,28 +28,29 @@ import (
 var (
 	flagSet = flag.NewFlagSet("bench", flag.ExitOnError)
 
-	runfor          = flagSet.Duration("runfor", 10*time.Second, "duration of time to run")
-	sleepfor        = flagSet.Duration("sleepfor", 1*time.Second, " time to sleep between pub")
-	lookupAddress   = flagSet.String("lookupd-http-address", "127.0.0.1:4161", "<addr>:<port> to connect to nsqlookupd")
-	topics          = app.StringArray{}
-	size            = flagSet.Int("size", 100, "size of messages")
-	batchSize       = flagSet.Int("batch-size", 10, "batch size of messages")
-	deadline        = flagSet.String("deadline", "", "deadline to start the benchmark run")
-	concurrency     = flagSet.Int("c", 100, "concurrency of goroutine")
-	pubPoolSize     = flagSet.Int("pub-pool", 1, "producer pool size")
-	benchCase       = flagSet.String("bench-case", "simple", "which bench should run (simple/benchpub/benchsub/benchdelaysub/checkdata/benchlookup/benchreg/consumeoffset/checkdata2)")
-	pipelineSize    = flagSet.Int("pipeline", 0, "pipeline size")
-	channelNum      = flagSet.Int("ch_num", 1, "the channel number under each topic")
-	ephemeral       = flagSet.Bool("ephemeral", false, "use ephemeral channel for test")
-	trace           = flagSet.Bool("trace", false, "enable the trace of pub and sub")
-	ordered         = flagSet.Bool("ordered", false, "enable ordered sub")
-	retryBackground = flagSet.Bool("retry-background", false, "retry pub in background")
-	checkMsgSize    = flagSet.Bool("check-size", false, "enable check the body size of sub")
-	topicListFile   = flagSet.String("topic-list-file", "", "the file that contains one topic each line")
-	maxDelaySecs    = flagSet.Int("max-delaysec", 30, "the max delayed message in second")
-	delayPercent    = flagSet.Int("delay-percent", 371, "the percent of delayed")
-	useSinglePubMgr = flagSet.Bool("single-pubmgr", false, "force use singe pub manager")
-	debugLog        = flagSet.Bool("debuglog", false, "log debug details")
+	runfor            = flagSet.Duration("runfor", 10*time.Second, "duration of time to run")
+	sleepfor          = flagSet.Duration("sleepfor", 1*time.Second, " time to sleep between pub")
+	lookupAddress     = flagSet.String("lookupd-http-address", "127.0.0.1:4161", "<addr>:<port> to connect to nsqlookupd")
+	topics            = app.StringArray{}
+	size              = flagSet.Int("size", 100, "size of messages")
+	batchSize         = flagSet.Int("batch-size", 10, "batch size of messages")
+	deadline          = flagSet.String("deadline", "", "deadline to start the benchmark run")
+	concurrency       = flagSet.Int("c", 100, "concurrency of goroutine")
+	pubPoolSize       = flagSet.Int("pub-pool", 1, "producer pool size")
+	benchCase         = flagSet.String("bench-case", "simple", "which bench should run (simple/benchpub/benchsub/benchdelaysub/checkdata/benchlookup/benchreg/consumeoffset/checkdata2)")
+	pipelineSize      = flagSet.Int("pipeline", 0, "pipeline size")
+	channelNum        = flagSet.Int("ch_num", 1, "the channel number under each topic")
+	ephemeral         = flagSet.Bool("ephemeral", false, "use ephemeral channel for test")
+	trace             = flagSet.Bool("trace", false, "enable the trace of pub and sub")
+	ordered           = flagSet.Bool("ordered", false, "enable ordered sub")
+	retryBackground   = flagSet.Bool("retry-background", false, "retry pub in background")
+	checkMsgSize      = flagSet.Bool("check-size", false, "enable check the body size of sub")
+	topicListFile     = flagSet.String("topic-list-file", "", "the file that contains one topic each line")
+	maxDelaySecs      = flagSet.Int("max-delaysec", 30, "the max delayed message in second")
+	delayPercent      = flagSet.Int("delay-percent", 371, "the percent of delayed")
+	useSinglePubMgr   = flagSet.Bool("single-pubmgr", false, "force use singe pub manager")
+	debugLog          = flagSet.Bool("debuglog", false, "log debug details")
+	showProducerStats = flagSet.Bool("show-producer-stats", false, "log producer stats period")
 )
 
 func getPartitionID(msgID nsq.NewMessageID) string {
@@ -132,7 +133,7 @@ func printTotalQPSAndLatencyStats(start time.Time, counter *int64, latency bool)
 	}
 }
 
-func printPeriodQPSAndLatencyStats(start time.Time, counter *int64, latency bool, done chan int) {
+func printPeriodQPSAndLatencyStats(pubMgr *nsq.TopicProducerMgr, start time.Time, counter *int64, latency bool, done chan int) {
 	go func() {
 		prevMsgCount := int64(0)
 		prevStart := start
@@ -157,6 +158,9 @@ func printPeriodQPSAndLatencyStats(start time.Time, counter *int64, latency bool
 
 			if latency {
 				printLatencyStats()
+			}
+			if pubMgr != nil && *showProducerStats {
+				log.Printf("producer stats: %v", pubMgr.Stat())
 			}
 		}
 	}()
@@ -273,7 +277,7 @@ func startBenchPub(msg []byte, batch [][]byte) {
 	start := time.Now()
 	close(goChan)
 	done := make(chan int)
-	printPeriodQPSAndLatencyStats(start, &currentMsgCount, true, done)
+	printPeriodQPSAndLatencyStats(pubMgr, start, &currentMsgCount, true, done)
 	wg.Wait()
 
 	close(done)
@@ -322,7 +326,7 @@ func startBenchSub() {
 	close(quitChan)
 
 	done := make(chan int)
-	printPeriodQPSAndLatencyStats(start, &totalSubMsgCount, false, done)
+	printPeriodQPSAndLatencyStats(nil, start, &totalSubMsgCount, false, done)
 
 	wg.Wait()
 
@@ -1182,6 +1186,18 @@ func pubWorker(td time.Duration, globalPubMgr *nsq.TopicProducerMgr, topicName s
 	mutex.Unlock()
 	traceIDs := make([]uint64, len(batch))
 
+	go func() {
+		if *showProducerStats {
+			for {
+				time.Sleep(time.Second * 5)
+				log.Printf("current producer stats: %v", pubMgr.Stat())
+				s := time.Now()
+				if s.After(endTime) {
+					return
+				}
+			}
+		}
+	}()
 	for {
 		s := time.Now()
 		if s.After(endTime) {
