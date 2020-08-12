@@ -46,21 +46,12 @@ func mustStartNSQD(opts *nsqdNs.Options) *nsqdServerNs.NsqdServer {
 		opts.DataPath = tmpDir
 	}
 	_, nsqd, _ := nsqdServerNs.NewNsqdServer(opts)
-	nsqdNs.SetLogger(opts.Logger)
-	nsqdNs.NsqLogger().SetLevel(3)
+	//nsqdNs.SetLogger(opts.Logger)
+	//nsqdNs.NsqLogger().SetLevel(3)
 	return nsqd
 }
 
-func newNsqdNode(t *testing.T, lopts Options) (*nsqdServerNs.NsqdServer, string) {
-	opts := nsqdNs.NewOptions()
-	opts.ClusterID = lopts.ClusterID
-	opts.ClusterLeadershipAddresses = lopts.ClusterLeadershipAddresses
-	opts.Logger = newTestLogger(t)
-	opts.LogLevel = 3
-	opts.MaxBytesPerFile = 1024 * 1024
-	opts.TCPAddress = lopts.TCPAddress
-	opts.HTTPAddress = lopts.HTTPAddress
-	opts.RPCPort = lopts.RPCPort
+func newNsqdNode(t *testing.T, opts *nsqdNs.Options) (*nsqdServerNs.NsqdServer, string) {
 	if t == nil {
 		opts.Logger = nil
 	}
@@ -68,7 +59,7 @@ func newNsqdNode(t *testing.T, lopts Options) (*nsqdServerNs.NsqdServer, string)
 	return nsqd, opts.DataPath
 }
 
-func prepareClusterNode(t *testing.T, opts Options) *testClusterNodeInfo {
+func prepareClusterNode(t *testing.T, lopts *Options, opts *nsqdNs.Options) (*net.TCPAddr, *NSQLookupd, *testClusterNodeInfo) {
 	rootPath := "http://127.0.0.1:2379/v2/keys/NSQMetaData/" + opts.ClusterID + "/Topics?recursive=true"
 	req, _ := http.NewRequest("DELETE",
 		rootPath,
@@ -82,11 +73,17 @@ func prepareClusterNode(t *testing.T, opts Options) *testClusterNodeInfo {
 	}
 
 	var n testClusterNodeInfo
+
 	n.localNsqd, n.dataPath = newNsqdNode(t, opts)
+	_, httpAddr, nsqlookupd := mustStartLookupdWithCluster(*lopts)
 	time.Sleep(time.Second)
-	n.localNsqd.Main()
+
+	err = n.localNsqd.Main()
+	if err != nil {
+		t.Fatalf("starting nsqd err: %s", err)
+	}
 	time.Sleep(time.Second)
-	return &n
+	return httpAddr, nsqlookupd, &n
 }
 
 func equal(t *testing.T, act, exp interface{}) {
@@ -374,25 +371,31 @@ func TestChannelUnregister(t *testing.T) {
 }
 
 func TestChannelRegisterWithTopicUnregister(t *testing.T) {
-	opts := NewOptions()
-	opts.ClusterID = "unit-test-lookup-channel-reg"
-	opts.ClusterLeadershipAddresses = "http://127.0.0.1:2379"
-	opts.TCPAddress = "127.0.0.1:4160"
-	opts.HTTPAddress = "127.0.0.1:4161"
-	opts.RPCPort = "12340"
+	lopts := NewOptions()
+	lopts.ClusterID = "unit-test-lookup-channel-reg"
+	lopts.ClusterLeadershipAddresses = "http://127.0.0.1:2379"
+	lopts.TCPAddress = "127.0.0.1:4160"
+	lopts.HTTPAddress = "127.0.0.1:4161"
+	lopts.RPCPort = "12340"
+	lopts.Logger = newTestLogger(t)
+	lopts.LogLevel = 3
+	SetLogger(lopts.Logger, 3)
+
+	opts := nsqdNs.NewOptions()
+	opts.ClusterID = lopts.ClusterID
+	opts.ClusterLeadershipAddresses = lopts.ClusterLeadershipAddresses
 	opts.Logger = newTestLogger(t)
 	opts.LogLevel = 3
-	_, httpAddr, nsqlookupd := mustStartLookupdWithCluster(*opts)
-	defer nsqlookupd.Exit()
-	SetLogger(opts.Logger, 3)
-
+	opts.MaxBytesPerFile = 1024 * 1024
 	opts.TCPAddress = "127.0.0.1:4150"
 	opts.HTTPAddress = "127.0.0.1:4151"
 	opts.RPCPort = "22341"
-	nsqdNode := prepareClusterNode(t, *opts)
+
+	httpAddr, nsqlookupd, nsqdNode := prepareClusterNode(t, lopts, opts)
 	time.Sleep(time.Second * 5)
 	defer func() {
 		nsqdNode.localNsqd.Exit()
+		nsqlookupd.Exit()
 		os.RemoveAll(nsqdNode.dataPath)
 	}()
 
@@ -414,8 +417,8 @@ func TestChannelRegisterWithTopicUnregister(t *testing.T) {
 	localTopic.GetChannel("ch1")
 
 	time.Sleep(time.Second)
-	t.Log(nsqlookupd.DB.registrationChannelMap)
-	t.Log(nsqlookupd.DB.registrationNodeMap)
+	//t.Log(nsqlookupd.DB.registrationChannelMap)
+	//t.Log(nsqlookupd.DB.registrationNodeMap)
 	topicRegs := nsqlookupd.DB.FindTopicProducers(topicName, "*")
 	equal(t, len(topicRegs), 1)
 

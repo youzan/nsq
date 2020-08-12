@@ -175,9 +175,11 @@ func (nlcoord *NsqLookupCoordinator) Stop() {
 	nlcoord.leadership.Stop()
 	// TODO: exit should avoid while test.
 	nlcoord.nsqlookupRpcServer.stop()
+	nlcoord.rpcMutex.RLock()
 	for _, c := range nlcoord.nsqdRpcClients {
 		c.Close()
 	}
+	nlcoord.rpcMutex.RUnlock()
 	nlcoord.wg.Wait()
 	coordLog.Infof("nsqlookup coordinator stopped.")
 }

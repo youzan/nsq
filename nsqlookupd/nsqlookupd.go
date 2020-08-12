@@ -2,7 +2,6 @@ package nsqlookupd
 
 import (
 	"net"
-	"os"
 	"strconv"
 	"sync"
 	"time"
@@ -53,14 +52,14 @@ func getIPv4ForInterfaceName(ifname string) string {
 	return ""
 }
 
-func (l *NSQLookupd) Main() {
+func (l *NSQLookupd) Main() error {
 	ctx := &Context{l}
 
 	nsqlookupLog.Logf(version.String("nsqlookupd"))
 	tcpListener, err := net.Listen("tcp", l.opts.TCPAddress)
 	if err != nil {
 		nsqlookupLog.LogErrorf("FATAL: listen (%s) failed - %s", l.opts.TCPAddress, err)
-		os.Exit(1)
+		return err
 	}
 	l.Lock()
 	l.tcpListener = tcpListener
@@ -90,7 +89,7 @@ func (l *NSQLookupd) Main() {
 		}
 		if node.NodeIP == "0.0.0.0" || node.NodeIP == "" {
 			nsqlookupLog.LogErrorf("can not decide the broadcast ip: %v", node.NodeIP)
-			os.Exit(1)
+			return err
 		}
 		nsqlookupLog.Logf("Start with broadcast ip:%s", node.NodeIP)
 		node.RpcPort = l.opts.RPCPort
@@ -103,12 +102,12 @@ func (l *NSQLookupd) Main() {
 			coordOpts.BalanceStart, err = strconv.Atoi(l.opts.BalanceInterval[0])
 			if err != nil {
 				nsqlookupLog.LogErrorf("invalid balance interval: %v", err)
-				os.Exit(1)
+				return err
 			}
 			coordOpts.BalanceEnd, err = strconv.Atoi(l.opts.BalanceInterval[1])
 			if err != nil {
 				nsqlookupLog.LogErrorf("invalid balance interval: %v", err)
-				os.Exit(1)
+				return err
 			}
 		}
 
@@ -120,13 +119,13 @@ func (l *NSQLookupd) Main() {
 		leadership, err := consistence.NewNsqLookupdEtcdMgr(l.opts.ClusterLeadershipAddresses, l.opts.ClusterLeadershipUsername, l.opts.ClusterLeadershipPassword)
 		if err != nil {
 			nsqlookupLog.LogErrorf("FATAL: start coordinator failed - %s", err)
-			os.Exit(1)
+			return err
 		}
 		l.coordinator.SetLeadershipMgr(leadership)
 		err = l.coordinator.Start()
 		if err != nil {
 			nsqlookupLog.LogErrorf("FATAL: start coordinator failed - %s", err)
-			os.Exit(1)
+			return err
 		}
 	} else {
 		nsqlookupLog.Logf("lookup start without the coordinator enabled.")
@@ -140,7 +139,7 @@ func (l *NSQLookupd) Main() {
 	httpListener, err := net.Listen("tcp", l.opts.HTTPAddress)
 	if err != nil {
 		nsqlookupLog.LogErrorf("FATAL: listen (%s) failed - %s", l.opts.HTTPAddress, err)
-		os.Exit(1)
+		return err
 	}
 	l.Lock()
 	l.httpListener = httpListener
@@ -149,6 +148,7 @@ func (l *NSQLookupd) Main() {
 	l.waitGroup.Wrap(func() {
 		http_api.Serve(httpListener, httpServer, "HTTP", l.opts.Logger)
 	})
+	return nil
 }
 
 func (l *NSQLookupd) RealTCPAddr() *net.TCPAddr {
