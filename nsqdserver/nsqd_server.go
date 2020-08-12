@@ -6,7 +6,6 @@ import (
 	"errors"
 	"io/ioutil"
 	"net"
-	"os"
 	"strconv"
 	"sync/atomic"
 
@@ -201,7 +200,7 @@ func (s *NsqdServer) Exit() {
 	nsqd.NsqLogger().Logf("nsqd server stopped.")
 }
 
-func (s *NsqdServer) Main() {
+func (s *NsqdServer) Main() error {
 	var httpListener net.Listener
 	var httpsListener net.Listener
 
@@ -209,7 +208,7 @@ func (s *NsqdServer) Main() {
 		err := s.ctx.nsqdCoord.Start()
 		if err != nil {
 			nsqd.NsqLogger().LogErrorf("FATAL: start coordinator failed - %v", err)
-			os.Exit(1)
+			return err
 		}
 	}
 
@@ -217,7 +216,7 @@ func (s *NsqdServer) Main() {
 	tcpListener, err := net.Listen("tcp", opts.TCPAddress)
 	if err != nil {
 		nsqd.NsqLogger().LogErrorf("FATAL: listen (%s) failed - %s", opts.TCPAddress, err)
-		os.Exit(1)
+		return err
 	}
 	s.tcpListener = tcpListener
 	s.ctx.tcpAddr = tcpListener.Addr().(*net.TCPAddr)
@@ -233,7 +232,7 @@ func (s *NsqdServer) Main() {
 		httpsListener, err = tls.Listen("tcp", opts.HTTPSAddress, s.ctx.GetTlsConfig())
 		if err != nil {
 			nsqd.NsqLogger().LogErrorf("FATAL: listen (%s) failed - %s", opts.HTTPSAddress, err)
-			os.Exit(1)
+			return err
 		}
 		s.httpsListener = httpsListener
 		httpsServer := newHTTPServer(s.ctx, true, true)
@@ -244,7 +243,7 @@ func (s *NsqdServer) Main() {
 	httpListener, err = net.Listen("tcp", opts.HTTPAddress)
 	if err != nil {
 		nsqd.NsqLogger().LogErrorf("FATAL: listen (%s) failed - %s", opts.HTTPAddress, err)
-		os.Exit(1)
+		return err
 	}
 	s.httpListener = httpListener
 	s.ctx.httpAddr = httpListener.Addr().(*net.TCPAddr)
@@ -262,4 +261,5 @@ func (s *NsqdServer) Main() {
 	})
 
 	s.waitGroup.Wrap(s.statsdLoop)
+	return nil
 }

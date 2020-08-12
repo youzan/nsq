@@ -283,7 +283,10 @@ func (p *program) Start() error {
 	nsqd.LoadMetadata(initDisabled)
 	nsqd.NotifyPersistMetadata()
 
-	nsqdServer.Main()
+	err = nsqdServer.Main()
+	if err != nil {
+		return err
+	}
 	p.nsqdServer = nsqdServer
 	return nil
 }

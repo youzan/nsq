@@ -61,7 +61,7 @@ func main() {
 	defer glog.Flush()
 	prg := &program{}
 	if err := svc.Run(prg, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGQUIT, syscall.SIGINT); err != nil {
-		log.Fatal(err)
+		log.Panic(err)
 	}
 }
 
@@ -105,7 +105,10 @@ func (p *program) Start() error {
 
 	daemon := nsqlookupd.New(opts)
 
-	daemon.Main()
+	err := daemon.Main()
+	if err != nil {
+		return err
+	}
 	p.nsqlookupd = daemon
 	return nil
 }
