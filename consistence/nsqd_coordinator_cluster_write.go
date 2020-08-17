@@ -1167,9 +1167,11 @@ func (ncoord *NsqdCoordinator) FinishMessageToCluster(channel *nsqd.Channel, cli
 			rpcErr = c.UpdateChannelOffset(&tcData.topicLeaderSession, &tcData.topicInfo, channel.GetName(), syncOffset)
 		} else {
 			if delayedMsg {
-				ts, cursorList, cntList, channelCntList := channel.GetDelayedQueueConsumedDetails()
-				rpcErr = c.UpdateDelayedQueueState(&tcData.topicLeaderSession, &tcData.topicInfo,
-					channel.GetName(), ts, cursorList, cntList, channelCntList, false)
+				// we ignore delayed queue offset sync here to avoid the GetDelayedQueueConsumedDetails (may slow) on
+				// large boltdb. since it will be synced in period, we are safe to ignore here (may cause some duplicated)
+				//ts, cursorList, cntList, channelCntList := channel.GetDelayedQueueConsumedDetails()
+				//rpcErr = c.UpdateDelayedQueueState(&tcData.topicLeaderSession, &tcData.topicInfo,
+				//	channel.GetName(), ts, cursorList, cntList, channelCntList, false)
 			} else {
 				c.NotifyUpdateChannelOffset(&tcData.topicLeaderSession, &tcData.topicInfo, channel.GetName(), syncOffset)
 			}

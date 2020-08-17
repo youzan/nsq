@@ -1205,6 +1205,7 @@ func (q *DelayQueue) IsChannelMessageDelayed(msgID MessageID, ch string) bool {
 	return found
 }
 
+// TODO: benchmark this
 func (q *DelayQueue) GetOldestConsumedState(chList []string, includeOthers bool) (RecentKeyList, map[int]uint64, map[string]uint64) {
 	db := q.getStore()
 	prefixList := make([][]byte, 0, len(chList)+2)

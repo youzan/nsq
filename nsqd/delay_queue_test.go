@@ -886,3 +886,7 @@ func TestDelayQueueReopenWithEmpty(t *testing.T) {
 	test.Equal(t, "body_new2", string(ret[0].Body))
 	test.Equal(t, "body_new2", string(ret[1].Body))
 }
+
+func BenchmarkGetOldestConsumedState(b *testing.B) {
+
+}
