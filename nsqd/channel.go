@@ -861,10 +861,15 @@ func (c *Channel) ConfirmDelayedMessage(msg *Message) (BackendOffset, int64, boo
 	needNotify := false
 	curConfirm := c.GetConfirmed()
 	if msg.DelayedOrigID > 0 && msg.DelayedType == ChannelDelayed && c.GetDelayedQueue() != nil {
+		tn := time.Now()
 		c.GetDelayedQueue().ConfirmedMessage(msg)
+		cost := time.Since(tn)
+		if cost > time.Second {
+			nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "FIN_DELAYED_SLOW", msg.TraceID, msg, "", cost.Nanoseconds())
+		}
 		c.delayedConfirmedMsgs[msg.ID] = *msg
 		if c.isTracedOrDebugTraceLog(msg) {
-			nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "FIN_DELAYED", msg.TraceID, msg, "", 0)
+			nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "FIN_DELAYED", msg.TraceID, msg, "", cost.Nanoseconds())
 		}
 		if atomic.AddInt64(&c.deferredFromDelay, -1) <= 0 {
 			c.nsqdNotify.NotifyScanDelayed(c)
@@ -1013,6 +1018,7 @@ func (c *Channel) FinishMessageForce(clientID int64, clientAddr string,
 // FinishMessage successfully discards an in-flight message
 func (c *Channel) internalFinishMessage(clientID int64, clientAddr string,
 	id MessageID, forceFin bool) (BackendOffset, int64, bool, *Message, error) {
+	now := time.Now()
 	c.inFlightMutex.Lock()
 	defer c.inFlightMutex.Unlock()
 	if forceFin {
@@ -1027,7 +1033,6 @@ func (c *Channel) internalFinishMessage(clientID int64, clientAddr string,
 			clientID)
 		return 0, 0, false, nil, err
 	}
-	now := time.Now()
 	ackCost := now.UnixNano() - msg.deliveryTS.UnixNano()
 	isOldDeferred := msg.IsDeferred()
 	if msg.TraceID != 0 || c.IsTraced() || nsqLog.Level() >= levellogger.LOG_DETAIL {
