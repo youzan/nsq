@@ -887,6 +887,49 @@ func TestDelayQueueReopenWithEmpty(t *testing.T) {
 	test.Equal(t, "body_new2", string(ret[1].Body))
 }
 
-func BenchmarkGetOldestConsumedState(b *testing.B) {
+func TestGetOldestConsumedStateCostOnLarge(t *testing.T) {
+	tmpDir, err := ioutil.TempDir("", fmt.Sprintf("nsq-test-delay-%d", time.Now().UnixNano()))
+	if err != nil {
+		panic(err)
+	}
+	defer os.RemoveAll(tmpDir)
 
+	opts := NewOptions()
+	opts.SyncEvery = 10000
+
+	dq, _ := NewDelayQueue("test", 0, tmpDir, opts, nil, false)
+	defer dq.Close()
+	cnt := 1000
+	for i := 0; i < cnt; i++ {
+		msg := NewMessage(0, []byte("body"))
+		msg.DelayedType = ChannelDelayed
+		msg.DelayedTs = time.Now().Add(time.Second).UnixNano()
+		msg.DelayedChannel = "test"
+		msg.DelayedOrigID = MessageID(i + 1)
+		dq.PutDelayMessage(msg)
+
+		msg = NewMessage(0, []byte("body"))
+		msg.DelayedType = ChannelDelayed
+		msg.DelayedTs = time.Now().Add(time.Second).UnixNano()
+		msg.DelayedChannel = "test2"
+		msg.DelayedOrigID = MessageID(i + 1)
+		dq.PutDelayMessage(msg)
+	}
+	dq.ForceFlush()
+
+	ret := make([]Message, cnt/10)
+	s := time.Now()
+	n, _ := dq.PeekRecentChannelTimeout(time.Now().UnixNano(), ret, "test")
+
+	cost1 := time.Since(s)
+	for _, m := range ret[:n] {
+		m.DelayedOrigID = m.ID
+		dq.ConfirmedMessage(&m)
+	}
+	cost2 := time.Since(s)
+	for i := 0; i < cnt; i++ {
+		dq.GetOldestConsumedState([]string{"test"}, true)
+	}
+	cost3 := time.Since(s)
+	t.Logf("cost: %s-%s, %s", cost1, cost2, cost3)
 }
