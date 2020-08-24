@@ -1712,18 +1712,22 @@ func (c *Channel) drainChannelWaiting(clearConfirmed bool, lastDataNeedRead *boo
 		}
 	}
 	reqCnt := len(c.waitingRequeueMsgs)
-	for k := range c.waitingRequeueMsgs {
+	delayed := 0
+	for k, m := range c.waitingRequeueMsgs {
+		if m.DelayedType == ChannelDelayed {
+			delayed++
+		}
 		c.waitingRequeueMsgs[k] = nil
 		delete(c.waitingRequeueMsgs, k)
 	}
 
-	nsqLog.Logf("drained channel %v waiting req %v, %v, delay: %v", c.GetName(), reqCnt,
+	nsqLog.Logf("drained channel %v waiting req %v, %v, delay: %v, %v", c.GetName(), reqCnt,
 		len(c.waitingRequeueChanMsgs),
-		atomic.LoadInt64(&c.deferredFromDelay))
+		atomic.LoadInt64(&c.deferredFromDelay), delayed)
 	// should in inFlightMutex to avoid concurrent with confirming from client
 	// we can not set it to 0, because there may be a message read out from req chan but still not
 	// begin start inflight.
-	atomic.AddInt64(&c.deferredFromDelay, -1*int64(reqCnt))
+	atomic.AddInt64(&c.deferredFromDelay, -1*int64(delayed))
 
 	if lastDataNeedRead != nil {
 		*lastDataNeedRead = false
