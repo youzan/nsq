@@ -379,7 +379,7 @@ func TestChannelRegisterWithTopicUnregister(t *testing.T) {
 	lopts.RPCPort = "12340"
 	lopts.Logger = newTestLogger(t)
 	lopts.LogLevel = 3
-	SetLogger(lopts.Logger, 3)
+	//SetLogger(lopts.Logger, 3)
 
 	opts := nsqdNs.NewOptions()
 	opts.ClusterID = lopts.ClusterID

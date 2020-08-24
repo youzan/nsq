@@ -861,10 +861,15 @@ func (c *Channel) ConfirmDelayedMessage(msg *Message) (BackendOffset, int64, boo
 	needNotify := false
 	curConfirm := c.GetConfirmed()
 	if msg.DelayedOrigID > 0 && msg.DelayedType == ChannelDelayed && c.GetDelayedQueue() != nil {
+		tn := time.Now()
 		c.GetDelayedQueue().ConfirmedMessage(msg)
+		cost := time.Since(tn)
+		if cost > time.Second {
+			nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "FIN_DELAYED_SLOW", msg.TraceID, msg, "", cost.Nanoseconds())
+		}
 		c.delayedConfirmedMsgs[msg.ID] = *msg
 		if c.isTracedOrDebugTraceLog(msg) {
-			nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "FIN_DELAYED", msg.TraceID, msg, "", 0)
+			nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "FIN_DELAYED", msg.TraceID, msg, "", cost.Nanoseconds())
 		}
 		if atomic.AddInt64(&c.deferredFromDelay, -1) <= 0 {
 			c.nsqdNotify.NotifyScanDelayed(c)
@@ -1013,6 +1018,7 @@ func (c *Channel) FinishMessageForce(clientID int64, clientAddr string,
 // FinishMessage successfully discards an in-flight message
 func (c *Channel) internalFinishMessage(clientID int64, clientAddr string,
 	id MessageID, forceFin bool) (BackendOffset, int64, bool, *Message, error) {
+	now := time.Now()
 	c.inFlightMutex.Lock()
 	defer c.inFlightMutex.Unlock()
 	if forceFin {
@@ -1027,7 +1033,6 @@ func (c *Channel) internalFinishMessage(clientID int64, clientAddr string,
 			clientID)
 		return 0, 0, false, nil, err
 	}
-	now := time.Now()
 	ackCost := now.UnixNano() - msg.deliveryTS.UnixNano()
 	isOldDeferred := msg.IsDeferred()
 	if msg.TraceID != 0 || c.IsTraced() || nsqLog.Level() >= levellogger.LOG_DETAIL {
@@ -1151,10 +1156,13 @@ func (c *Channel) ShouldRequeueToEnd(clientID int64, clientAddr string, id Messa
 			c.DepthTimestamp(), msg.Attempts, atomic.LoadInt32(&c.waitingConfirm))
 	}
 
+	// too much delayed queue will impact the read/write on boltdb, so we refuse to write if too large
+	if int64(c.GetDelayedQueueCnt()) > c.option.MaxChannelDelayedQNum*10 {
+		return nil, false
+	}
 	tn := time.Now()
 	// check if delayed queue is blocked too much, and try increase delay and put this
 	// delayed message to delay-queue again.
-
 	if msg.DelayedType == ChannelDelayed {
 		//to avoid some delayed messages req again and again (bad for boltdb performance )
 		// we should control the req timeout for some failed message with too much attempts
@@ -1199,7 +1207,7 @@ func (c *Channel) ShouldRequeueToEnd(clientID int64, clientAddr string, id Messa
 	newTimeout := tn.Add(timeout)
 	if newTimeout.Sub(msg.deliveryTS) >=
 		c.option.MaxReqTimeout || timeout > threshold {
-		_, dqCnt := c.GetDelayedQueueConsumedState()
+		dqCnt := c.GetDelayedQueueCnt()
 		if c.option.MaxChannelDelayedQNum == 0 || int64(dqCnt) < c.option.MaxChannelDelayedQNum {
 			return msg.GetCopy(), true
 		}
@@ -2524,6 +2532,16 @@ func (c *Channel) GetDelayedQueueConsumedDetails() (int64, RecentKeyList, map[in
 	ts := time.Now().UnixNano()
 	kl, cntList, chList := dq.GetOldestConsumedState([]string{c.GetName()}, false)
 	return ts, kl, cntList, chList
+}
+
+func (c *Channel) GetDelayedQueueCnt() uint64 {
+	dqCnt := uint64(0)
+	dq := c.GetDelayedQueue()
+	if dq == nil {
+		return dqCnt
+	}
+	dqCnt, _ = dq.GetCurrentDelayedCnt(ChannelDelayed, c.GetName())
+	return dqCnt
 }
 
 func (c *Channel) GetDelayedQueueConsumedState() (int64, uint64) {
