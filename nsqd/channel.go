@@ -2090,10 +2090,6 @@ LOOP:
 				case <-c.tagChanRemovedChan:
 					//do not go to msgDefaultLoop, as tag chan remove event may invoked from previously deleted client
 					goto tagMsgLoop
-				case resetOffset := <-c.readerChanged:
-					nsqLog.Infof("got reader reset notify while dispatch message:%v ", resetOffset)
-					c.resetChannelReader(resetOffset, &lastDataNeedRead, origReadChan, &lastMsg, &needReadBackend, &readBackendWait)
-					continue LOOP
 				case <-c.exitChan:
 					goto exit
 				}
@@ -2112,6 +2108,7 @@ LOOP:
 		case c.clientMsgChan <- msg:
 		case resetOffset := <-c.readerChanged:
 			nsqLog.Infof("got reader reset notify while dispatch message:%v ", resetOffset)
+			c.cleanWaitingRequeueChan(msg)
 			c.resetChannelReader(resetOffset, &lastDataNeedRead, origReadChan, &lastMsg, &needReadBackend, &readBackendWait)
 		case <-c.exitChan:
 			goto exit
