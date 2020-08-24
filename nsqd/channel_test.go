@@ -365,10 +365,12 @@ func TestChannelEmptyWhileReqDelayedMessageWaitingDispatchToClient(t *testing.T)
 	channel.inFlightMutex.Lock()
 	waitChCnt := len(channel.waitingRequeueChanMsgs)
 	realWaitChCnt := len(channel.requeuedMsgChan)
+	waitReqMoreCnt := len(channel.waitingRequeueMsgs)
 	channel.inFlightMutex.Unlock()
 	t.Logf("current %v, %v", atomic.LoadInt64(&channel.deferredFromDelay), channel.GetChannelDebugStats())
 	ast.True(t, waitChCnt > 0, "should have wait req count")
 	ast.Equal(t, waitChCnt, realWaitChCnt+1)
+	ast.Equal(t, int64(waitChCnt+waitReqMoreCnt), atomic.LoadInt64(&channel.deferredFromDelay))
 
 	e := channel.GetChannelEnd()
 	queueOffset := int64(e.Offset())
@@ -409,7 +411,128 @@ func TestChannelEmptyWhileReqDelayedMessageWaitingDispatchToClient(t *testing.T)
 	_, dqCnt := channel.GetDelayedQueueConsumedState()
 	ast.Equal(t, uint64(0), dqCnt)
 	// make sure all delayed counter is not more or less
-	equal(t, atomic.LoadInt64(&channel.deferredFromDelay) == int64(0), true)
+	equal(t, atomic.LoadInt64(&channel.deferredFromDelay), int64(0))
+	equal(t, atomic.LoadInt64(&channel.deferredCount), int64(0))
+}
+
+func TestChannelEmptyWhileReqDelayedMessageWaitingInReq(t *testing.T) {
+	// test confirm delay counter while empty channel
+	opts := NewOptions()
+	opts.SyncEvery = 1
+	opts.Logger = newTestLogger(t)
+	opts.QueueScanInterval = time.Second
+	// use small max ready count to make sure the req chan to be full and more delayed messages is waiting in requeued map
+	opts.MaxRdyCount = 2
+	opts.MsgTimeout = time.Second
+	if testing.Verbose() {
+		opts.LogLevel = 2
+		SetLogger(opts.Logger)
+	}
+	_, _, nsqd := mustStartNSQD(opts)
+	defer os.RemoveAll(opts.DataPath)
+	defer nsqd.Exit()
+
+	topicName := "test_channel_empty_req_delay" + strconv.Itoa(int(time.Now().Unix()))
+	topic := nsqd.GetTopicIgnPart(topicName)
+	channel := topic.GetChannel("channel")
+	dq, err := topic.GetOrCreateDelayedQueueNoLock(nil)
+	equal(t, err, nil)
+	// write at least 2*MaxWaitingDelayed to test the second peek from delayed queue
+	for i := 0; i < 2*MaxWaitingDelayed+1; i++ {
+		msg := NewMessage(0, []byte("test"))
+		id, _, _, _, err := topic.PutMessage(msg)
+		equal(t, err, nil)
+		newMsg := msg.GetCopy()
+		newMsg.ID = 0
+		newMsg.DelayedType = ChannelDelayed
+
+		newTimeout := time.Now().Add(time.Second)
+		newMsg.DelayedTs = newTimeout.UnixNano()
+
+		newMsg.DelayedOrigID = id
+		newMsg.DelayedChannel = channel.GetName()
+
+		_, _, _, _, err = dq.PutDelayMessage(newMsg)
+		equal(t, err, nil)
+	}
+
+	t.Logf("current %v, %v", atomic.LoadInt64(&channel.deferredFromDelay), channel.GetChannelDebugStats())
+	channel.AddClient(1, NewFakeConsumer(1))
+	channel.skipChannelToEnd()
+	// write a message for req in mem
+	for i := 0; i < 1; i++ {
+		msg := NewMessage(0, []byte("testreq"))
+		_, _, _, _, err := topic.PutMessage(msg)
+		equal(t, err, nil)
+	}
+	select {
+	case outputMsg, _ := <-channel.clientMsgChan:
+		t.Logf("consume %v", outputMsg)
+		// make sure we are not requeue the delayed messages
+		ast.NotEqual(t, ChannelDelayed, outputMsg.DelayedType)
+		channel.StartInFlightTimeout(outputMsg, NewFakeConsumer(1), "", opts.MsgTimeout)
+		channel.RequeueMessage(1, "", outputMsg.ID, time.Second, false)
+	}
+
+	equal(t, atomic.LoadInt64(&channel.deferredCount), int64(1))
+	// wait peek delayed messages
+	time.Sleep(time.Second * 3)
+	// the clientMsgChan should block waiting
+	channel.inFlightMutex.Lock()
+	waitChCnt := len(channel.waitingRequeueChanMsgs)
+	realWaitChCnt := len(channel.requeuedMsgChan)
+	waitReqMoreCnt := len(channel.waitingRequeueMsgs)
+	inflightCnt := len(channel.inFlightMessages)
+	channel.inFlightMutex.Unlock()
+	t.Logf("current %v, %v", atomic.LoadInt64(&channel.deferredFromDelay), channel.GetChannelDebugStats())
+	ast.True(t, waitChCnt > 0, "should have wait req count")
+	ast.True(t, waitReqMoreCnt > 0, "should have wait more req count")
+	ast.Equal(t, waitChCnt, realWaitChCnt+1)
+	ast.Equal(t, 0, inflightCnt)
+	ast.Equal(t, int64(waitChCnt+waitReqMoreCnt), atomic.LoadInt64(&channel.deferredFromDelay)+1)
+
+	equal(t, atomic.LoadInt64(&channel.deferredCount), int64(0))
+	e := channel.GetChannelEnd()
+	queueOffset := int64(e.Offset())
+	cnt := e.TotalMsgCnt()
+	channel.SetConsumeOffset(BackendOffset(queueOffset), cnt, true)
+	time.Sleep(time.Millisecond * 10)
+
+	s := time.Now()
+	// continue consume
+	done := false
+	for !done {
+		ticker := time.NewTimer(time.Second * 3)
+		select {
+		case outputMsg, ok := <-channel.clientMsgChan:
+			if !ok {
+				done = true
+				break
+			}
+			t.Logf("consume %v", outputMsg)
+			channel.StartInFlightTimeout(outputMsg, NewFakeConsumer(0), "", opts.MsgTimeout)
+			channel.FinishMessageForce(0, "", outputMsg.ID, true)
+		case <-ticker.C:
+			_, dqCnt := channel.GetDelayedQueueConsumedState()
+			if dqCnt == 0 {
+				done = true
+				break
+			}
+			if time.Since(s) > time.Minute {
+				t.Errorf("timeout waiting consume delayed messages: %v", dqCnt)
+				done = true
+				break
+			}
+			continue
+		}
+	}
+
+	t.Logf("stopped %v, %v", atomic.LoadInt64(&channel.deferredFromDelay), channel.GetChannelDebugStats())
+	_, dqCnt := channel.GetDelayedQueueConsumedState()
+	ast.Equal(t, uint64(0), dqCnt)
+	// make sure all delayed counter is not more or less
+	equal(t, atomic.LoadInt64(&channel.deferredFromDelay), int64(0))
+	equal(t, atomic.LoadInt64(&channel.deferredCount), int64(0))
 }
 
 func TestChannelHealth(t *testing.T) {
