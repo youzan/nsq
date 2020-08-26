@@ -495,7 +495,7 @@ func (ncoord *NsqdCoordinator) periodFlushCommitLogs() {
 				if !tpc.IsExiting() && tcData.GetLeader() == ncoord.myNode.GetID() {
 					syncChList := !tpc.IsWriteDisabled() && flushAll
 					if ((pid+1)%FLUSH_DISTANCE) == matchCnt || syncChList {
-						ncoord.trySyncTopicChannels(tcData, false, syncChList, false)
+						ncoord.trySyncTopicChannels(tcData, syncChList, false)
 					}
 				}
 				delete(tc, pid)
@@ -2387,7 +2387,7 @@ func (ncoord *NsqdCoordinator) switchStateForMaster(topicCoord *TopicCoordinator
 		localTopic.Unlock()
 
 		if !isWriteDisabled {
-			ncoord.trySyncTopicChannels(tcData, true, false, true)
+			ncoord.trySyncTopicChannels(tcData, false, true)
 		}
 
 		coordLog.Infof("current topic %v write state: %v",
@@ -2662,7 +2662,7 @@ func (ncoord *NsqdCoordinator) SyncTopicChannels(topicName string, part int) err
 	if err != nil {
 		return err.ToErrorType()
 	}
-	ncoord.trySyncTopicChannels(tcData, false, false, false)
+	ncoord.trySyncTopicChannelList(tcData, false)
 	return nil
 }
 
@@ -2694,120 +2694,138 @@ func (ncoord *NsqdCoordinator) doRpcForNodeList(nodes []string, failBreak bool, 
 }
 
 // sync topic channels state period.
-func (ncoord *NsqdCoordinator) trySyncTopicChannels(tcData *coordData, syncDelayedQueue bool, syncChannelList bool, notifyOnly bool) {
+func (ncoord *NsqdCoordinator) trySyncTopicChannelList(tcData *coordData, notifyOnly bool) {
+	if tcData.GetLeader() != ncoord.myNode.GetID() {
+		return
+	}
 	localTopic, _ := ncoord.localNsqd.GetExistingTopic(tcData.topicInfo.Name, tcData.topicInfo.Partition)
-	if localTopic != nil {
-		channels := localTopic.GetChannelMapCopy()
-		if syncChannelList {
-			chNameList := make([]string, 0, len(channels))
-			for _, ch := range channels {
-				if ch.IsEphemeral() {
-					continue
-				}
-				chNameList = append(chNameList, ch.GetName())
-			}
-			if !isSameStrList(chNameList, tcData.syncedConsumeMgr.GetSyncedChs()) {
-				tcData.syncedConsumeMgr.Clear()
-				rpcErr := ncoord.doRpcForNodeList(tcData.topicInfo.ISR, false, func(c *NsqdRpcClient) *CoordErr {
-					if notifyOnly {
-						c.NotifyChannelList(&tcData.topicLeaderSession, &tcData.topicInfo, chNameList)
-					} else {
-						return c.UpdateChannelList(&tcData.topicLeaderSession, &tcData.topicInfo, chNameList)
-					}
-					return nil
-				})
-				if rpcErr == nil && !notifyOnly {
-					tcData.syncedConsumeMgr.UpdateSyncedChs(chNameList)
-				}
-			}
+	if localTopic == nil {
+		return
+	}
+	channels := localTopic.GetChannelMapCopy()
+	chNameList := make([]string, 0, len(channels))
+	for _, ch := range channels {
+		if ch.IsEphemeral() {
+			continue
 		}
-
-		if syncDelayedQueue {
-			ts, keyList, cntList, channelCntList := localTopic.GetDelayedQueueConsumedState()
-			if keyList == nil && cntList == nil && channelCntList == nil {
-				// no delayed queue
+		chNameList = append(chNameList, ch.GetName())
+	}
+	if !isSameStrList(chNameList, tcData.syncedConsumeMgr.GetSyncedChs()) {
+		tcData.syncedConsumeMgr.Clear()
+		rpcErr := ncoord.doRpcForNodeList(tcData.topicInfo.ISR, false, func(c *NsqdRpcClient) *CoordErr {
+			if notifyOnly {
+				c.NotifyChannelList(&tcData.topicLeaderSession, &tcData.topicInfo, chNameList)
 			} else {
-				waitRsp := !notifyOnly
-				ncoord.doRpcForNodeList(tcData.topicInfo.ISR, false, func(c *NsqdRpcClient) *CoordErr {
-					rpcErr := c.UpdateDelayedQueueState(&tcData.topicLeaderSession, &tcData.topicInfo,
-						"", ts, keyList, cntList, channelCntList, waitRsp)
-					if rpcErr != nil {
-						coordLog.Infof("node %v update delayed queue state %v failed %v.", c.remote,
-							tcData.topicInfo.GetTopicDesp(), rpcErr)
-					}
-					return rpcErr
-				})
+				return c.UpdateChannelList(&tcData.topicLeaderSession, &tcData.topicInfo, chNameList)
 			}
+			return nil
+		})
+		if rpcErr == nil && !notifyOnly {
+			tcData.syncedConsumeMgr.UpdateSyncedChs(chNameList)
 		}
+	}
+}
 
-		var syncOffset ChannelConsumerOffset
-		syncOffset.Flush = true
-		// always allow backward here since it may happen that slave already created the channel with end
-		syncOffset.AllowBackward = true
-		for _, ch := range channels {
-			// skipped ordered channel will not sync offset,
-			// so we need sync here
-			if ch.IsOrdered() && !ch.IsSkipped() {
-				continue
-			}
-			if ch.IsEphemeral() {
-				continue
-			}
-			confirmed := ch.GetConfirmed()
-			// try fix message count here, since old version has no count info.
-			if confirmed.Offset() > 0 && confirmed.TotalMsgCnt() <= 0 {
-				l, offset, cnt, err := ncoord.SearchLogByMsgOffset(tcData.topicInfo.Name, tcData.topicInfo.Partition, int64(confirmed.Offset()))
-				if err != nil {
-					coordLog.Infof("search msg offset failed: %v", err)
-				} else {
-					coordLog.Infof("try fix the channel %v confirmed queue info from %v to %v:%v, commitlog: %v",
-						ch.GetName(), confirmed, offset, cnt, l)
-					ch.SetConsumeOffset(nsqd.BackendOffset(offset), cnt, true)
-					time.Sleep(time.Millisecond * 10)
-					confirmed = ch.GetConfirmed()
-				}
-			}
+// sync topic channels state period.
+func (ncoord *NsqdCoordinator) trySyncTopicChannels(tcData *coordData, syncChannelList bool, notifyOnly bool) {
+	localTopic, _ := ncoord.localNsqd.GetExistingTopic(tcData.topicInfo.Name, tcData.topicInfo.Partition)
+	if localTopic == nil {
+		return
+	}
+	if syncChannelList {
+		ncoord.trySyncTopicChannelList(tcData, notifyOnly)
+	}
 
-			syncOffset.VOffset = int64(confirmed.Offset())
-			syncOffset.VCnt = confirmed.TotalMsgCnt()
-			if ch.GetConfirmedIntervalLen() > 100 {
-				syncOffset.NeedUpdateConfirmed = false
-				syncOffset.ConfirmedInterval = nil
-			} else {
-				syncOffset.ConfirmedInterval = ch.GetConfirmedInterval()
-				syncOffset.NeedUpdateConfirmed = true
-			}
-
-			cco, ok := tcData.syncedConsumeMgr.Get(ch.GetName())
-			if ok && cco.IsSame(&syncOffset) {
-				continue
-			}
-			// Because the new channel on slave will init consume offset to the end of topic,
-			// we should update consume offset to both isr and catchup to avoid skip some messages on the new channel on the slave
-			// if the slave became the new leader.
-			// But the catchup node may fail to connect, so we should avoid block by catchup nodes.
+	lastChangedTs, ok := localTopic.GetDelayedQueueUpdateTs()
+	if ok && (lastChangedTs == 0 || tcData.syncedConsumeMgr.GetSyncedDelayedQueueTs() != lastChangedTs) {
+		ts, keyList, cntList, channelCntList := localTopic.GetDelayedQueueConsumedState()
+		if keyList == nil && cntList == nil && channelCntList == nil {
+			// no delayed queue
+		} else {
+			waitRsp := !notifyOnly
 			rpcErr := ncoord.doRpcForNodeList(tcData.topicInfo.ISR, false, func(c *NsqdRpcClient) *CoordErr {
-				if notifyOnly {
-					c.NotifyUpdateChannelOffset(&tcData.topicLeaderSession, &tcData.topicInfo, ch.GetName(), syncOffset)
-				} else {
-					rpcErr := c.UpdateChannelOffset(&tcData.topicLeaderSession, &tcData.topicInfo, ch.GetName(), syncOffset)
-					if rpcErr != nil {
-						coordLog.Debugf("node %v update channel %v offset failed %v.", c.remote, ch.GetName(), rpcErr)
-					}
-					return rpcErr
+				rpcErr := c.UpdateDelayedQueueState(&tcData.topicLeaderSession, &tcData.topicInfo,
+					"", ts, keyList, cntList, channelCntList, waitRsp)
+				if rpcErr != nil {
+					coordLog.Infof("node %v update delayed queue state %v failed %v.", c.remote,
+						tcData.topicInfo.GetTopicDesp(), rpcErr)
 				}
-				return nil
+				return rpcErr
 			})
 			if rpcErr == nil && !notifyOnly {
-				tcData.syncedConsumeMgr.Update(ch.GetName(), syncOffset)
+				tcData.syncedConsumeMgr.UpdateSyncedDelayedQueueTs(lastChangedTs)
 			}
-			ncoord.doRpcForNodeList(tcData.topicInfo.CatchupList, false, func(c *NsqdRpcClient) *CoordErr {
-				c.NotifyUpdateChannelOffset(&tcData.topicLeaderSession, &tcData.topicInfo, ch.GetName(), syncOffset)
-				return nil
-			})
-			// only the first channel of topic should flush.
-			syncOffset.Flush = false
 		}
+	}
+
+	channels := localTopic.GetChannelMapCopy()
+	var syncOffset ChannelConsumerOffset
+	syncOffset.Flush = true
+	// always allow backward here since it may happen that slave already created the channel with end
+	syncOffset.AllowBackward = true
+	for _, ch := range channels {
+		// skipped ordered channel will not sync offset,
+		// so we need sync here
+		if ch.IsOrdered() && !ch.IsSkipped() {
+			continue
+		}
+		if ch.IsEphemeral() {
+			continue
+		}
+		confirmed := ch.GetConfirmed()
+		// try fix message count here, since old version has no count info.
+		if confirmed.Offset() > 0 && confirmed.TotalMsgCnt() <= 0 {
+			l, offset, cnt, err := ncoord.SearchLogByMsgOffset(tcData.topicInfo.Name, tcData.topicInfo.Partition, int64(confirmed.Offset()))
+			if err != nil {
+				coordLog.Infof("search msg offset failed: %v", err)
+			} else {
+				coordLog.Infof("try fix the channel %v confirmed queue info from %v to %v:%v, commitlog: %v",
+					ch.GetName(), confirmed, offset, cnt, l)
+				ch.SetConsumeOffset(nsqd.BackendOffset(offset), cnt, true)
+				time.Sleep(time.Millisecond * 10)
+				confirmed = ch.GetConfirmed()
+			}
+		}
+
+		syncOffset.VOffset = int64(confirmed.Offset())
+		syncOffset.VCnt = confirmed.TotalMsgCnt()
+		if ch.GetConfirmedIntervalLen() > 100 {
+			syncOffset.NeedUpdateConfirmed = false
+			syncOffset.ConfirmedInterval = nil
+		} else {
+			syncOffset.ConfirmedInterval = ch.GetConfirmedInterval()
+			syncOffset.NeedUpdateConfirmed = true
+		}
+
+		cco, ok := tcData.syncedConsumeMgr.Get(ch.GetName())
+		if ok && cco.IsSame(&syncOffset) {
+			continue
+		}
+		// Because the new channel on slave will init consume offset to the end of topic,
+		// we should update consume offset to both isr and catchup to avoid skip some messages on the new channel on the slave
+		// if the slave became the new leader.
+		// But the catchup node may fail to connect, so we should avoid block by catchup nodes.
+		rpcErr := ncoord.doRpcForNodeList(tcData.topicInfo.ISR, false, func(c *NsqdRpcClient) *CoordErr {
+			if notifyOnly {
+				c.NotifyUpdateChannelOffset(&tcData.topicLeaderSession, &tcData.topicInfo, ch.GetName(), syncOffset)
+			} else {
+				rpcErr := c.UpdateChannelOffset(&tcData.topicLeaderSession, &tcData.topicInfo, ch.GetName(), syncOffset)
+				if rpcErr != nil {
+					coordLog.Debugf("node %v update channel %v offset failed %v.", c.remote, ch.GetName(), rpcErr)
+				}
+				return rpcErr
+			}
+			return nil
+		})
+		if rpcErr == nil && !notifyOnly {
+			tcData.syncedConsumeMgr.Update(ch.GetName(), syncOffset)
+		}
+		ncoord.doRpcForNodeList(tcData.topicInfo.CatchupList, false, func(c *NsqdRpcClient) *CoordErr {
+			c.NotifyUpdateChannelOffset(&tcData.topicLeaderSession, &tcData.topicInfo, ch.GetName(), syncOffset)
+			return nil
+		})
+		// only the first channel of topic should flush.
+		syncOffset.Flush = false
 	}
 }
 
@@ -2989,7 +3007,7 @@ func (ncoord *NsqdCoordinator) prepareLeavingCluster() {
 
 			tpCoord.Exiting()
 			if tcData.GetLeader() == ncoord.myNode.GetID() {
-				ncoord.trySyncTopicChannels(tcData, true, false, true)
+				ncoord.trySyncTopicChannels(tcData, false, true)
 			}
 			// TODO: if we release leader first, we can not transfer the leader properly,
 			// if we leave isr first, we would get the state that the leader not in isr

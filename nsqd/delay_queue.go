@@ -317,6 +317,7 @@ func newDelayQueue(topicName string, part int, dataPath string, opt *Options,
 		return nil, err
 	}
 	q.kvStore.NoSync = true
+	atomic.StoreInt64(&q.changedTs, time.Now().UnixNano())
 	if readOnly {
 		return q, nil
 	}
@@ -395,6 +396,7 @@ func (q *DelayQueue) reOpenStore() error {
 	q.oldestMutex.Unlock()
 
 	q.kvStore.NoSync = true
+	atomic.StoreInt64(&q.changedTs, time.Now().UnixNano())
 	err = q.kvStore.Update(func(tx *bolt.Tx) error {
 		_, err := tx.CreateBucketIfNotExists(bucketDelayedMsg)
 		if err != nil {
@@ -584,7 +586,6 @@ func (q *DelayQueue) ReopenWithEmpty() error {
 		nsqLog.LogErrorf("topic(%v) failed to reopen empty delayed db: %v , %v ", q.fullName, err, kvPath)
 		return err
 	}
-	atomic.StoreInt64(&q.changedTs, time.Now().UnixNano())
 	return nil
 }
 
@@ -639,7 +640,6 @@ func (q *DelayQueue) RestoreKVStoreFrom(body io.Reader) error {
 		nsqLog.LogErrorf("topic(%v) failed to restore delayed db: %v , %v ", q.fullName, err, kvPath)
 		return err
 	}
-	atomic.StoreInt64(&q.changedTs, time.Now().UnixNano())
 	return nil
 }
 
@@ -1494,7 +1494,6 @@ func (q *DelayQueue) compactStore(force bool) error {
 	if openErr != nil {
 		return openErr
 	}
-	atomic.StoreInt64(&q.changedTs, time.Now().UnixNano())
 	return nil
 }
 

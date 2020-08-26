@@ -50,6 +50,7 @@ type ChannelConsumeMgr struct {
 	sync.Mutex
 	channelNames         []string
 	channelConsumeOffset map[string]ChannelConsumerOffset
+	delayedQueueSyncedTs int64
 }
 
 func isSameStrList(l, r []string) bool {
@@ -74,6 +75,7 @@ func (cc *ChannelConsumeMgr) Clear() {
 	cc.Lock()
 	cc.channelNames = []string{}
 	cc.channelConsumeOffset = make(map[string]ChannelConsumerOffset)
+	cc.delayedQueueSyncedTs = 0
 	cc.Unlock()
 }
 
@@ -88,6 +90,18 @@ func (cc *ChannelConsumeMgr) Update(ch string, cco ChannelConsumerOffset) {
 	cc.Lock()
 	cc.channelConsumeOffset[ch] = cco
 	cc.Unlock()
+}
+
+func (cc *ChannelConsumeMgr) GetSyncedDelayedQueueTs() int64 {
+	cc.Lock()
+	defer cc.Unlock()
+	return cc.delayedQueueSyncedTs
+}
+
+func (cc *ChannelConsumeMgr) UpdateSyncedDelayedQueueTs(ts int64) {
+	cc.Lock()
+	defer cc.Unlock()
+	cc.delayedQueueSyncedTs = ts
 }
 
 func (cc *ChannelConsumeMgr) GetSyncedChs() []string {

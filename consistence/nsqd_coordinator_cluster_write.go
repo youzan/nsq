@@ -1172,9 +1172,9 @@ func (ncoord *NsqdCoordinator) FinishMessageToCluster(channel *nsqd.Channel, cli
 				// large boltdb.
 				// however, the large boltdb may have no consume for a long time, we should also
 				// avoid period sync unchanged state.(may slow)
-				ts, cursorList, cntList, channelCntList := channel.GetDelayedQueueConsumedDetails()
-				rpcErr = c.UpdateDelayedQueueState(&tcData.topicLeaderSession, &tcData.topicInfo,
-					channel.GetName(), ts, cursorList, cntList, channelCntList, false)
+				//ts, cursorList, cntList, channelCntList := channel.GetDelayedQueueConsumedDetails()
+				//rpcErr = c.UpdateDelayedQueueState(&tcData.topicLeaderSession, &tcData.topicInfo,
+				//	channel.GetName(), ts, cursorList, cntList, channelCntList, false)
 			} else {
 				c.NotifyUpdateChannelOffset(&tcData.topicLeaderSession, &tcData.topicInfo, channel.GetName(), syncOffset)
 			}
