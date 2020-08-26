@@ -314,21 +314,106 @@ func TestDelayQueueEmptyAll(t *testing.T) {
 	newCnt, _ = dq.GetCurrentDelayedCnt(ChannelDelayed, "test2")
 	test.Equal(t, cnt, int(newCnt))
 	// should at most empty one max batch size
-	dq.EmptyDelayedChannel("test2")
+	err = dq.EmptyDelayedChannel("test2")
+	test.Nil(t, err)
 
 	newCnt, _ = dq.GetCurrentDelayedCnt(ChannelDelayed, "test2")
 	test.Equal(t, 1, int(newCnt))
 	newCnt, _ = dq.GetCurrentDelayedCnt(ChannelDelayed, "test")
 	test.Equal(t, cnt, int(newCnt))
-	dq.EmptyDelayedChannel("test")
+	err = dq.EmptyDelayedChannel("test")
+	test.Nil(t, err)
 	newCnt, _ = dq.GetCurrentDelayedCnt(ChannelDelayed, "test")
 	test.Equal(t, 1, int(newCnt))
 
 	// empty again
-	dq.EmptyDelayedChannel("test2")
+	err = dq.EmptyDelayedChannel("test2")
+	test.Nil(t, err)
 	newCnt, _ = dq.GetCurrentDelayedCnt(ChannelDelayed, "test2")
 	test.Equal(t, 0, int(newCnt))
-	dq.EmptyDelayedChannel("test")
+	err = dq.EmptyDelayedChannel("test")
+	test.Nil(t, err)
+	newCnt, _ = dq.GetCurrentDelayedCnt(ChannelDelayed, "test")
+	test.Equal(t, 0, int(newCnt))
+}
+
+func TestDelayQueueUpdateConsumedState(t *testing.T) {
+	tmpDir, err := ioutil.TempDir("", fmt.Sprintf("nsq-test-delay-%d", time.Now().UnixNano()))
+	if err != nil {
+		panic(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	opts := NewOptions()
+	opts.Logger = newTestLogger(t)
+	opts.SyncEvery = 1
+	if testing.Verbose() {
+		SetLogger(opts.Logger)
+	}
+
+	dq, err := NewDelayQueue("test", 0, tmpDir, opts, nil, false)
+	test.Nil(t, err)
+	defer dq.Close()
+	oldMaxBatch := txMaxBatch
+	txMaxBatch = 100
+	defer func() {
+		txMaxBatch = oldMaxBatch
+	}()
+	cnt := txMaxBatch + 2
+	for i := 0; i < cnt; i++ {
+		msg := NewMessage(0, []byte("body"))
+		msg.DelayedType = ChannelDelayed
+		msg.DelayedTs = time.Now().Add(time.Second).UnixNano()
+		msg.DelayedChannel = "test"
+		msg.DelayedOrigID = MessageID(i + 1)
+		_, _, _, _, err := dq.PutDelayMessage(msg)
+		test.Nil(t, err)
+		msg = NewMessage(0, []byte("body"))
+		msg.DelayedType = ChannelDelayed
+		msg.DelayedTs = time.Now().Add(time.Second).UnixNano()
+		msg.DelayedChannel = "test2"
+		msg.DelayedOrigID = MessageID(i + 1)
+		_, _, _, _, err = dq.PutDelayMessage(msg)
+		test.Nil(t, err)
+		time.Sleep(time.Millisecond * 100)
+	}
+
+	newCnt, _ := dq.GetCurrentDelayedCnt(ChannelDelayed, "test")
+	test.Equal(t, cnt, int(newCnt))
+	newCnt, _ = dq.GetCurrentDelayedCnt(ChannelDelayed, "test2")
+	test.Equal(t, cnt, int(newCnt))
+
+	time.Sleep(time.Second * 5)
+	// should at most empty one max batch size
+	var keyList RecentKeyList
+	cntList := make(map[int]uint64)
+	chCntList := make(map[string]uint64)
+	chCntList["test2"] = 0
+	//recent, _, _ := dq.GetOldestConsumedState([]string{"test2"}, false)
+	//keyList = append(keyList, recent)
+	err = dq.UpdateConsumedState(time.Now().UnixNano(), keyList, cntList, chCntList)
+	test.Equal(t, errOnlyPartialEmpty, err)
+
+	newCnt, _ = dq.GetCurrentDelayedCnt(ChannelDelayed, "test2")
+	test.Equal(t, 1, int(newCnt))
+	newCnt, _ = dq.GetCurrentDelayedCnt(ChannelDelayed, "test")
+	test.Equal(t, cnt, int(newCnt))
+
+	chCntList = make(map[string]uint64)
+	chCntList["test"] = 0
+	err = dq.UpdateConsumedState(time.Now().UnixNano(), keyList, cntList, chCntList)
+	test.Equal(t, errOnlyPartialEmpty, err)
+	newCnt, _ = dq.GetCurrentDelayedCnt(ChannelDelayed, "test")
+	test.Equal(t, 1, int(newCnt))
+
+	// update again
+	chCntList = make(map[string]uint64)
+	chCntList["test2"] = 0
+	chCntList["test"] = 0
+	err = dq.UpdateConsumedState(time.Now().UnixNano(), keyList, cntList, chCntList)
+	test.Nil(t, err)
+	newCnt, _ = dq.GetCurrentDelayedCnt(ChannelDelayed, "test2")
+	test.Equal(t, 0, int(newCnt))
 	newCnt, _ = dq.GetCurrentDelayedCnt(ChannelDelayed, "test")
 	test.Equal(t, 0, int(newCnt))
 }

@@ -1527,6 +1527,18 @@ func (t *Topic) ResetBackendWithQueueStartNoLock(queueStartOffset int64, queueSt
 	return nil
 }
 
+func (t *Topic) GetDelayedQueueUpdateTs() (int64, bool) {
+	if t.IsOrdered() {
+		return 0, false
+	}
+	dq := t.GetDelayedQueue()
+	if dq == nil {
+		return 0, false
+	}
+	ts := dq.GetChangedTs()
+	return ts, true
+}
+
 func (t *Topic) GetDelayedQueueConsumedState() (int64, RecentKeyList, map[int]uint64, map[string]uint64) {
 	if t.IsOrdered() {
 		return 0, nil, nil, nil
