@@ -393,7 +393,7 @@ func (ncoord *NsqdCoordinator) doSyncOpToCluster(isWrite bool, coord *TopicCoord
 		clusterWriteErr = localErr
 		goto exitsync
 	}
-	needLeaveISR = true
+	needLeaveISR = isWrite
 
 retrysync:
 	if isWrite && !halfSuccess && coord.IsExiting() {
@@ -481,7 +481,7 @@ retrysync:
 				exitErr++
 				coordLog.Infof("operation failed and no retry type: %v, %v", rpcErr.ErrType, exitErr)
 				if exitErr > len(tcData.topicInfo.ISR)/2 {
-					needLeaveISR = true
+					needLeaveISR = isWrite
 					goto exitsync
 				}
 			}
@@ -502,7 +502,9 @@ retrysync:
 		}
 		if localErr != nil {
 			coordLog.Errorf("topic : %v failed commit operation: %v", topicFullName, localErr)
-			needLeaveISR = true
+			if isWrite {
+				needLeaveISR = true
+			}
 			clusterWriteErr = &CoordErr{localErr.Error(), RpcCommonErr, CoordLocalErr}
 		} else {
 			needLeaveISR = false
@@ -549,7 +551,7 @@ retrysync:
 		goto retrysync
 	}
 exitsync:
-	if needLeaveISR {
+	if needLeaveISR && isWrite {
 		doLocalRollback()
 		coord.dataMutex.Lock()
 		newCoordData := coord.coordData.GetCopy()
@@ -1482,7 +1484,8 @@ func (ncoord *NsqdCoordinator) EmptyChannelDelayedStateToCluster(channel *nsqd.C
 			coordLog.Infof("sync channel(%v) delayed queue state to replica %v failed: %v", channel.GetName(),
 				nodeID, rpcErr)
 		}
-		return rpcErr
+		// just ignore the delayed sync error (wait next time)
+		return nil
 	}
 	handleSyncResult := func(successNum int, tcData *coordData) bool {
 		// we can ignore the error if this channel is not ordered. (just sync next time)
