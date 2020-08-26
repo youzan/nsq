@@ -31,6 +31,7 @@ var (
 	largeDBSize            int64 = 1024 * 1024 * 1024 * 4
 	errDBSizeTooLarge            = errors.New("db size too large")
 	errTooMuchRunningEmpty       = errors.New("too much running empty")
+	errOnlyPartialEmpty          = errors.New("only partial empty")
 )
 
 const (
@@ -987,8 +988,11 @@ func (q *DelayQueue) emptyDelayedUntil(dt int, peekTs int64, id MessageID, ch st
 		}
 		return cleanedTs, err
 	}
+	if exceedMaxBatch {
+		err = errOnlyPartialEmpty
+	}
 	if batched == 0 {
-		return cleanedTs, nil
+		return cleanedTs, err
 	}
 	if emptyAll || exceedMaxBatch {
 		nsqLog.Infof("topic %v empty delayed: %v, %v, %v", q.GetFullName(), string(prefix), batched, peekTs)
@@ -1008,16 +1012,11 @@ func (q *DelayQueue) emptyDelayedUntil(dt int, peekTs int64, id MessageID, ch st
 		}
 		q.oldestMutex.Unlock()
 	}
-	return cleanedTs, nil
+	return cleanedTs, err
 }
 
 func (q *DelayQueue) emptyAllDelayedType(dt int, ch string) (int64, error) {
 	return q.emptyDelayedUntil(dt, 0, 0, ch, true)
-}
-
-func (q *DelayQueue) EmptyDelayedType(dt int) error {
-	_, err := q.emptyAllDelayedType(dt, "")
-	return err
 }
 
 func (q *DelayQueue) EmptyDelayedChannel(ch string) error {
@@ -1027,6 +1026,9 @@ func (q *DelayQueue) EmptyDelayedChannel(ch string) error {
 		return errors.New("empty delayed channel name should be given")
 	}
 	_, err := q.emptyAllDelayedType(ChannelDelayed, ch)
+	if err == errOnlyPartialEmpty {
+		return nil
+	}
 	return err
 }
 
@@ -1291,25 +1293,35 @@ func (q *DelayQueue) UpdateConsumedState(ts int64, keyList RecentKeyList, cntLis
 		nsqLog.Infof("topic %v empty too much %v", q.GetFullName(), n)
 		return errTooMuchRunningEmpty
 	}
+	var anyErr error
 	for _, k := range keyList {
 		dt, dts, id, delayedCh, err := decodeDelayedMsgDBKey(k)
 		if err != nil {
 			nsqLog.Infof("decode key failed : %v, %v", k, err)
 			continue
 		}
-		q.emptyDelayedUntil(int(dt), dts, id, delayedCh, false)
+		_, err = q.emptyDelayedUntil(int(dt), dts, id, delayedCh, false)
+		if err != nil {
+			anyErr = err
+		}
 	}
 	for dt, cnt := range cntList {
 		if cnt == 0 && dt != ChannelDelayed {
-			q.emptyDelayedUntil(dt, ts, 0, "", false)
+			_, err := q.emptyDelayedUntil(dt, ts, 0, "", false)
+			if err != nil {
+				anyErr = err
+			}
 		}
 	}
 	for ch, cnt := range channelCntList {
 		if cnt == 0 {
-			q.emptyDelayedUntil(ChannelDelayed, ts, 0, ch, false)
+			_, err := q.emptyDelayedUntil(ChannelDelayed, ts, 0, ch, false)
+			if err != nil {
+				anyErr = err
+			}
 		}
 	}
-	return nil
+	return anyErr
 }
 
 func (q *DelayQueue) TryCleanOldData(retentionSize int64, noRealClean bool, maxCleanOffset BackendOffset) (BackendQueueEnd, error) {
