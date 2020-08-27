@@ -475,21 +475,32 @@ func TestChannelEmptyWhileReqDelayedMessageWaitingInReq(t *testing.T) {
 	}
 
 	equal(t, atomic.LoadInt64(&channel.deferredCount), int64(1))
-	// wait peek delayed messages
-	time.Sleep(time.Second * 3)
-	// the clientMsgChan should block waiting
-	channel.inFlightMutex.Lock()
-	waitChCnt := len(channel.waitingRequeueChanMsgs)
-	realWaitChCnt := len(channel.requeuedMsgChan)
-	waitReqMoreCnt := len(channel.waitingRequeueMsgs)
-	inflightCnt := len(channel.inFlightMessages)
-	channel.inFlightMutex.Unlock()
-	t.Logf("current %v, %v", atomic.LoadInt64(&channel.deferredFromDelay), channel.GetChannelDebugStats())
-	ast.True(t, waitChCnt > 0, "should have wait req count")
-	ast.True(t, waitReqMoreCnt > 0, "should have wait more req count")
-	ast.Equal(t, waitChCnt, realWaitChCnt+1)
-	ast.Equal(t, 0, inflightCnt)
-	ast.Equal(t, int64(waitChCnt+waitReqMoreCnt), atomic.LoadInt64(&channel.deferredFromDelay)+1)
+	s := time.Now()
+	for {
+		if time.Since(s) > time.Minute {
+			t.Error("timeout waiting req")
+			return
+		}
+		// wait peek delayed messages
+		time.Sleep(time.Second * 3)
+		// the clientMsgChan should block waiting
+		channel.inFlightMutex.Lock()
+		waitChCnt := len(channel.waitingRequeueChanMsgs)
+		realWaitChCnt := len(channel.requeuedMsgChan)
+		waitReqMoreCnt := len(channel.waitingRequeueMsgs)
+		inflightCnt := len(channel.inFlightMessages)
+		channel.inFlightMutex.Unlock()
+		t.Logf("current %v, %v", atomic.LoadInt64(&channel.deferredFromDelay), channel.GetChannelDebugStats())
+		if waitChCnt <= 0 || waitReqMoreCnt <= 0 {
+			continue
+		}
+		ast.True(t, waitChCnt > 0, "should have wait req count")
+		ast.True(t, waitReqMoreCnt > 0, "should have wait more req count")
+		ast.Equal(t, waitChCnt, realWaitChCnt+1)
+		ast.Equal(t, 0, inflightCnt)
+		ast.Equal(t, int64(waitChCnt+waitReqMoreCnt), atomic.LoadInt64(&channel.deferredFromDelay)+1)
+		break
+	}
 
 	equal(t, atomic.LoadInt64(&channel.deferredCount), int64(0))
 	e := channel.GetChannelEnd()
@@ -498,7 +509,7 @@ func TestChannelEmptyWhileReqDelayedMessageWaitingInReq(t *testing.T) {
 	channel.SetConsumeOffset(BackendOffset(queueOffset), cnt, true)
 	time.Sleep(time.Millisecond * 10)
 
-	s := time.Now()
+	s = time.Now()
 	// continue consume
 	done := false
 	for !done {

@@ -73,6 +73,62 @@ func TestDiskQueueWriter(t *testing.T) {
 	dqReader.Close()
 }
 
+func TestDiskQueueWriterAlwaysWriteFileMetaData(t *testing.T) {
+	//l := newTestLogger(t)
+	//nsqLog.Logger = l
+	atomic.StoreInt32(&alwaysEnableFileMetaWriter, 1)
+	defer atomic.StoreInt32(&alwaysEnableFileMetaWriter, 0)
+
+	dqName := "test_disk_queue" + strconv.Itoa(int(time.Now().Unix()))
+	tmpDir, err := ioutil.TempDir("", fmt.Sprintf("nsq-test-%d", time.Now().UnixNano()))
+	if err != nil {
+		panic(err)
+	}
+	defer os.RemoveAll(tmpDir)
+	queue, _ := NewDiskQueueWriter(dqName, tmpDir, 1024, 4, 1<<10, 1)
+	dqWriter := queue.(*diskQueueWriter)
+	defer dqWriter.Close()
+	nequal(t, dqWriter, nil)
+
+	msg := []byte("test")
+	dqWriter.Put(msg)
+	dqWriter.Flush(false)
+	end := dqWriter.GetQueueWriteEnd()
+
+	oldWriter, _ := newDiskQueueWriter(dqName, tmpDir, 1024,
+		4, 1<<10, 1, false, nil)
+	end2 := oldWriter.GetQueueWriteEnd()
+	equal(t, end, end2)
+}
+
+func TestDiskQueueWriterNoAlwaysWriteFileMetaData(t *testing.T) {
+	//l := newTestLogger(t)
+	//nsqLog.Logger = l
+	atomic.StoreInt32(&alwaysEnableFileMetaWriter, 0)
+	defer atomic.StoreInt32(&alwaysEnableFileMetaWriter, 1)
+
+	dqName := "test_disk_queue" + strconv.Itoa(int(time.Now().Unix()))
+	tmpDir, err := ioutil.TempDir("", fmt.Sprintf("nsq-test-%d", time.Now().UnixNano()))
+	if err != nil {
+		panic(err)
+	}
+	defer os.RemoveAll(tmpDir)
+	queue, _ := NewDiskQueueWriter(dqName, tmpDir, 1024, 4, 1<<10, 1)
+	dqWriter := queue.(*diskQueueWriter)
+	defer dqWriter.Close()
+	nequal(t, dqWriter, nil)
+
+	msg := []byte("test")
+	dqWriter.Put(msg)
+	dqWriter.Flush(false)
+	end := dqWriter.GetQueueWriteEnd()
+
+	oldWriter, _ := newDiskQueueWriter(dqName, tmpDir, 1024,
+		4, 1<<10, 1, false, nil)
+	end2 := oldWriter.GetQueueWriteEnd()
+	nequal(t, end, end2)
+}
+
 func TestDiskQueueWriterLargeFileNum(t *testing.T) {
 	oldSeq := FileNumV2Seq
 	FileNumV2Seq = 10

@@ -2489,7 +2489,7 @@ func TestNsqLookupMovePartitionAndSlaveTimeoutWhileReadWrite(t *testing.T) {
 				test.Assert(t, ch.GetConfirmedIntervalLen() <= 0, "should have no confirmed interval")
 				test.Assert(t, ch.Depth() <= 0, "should have no depth")
 				tc, _ := node.nsqdCoord.getTopicCoord(topic_p1_r2, 0)
-				node.nsqdCoord.trySyncTopicChannels(tc.GetData(), false, true, false)
+				node.nsqdCoord.trySyncTopicChannels(tc.GetData(), true, false)
 				co, _ := tc.syncedConsumeMgr.Get("ch1")
 				t.Logf("synced ch: %v", co)
 			} else {
