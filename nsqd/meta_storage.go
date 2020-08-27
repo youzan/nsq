@@ -24,6 +24,15 @@ const (
 )
 
 var errMetaNotFound = errors.New("meta not found")
+var alwaysEnableFileMetaWriter = int32(1)
+
+func SwitchEnableFileMetaWriter(on bool) {
+	if on {
+		atomic.StoreInt32(&alwaysEnableFileMetaWriter, 1)
+	} else {
+		atomic.StoreInt32(&alwaysEnableFileMetaWriter, 0)
+	}
+}
 
 type IMetaStorage interface {
 	PersistReader(key string, fsync bool, confirmed diskQueueEndInfo, queueEndInfo diskQueueEndInfo) error
@@ -458,6 +467,9 @@ func (dbs *dbMetaStorage) PersistWriter(key string, fsync bool, queueEndInfo dis
 	if err != nil {
 		nsqLog.LogErrorf("failed to save meta key %v from db: %v , %v ", key, dbs.dataPath, err)
 	}
+	if atomic.LoadInt32(&alwaysEnableFileMetaWriter) == 1 {
+		dbs.fileMeta.PersistWriter(key, fsync, queueEndInfo)
+	}
 	return err
 }
 
@@ -476,7 +488,7 @@ func (dbs *dbMetaStorage) RetrieveWriter(key string, readOnly bool) (diskQueueEn
 		return json.Unmarshal(v, &metaEnd)
 	})
 	if err != nil {
-		nsqLog.Warningf("failed to read meta key %v from db: %v , %v ", key, dbs.dataPath, err)
+		nsqLog.Infof("failed to read meta key %v from db: %v , %v ", key, dbs.dataPath, err)
 	}
 	if fallback || err != nil {
 		nsqLog.Logf("fallback to read meta key %v from file meta", key)

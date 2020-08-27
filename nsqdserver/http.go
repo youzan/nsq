@@ -88,6 +88,7 @@ func newHTTPServer(ctx *context, tlsEnabled bool, tlsRequired bool) *httpServer 
 	router.Handle("GET", "/config/:opt", http_api.Decorate(s.doConfig, log, http_api.V1))
 	router.Handle("PUT", "/config/:opt", http_api.Decorate(s.doConfig, log, http_api.V1))
 	router.Handle("PUT", "/delayqueue/enable", http_api.Decorate(s.doEnableDelayedQueue, log, http_api.V1))
+	router.Handle("PUT", "/filemeta_writer/enable", http_api.Decorate(s.doEnableFileMetaWriter, log, http_api.V1))
 	router.Handle("GET", "/delayqueue/backupto", http_api.Decorate(s.doDelayedQueueBackupTo, log, http_api.V1Stream))
 
 	router.Handle("POST", "/topic/cleanunused", http_api.Decorate(s.doCleanUnusedTopicData, log, http_api.V1))
@@ -1428,6 +1429,21 @@ func (s *httpServer) doEnableDelayedQueue(w http.ResponseWriter, req *http.Reque
 	if enableStr == "true" {
 		atomic.StoreInt32(&nsqd.EnableDelayedQueue, 1)
 		s.ctx.persistMetadata()
+	}
+	return nil, nil
+}
+
+func (s *httpServer) doEnableFileMetaWriter(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {
+	reqParams, err := url.ParseQuery(req.URL.RawQuery)
+	if err != nil {
+		return nil, http_api.Err{400, "INVALID_REQUEST"}
+	}
+
+	enableStr := reqParams.Get("state")
+	if enableStr == "true" {
+		nsqd.SwitchEnableFileMetaWriter(true)
+	} else if enableStr == "false" {
+		nsqd.SwitchEnableFileMetaWriter(false)
 	}
 	return nil, nil
 }
