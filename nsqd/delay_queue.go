@@ -1398,19 +1398,22 @@ func (q *DelayQueue) TryCleanOldData(retentionSize int64, noRealClean bool, maxC
 
 	nsqLog.Infof("clean topic %v delayed queue from %v under retention %v, %v",
 		q.GetFullName(), cleanEndInfo, cleanTime, retentionSize)
-	if cleanEndInfo == nil || cleanEndInfo.Offset()+BackendOffset(retentionSize) >= maxCleanOffset {
-		if cleanEndInfo != nil {
-			nsqLog.Warningf("clean topic %v data at position: %v could not exceed current oldest confirmed %v and max clean end: %v",
-				q.GetFullName(), cleanEndInfo, oldestPos, maxCleanOffset)
-		}
-		return nil, nil
-	}
+
+	// always try compact first since it may skip to clean under retention size.
 	if !noRealClean {
 		err := q.compactStore(false)
 		if err != nil {
 			nsqLog.Errorf("topic %v failed to compact the bolt db: %v", q.fullName, err)
 			return nil, err
 		}
+	}
+
+	if cleanEndInfo == nil || cleanEndInfo.Offset()+BackendOffset(retentionSize) >= maxCleanOffset {
+		if cleanEndInfo != nil {
+			nsqLog.Warningf("clean topic %v data at position: %v could not exceed current oldest confirmed %v and max clean end: %v",
+				q.GetFullName(), cleanEndInfo, oldestPos, maxCleanOffset)
+		}
+		return nil, nil
 	}
 	return q.backend.CleanOldDataByRetention(cleanEndInfo, noRealClean, maxCleanOffset)
 }
