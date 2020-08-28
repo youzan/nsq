@@ -246,14 +246,18 @@ type DelayQueue struct {
 	updateConsumeCnt       int64
 }
 
+func getDefaultBoltDbOptions(readOnly bool) *bolt.Options {
+	return &bolt.Options{
+		Timeout:        time.Second,
+		ReadOnly:       readOnly,
+		FreelistType:   bolt.FreelistMapType,
+		NoFreelistSync: true,
+	}
+}
+
 func NewDelayQueueForRead(topicName string, part int, dataPath string, opt *Options,
 	idGen MsgIDGenerator, isExt bool) (*DelayQueue, error) {
-	ro := &bolt.Options{
-		Timeout:      time.Second,
-		ReadOnly:     true,
-		FreelistType: bolt.FreelistMapType,
-	}
-	return newDelayQueue(topicName, part, dataPath, opt, idGen, isExt, ro)
+	return newDelayQueue(topicName, part, dataPath, opt, idGen, isExt, getDefaultBoltDbOptions(true))
 }
 
 func NewDelayQueue(topicName string, part int, dataPath string, opt *Options,
@@ -297,11 +301,7 @@ func newDelayQueue(topicName string, part int, dataPath string, opt *Options,
 	}
 	q.backend = queue.(*diskQueueWriter)
 	if ro == nil {
-		ro = &bolt.Options{
-			Timeout:      time.Second,
-			ReadOnly:     false,
-			FreelistType: bolt.FreelistMapType,
-		}
+		ro = getDefaultBoltDbOptions(false)
 	}
 	// since the bolt will fail to open in read mode if no db file, but leave the db file created.
 	// So we check here before open
@@ -381,11 +381,7 @@ func (q *DelayQueue) Stats() string {
 
 func (q *DelayQueue) reOpenStore() error {
 	var err error
-	ro := &bolt.Options{
-		Timeout:      time.Second,
-		ReadOnly:     false,
-		FreelistType: bolt.FreelistMapType,
-	}
+	ro := getDefaultBoltDbOptions(false)
 	q.kvStore, err = bolt.Open(path.Join(q.dataPath, getDelayQueueDBName(q.tname, q.partition)), 0644, ro)
 	if err != nil {
 		nsqLog.LogErrorf("topic(%v) failed to open delayed db: %v ", q.fullName, err)
@@ -1461,11 +1457,7 @@ func (q *DelayQueue) compactStore(force bool) error {
 	}
 	tmpPath := fmt.Sprintf("%s-tmp.compact.%d", src.Path(), time.Now().UnixNano())
 	// Open destination database.
-	ro := &bolt.Options{
-		Timeout:      time.Second,
-		ReadOnly:     false,
-		FreelistType: bolt.FreelistMapType,
-	}
+	ro := getDefaultBoltDbOptions(false)
 	dst, err := bolt.Open(tmpPath, 0644, ro)
 	if err != nil {
 		return err
