@@ -247,10 +247,9 @@ type DelayQueue struct {
 
 func getDefaultBoltDbOptions(readOnly bool) *bolt.Options {
 	return &bolt.Options{
-		Timeout:  time.Second,
-		ReadOnly: readOnly,
-		// using the array type for boltdb since it is better for delete
-		FreelistType:   bolt.FreelistArrayType,
+		Timeout:        time.Second,
+		ReadOnly:       readOnly,
+		FreelistType:   bolt.FreelistMapType,
 		NoFreelistSync: true,
 	}
 }
