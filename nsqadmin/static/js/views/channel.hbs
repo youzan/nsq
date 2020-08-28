@@ -59,7 +59,7 @@
     </div>
     {{#if (and is_ext enable_zan_test_skip)}}
     <div class="col-md-2">
-        {{#if ../zan_test_skipped}}
+        {{#if zan_test_skipped}}
             <button class="btn btn-medium btn-success" data-action="unskipZanTest" {{#if login}}{{else}}disabled{{/if}}>UnSkip Zan Test</button>
         {{else}}
             <button class="btn btn-medium btn-primary" data-action="skipZanTest" {{#if login}}{{else}}disabled{{/if}}>Skip Zan Test</button>
