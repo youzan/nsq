@@ -7,7 +7,8 @@
     "url": ""
   },
   "devDependencies": {
-    "browserify": "^16.2.2",
+    "browserify": "^16.5.2",
+    "fsevents": "^2.1.2",
     "gulp": "^4.0.2",
     "gulp-clean": "^0.4.0",
     "gulp-notify": "^3.2.0",
@@ -18,8 +19,7 @@
     "handlebars": "^4.2.0",
     "hbsfy": "^2.8.1",
     "vinyl-buffer": "^1.0.0",
-    "vinyl-source-stream": "^2.0.0",
-    "fsevents": "^2.1.2"
+    "vinyl-source-stream": "^2.0.0"
   },
   "dependencies": {
     "backbone": "^1.4.0",
