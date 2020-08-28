@@ -250,7 +250,7 @@ func getDefaultBoltDbOptions(readOnly bool) *bolt.Options {
 	return &bolt.Options{
 		Timeout:        time.Second,
 		ReadOnly:       readOnly,
-		FreelistType:   bolt.FreelistMapType,
+		FreelistType:   bolt.FreelistArrayType,
 		NoFreelistSync: true,
 	}
 }
@@ -586,6 +586,17 @@ func (q *DelayQueue) ReopenWithEmpty() error {
 	return nil
 }
 
+func preloadDBAndOptimizeOpen(dbPath string) error {
+	ro := getDefaultBoltDbOptions(false)
+	// use this to scan freelist and sync to disk
+	ro.NoFreelistSync = false
+	_, err := bolt.Open(dbPath, 0644, ro)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 func (q *DelayQueue) RestoreKVStoreFrom(body io.Reader) error {
 	buf := make([]byte, 8)
 	n, err := body.Read(buf)
@@ -596,7 +607,7 @@ func (q *DelayQueue) RestoreKVStoreFrom(body io.Reader) error {
 		return errors.New("unexpected length for body length")
 	}
 	bodyLen := int64(binary.BigEndian.Uint64(buf))
-	tmpPath := path.Join(q.dataPath, getDelayQueueDBName(q.tname, q.partition)+"-tmp.restore")
+	tmpPath := fmt.Sprintf("%s-tmp.restore.%d", q.getStore().Path(), time.Now().UnixNano())
 	err = os.Remove(tmpPath)
 	if err != nil {
 		if !os.IsNotExist(err) {
@@ -622,6 +633,10 @@ func (q *DelayQueue) RestoreKVStoreFrom(body io.Reader) error {
 		return err
 	}
 
+	err = preloadDBAndOptimizeOpen(tmpPath)
+	if err != nil {
+		return err
+	}
 	q.compactMutex.Lock()
 	defer q.compactMutex.Unlock()
 	kvPath := path.Join(q.dataPath, getDelayQueueDBName(q.tname, q.partition))
@@ -1458,6 +1473,8 @@ func (q *DelayQueue) compactStore(force bool) error {
 	tmpPath := fmt.Sprintf("%s-tmp.compact.%d", src.Path(), time.Now().UnixNano())
 	// Open destination database.
 	ro := getDefaultBoltDbOptions(false)
+	// we need sync free list to speed up the reopen which will hold write lock
+	ro.NoFreelistSync = false
 	dst, err := bolt.Open(tmpPath, 0644, ro)
 	if err != nil {
 		return err
