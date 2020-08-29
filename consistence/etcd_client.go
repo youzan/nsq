@@ -1,6 +1,8 @@
 package consistence
 
 import (
+	"net"
+	"net/http"
 	"strings"
 	"time"
 
@@ -13,12 +15,24 @@ type EtcdClient struct {
 	kapi   client.KeysAPI
 }
 
+var etcdTransport client.CancelableTransport = &http.Transport{
+	Proxy: http.ProxyFromEnvironment,
+	Dial: (&net.Dialer{
+		Timeout:   30 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}).Dial,
+	TLSHandshakeTimeout: 10 * time.Second,
+	WriteBufferSize:     1024,
+	ReadBufferSize:      1024,
+}
+
 func NewEClient(host, userName, pwd string) (*EtcdClient, error) {
 	machines := strings.Split(host, ",")
 	initEtcdPeers(machines)
+
 	cfg := client.Config{
 		Endpoints:               machines,
-		Transport:               client.DefaultTransport,
+		Transport:               etcdTransport,
 		HeaderTimeoutPerRequest: time.Second,
 		Username:                userName,
 		Password:                pwd,
