@@ -23,7 +23,13 @@ func (nlcoord *NsqLookupCoordinator) GetLookupLeader() NsqLookupdNodeInfo {
 	return nlcoord.leaderNode
 }
 
-func (nlcoord *NsqLookupCoordinator) GetTopicMetaInfo(topicName string) (TopicMetaInfo, error) {
+func (nlcoord *NsqLookupCoordinator) GetTopicMetaInfo(topicName string, newest bool) (TopicMetaInfo, error) {
+	if !newest {
+		meta, ok := nlcoord.leadership.GetTopicMetaInfoTryCacheOnly(topicName)
+		if ok {
+			return meta, nil
+		}
+	}
 	meta, cached, err := nlcoord.leadership.GetTopicMetaInfoTryCache(topicName)
 	if err != nil {
 		return TopicMetaInfo{}, err
@@ -65,12 +71,12 @@ func (nlcoord *NsqLookupCoordinator) GetTopicLeaderNodes(topicName string) (map[
 	return ret, nil
 }
 
-func (nlcoord *NsqLookupCoordinator) GetTopicLeaderForConsume(topicName string, part int) (string, error) {
-	info, err := nlcoord.leadership.GetTopicInfo(topicName, part)
-	if err != nil {
-		return "", err
+func (nlcoord *NsqLookupCoordinator) GetTopicLeaderForConsume(topicName string, part int) (string, bool) {
+	info, ok := nlcoord.leadership.GetTopicInfoFromCacheOnly(topicName, part)
+	if ok {
+		return info.Leader, true
 	}
-	return info.Leader, nil
+	return "", false
 }
 
 func (nlcoord *NsqLookupCoordinator) IsMineLeader() bool {

@@ -187,6 +187,8 @@ type NSQLookupdLeadership interface {
 	// should return both the meta info for topic and the replica info for topic partition
 	// epoch should be updated while return
 	GetTopicInfo(topic string, partition int) (*TopicPartitionMetaInfo, error)
+	// only get local cache info
+	GetTopicInfoFromCacheOnly(topic string, partition int) (*TopicPartitionMetaInfo, bool)
 	// create and write the meta info to topic meta node
 	CreateTopic(topic string, meta *TopicMetaInfo) error
 	// create topic partition path
@@ -195,7 +197,10 @@ type NSQLookupdLeadership interface {
 	IsExistTopicPartition(topic string, partition int) (bool, error)
 	// get topic meta info only
 	GetTopicMetaInfo(topic string) (TopicMetaInfo, EpochType, error)
+	// get local cache info first and try read etcd if missed
 	GetTopicMetaInfoTryCache(topic string) (TopicMetaInfo, bool, error)
+	// only get local cache info
+	GetTopicMetaInfoTryCacheOnly(topic string) (TopicMetaInfo, bool)
 	UpdateTopicMetaInfo(topic string, meta *TopicMetaInfo, oldGen EpochType) error
 	DeleteTopic(topic string, partition int) error
 	DeleteWholeTopic(topic string) error

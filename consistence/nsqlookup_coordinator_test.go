@@ -244,6 +244,10 @@ func (self *FakeNsqlookupLeadership) ScanTopics() ([]TopicPartitionMetaInfo, err
 	return alltopics, nil
 }
 
+func (self *FakeNsqlookupLeadership) GetTopicInfoFromCacheOnly(topic string, partition int) (*TopicPartitionMetaInfo, error) {
+	return self.GetTopicInfo(topic, partition)
+}
+
 func (self *FakeNsqlookupLeadership) GetTopicInfo(topic string, partition int) (*TopicPartitionMetaInfo, error) {
 	self.dataMutex.Lock()
 	defer self.dataMutex.Unlock()
@@ -315,6 +319,10 @@ func (self *FakeNsqlookupLeadership) IsExistTopicPartition(topic string, partiti
 	}
 	_, ok = t[partition]
 	return ok, nil
+}
+
+func (self *FakeNsqlookupLeadership) GetTopicMetaInfoTryCacheOnly(topic string) (TopicMetaInfo, bool, error) {
+	return self.GetTopicMetaInfoTryCache(topic)
 }
 
 func (self *FakeNsqlookupLeadership) GetTopicMetaInfoTryCache(topic string) (TopicMetaInfo, bool, error) {

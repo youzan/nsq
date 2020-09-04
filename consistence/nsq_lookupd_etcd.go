@@ -550,6 +550,31 @@ func (self *NsqLookupdEtcdMgr) processTopicNode(nodes client.Nodes,
 	return nil
 }
 
+func (self *NsqLookupdEtcdMgr) GetTopicInfoFromCacheOnly(topic string, partition int) (*TopicPartitionMetaInfo, bool) {
+	var topicInfo TopicPartitionMetaInfo
+	metaInfo, ok := self.GetTopicMetaInfoTryCacheOnly(topic)
+	if !ok {
+		return nil, false
+	}
+	topicInfo.TopicMetaInfo = metaInfo
+	var rInfo TopicPartitionReplicaInfo
+	found := false
+	self.tmiMutex.RLock()
+	parts, ok := self.topicReplicasMap[topic]
+	if ok {
+		p, ok := parts[partition]
+		if ok {
+			rInfo = *(p.Copy())
+			found = true
+		}
+	}
+	self.tmiMutex.RUnlock()
+	topicInfo.TopicPartitionReplicaInfo = rInfo
+	topicInfo.Name = topic
+	topicInfo.Partition = partition
+	return &topicInfo, found
+}
+
 func (self *NsqLookupdEtcdMgr) GetTopicInfo(topic string, partition int) (*TopicPartitionMetaInfo, error) {
 	var topicInfo TopicPartitionMetaInfo
 	metaInfo, _, err := self.GetTopicMetaInfoTryCache(topic)
@@ -655,6 +680,15 @@ func (self *NsqLookupdEtcdMgr) IsExistTopicPartition(topic string, partitionNum 
 		}
 	}
 	return true, nil
+}
+
+func (self *NsqLookupdEtcdMgr) GetTopicMetaInfoTryCacheOnly(topic string) (TopicMetaInfo, bool) {
+	var metaInfo TopicMetaInfo
+	var ok bool
+	self.tmiMutex.RLock()
+	metaInfo, ok = self.topicMetaMap[topic]
+	self.tmiMutex.RUnlock()
+	return metaInfo, ok
 }
 
 func (self *NsqLookupdEtcdMgr) GetTopicMetaInfoTryCache(topic string) (TopicMetaInfo, bool, error) {
