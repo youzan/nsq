@@ -1989,7 +1989,8 @@ func TestChannelCreateSync(t *testing.T) {
 	t.Log(t2ch1.GetConfirmed())
 	t.Log(t2ch1.GetChannelEnd())
 	test.Assert(t, c1.Offset() < t2ch1.GetConfirmed().Offset(), "channel should init with end")
-	nsqdCoord1.SyncTopicChannels(topic, partition)
+	coordData, _ := nsqdCoord1.getTopicCoordData(topic, partition)
+	nsqdCoord1.trySyncTopicChannels(coordData, true, false)
 	t.Log(t2ch1.GetConfirmed())
 	test.Equal(t, c1, t2ch1.GetConfirmed())
 

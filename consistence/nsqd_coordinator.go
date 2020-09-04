@@ -2186,7 +2186,10 @@ func (ncoord *NsqdCoordinator) syncChannelsFromOther(c *NsqdRpcClient, topicInfo
 					localTopic.CloseExistingChannel(chName, false)
 				}
 			}
-			localTopic.SaveChannelMeta()
+			err = localTopic.SaveChannelMeta()
+			if err != nil {
+				return &CoordErr{err.Error(), RpcNoErr, CoordTmpErr}
+			}
 			localTopic.ForceFlush()
 		}
 	}
