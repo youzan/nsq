@@ -1,7 +1,10 @@
 PREFIX=/usr/local
 DESTDIR=
-GOFLAGS=
+PROJECT?=github.com/youzan/nsq
 BINDIR=${PREFIX}/bin
+COMMIT?=$(shell git rev-parse --short HEAD)
+BUILD_TIME?=$(shell date '+%Y-%m-%d_%H:%M:%S-%Z')
+GOFLAGS=-ldflags "-X ${PROJECT}/internal/version.Commit=${COMMIT} -X ${PROJECT}/internal/version.BuildTime=${BUILD_TIME}"
 
 BLDDIR = build
 EXT=
