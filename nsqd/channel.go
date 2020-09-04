@@ -193,15 +193,12 @@ func NewChannel(topicName string, part int, topicOrdered bool, channelName strin
 	}
 	if topicOrdered || c.IsEphemeral() {
 		c.requeuedMsgChan = make(chan *Message, memSizeForSmall)
-		c.waitingRequeueChanMsgs = make(map[MessageID]*Message, memSizeForSmall)
-		c.waitingRequeueMsgs = make(map[MessageID]*Message, memSizeForSmall)
-		c.delayedConfirmedMsgs = make(map[MessageID]Message, memSizeForSmall)
 	} else {
-		c.requeuedMsgChan = make(chan *Message, opt.MaxRdyCount/2+1)
-		c.waitingRequeueChanMsgs = make(map[MessageID]*Message, 100)
-		c.waitingRequeueMsgs = make(map[MessageID]*Message, 100)
-		c.delayedConfirmedMsgs = make(map[MessageID]Message, MaxWaitingDelayed)
+		c.requeuedMsgChan = make(chan *Message, opt.MaxRdyCount/10+1)
 	}
+	c.waitingRequeueChanMsgs = make(map[MessageID]*Message, memSizeForSmall)
+	c.waitingRequeueMsgs = make(map[MessageID]*Message, memSizeForSmall)
+	c.delayedConfirmedMsgs = make(map[MessageID]Message, memSizeForSmall)
 
 	if len(opt.E2EProcessingLatencyPercentiles) > 0 {
 		c.e2eProcessingLatencyStream = quantile.New(
