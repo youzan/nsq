@@ -558,12 +558,16 @@ func (c *ClientV2) SwitchToConsumer(isEphemeral bool) error {
 	if atomic.LoadInt32(&c.Deflate) == 1 || atomic.LoadInt32(&c.Snappy) == 1 {
 		return nil
 	}
-	atomic.StoreInt64(&c.outputBufferSize, int64(defaultConsumerWriteBufferSize))
+	sz := int64(defaultConsumerWriteBufferSize)
+	if sz > c.ctxOpts.MaxOutputBufferSize {
+		sz = c.ctxOpts.MaxOutputBufferSize
+	}
+	atomic.StoreInt64(&c.outputBufferSize, sz)
 	err := c.Writer.Flush()
 	if err != nil {
 		return err
 	}
-	c.Writer = newBufioWriterSize(c.Conn, defaultConsumerWriteBufferSize)
+	c.Writer = newBufioWriterSize(c.Conn, int(c.GetOutputBufferSize()))
 	return nil
 }
 

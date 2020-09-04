@@ -112,6 +112,15 @@ func New(opts *Options) *NSQD {
 	if opts.RetentionSizePerDay > 0 {
 		DEFAULT_RETENTION_DAYS = int(opts.RetentionDays)
 	}
+	if opts.QueueReadBufferSize > 0 {
+		readBufferSize = int(opts.QueueReadBufferSize)
+	}
+	if opts.QueueWriteBufferSize > 0 {
+		writeBufSize = int(opts.QueueWriteBufferSize)
+	}
+	if opts.PubQueueSize > 0 {
+		PubQueue = opts.PubQueueSize
+	}
 
 	n := &NSQD{
 		startTime:            time.Now(),

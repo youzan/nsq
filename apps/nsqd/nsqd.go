@@ -175,6 +175,10 @@ func nsqdFlagSet(opts *nsqd.Options) *flag.FlagSet {
 	flagSet.Int("max-commit-buf", int(opts.MaxCommitBuf), "the max commit buffer for topic data")
 	flagSet.Bool("use-fsync", opts.UseFsync, "use fsync while flush data")
 	flagSet.Int("max-conn-for-client", int(opts.MaxConnForClient), "the max connections for all clients")
+	flagSet.Int("queue-read-buffer-size", int(opts.QueueReadBufferSize), "the read buffer size for topic disk queue file")
+	flagSet.Int("queue-write-buffer-size", int(opts.QueueWriteBufferSize), "the write buffer size for topic disk queue file")
+	flagSet.Int("pub-queue-size", int(opts.PubQueueSize), "the pub queue size for topic")
+	flagSet.Int("sleepms-between-log-sync-pull", int(opts.SleepMsBetweenLogSyncPull), "the sleep ms between each log sync pull")
 	return flagSet
 }
 

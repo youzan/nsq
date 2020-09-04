@@ -17,8 +17,9 @@ import (
 
 const (
 	MAX_POSSIBLE_MSG_SIZE = 1 << 28
-	readBufferSize        = 1024 * 4
 )
+
+var readBufferSize = 1024 * 4
 
 var errInvalidMetaFileData = errors.New("invalid meta file data")
 var diskMagicEndBytes = []byte{0xae, 0x83}
@@ -826,8 +827,8 @@ func (d *diskQueueReader) ensureReadBuffer(dataNeed int64, curNum int64, current
 	if int64(d.readBuffer.Len()) < dataNeed {
 		bufDataSize := dataNeed
 		// at least we should buffer a buffer size
-		if bufDataSize < readBufferSize {
-			bufDataSize = readBufferSize
+		if bufDataSize < int64(readBufferSize) {
+			bufDataSize = int64(readBufferSize)
 		}
 		if curNum == qend.EndOffset.FileNum {
 			// we should avoid prefetch uncommit file data after the committed queue end

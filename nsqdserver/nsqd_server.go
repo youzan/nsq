@@ -100,6 +100,9 @@ func NewNsqdServer(opts *nsqd.Options) (*nsqd.NSQD, *NsqdServer, error) {
 		consistence.MAX_COMMIT_BUF_SIZE = int(opts.MaxCommitBuf)
 	}
 
+	if opts.SleepMsBetweenLogSyncPull > 0 {
+		consistence.ChangeSleepMsBetweenLogSyncPull(opts.SleepMsBetweenLogSyncPull)
+	}
 	// check max open file limit
 	fl, err := FDLimit()
 	if err == nil && !testMode {

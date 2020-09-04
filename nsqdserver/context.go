@@ -57,6 +57,7 @@ func (c *context) nextClientID() int64 {
 func (c *context) swapOpts(other *nsqd.Options) {
 	c.nsqd.SwapOpts(other)
 	consistence.SetCoordLogLevel(other.LogLevel)
+	consistence.ChangeSleepMsBetweenLogSyncPull(other.SleepMsBetweenLogSyncPull)
 }
 
 func (c *context) triggerOptsNotification() {
