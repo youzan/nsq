@@ -55,10 +55,6 @@ func (n *NsqdServer) statsdLoop() {
 					"topic":     topic.TopicName,
 					"partition": topic.TopicPartition,
 				}).Set(float64(topic.MessageCount))
-				nsqd.TopicQueueMsgSizeEnd.With(prometheus.Labels{
-					"topic":     topic.TopicName,
-					"partition": topic.TopicPartition,
-				}).Set(float64(topic.BackendDepth))
 				nsqd.TopicPubClientCnt.With(prometheus.Labels{
 					"topic":     topic.TopicName,
 					"partition": topic.TopicPartition,
@@ -78,7 +74,6 @@ func (n *NsqdServer) statsdLoop() {
 					if protocol.IsEphemeral(channel.ChannelName) {
 						continue
 					}
-
 					nsqd.ChannelDepth.With(prometheus.Labels{
 						"topic":     topic.TopicName,
 						"partition": topic.TopicPartition,
@@ -94,21 +89,6 @@ func (n *NsqdServer) statsdLoop() {
 						"partition": topic.TopicPartition,
 						"channel":   channel.ChannelName,
 					}).Set(float64(channel.DepthTsNano))
-					nsqd.ChannelInflightCnt.With(prometheus.Labels{
-						"topic":     topic.TopicName,
-						"partition": topic.TopicPartition,
-						"channel":   channel.ChannelName,
-					}).Set(float64(channel.InFlightCount))
-					nsqd.ChannelDeferredCnt.With(prometheus.Labels{
-						"topic":     topic.TopicName,
-						"partition": topic.TopicPartition,
-						"channel":   channel.ChannelName,
-					}).Set(float64(channel.DeferredCount))
-					nsqd.ChannelDeferredFromDelayCnt.With(prometheus.Labels{
-						"topic":     topic.TopicName,
-						"partition": topic.TopicPartition,
-						"channel":   channel.ChannelName,
-					}).Set(float64(channel.DeferredFromDelayCount))
 					nsqd.ChannelClientCnt.With(prometheus.Labels{
 						"topic":     topic.TopicName,
 						"partition": topic.TopicPartition,

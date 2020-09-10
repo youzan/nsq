@@ -23,10 +23,6 @@ var (
 		Name: "topic_queue_msg_end",
 		Help: "the end message count of the topic disk queue",
 	}, []string{"topic", "partition"})
-	TopicQueueMsgSizeEnd = promauto.NewGaugeVec(prometheus.GaugeOpts{
-		Name: "topic_queue_msg_size_end",
-		Help: "the end size of the topic disk queue",
-	}, []string{"topic", "partition"})
 	TopicWriteLatencyMs = promauto.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    "topic_write_latency_ms",
 		Help:    "topic write latency ms",
@@ -54,18 +50,6 @@ var (
 	ChannelDepthTs = promauto.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "channel_depth_ts",
 		Help: "channel depth for message recent consumed timestamp",
-	}, []string{"topic", "partition", "channel"})
-	ChannelInflightCnt = promauto.NewGaugeVec(prometheus.GaugeOpts{
-		Name: "channel_inflight_cnt",
-		Help: "channel inflight cnt for channel",
-	}, []string{"topic", "partition", "channel"})
-	ChannelDeferredCnt = promauto.NewGaugeVec(prometheus.GaugeOpts{
-		Name: "channel_deferred_cnt",
-		Help: "channel current deferred cnt for both memory and delay queue",
-	}, []string{"topic", "partition", "channel"})
-	ChannelDeferredFromDelayCnt = promauto.NewGaugeVec(prometheus.GaugeOpts{
-		Name: "channel_deferred_from_delay_cnt",
-		Help: "channel current deferred from delay queue cnt",
 	}, []string{"topic", "partition", "channel"})
 	ChannelRequeuedCnt = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "channel_requeued_cnt",
