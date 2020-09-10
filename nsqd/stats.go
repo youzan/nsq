@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/youzan/nsq/internal/quantile"
 	"github.com/youzan/nsq/internal/util"
 )
@@ -82,6 +83,7 @@ type ChannelStats struct {
 	Depth          int64  `json:"depth"`
 	DepthSize      int64  `json:"depth_size"`
 	DepthTimestamp string `json:"depth_ts"`
+	DepthTsNano    int64  `json:"depth_ts_nano"`
 	BackendDepth   int64  `json:"backend_depth"`
 	// total size sub past hour on this channel
 	HourlySubSize int64 `json:"hourly_subsize"`
@@ -98,8 +100,9 @@ type ChannelStats struct {
 	Skipped                bool          `json:"skipped"`
 	ZanTestSkipped         bool          `json:"zan_test_skipped"`
 
-	DelayedQueueCount  uint64 `json:"delayed_queue_count"`
-	DelayedQueueRecent string `json:"delayed_queue_recent"`
+	DelayedQueueCount      uint64 `json:"delayed_queue_count"`
+	DelayedQueueRecent     string `json:"delayed_queue_recent"`
+	DelayedQueueRecentNano int64  `json:"delayed_queue_recent_nano"`
 
 	E2eProcessingLatency    *quantile.Result `json:"e2e_processing_latency"`
 	MsgConsumeLatencyStats  []int64          `json:"msg_consume_latency_stats"`
@@ -116,6 +119,7 @@ func NewChannelStats(c *Channel, clients []ClientStats, clientNum int) ChannelSt
 		ChannelName:    c.name,
 		Depth:          c.Depth(),
 		DepthTimestamp: time.Unix(0, c.DepthTimestamp()).String(),
+		DepthTsNano:    c.DepthTimestamp(),
 		// the message bytes need to be consumed
 		DepthSize:     c.DepthSize(),
 		BackendDepth:  c.backend.Depth(),
@@ -134,6 +138,7 @@ func NewChannelStats(c *Channel, clients []ClientStats, clientNum int) ChannelSt
 		ZanTestSkipped:         c.IsZanTestSkipped(),
 		DelayedQueueCount:      dqCnt,
 		DelayedQueueRecent:     time.Unix(0, recentTs).String(),
+		DelayedQueueRecentNano: recentTs,
 
 		E2eProcessingLatency:    c.e2eProcessingLatencyStream.Result(),
 		MsgConsumeLatencyStats:  c.channelStatsInfo.GetChannelLatencyStats(),
@@ -306,11 +311,11 @@ type DetailStatsInfo struct {
 	clientPubStats   map[string]*ClientPubStats
 }
 
-func NewDetailStatsInfo(initPubSize int64, historyPath string) *DetailStatsInfo {
+func NewDetailStatsInfo(topic string, part string, initPubSize int64, historyPath string) *DetailStatsInfo {
 	d := &DetailStatsInfo{
 		historyStatsInfo: &TopicHistoryStatsInfo{lastHour: int32(time.Now().Hour()),
 			lastPubSize: initPubSize},
-		msgStats:       &TopicMsgStatsInfo{},
+		msgStats:       &TopicMsgStatsInfo{topicName: topic, topicPart: part},
 		clientPubStats: make(map[string]*ClientPubStats),
 	}
 	d.LoadHistory(historyPath)
@@ -318,13 +323,18 @@ func NewDetailStatsInfo(initPubSize int64, historyPath string) *DetailStatsInfo 
 }
 
 type TopicMsgStatsInfo struct {
+	topicName string
+	topicPart string
 	// <100bytes, <1KB, 2KB, 4KB, 8KB, 16KB, 32KB, 64KB, 128KB, 256KB, 512KB, 1MB, 2MB, 4MB
 	MsgSizeStats [16]int64
-	// <1024us, 2ms, 4ms, 8ms, 16ms, 32ms, 64ms, 128ms, 256ms, 512ms, 1024ms, 2048ms, 4s, 8s
+	// <1ms, 2ms, 4ms, 8ms, 16ms, 32ms, 64ms, 128ms, 256ms, 512ms, 1024ms, 2048ms, 4s, 8s
 	MsgWriteLatencyStats [16]int64
 }
 
 type ChannelStatsInfo struct {
+	topicName   string
+	topicPart   string
+	channelName string
 	// 16ms, 32ms, 64ms, 128ms, 256ms, 512ms, 1024ms, 2048ms, 4s, 8s, 16s, above
 	MsgConsumeLatencyStats  [12]int64
 	MsgDeliveryLatencyStats [12]int64
@@ -384,6 +394,13 @@ func (self *ChannelStatsInfo) UpdateDelivery2ACKLatencyStats(latencyInMillSec in
 		bucket = len(self.MsgDeliveryLatencyStats) - 1
 	}
 	atomic.AddInt64(&self.MsgDeliveryLatencyStats[bucket], 1)
+	if latencyInMillSec > 8 {
+		ChannelConsumeDelivery2AckLatencyMs.With(prometheus.Labels{
+			"topic":     self.topicName,
+			"partition": self.topicPart,
+			"channel":   self.channelName,
+		}).Observe(float64(latencyInMillSec))
+	}
 }
 
 func (self *TopicMsgStatsInfo) UpdateMsgSizeStats(msgSize int64) {
@@ -398,13 +415,23 @@ func (self *TopicMsgStatsInfo) UpdateMsgSizeStats(msgSize int64) {
 		bucket = len(self.MsgSizeStats) - 1
 	}
 	atomic.AddInt64(&self.MsgSizeStats[bucket], 1)
+	if msgSize >= 100 {
+		TopicWriteByteSize.With(prometheus.Labels{
+			"topic":     self.topicName,
+			"partition": self.topicPart,
+		}).Observe(float64(msgSize))
+	}
 }
 
-func (self *TopicMsgStatsInfo) BatchUpdateMsgLatencyStats(latency int64, num int64) {
+func (self *TopicMsgStatsInfo) BatchUpdateMsgLatencyStats(latencyUs int64, num int64) {
 	bucket := 0
-	if latency < 1024 {
+	if latencyUs < 1000 {
 	} else {
-		bucket = int(math.Log2(float64(latency/1024))) + 1
+		bucket = int(math.Log2(float64(latencyUs/1000))) + 1
+		TopicWriteLatencyMs.With(prometheus.Labels{
+			"topic":     self.topicName,
+			"partition": self.topicPart,
+		}).Observe(float64(latencyUs / 1000))
 	}
 	if bucket >= len(self.MsgWriteLatencyStats) {
 		bucket = len(self.MsgWriteLatencyStats) - 1
@@ -412,11 +439,15 @@ func (self *TopicMsgStatsInfo) BatchUpdateMsgLatencyStats(latency int64, num int
 	atomic.AddInt64(&self.MsgWriteLatencyStats[bucket], num)
 }
 
-func (self *TopicMsgStatsInfo) UpdateMsgLatencyStats(latency int64) {
+func (self *TopicMsgStatsInfo) UpdateMsgLatencyStats(latencyUs int64) {
 	bucket := 0
-	if latency < 1024 {
+	if latencyUs < 1000 {
 	} else {
-		bucket = int(math.Log2(float64(latency/1024))) + 1
+		bucket = int(math.Log2(float64(latencyUs/1000))) + 1
+		TopicWriteLatencyMs.With(prometheus.Labels{
+			"topic":     self.topicName,
+			"partition": self.topicPart,
+		}).Observe(float64(latencyUs / 1000))
 	}
 	if bucket >= len(self.MsgWriteLatencyStats) {
 		bucket = len(self.MsgWriteLatencyStats) - 1

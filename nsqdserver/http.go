@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/julienschmidt/httprouter"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/youzan/nsq/consistence"
 	"github.com/youzan/nsq/internal/clusterinfo"
 	"github.com/youzan/nsq/internal/ext"
@@ -97,6 +98,7 @@ func newHTTPServer(ctx *context, tlsEnabled bool, tlsRequired bool) *httpServer 
 	//router.Handle("POST", "/topic/delete", http_api.Decorate(s.doDeleteTopic, http_api.DeprecatedAPI, log, http_api.V1))
 	router.Handle("POST", "/disable/write", http_api.Decorate(s.doDisableClusterWrite, log, http_api.V1))
 
+	router.Handler("GET", "/metric", promhttp.Handler())
 	// debug
 	router.HandlerFunc("GET", "/debug/pprof/", pprof.Index)
 	router.HandlerFunc("GET", "/debug/pprof/cmdline", pprof.Cmdline)
