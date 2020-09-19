@@ -31,7 +31,7 @@ var (
 	TopicWriteByteSize = promauto.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    "topic_write_byte_size",
 		Help:    "topic write message byte size",
-		Buckets: prometheus.ExponentialBuckets(128, 2, 12),
+		Buckets: prometheus.ExponentialBuckets(128, 2, 14),
 	}, []string{"topic", "partition"})
 	TopicPubClientCnt = promauto.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "topic_pub_client_cnt",
