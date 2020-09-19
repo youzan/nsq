@@ -7,6 +7,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/youzan/nsq/internal/protocol"
 	"github.com/youzan/nsq/internal/statsd"
 	"github.com/youzan/nsq/nsqd"
@@ -38,20 +39,26 @@ func (n *NsqdServer) statsdLoop() {
 		case <-ticker.C:
 			n.ctx.nsqd.UpdateTopicHistoryStats()
 
-			if opts.StatsdAddress == "" {
-				continue
-			}
-			client := statsd.NewClient(opts.StatsdAddress, opts.StatsdPrefix)
-			err := client.CreateSocket(opts.StatsdProtocol)
-			if err != nil {
-				nsqd.NsqLogger().Logf("failed to create %v socket to statsd(%s)", opts.StatsdProtocol, client)
-				continue
-			}
-
-			nsqd.NsqLogger().LogDebugf("STATSD: pushing stats to %s, using prefix: %v", client, opts.StatsdPrefix)
-
 			stats := n.ctx.nsqd.GetStats(false, true)
+			var client *statsd.Client
+			if opts.StatsdAddress != "" {
+				client = statsd.NewClient(opts.StatsdAddress, opts.StatsdPrefix)
+				err := client.CreateSocket(opts.StatsdProtocol)
+				if err != nil {
+					nsqd.NsqLogger().Logf("failed to create %v socket to statsd(%s)", opts.StatsdProtocol, client)
+				}
+				nsqd.NsqLogger().LogDebugf("STATSD: pushing stats to %s, using prefix: %v", client, opts.StatsdPrefix)
+			}
+
 			for _, topic := range stats {
+				nsqd.TopicQueueMsgEnd.With(prometheus.Labels{
+					"topic":     topic.TopicName,
+					"partition": topic.TopicPartition,
+				}).Set(float64(topic.MessageCount))
+				nsqd.TopicPubClientCnt.With(prometheus.Labels{
+					"topic":     topic.TopicName,
+					"partition": topic.TopicPartition,
+				}).Set(float64(len(topic.Clients)))
 				// try to find the topic in the last collection
 				lastTopic := nsqd.TopicStats{}
 				for _, checkTopic := range lastStats {
@@ -61,28 +68,44 @@ func (n *NsqdServer) statsdLoop() {
 					}
 				}
 				statdName := topic.StatsdName
-				diff := topic.MessageCount - lastTopic.MessageCount
-				if (topic.IsMultiOrdered || topic.IsMultiPart) && !topic.IsLeader {
-					diff = 0
-				}
-				stat := fmt.Sprintf("topic.%s.message_count", statdName)
-				err := client.Incr(stat, int64(diff))
-				if err != nil {
-					nsqd.NsqLogger().Logf("STATSD: pushing stats failed: %v", err)
-					break
-				}
-
-				for _, item := range topic.E2eProcessingLatency.Percentiles {
-					stat = fmt.Sprintf("topic.%s.e2e_processing_latency_%.0f", statdName, item["quantile"]*100.0)
-					// We can cast the value to int64 since a value of 1 is the
-					// minimum resolution we will have, so there is no loss of
-					// accuracy
-					client.Gauge(stat, int64(item["value"]))
-				}
 
 				for _, channel := range topic.Channels {
 					// ephemeral may be too much, so we just ignore report ephemeral channel stats to remote
 					if protocol.IsEphemeral(channel.ChannelName) {
+						continue
+					}
+					nsqd.ChannelDepth.With(prometheus.Labels{
+						"topic":     topic.TopicName,
+						"partition": topic.TopicPartition,
+						"channel":   channel.ChannelName,
+					}).Set(float64(channel.Depth))
+					nsqd.ChannelDepthSize.With(prometheus.Labels{
+						"topic":     topic.TopicName,
+						"partition": topic.TopicPartition,
+						"channel":   channel.ChannelName,
+					}).Set(float64(channel.DepthSize))
+					nsqd.ChannelDepthTs.With(prometheus.Labels{
+						"topic":     topic.TopicName,
+						"partition": topic.TopicPartition,
+						"channel":   channel.ChannelName,
+					}).Set(float64(channel.DepthTsNano))
+					nsqd.ChannelClientCnt.With(prometheus.Labels{
+						"topic":     topic.TopicName,
+						"partition": topic.TopicPartition,
+						"channel":   channel.ChannelName,
+					}).Set(float64(channel.ClientNum))
+					nsqd.ChannelDelayedQueueCnt.With(prometheus.Labels{
+						"topic":     topic.TopicName,
+						"partition": topic.TopicPartition,
+						"channel":   channel.ChannelName,
+					}).Set(float64(channel.DelayedQueueCount))
+					nsqd.ChannelDelayedQueueTs.With(prometheus.Labels{
+						"topic":     topic.TopicName,
+						"partition": topic.TopicPartition,
+						"channel":   channel.ChannelName,
+					}).Set(float64(channel.DelayedQueueRecentNano))
+
+					if client == nil {
 						continue
 					}
 					// try to find the channel in the last collection
@@ -189,8 +212,31 @@ func (n *NsqdServer) statsdLoop() {
 						client.Gauge(stat, int64(item["value"]))
 					}
 				}
+				if client == nil {
+					continue
+				}
+				diff := topic.MessageCount - lastTopic.MessageCount
+				if (topic.IsMultiOrdered || topic.IsMultiPart) && !topic.IsLeader {
+					diff = 0
+				}
+				stat := fmt.Sprintf("topic.%s.message_count", statdName)
+				err := client.Incr(stat, int64(diff))
+				if err != nil {
+					nsqd.NsqLogger().Logf("STATSD: pushing stats failed: %v", err)
+				}
+
+				for _, item := range topic.E2eProcessingLatency.Percentiles {
+					stat = fmt.Sprintf("topic.%s.e2e_processing_latency_%.0f", statdName, item["quantile"]*100.0)
+					// We can cast the value to int64 since a value of 1 is the
+					// minimum resolution we will have, so there is no loss of
+					// accuracy
+					client.Gauge(stat, int64(item["value"]))
+				}
 			}
 			lastStats = stats
+			if client == nil {
+				continue
+			}
 
 			if opts.StatsdMemStats {
 				var memStats runtime.MemStats

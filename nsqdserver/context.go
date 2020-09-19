@@ -4,9 +4,11 @@ import (
 	"crypto/tls"
 	"errors"
 	"net"
+	"strconv"
 	"sync/atomic"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/youzan/nsq/consistence"
 	"github.com/youzan/nsq/internal/ext"
 	"github.com/youzan/nsq/nsqd"
@@ -25,6 +27,7 @@ var (
 
 func incrServerPubFailed() {
 	atomic.AddInt64(&serverPubFailedCnt, 1)
+	nsqd.ServerPubFailedCnt.Inc()
 }
 
 func getServerPubFailed() int64 {
@@ -57,6 +60,7 @@ func (c *context) nextClientID() int64 {
 func (c *context) swapOpts(other *nsqd.Options) {
 	c.nsqd.SwapOpts(other)
 	consistence.SetCoordLogLevel(other.LogLevel)
+	consistence.ChangeSleepMsBetweenLogSyncPull(other.SleepMsBetweenLogSyncPull)
 }
 
 func (c *context) triggerOptsNotification() {
@@ -193,6 +197,11 @@ func (c *context) PutMessage(topic *nsqd.Topic,
 	}
 	msg.TraceID = traceID
 
+	nsqd.TopicPubTotalCnt.With(prometheus.Labels{
+		"topic":     topic.GetTopicName(),
+		"partition": strconv.Itoa(topic.GetTopicPart()),
+	}).Inc()
+
 	if c.nsqdCoord == nil {
 		return topic.PutMessage(msg)
 	}
@@ -200,6 +209,11 @@ func (c *context) PutMessage(topic *nsqd.Topic,
 }
 
 func (c *context) PutMessages(topic *nsqd.Topic, msgs []*nsqd.Message) (nsqd.MessageID, nsqd.BackendOffset, int32, error) {
+	nsqd.TopicPubTotalCnt.With(prometheus.Labels{
+		"topic":     topic.GetTopicName(),
+		"partition": strconv.Itoa(topic.GetTopicPart()),
+	}).Add(float64(len(msgs)))
+
 	if c.nsqdCoord == nil {
 		id, offset, rawSize, _, _, err := topic.PutMessages(msgs)
 		return id, offset, rawSize, err

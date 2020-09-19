@@ -15,6 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/youzan/nsq/internal/ext"
 	"github.com/youzan/nsq/internal/levellogger"
 	"github.com/youzan/nsq/internal/protocol"
@@ -147,6 +148,10 @@ func (t *Topic) IsExt() bool {
 
 func (t *Topic) IncrPubFailed() {
 	atomic.AddInt64(&t.pubFailedCnt, 1)
+	TopicPubFailedCnt.With(prometheus.Labels{
+		"topic":     t.GetTopicName(),
+		"partition": strconv.Itoa(t.GetTopicPart()),
+	}).Inc()
 }
 
 func (t *Topic) PubFailed() int64 {
@@ -234,7 +239,7 @@ func NewTopicWithExt(topicName string, part int, ext bool, ordered bool, opt *Op
 		nsqLog.LogErrorf("topic %v failed to load magic code: %v", t.fullName, err)
 		return nil
 	}
-	t.detailStats = NewDetailStatsInfo(t.TotalDataSize(), t.getHistoryStatsFileName())
+	t.detailStats = NewDetailStatsInfo(t.tname, strconv.Itoa(t.partition), t.TotalDataSize(), t.getHistoryStatsFileName())
 	t.nsqdNotify.NotifyStateChanged(t, true)
 	nsqLog.LogDebugf("new topic created: %v", t.tname)
 

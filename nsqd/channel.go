@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/youzan/nsq/internal/protocol"
 
 	simpleJson "github.com/bitly/go-simplejson"
@@ -193,15 +194,12 @@ func NewChannel(topicName string, part int, topicOrdered bool, channelName strin
 	}
 	if topicOrdered || c.IsEphemeral() {
 		c.requeuedMsgChan = make(chan *Message, memSizeForSmall)
-		c.waitingRequeueChanMsgs = make(map[MessageID]*Message, memSizeForSmall)
-		c.waitingRequeueMsgs = make(map[MessageID]*Message, memSizeForSmall)
-		c.delayedConfirmedMsgs = make(map[MessageID]Message, memSizeForSmall)
 	} else {
-		c.requeuedMsgChan = make(chan *Message, opt.MaxRdyCount/2+1)
-		c.waitingRequeueChanMsgs = make(map[MessageID]*Message, 100)
-		c.waitingRequeueMsgs = make(map[MessageID]*Message, 100)
-		c.delayedConfirmedMsgs = make(map[MessageID]Message, MaxWaitingDelayed)
+		c.requeuedMsgChan = make(chan *Message, opt.MaxRdyCount/10+1)
 	}
+	c.waitingRequeueChanMsgs = make(map[MessageID]*Message, memSizeForSmall)
+	c.waitingRequeueMsgs = make(map[MessageID]*Message, memSizeForSmall)
+	c.delayedConfirmedMsgs = make(map[MessageID]Message, memSizeForSmall)
 
 	if len(opt.E2EProcessingLatencyPercentiles) > 0 {
 		c.e2eProcessingLatencyStream = quantile.New(
@@ -216,7 +214,11 @@ func NewChannel(topicName string, part int, topicOrdered bool, channelName strin
 	}
 
 	//initialize channel stats
-	c.channelStatsInfo = &ChannelStatsInfo{}
+	c.channelStatsInfo = &ChannelStatsInfo{
+		topicName:   c.topicName,
+		topicPart:   strconv.Itoa(c.topicPart),
+		channelName: channelName,
+	}
 
 	c.initPQ()
 
@@ -1542,6 +1544,11 @@ func (c *Channel) doRequeue(m *Message, clientAddr string) error {
 	if c.Exiting() {
 		return ErrExiting
 	}
+	ChannelRequeuedCnt.With(prometheus.Labels{
+		"topic":     c.GetTopicName(),
+		"partition": strconv.Itoa(c.GetTopicPart()),
+		"channel":   c.GetName(),
+	}).Inc()
 	atomic.AddUint64(&c.requeueCount, 1)
 	if c.isTracedOrDebugTraceLog(m) {
 		nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "REQ", m.TraceID, m, clientAddr, 0)
@@ -2292,6 +2299,11 @@ func (c *Channel) processInFlightQueue(tnow int64) (bool, bool) {
 			atomic.AddInt64(&c.deferredCount, -1)
 		} else {
 			atomic.AddUint64(&c.timeoutCount, 1)
+			ChannelTimeoutCnt.With(prometheus.Labels{
+				"topic":     c.GetTopicName(),
+				"partition": strconv.Itoa(c.GetTopicPart()),
+				"channel":   c.GetName(),
+			}).Inc()
 		}
 		client := msg.belongedConsumer
 		if msg.belongedConsumer != nil {

@@ -393,7 +393,7 @@ func (s *httpServer) doLookup(w http.ResponseWriter, req *http.Request, ps httpr
 		}
 	}
 	if needMeta != "" && s.ctx.nsqlookupd.coordinator != nil {
-		meta, err := s.ctx.nsqlookupd.coordinator.GetTopicMetaInfo(topicName)
+		meta, err := s.ctx.nsqlookupd.coordinator.GetTopicMetaInfo(topicName, false)
 		if err != nil {
 			// maybe topic on old nsqd
 			if err != consistence.ErrKeyNotFound {
@@ -465,7 +465,7 @@ func (s *httpServer) tryFindRegsForConsumer(topicName string, topicPartition str
 		return registrations
 	}
 	if topicPartition == "*" {
-		meta, err := s.ctx.nsqlookupd.coordinator.GetTopicMetaInfo(topicName)
+		meta, err := s.ctx.nsqlookupd.coordinator.GetTopicMetaInfo(topicName, false)
 		if err != nil {
 			return registrations
 		}
@@ -481,8 +481,8 @@ func (s *httpServer) tryFindRegsForConsumer(topicName string, topicPartition str
 			if ok {
 				continue
 			}
-			nodeID, err := s.ctx.nsqlookupd.coordinator.GetTopicLeaderForConsume(topicName, i)
-			if err != nil {
+			nodeID, ok := s.ctx.nsqlookupd.coordinator.GetTopicLeaderForConsume(topicName, i)
+			if !ok {
 				continue
 			}
 			peerInfo := s.ctx.nsqlookupd.DB.SearchPeerClientByClusterID(nodeID)
@@ -501,8 +501,8 @@ func (s *httpServer) tryFindRegsForConsumer(topicName string, topicPartition str
 		if err != nil {
 			return registrations
 		}
-		nodeID, err := s.ctx.nsqlookupd.coordinator.GetTopicLeaderForConsume(topicName, part)
-		if err == nil {
+		nodeID, ok := s.ctx.nsqlookupd.coordinator.GetTopicLeaderForConsume(topicName, part)
+		if ok {
 			peerInfo := s.ctx.nsqlookupd.DB.SearchPeerClientByClusterID(nodeID)
 			if peerInfo != nil {
 				var reg TopicProducerReg

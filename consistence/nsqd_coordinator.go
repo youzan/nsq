@@ -34,7 +34,12 @@ var (
 	ForceFixLeaderData          = false
 	MaxTopicRetentionSizePerDay = int64(1024 * 1024 * 1024 * 16)
 	flushTicker                 = time.Second * 2
+	sleepMsBetweenLogSyncPull   = int32(0)
 )
+
+func ChangeSleepMsBetweenLogSyncPull(ms int) {
+	atomic.StoreInt32(&sleepMsBetweenLogSyncPull, int32(ms))
+}
 
 var testCatchupPausedPullLogs int32
 
@@ -1812,6 +1817,10 @@ func (ncoord *NsqdCoordinator) pullCatchupDataFromLeader(tc *TopicCoordinator,
 				localErr, logIndex, offset)
 			return &CoordErr{localErr.Error(), RpcNoErr, CoordLocalErr}
 		}
+		sleepMs := atomic.LoadInt32(&sleepMsBetweenLogSyncPull)
+		if sleepMs > 0 {
+			time.Sleep(time.Duration(sleepMs) * time.Millisecond)
+		}
 		logs, dataList, rpcErr := c.PullCommitLogsAndData(topicInfo.Name, topicInfo.Partition,
 			countNumIndex, logIndex, offset, MAX_LOG_PULL, fromDelayedQueue)
 		if rpcErr != nil {
@@ -2177,7 +2186,10 @@ func (ncoord *NsqdCoordinator) syncChannelsFromOther(c *NsqdRpcClient, topicInfo
 					localTopic.CloseExistingChannel(chName, false)
 				}
 			}
-			localTopic.SaveChannelMeta()
+			err = localTopic.SaveChannelMeta()
+			if err != nil {
+				return &CoordErr{err.Error(), RpcNoErr, CoordTmpErr}
+			}
 			localTopic.ForceFlush()
 		}
 	}
