@@ -828,11 +828,13 @@ func (ncoord *NsqdCoordinator) loadLocalTopicData() error {
 			continue
 		}
 		dyConf := &nsqd.TopicDynamicConf{SyncEvery: int64(topicInfo.SyncEvery),
-			AutoCommit:   0,
-			RetentionDay: topicInfo.RetentionDay,
-			OrderedMulti: topicInfo.OrderedMulti,
-			MultiPart:    topicInfo.MultiPart,
-			Ext:          topicInfo.Ext,
+			AutoCommit:               0,
+			RetentionDay:             topicInfo.RetentionDay,
+			OrderedMulti:             topicInfo.OrderedMulti,
+			MultiPart:                topicInfo.MultiPart,
+			Ext:                      topicInfo.Ext,
+			DisableChannelAutoCreate: topicInfo.DisableChannelAutoCreate,
+			RegisteredChannels:       topicInfo.Channels,
 		}
 		tc.GetData().updateBufferSize(int(dyConf.SyncEvery - 1))
 		maybeInitDelayedQ(tc.GetData(), topic)
@@ -1998,11 +2000,13 @@ func (ncoord *NsqdCoordinator) catchupFromLeader(topicInfo TopicPartitionMetaInf
 	}
 
 	dyConf := &nsqd.TopicDynamicConf{SyncEvery: int64(topicInfo.SyncEvery),
-		AutoCommit:   0,
-		RetentionDay: topicInfo.RetentionDay,
-		OrderedMulti: topicInfo.OrderedMulti,
-		MultiPart:    topicInfo.MultiPart,
-		Ext:          topicInfo.Ext,
+		AutoCommit:               0,
+		RetentionDay:             topicInfo.RetentionDay,
+		OrderedMulti:             topicInfo.OrderedMulti,
+		MultiPart:                topicInfo.MultiPart,
+		Ext:                      topicInfo.Ext,
+		DisableChannelAutoCreate: topicInfo.DisableChannelAutoCreate,
+		RegisteredChannels:       topicInfo.Channels,
 	}
 	tc.GetData().updateBufferSize(int(dyConf.SyncEvery - 1))
 	localTopic.SetDynamicInfo(*dyConf, tc.GetData().logMgr)
@@ -2523,11 +2527,13 @@ func (ncoord *NsqdCoordinator) updateTopicLeaderSession(topicCoord *TopicCoordin
 		return ErrLocalMissingTopic
 	}
 	dyConf := &nsqd.TopicDynamicConf{SyncEvery: int64(tcData.topicInfo.SyncEvery),
-		AutoCommit:   0,
-		RetentionDay: tcData.topicInfo.RetentionDay,
-		OrderedMulti: tcData.topicInfo.OrderedMulti,
-		MultiPart:    tcData.topicInfo.MultiPart,
-		Ext:          tcData.topicInfo.Ext,
+		AutoCommit:               0,
+		RetentionDay:             tcData.topicInfo.RetentionDay,
+		OrderedMulti:             tcData.topicInfo.OrderedMulti,
+		MultiPart:                tcData.topicInfo.MultiPart,
+		Ext:                      tcData.topicInfo.Ext,
+		DisableChannelAutoCreate: tcData.topicInfo.DisableChannelAutoCreate,
+		RegisteredChannels:       tcData.topicInfo.Channels,
 	}
 	tcData.updateBufferSize(int(dyConf.SyncEvery - 1))
 	localTopic.SetDynamicInfo(*dyConf, tcData.logMgr)
@@ -2965,11 +2971,13 @@ func (ncoord *NsqdCoordinator) updateLocalTopic(topicInfo *TopicPartitionMetaInf
 		return nil, ErrLocalInitTopicFailed
 	}
 	dyConf := &nsqd.TopicDynamicConf{SyncEvery: int64(topicInfo.SyncEvery),
-		AutoCommit:   0,
-		RetentionDay: topicInfo.RetentionDay,
-		OrderedMulti: topicInfo.OrderedMulti,
-		MultiPart:    topicInfo.MultiPart,
-		Ext:          topicInfo.Ext,
+		AutoCommit:               0,
+		RetentionDay:             topicInfo.RetentionDay,
+		OrderedMulti:             topicInfo.OrderedMulti,
+		MultiPart:                topicInfo.MultiPart,
+		Ext:                      topicInfo.Ext,
+		DisableChannelAutoCreate: topicInfo.DisableChannelAutoCreate,
+		RegisteredChannels:       topicInfo.Channels,
 	}
 	t.SetDynamicInfo(*dyConf, tcData.logMgr)
 

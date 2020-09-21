@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/pprof"
 	"net/url"
+	"strings"
 	"sync/atomic"
 
 	"errors"
@@ -260,10 +261,11 @@ func (s *httpServer) doTopics(w http.ResponseWriter, req *http.Request, ps httpr
 				return nil, fmt.Errorf("topic meta info for %v not exist", topic)
 			}
 			info := &clusterinfo.TopicInfo{
-				TopicName:  topic,
-				ExtSupport: topicMeta.Ext,
-				Ordered:    topicMeta.OrderedMulti,
-				MultiPart:  topicMeta.MultiPart,
+				TopicName:                topic,
+				ExtSupport:               topicMeta.Ext,
+				Ordered:                  topicMeta.OrderedMulti,
+				MultiPart:                topicMeta.MultiPart,
+				DisableChannelAutoCreate: topicMeta.DisableChannelAutoCreate,
 			}
 			topicsInfo = append(topicsInfo, info)
 		}
@@ -634,6 +636,7 @@ func (s *httpServer) doCreateTopic(w http.ResponseWriter, req *http.Request, ps 
 	allowMultiOrdered := reqParams.Get("orderedmulti")
 	multiPart := reqParams.Get("multipart")
 	allowExt := reqParams.Get("extend")
+	disableChannelAutoCreate := reqParams.Get("disable_channel_auto_create")
 
 	if s.ctx.nsqlookupd.coordinator == nil {
 		return nil, http_api.Err{500, "MISSING_COORDINATOR"}
@@ -652,6 +655,9 @@ func (s *httpServer) doCreateTopic(w http.ResponseWriter, req *http.Request, ps 
 	meta.SuggestLF = suggestLF
 	meta.SyncEvery = syncEvery
 	meta.RetentionDay = int32(retentionDays)
+	if disableChannelAutoCreate == "true" {
+		meta.DisableChannelAutoCreate = true
+	}
 	if allowMultiOrdered == "true" {
 		meta.OrderedMulti = true
 	}
@@ -781,13 +787,24 @@ func (s *httpServer) doChangeTopicDynamicParam(w http.ResponseWriter, req *http.
 	}
 	upgradeExtStr := reqParams.Get("upgradeext")
 
+	disableChannelAutoCreate := reqParams.Get("disable_channel_auto_create")
+
+	registeredChannels := parseInitRegisteredChannels(reqParams.Get("registered_channels"))
+
 	err = s.ctx.nsqlookupd.coordinator.ChangeTopicMetaParam(topicName, syncEvery,
-		retentionDays, replicator, upgradeExtStr)
+		retentionDays, replicator, upgradeExtStr, disableChannelAutoCreate, registeredChannels)
 	if err != nil {
 		return nil, http_api.Err{400, err.Error()}
 	}
 
 	return nil, nil
+}
+
+func parseInitRegisteredChannels(channelsPattern string) []string {
+	if len(channelsPattern) == 0 {
+		return nil
+	}
+	return strings.Split(channelsPattern, ",")
 }
 
 func (s *httpServer) doMoveTopicParition(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {

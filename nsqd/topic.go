@@ -65,12 +65,14 @@ type MsgIDGenerator interface {
 }
 
 type TopicDynamicConf struct {
-	AutoCommit   int32
-	RetentionDay int32
-	SyncEvery    int64
-	OrderedMulti bool
-	MultiPart    bool
-	Ext          bool
+	AutoCommit               int32
+	RetentionDay             int32
+	SyncEvery                int64
+	OrderedMulti             bool
+	MultiPart                bool
+	DisableChannelAutoCreate bool
+	RegisteredChannels       []string
+	Ext                      bool
 }
 
 type PubInfo struct {

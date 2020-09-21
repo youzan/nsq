@@ -403,7 +403,7 @@ func (nlcoord *NsqLookupCoordinator) deleteTopicPartition(topic string, pid int)
 }
 
 func (nlcoord *NsqLookupCoordinator) ChangeTopicMetaParam(topic string,
-	newSyncEvery int, newRetentionDay int, newReplicator int, upgradeExt string) error {
+	newSyncEvery int, newRetentionDay int, newReplicator int, upgradeExt string, channelAutoCreate string, registeredchannels []string) error {
 	if nlcoord.leaderNode.GetID() != nlcoord.myNode.GetID() {
 		coordLog.Infof("not leader while create topic")
 		return ErrNotNsqLookupLeader
@@ -463,6 +463,12 @@ func (nlcoord *NsqLookupCoordinator) ChangeTopicMetaParam(topic string,
 			meta.Ext = true
 			needDisableWrite = true
 		}
+		//update channel auto create opt
+		if channelAutoCreate == "true" && !meta.DisableChannelAutoCreate {
+			meta.DisableChannelAutoCreate = true
+		} else if channelAutoCreate == "false" && !meta.DisableChannelAutoCreate {
+			meta.DisableChannelAutoCreate = false
+		}
 		if needDisableWrite {
 			if !atomic.CompareAndSwapInt32(&nlcoord.isUpgrading, 0, 1) {
 				coordLog.Infof("the cluster state is already upgrading")
@@ -481,10 +487,12 @@ func (nlcoord *NsqLookupCoordinator) ChangeTopicMetaParam(topic string,
 				coordLog.Infof("failed get info for topic : %v-%v, %v", topic, i, err)
 				continue
 			}
-			if topicInfo.TopicMetaInfo != meta {
+			if topicInfo.TopicMetaInfo == meta {
 				coordLog.Warningf("topic partition meta info %v should match topic meta %v", topicInfo, meta)
 			}
 			topicReplicaInfo := &topicInfo.TopicPartitionReplicaInfo
+			//update registered channels
+			topicReplicaInfo.Channels = registeredchannels
 			err = nlcoord.leadership.UpdateTopicNodeInfo(topic, i, topicReplicaInfo, topicReplicaInfo.Epoch)
 			if err != nil {
 				coordLog.Infof("failed update info for topic : %v-%v, %v", topic, i, err)
@@ -658,7 +666,7 @@ func (nlcoord *NsqLookupCoordinator) CreateTopic(topic string, meta TopicMetaInf
 		if oldMeta.SyncEvery >= MAX_SYNC_EVERY {
 			meta.SyncEvery = oldMeta.SyncEvery
 		}
-		if oldMeta != meta {
+		if oldMeta == meta {
 			return ErrAlreadyExist
 		}
 	}

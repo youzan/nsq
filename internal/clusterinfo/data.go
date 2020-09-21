@@ -417,10 +417,12 @@ func (c *ClusterInfo) GetLookupdTopicProducers(topic string, lookupdHTTPAddrs []
 }
 
 type TopicInfo struct {
-	TopicName  string `json:"topic_name"`
-	ExtSupport bool   `json:"extend_support"`
-	Ordered    bool   `json:"ordered"`
-	MultiPart  bool   `json:"multi_part"`
+	TopicName                string   `json:"topic_name"`
+	ExtSupport               bool     `json:"extend_support"`
+	Ordered                  bool     `json:"ordered"`
+	MultiPart                bool     `json:"multi_part"`
+	DisableChannelAutoCreate bool     `json:"disable_channel_auto_create"`
+	RegisteredChannels       []string `json:"registered_channels"`
 }
 
 type TopicInfoSortByName []*TopicInfo
@@ -446,10 +448,12 @@ func (c *ClusterInfo) GetNSQDTopics(nsqdHTTPAddrs []string) ([]*TopicInfo, error
 
 	type respType struct {
 		Topics []struct {
-			Name       string `json:"topic_name"`
-			Ordered    bool   `json:"is_multi_ordered"`
-			ExtSupport bool   `json:"is_ext"`
-			MultiPart  bool   `json:"multi_part"`
+			Name                     string   `json:"topic_name"`
+			Ordered                  bool     `json:"is_multi_ordered"`
+			ExtSupport               bool     `json:"is_ext"`
+			MultiPart                bool     `json:"multi_part"`
+			DisableChannelAutoCreate bool     `json:"disable_channel_auto_create"`
+			RegisteredChannels       []string `json:"registered_channels"`
 		} `json:"topics"`
 	}
 
@@ -474,10 +478,12 @@ func (c *ClusterInfo) GetNSQDTopics(nsqdHTTPAddrs []string) ([]*TopicInfo, error
 			defer lock.Unlock()
 			for _, topic := range resp.Topics {
 				topics = append(topics, &TopicInfo{
-					TopicName:  topic.Name,
-					Ordered:    topic.Ordered,
-					MultiPart:  topic.MultiPart,
-					ExtSupport: topic.ExtSupport,
+					TopicName:                topic.Name,
+					Ordered:                  topic.Ordered,
+					MultiPart:                topic.MultiPart,
+					ExtSupport:               topic.ExtSupport,
+					DisableChannelAutoCreate: topic.DisableChannelAutoCreate,
+					RegisteredChannels:       topic.RegisteredChannels,
 				})
 			}
 		}(addr)
@@ -970,6 +976,7 @@ func (c *ClusterInfo) GetNSQDStats(producers Producers, selectedTopic string, so
 					channel.IsMultiOrdered = topic.IsMultiOrdered
 					channel.IsMultiPart = topic.IsMultiPart
 					channel.IsExt = topic.IsExt
+					channel.IsRegistered = topic.isRegisteredChannel(channel.ChannelName)
 					channel.MemoryDepth = channel.Depth - channel.BackendDepth
 					key := channel.ChannelName
 					if selectedTopic == "" {
@@ -995,6 +1002,7 @@ func (c *ClusterInfo) GetNSQDStats(producers Producers, selectedTopic string, so
 							IsMultiPart:    topic.IsMultiPart,
 							IsExt:          topic.IsExt,
 							ZanTestSkipped: channel.ZanTestSkipped,
+							IsRegistered:   channel.IsRegistered,
 						}
 						channelStatsMap[key] = channelStats
 					}
@@ -1160,13 +1168,13 @@ func (c *ClusterInfo) CreateTopicChannel(topicName string, channelName string, l
 }
 
 func (c *ClusterInfo) CreateTopic(topicName string, partitionNum int, replica int, syncDisk int,
-	retentionDays string, orderedmulti string, ext string, lookupdHTTPAddrs []LookupdAddressDC) error {
+	retentionDays string, orderedmulti string, ext string, disableChannelAutoCreate string, lookupdHTTPAddrs []LookupdAddressDC) error {
 	var errs []error
 
 	// TODO: found the master lookup node first
 	// create the topic on all the nsqlookupd
-	qs := fmt.Sprintf("topic=%s&partition_num=%d&replicator=%d&syncdisk=%d&retention=%s&orderedmulti=%s&extend=%s",
-		url.QueryEscape(topicName), partitionNum, replica, syncDisk, retentionDays, orderedmulti, ext)
+	qs := fmt.Sprintf("topic=%s&partition_num=%d&replicator=%d&syncdisk=%d&retention=%s&orderedmulti=%s&extend=%s&disable_channel_auto_create=%s",
+		url.QueryEscape(topicName), partitionNum, replica, syncDisk, retentionDays, orderedmulti, ext, disableChannelAutoCreate)
 	lookupdNodesDC, err := c.ListAllLookupdNodes(lookupdHTTPAddrs)
 	if err != nil {
 		c.logf("failed to list lookupd nodes while create topic: %v", err)
