@@ -42,12 +42,15 @@ func (n *NsqdServer) statsdLoop() {
 			stats := n.ctx.nsqd.GetStats(false, true)
 			var client *statsd.Client
 			if opts.StatsdAddress != "" {
-				client = statsd.NewClient(opts.StatsdAddress, opts.StatsdPrefix)
-				err := client.CreateSocket(opts.StatsdProtocol)
+				nc := statsd.NewClient(opts.StatsdAddress, opts.StatsdPrefix)
+				err := nc.CreateSocket(opts.StatsdProtocol)
 				if err != nil {
-					nsqd.NsqLogger().Logf("failed to create %v socket to statsd(%s)", opts.StatsdProtocol, client)
+					nsqd.NsqLogger().Logf("failed to create %v socket to statsd(%s), err: %s", opts.StatsdProtocol, nc, err.Error())
+					// we continue here to allow update the stats for prometheus without pushing the old statsd
+				} else {
+					client = nc
 				}
-				nsqd.NsqLogger().LogDebugf("STATSD: pushing stats to %s, using prefix: %v", client, opts.StatsdPrefix)
+				nsqd.NsqLogger().LogDebugf("STATSD: pushing stats to %s, using prefix: %v", nc, opts.StatsdPrefix)
 			}
 
 			for _, topic := range stats {

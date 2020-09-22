@@ -149,7 +149,7 @@ func (self *fakeNsqdLeadership) UpdateTopics(topic string, info map[int]*TopicPa
 
 func (self *fakeNsqdLeadership) GetTopicMetaInfo(topic string) (TopicMetaInfo, EpochType, error) {
 	self.Lock()
-	self.Unlock()
+	defer self.Unlock()
 	t, ok := self.fakeTopicsInfo[topic]
 	if ok {
 		tp, ok2 := t[0]
@@ -162,7 +162,7 @@ func (self *fakeNsqdLeadership) GetTopicMetaInfo(topic string) (TopicMetaInfo, E
 
 func (self *fakeNsqdLeadership) GetTopicInfo(topic string, partition int) (*TopicPartitionMetaInfo, error) {
 	self.Lock()
-	self.Unlock()
+	defer self.Unlock()
 	t, ok := self.fakeTopicsInfo[topic]
 	if ok {
 		tp, ok2 := t[partition]

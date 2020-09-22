@@ -34,6 +34,9 @@ func (c *Client) CreateSocket(protocol string) error {
 }
 
 func (c *Client) Close() error {
+	if c.conn == nil {
+		return errors.New("not connected")
+	}
 	return c.conn.Close()
 }
 

@@ -10,7 +10,9 @@ import (
 	"time"
 
 	"github.com/golang/snappy"
+	"github.com/stretchr/testify/assert"
 	"github.com/youzan/go-nsq"
+	"github.com/youzan/nsq/internal/statsd"
 	"github.com/youzan/nsq/internal/test"
 	nsqdNs "github.com/youzan/nsq/nsqd"
 )
@@ -110,4 +112,43 @@ func TestClientAttributes(t *testing.T) {
 	client := statsData.Get("topics").GetIndex(0).Get("channels").GetIndex(0).Get("clients").GetIndex(0)
 	test.Equal(t, client.Get("user_agent").MustString(), userAgent)
 	test.Equal(t, client.Get("snappy").MustBool(), true)
+}
+
+func TestStatsConnectFailed(t *testing.T) {
+	opts := nsqdNs.NewOptions()
+	opts.StatsdProtocol = "udp"
+	opts.StatsdInterval = time.Second * 2
+	opts.StatsdAddress = "nsq-monitor.example.com:1234"
+	opts.Logger = newTestLogger(t)
+	nc := statsd.NewClient(opts.StatsdAddress, opts.StatsdPrefix)
+	err := nc.CreateSocket(opts.StatsdProtocol)
+	t.Log(err)
+	assert.NotNil(t, err)
+
+	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
+	defer os.RemoveAll(opts.DataPath)
+	defer nsqdServer.Exit()
+
+	topicName := "test_stats" + strconv.Itoa(int(time.Now().Unix()))
+	topic := nsqd.GetTopicIgnPart(topicName)
+	msg := nsqdNs.NewMessage(0, []byte("test body"))
+	topic.PutMessage(msg)
+
+	conn, err := mustConnectNSQD(tcpAddr)
+	test.Equal(t, err, nil)
+	defer conn.Close()
+
+	identify(t, conn, nil, frameTypeResponse)
+	sub(t, conn, topicName, "ch")
+
+	interval := opts.StatsdInterval
+	s := time.Now()
+	for {
+		stats := nsqd.GetStats(false, false)
+		t.Logf("stats: %+v", stats)
+		time.Sleep(time.Second)
+		if time.Since(s) > interval*2 {
+			break
+		}
+	}
 }
