@@ -611,6 +611,12 @@ func (s *httpServer) doCreateChannel(w http.ResponseWriter, req *http.Request, p
 		return nil, err
 	}
 	if s.ctx.checkConsumeForMasterWrite(topic.GetTopicName(), topic.GetTopicPart()) {
+		//check channel exists in topic partition info, if topic has DisableChannelAutoCreate
+		dynamicInfo := topic.GetDynamicInfo()
+		if dynamicInfo.DisableChannelAutoCreate && !dynamicInfo.FindInRegisteredChannels(channelName) {
+			return nil, http_api.Err{403, fmt.Sprintf("channel %v not registered. channel should be initialized before use.", channelName)}
+		}
+
 		topic.GetChannel(channelName)
 		// need sync channel after created
 		err := s.ctx.SyncChannels(topic)

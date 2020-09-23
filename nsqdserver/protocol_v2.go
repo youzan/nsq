@@ -1068,6 +1068,9 @@ func (p *protocolV2) internalSUB(client *nsqd.ClientV2, params [][]byte, enableT
 		topic.DisableForSlave(false)
 		return nil, protocol.NewFatalClientErr(nil, FailedOnNotLeader, "")
 	}
+	if topic.IsChannelAutoCreateDisabled() && !topic.GetDynamicInfo().FindInRegisteredChannels(channelName) {
+		return nil, protocol.NewFatalClientErr(nil, "E_SUB_CHANNEL_NOT_REGISTERED", "channel is not registered under topic.")
+	}
 	channel := topic.GetChannel(channelName)
 	// need sync channel after created
 	p.ctx.SyncChannels(topic)

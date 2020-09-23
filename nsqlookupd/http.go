@@ -77,6 +77,7 @@ func GetValidSuggestLF(r string) (int, error) {
 type httpServer struct {
 	ctx    *Context
 	router http.Handler
+	client *http_api.Client
 }
 
 func newHTTPServer(ctx *Context) *httpServer {
@@ -92,6 +93,7 @@ func newHTTPServer(ctx *Context) *httpServer {
 	s := &httpServer{
 		ctx:    ctx,
 		router: router,
+		client: http_api.NewClient(nil),
 	}
 
 	router.Handle("GET", "/ping", http_api.Decorate(s.pingHandler, log, http_api.PlainText))
@@ -118,8 +120,8 @@ func newHTTPServer(ctx *Context) *httpServer {
 	router.Handle("POST", "/topic/partition/expand", http_api.Decorate(s.doChangeTopicPartitionNum, log, http_api.V1))
 	router.Handle("POST", "/topic/partition/move", http_api.Decorate(s.doMoveTopicParition, log, http_api.V1))
 	router.Handle("POST", "/topic/meta/update", http_api.Decorate(s.doChangeTopicDynamicParam, log, http_api.V1))
-	//router.Handle("POST", "/channel/create", http_api.Decorate(s.doCreateChannel, log, http_api.V1))
-	//router.Handle("POST", "/channel/delete", http_api.Decorate(s.doDeleteChannel, log, http_api.V1))
+	router.Handle("POST", "/channel/create", http_api.Decorate(s.doCreateChannel, log, http_api.V1))
+	router.Handle("POST", "/channel/delete", http_api.Decorate(s.doDeleteChannel, log, http_api.V1))
 	router.Handle("POST", "/topic/tombstone", http_api.Decorate(s.doTombstoneTopicProducer, log, http_api.V1))
 	router.Handle("POST", "/disable/write", http_api.Decorate(s.doDisableClusterWrite, log, http_api.V1))
 
@@ -317,39 +319,8 @@ func (s *httpServer) doDisableClusterWrite(w http.ResponseWriter, req *http.Requ
 	return nil, nil
 }
 
-func (s *httpServer) doLookup(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {
-	reqParams, err := url.ParseQuery(req.URL.RawQuery)
-	if err != nil {
-		nsqlookupLog.Logf("lookup topic param error : %v", err.Error())
-		return nil, http_api.Err{400, "INVALID_REQUEST"}
-	}
-
-	topicName := reqParams.Get("topic")
-	if topicName == "" {
-		return nil, http_api.Err{400, "MISSING_ARG_TOPIC"}
-	}
-	topicPartition := reqParams.Get("partition")
-	if topicPartition == "" {
-		topicPartition = "*"
-	}
-	// access mode will be used for disable some write method (pub) to allow
-	// removing the topic from some node without affecting the consumer.
-	// if a node is setting read only, then with access mode "w", this node
-	// will be filtered before return to client.
-	// The access mode "r" will return all nodes (that have the topic) without any filter.
-	accessMode := reqParams.Get("access")
-	if accessMode == "" {
-		accessMode = "r"
-	}
-	if accessMode != "w" && accessMode != "r" {
-		return nil, http_api.Err{400, "INVALID_ACCESS_MODE"}
-	}
-	// check consistent level
-	// The reported info in the register db may not consistent,
-	// if the client need a strong consistent result, we check the db result with
-	// the leadership info from etcd.
-	checkConsistent := reqParams.Get("consistent")
-
+func (s *httpServer) lookup(topicName, topicPartition, accessMode, checkConsistent, needMeta string) (map[string]interface{}, error) {
+	var err error
 	registrations := s.ctx.nsqlookupd.DB.FindTopicProducers(topicName, topicPartition)
 	isFoundInRegister := len(registrations) > 0
 	if len(registrations) == 0 {
@@ -385,7 +356,6 @@ func (s *httpServer) doLookup(w http.ResponseWriter, req *http.Request, ps httpr
 	}
 	// maybe channels should be under topic partitions?
 	channels := s.ctx.nsqlookupd.DB.FindChannelRegs(topicName, topicPartition).Channels()
-	needMeta := reqParams.Get("metainfo")
 	if accessMode == "w" {
 		if consistence.IsAllClusterWriteDisabled() {
 			peers = nil
@@ -424,6 +394,44 @@ func (s *httpServer) doLookup(w http.ResponseWriter, req *http.Request, ps httpr
 		"producers":  peers,
 		"partitions": partitionProducers,
 	}, nil
+}
+
+func (s *httpServer) doLookup(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {
+	reqParams, err := url.ParseQuery(req.URL.RawQuery)
+	if err != nil {
+		nsqlookupLog.Logf("lookup topic param error : %v", err.Error())
+		return nil, http_api.Err{400, "INVALID_REQUEST"}
+	}
+
+	topicName := reqParams.Get("topic")
+	if topicName == "" {
+		return nil, http_api.Err{400, "MISSING_ARG_TOPIC"}
+	}
+	topicPartition := reqParams.Get("partition")
+	if topicPartition == "" {
+		topicPartition = "*"
+	}
+	// access mode will be used for disable some write method (pub) to allow
+	// removing the topic from some node without affecting the consumer.
+	// if a node is setting read only, then with access mode "w", this node
+	// will be filtered before return to client.
+	// The access mode "r" will return all nodes (that have the topic) without any filter.
+	accessMode := reqParams.Get("access")
+	if accessMode == "" {
+		accessMode = "r"
+	}
+	if accessMode != "w" && accessMode != "r" {
+		return nil, http_api.Err{400, "INVALID_ACCESS_MODE"}
+	}
+	// check consistent level
+	// The reported info in the register db may not consistent,
+	// if the client need a strong consistent result, we check the db result with
+	// the leadership info from etcd.
+	checkConsistent := reqParams.Get("consistent")
+
+	needMeta := reqParams.Get("metainfo")
+
+	return s.lookup(topicName, topicPartition, accessMode, checkConsistent, needMeta)
 }
 
 func (s *httpServer) tryFindRegsFromRegister(topicName string, topicPartition string, registrations TopicRegistrations) (TopicRegistrations, error) {
@@ -573,6 +581,188 @@ func (s *httpServer) doSetLogLevel(w http.ResponseWriter, req *http.Request, ps 
 	nsqlookupLog.SetLevel(int32(level))
 	consistence.SetCoordLogLevel(int32(level))
 	return nil, nil
+}
+
+func (s *httpServer) doDeleteChannel(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {
+	reqParams, err := url.ParseQuery(req.URL.RawQuery)
+	if err != nil {
+		return nil, http_api.Err{400, "INVALID_REQUEST"}
+	}
+
+	topicName := reqParams.Get("topic")
+	if topicName == "" {
+		return nil, http_api.Err{400, "MISSING_ARG_TOPIC"}
+	}
+
+	if !protocol.IsValidTopicName(topicName) {
+		return nil, http_api.Err{400, "INVALID_ARG_TOPIC"}
+	}
+
+	channelName := reqParams.Get("channel")
+	if channelName == "" {
+		return nil, http_api.Err{400, "MISSING_ARG_TOPIC"}
+	}
+
+	if !protocol.IsValidChannelName(channelName) {
+		return nil, http_api.Err{400, "INVALID_ARG_TOPIC"}
+	}
+
+	topicMeta, err := s.ctx.nsqlookupd.coordinator.GetTopicMetaInfo(topicName, true)
+	if err != nil {
+		return nil, http_api.Err{400, err.Error()}
+	}
+
+	if topicMeta.DisableChannelAutoCreate {
+		registeredChannels, err := s.ctx.nsqlookupd.coordinator.GetRegisteredChannel(topicName)
+		if err != nil {
+			return nil, http_api.Err{400, err.Error()}
+		}
+		if !existInRegisteredChannels(channelName, registeredChannels) {
+			return nil, http_api.Err{400, fmt.Sprintf("channel %v not registered", channelName)}
+		}
+
+		//append new channel and update channel
+		newRegisteredChannels, removed := removeFromRegisteredChannels(channelName, registeredChannels)
+		if !removed {
+			return nil, http_api.Err{404, fmt.Sprintf("register channel %v not found", channelName)}
+		}
+		err = s.ctx.nsqlookupd.coordinator.ChangeTopicMetaParam(topicName, -1,
+			-1, -1, "", "", newRegisteredChannels)
+		if err != nil {
+			return nil, http_api.Err{400, err.Error()}
+		}
+	}
+
+	//loop nsqd nodes and create channels
+	resp, err := s.lookup(topicName, "*", "r", "false", "true")
+	if err != nil {
+		return nil, http_api.Err{500, fmt.Sprintf("fail to lookup topic %v before create channel %v", topicName, channelName)}
+	}
+	partitions := resp["partitions"]
+	if partitions == nil {
+		return nil, http_api.Err{500, fmt.Sprintf("fail to lookup topic %v before create channel %v", topicName, channelName)}
+	}
+
+	var errs []error
+	for pid, pi := range partitions.(map[string]*PeerInfo) {
+		qs := fmt.Sprintf("http://%s:%v/channel/delete?topic=%s&channel=%s&partition=%s", pi.RemoteAddress, pi.HTTPPort, url.QueryEscape(topicName), url.QueryEscape(channelName), pid)
+		_, err := s.client.POSTV1(qs)
+		if err != nil {
+			pe, ok := err.(clusterinfo.PartialErr)
+			if !ok {
+				return nil, err
+			}
+			errs = append(errs, pe.Errors()...)
+		}
+	}
+	if len(errs) > 0 {
+		return nil, clusterinfo.ErrList(errs)
+	}
+	return nil, nil
+}
+
+func (s *httpServer) doCreateChannel(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {
+	reqParams, err := url.ParseQuery(req.URL.RawQuery)
+	if err != nil {
+		return nil, http_api.Err{400, "INVALID_REQUEST"}
+	}
+
+	topicName := reqParams.Get("topic")
+	if topicName == "" {
+		return nil, http_api.Err{400, "MISSING_ARG_TOPIC"}
+	}
+
+	if !protocol.IsValidTopicName(topicName) {
+		return nil, http_api.Err{400, "INVALID_ARG_TOPIC"}
+	}
+
+	channelName := reqParams.Get("channel")
+	if channelName == "" {
+		return nil, http_api.Err{400, "MISSING_ARG_TOPIC"}
+	}
+
+	if !protocol.IsValidChannelName(channelName) {
+		return nil, http_api.Err{400, "INVALID_ARG_TOPIC"}
+	}
+
+	topicMeta, err := s.ctx.nsqlookupd.coordinator.GetTopicMetaInfo(topicName, true)
+	if err != nil {
+		return nil, http_api.Err{400, err.Error()}
+	}
+
+	if topicMeta.DisableChannelAutoCreate {
+		registeredChannels, err := s.ctx.nsqlookupd.coordinator.GetRegisteredChannel(topicName)
+		if err != nil {
+			return nil, http_api.Err{400, err.Error()}
+		}
+		if existInRegisteredChannels(channelName, registeredChannels) {
+			return nil, http_api.Err{400, fmt.Sprintf("channel %v already registered", channelName)}
+		}
+
+		//append new channel and update channel
+		registeredChannels = append(registeredChannels, channelName)
+		err = s.ctx.nsqlookupd.coordinator.ChangeTopicMetaParam(topicName, -1,
+			-1, -1, "", "", registeredChannels)
+		if err != nil {
+			return nil, http_api.Err{400, err.Error()}
+		}
+	}
+
+	//loop nsqd nodes and create channels
+	resp, err := s.lookup(topicName, "*", "r", "false", "true")
+	if err != nil {
+		return nil, http_api.Err{500, fmt.Sprintf("fail to lookup topic %v before create channel %v", topicName, channelName)}
+	}
+	partitions := resp["partitions"]
+	if partitions == nil {
+		return nil, http_api.Err{500, fmt.Sprintf("fail to lookup topic %v before create channel %v", topicName, channelName)}
+	}
+
+	var errs []error
+	for pid, pi := range partitions.(map[string]*PeerInfo) {
+		qs := fmt.Sprintf("http://%s:%v/channel/create?topic=%s&channel=%s&partition=%s", pi.RemoteAddress, pi.HTTPPort, url.QueryEscape(topicName), url.QueryEscape(channelName), pid)
+		_, err := s.client.POSTV1(qs)
+		if err != nil {
+			pe, ok := err.(clusterinfo.PartialErr)
+			if !ok {
+				return nil, err
+			}
+			errs = append(errs, pe.Errors()...)
+		}
+	}
+	if len(errs) > 0 {
+		return nil, clusterinfo.ErrList(errs)
+	}
+	return nil, nil
+}
+
+func existInRegisteredChannels(ch string, registeredChannels []string) bool {
+	if len(registeredChannels) == 0 {
+		return false
+	}
+	for _, rch := range registeredChannels {
+		if rch == ch {
+			return true
+		}
+	}
+	return false
+}
+
+func removeFromRegisteredChannels(ch string, registeredChannels []string) ([]string, bool) {
+	if len(registeredChannels) == 0 {
+		return registeredChannels, false
+	}
+	idx := -1
+	for i, rch := range registeredChannels {
+		if rch == ch {
+			idx = i
+		}
+	}
+	if idx < 0 {
+		return registeredChannels, false
+	}
+	registeredChannels[idx] = registeredChannels[len(registeredChannels)-1]
+	return registeredChannels[:len(registeredChannels)-1], true
 }
 
 func (s *httpServer) doCreateTopic(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {

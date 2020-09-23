@@ -402,8 +402,37 @@ func (nlcoord *NsqLookupCoordinator) deleteTopicPartition(topic string, pid int)
 	return nil
 }
 
+//return current registered channels slize under target topic
+func (nlcoord *NsqLookupCoordinator) GetRegisteredChannel(topic string) ([]string, error) {
+	topicMeta, _, err := nlcoord.leadership.GetTopicMetaInfo(topic)
+	if err != nil {
+		coordLog.Infof("get topic key %v failed :%v", topic, err)
+		return nil, err
+	}
+
+	var registeredChannels []string
+	registeredChannelsMap := make(map[string]bool)
+	for i := 0; i < topicMeta.PartitionNum; i++ {
+		topicInfo, err := nlcoord.leadership.GetTopicInfo(topic, i)
+		if err != nil {
+			coordLog.Infof("failed get info for topic : %v-%v, %v", topic, i, err)
+			continue
+		}
+		for _, ch := range topicInfo.Channels {
+			registeredChannelsMap[ch] = true
+		}
+	}
+	//convert registered channels map back
+	for ch, _ := range registeredChannelsMap {
+		channelName := ch
+		registeredChannels = append(registeredChannels, channelName)
+	}
+
+	return registeredChannels, nil
+}
+
 func (nlcoord *NsqLookupCoordinator) ChangeTopicMetaParam(topic string,
-	newSyncEvery int, newRetentionDay int, newReplicator int, upgradeExt string, channelAutoCreate string, registeredchannels []string) error {
+	newSyncEvery int, newRetentionDay int, newReplicator int, upgradeExt string, disableChannelAutoCreate string, registeredchannels []string) error {
 	if nlcoord.leaderNode.GetID() != nlcoord.myNode.GetID() {
 		coordLog.Infof("not leader while create topic")
 		return ErrNotNsqLookupLeader
@@ -464,9 +493,9 @@ func (nlcoord *NsqLookupCoordinator) ChangeTopicMetaParam(topic string,
 			needDisableWrite = true
 		}
 		//update channel auto create opt
-		if channelAutoCreate == "true" && !meta.DisableChannelAutoCreate {
+		if disableChannelAutoCreate == "true" && !meta.DisableChannelAutoCreate {
 			meta.DisableChannelAutoCreate = true
-		} else if channelAutoCreate == "false" && !meta.DisableChannelAutoCreate {
+		} else if disableChannelAutoCreate == "false" && !meta.DisableChannelAutoCreate {
 			meta.DisableChannelAutoCreate = false
 		}
 		if needDisableWrite {

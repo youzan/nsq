@@ -2966,7 +2966,7 @@ func (ncoord *NsqdCoordinator) notifyFlushData(topic string, partition int) {
 
 func (ncoord *NsqdCoordinator) updateLocalTopic(topicInfo *TopicPartitionMetaInfo, tcData *coordData) (*nsqd.Topic, *CoordErr) {
 	// check topic exist and prepare on local.
-	t := ncoord.localNsqd.GetTopicWithDisabled(topicInfo.Name, topicInfo.Partition, topicInfo.Ext, topicInfo.OrderedMulti)
+	t := ncoord.localNsqd.GetTopicWithDisabled(topicInfo.Name, topicInfo.Partition, topicInfo.Ext, topicInfo.OrderedMulti, topicInfo.DisableChannelAutoCreate)
 	if t == nil {
 		return nil, ErrLocalInitTopicFailed
 	}
