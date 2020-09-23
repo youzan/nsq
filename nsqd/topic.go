@@ -165,6 +165,10 @@ func (t *Topic) DisableChannelAutoCreate() {
 	atomic.StoreInt32(&t.isChannelAutoCreatedDisabled, 1)
 }
 
+func (t *Topic) EnableChannelAutoCreate() {
+	atomic.StoreInt32(&t.isChannelAutoCreatedDisabled, 0)
+}
+
 func (t *Topic) IsChannelAutoCreateDisabled() bool {
 	return atomic.LoadInt32(&t.isChannelAutoCreatedDisabled) == 1
 }
@@ -717,8 +721,11 @@ func (t *Topic) SetDynamicInfo(dynamicConf TopicDynamicConf, idGen MsgIDGenerato
 		t.setExt()
 	}
 	t.dynamicConf.DisableChannelAutoCreate = dynamicConf.DisableChannelAutoCreate
-	if dynamicConf.DisableChannelAutoCreate {
+	channelAutoCreateDisabled := t.IsChannelAutoCreateDisabled()
+	if dynamicConf.DisableChannelAutoCreate && !channelAutoCreateDisabled {
 		t.DisableChannelAutoCreate()
+	} else if !dynamicConf.DisableChannelAutoCreate && channelAutoCreateDisabled {
+		t.EnableChannelAutoCreate()
 	}
 	t.dynamicConf.RegisteredChannels = dynamicConf.RegisteredChannels
 	nsqLog.Logf("topic dynamic configure changed to %v", dynamicConf)

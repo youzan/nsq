@@ -645,7 +645,7 @@ func (s *httpServer) doDeleteChannel(w http.ResponseWriter, req *http.Request, p
 
 	var errs []error
 	for pid, pi := range partitions.(map[string]*PeerInfo) {
-		qs := fmt.Sprintf("http://%s:%v/channel/delete?topic=%s&channel=%s&partition=%s", pi.RemoteAddress, pi.HTTPPort, url.QueryEscape(topicName), url.QueryEscape(channelName), pid)
+		qs := fmt.Sprintf("http://%s:%v/channel/delete?topic=%s&channel=%s&partition=%s", pi.BroadcastAddress, pi.HTTPPort, url.QueryEscape(topicName), url.QueryEscape(channelName), pid)
 		_, err := s.client.POSTV1(qs)
 		if err != nil {
 			pe, ok := err.(clusterinfo.PartialErr)
@@ -720,7 +720,8 @@ func (s *httpServer) doCreateChannel(w http.ResponseWriter, req *http.Request, p
 
 	var errs []error
 	for pid, pi := range partitions.(map[string]*PeerInfo) {
-		qs := fmt.Sprintf("http://%s:%v/channel/create?topic=%s&channel=%s&partition=%s", pi.RemoteAddress, pi.HTTPPort, url.QueryEscape(topicName), url.QueryEscape(channelName), pid)
+		qs := fmt.Sprintf("http://%s:%v/channel/create?topic=%s&channel=%s&partition=%s", pi.BroadcastAddress, pi.HTTPPort, url.QueryEscape(topicName), url.QueryEscape(channelName), pid)
+		fmt.Printf("%s", qs)
 		_, err := s.client.POSTV1(qs)
 		if err != nil {
 			pe, ok := err.(clusterinfo.PartialErr)

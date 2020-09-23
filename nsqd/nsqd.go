@@ -433,6 +433,7 @@ func (n *NSQD) persistMetadata(currentTopics []*Topic) error {
 			nsqLog.Warningf("save topic %v channel meta failed: %v", topic.GetFullName(), err)
 		}
 		topicData["channels"] = channels
+		topicData["disbale_channel_auto_create"] = topic.IsChannelAutoCreateDisabled()
 		topics = append(topics, topicData)
 	}
 	js["version"] = version.Binary

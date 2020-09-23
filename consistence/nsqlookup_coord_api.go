@@ -495,7 +495,7 @@ func (nlcoord *NsqLookupCoordinator) ChangeTopicMetaParam(topic string,
 		//update channel auto create opt
 		if disableChannelAutoCreate == "true" && !meta.DisableChannelAutoCreate {
 			meta.DisableChannelAutoCreate = true
-		} else if disableChannelAutoCreate == "false" && !meta.DisableChannelAutoCreate {
+		} else if disableChannelAutoCreate == "false" && meta.DisableChannelAutoCreate {
 			meta.DisableChannelAutoCreate = false
 		}
 		if needDisableWrite {
