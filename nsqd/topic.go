@@ -71,20 +71,7 @@ type TopicDynamicConf struct {
 	OrderedMulti             bool
 	MultiPart                bool
 	DisableChannelAutoCreate bool
-	RegisteredChannels       []string
 	Ext                      bool
-}
-
-func (d TopicDynamicConf) FindInRegisteredChannels(ch string) bool {
-	if len(d.RegisteredChannels) == 0 {
-		return false
-	}
-	for _, rch := range d.RegisteredChannels {
-		if rch == ch {
-			return true
-		}
-	}
-	return false
 }
 
 type PubInfo struct {
@@ -727,7 +714,6 @@ func (t *Topic) SetDynamicInfo(dynamicConf TopicDynamicConf, idGen MsgIDGenerato
 	} else if !dynamicConf.DisableChannelAutoCreate && channelAutoCreateDisabled {
 		t.EnableChannelAutoCreate()
 	}
-	t.dynamicConf.RegisteredChannels = dynamicConf.RegisteredChannels
 	nsqLog.Logf("topic dynamic configure changed to %v", dynamicConf)
 	t.channelLock.RLock()
 	for _, ch := range t.channelMap {

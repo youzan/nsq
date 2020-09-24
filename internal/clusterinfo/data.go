@@ -976,7 +976,6 @@ func (c *ClusterInfo) GetNSQDStats(producers Producers, selectedTopic string, so
 					channel.IsMultiOrdered = topic.IsMultiOrdered
 					channel.IsMultiPart = topic.IsMultiPart
 					channel.IsExt = topic.IsExt
-					channel.IsRegistered = topic.isRegisteredChannel(channel.ChannelName)
 					channel.MemoryDepth = channel.Depth - channel.BackendDepth
 					key := channel.ChannelName
 					if selectedTopic == "" {
@@ -1002,7 +1001,6 @@ func (c *ClusterInfo) GetNSQDStats(producers Producers, selectedTopic string, so
 							IsMultiPart:    topic.IsMultiPart,
 							IsExt:          topic.IsExt,
 							ZanTestSkipped: channel.ZanTestSkipped,
-							IsRegistered:   channel.IsRegistered,
 						}
 						channelStatsMap[key] = channelStats
 					}

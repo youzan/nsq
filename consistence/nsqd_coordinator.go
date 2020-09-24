@@ -828,13 +828,11 @@ func (ncoord *NsqdCoordinator) loadLocalTopicData() error {
 			continue
 		}
 		dyConf := &nsqd.TopicDynamicConf{SyncEvery: int64(topicInfo.SyncEvery),
-			AutoCommit:               0,
-			RetentionDay:             topicInfo.RetentionDay,
-			OrderedMulti:             topicInfo.OrderedMulti,
-			MultiPart:                topicInfo.MultiPart,
-			Ext:                      topicInfo.Ext,
-			DisableChannelAutoCreate: topicInfo.DisableChannelAutoCreate,
-			RegisteredChannels:       topicInfo.Channels,
+			AutoCommit:   0,
+			RetentionDay: topicInfo.RetentionDay,
+			OrderedMulti: topicInfo.OrderedMulti,
+			MultiPart:    topicInfo.MultiPart,
+			Ext:          topicInfo.Ext,
 		}
 		tc.GetData().updateBufferSize(int(dyConf.SyncEvery - 1))
 		maybeInitDelayedQ(tc.GetData(), topic)
@@ -2006,7 +2004,6 @@ func (ncoord *NsqdCoordinator) catchupFromLeader(topicInfo TopicPartitionMetaInf
 		MultiPart:                topicInfo.MultiPart,
 		Ext:                      topicInfo.Ext,
 		DisableChannelAutoCreate: topicInfo.DisableChannelAutoCreate,
-		RegisteredChannels:       topicInfo.Channels,
 	}
 	tc.GetData().updateBufferSize(int(dyConf.SyncEvery - 1))
 	localTopic.SetDynamicInfo(*dyConf, tc.GetData().logMgr)
@@ -2533,7 +2530,6 @@ func (ncoord *NsqdCoordinator) updateTopicLeaderSession(topicCoord *TopicCoordin
 		MultiPart:                tcData.topicInfo.MultiPart,
 		Ext:                      tcData.topicInfo.Ext,
 		DisableChannelAutoCreate: tcData.topicInfo.DisableChannelAutoCreate,
-		RegisteredChannels:       tcData.topicInfo.Channels,
 	}
 	tcData.updateBufferSize(int(dyConf.SyncEvery - 1))
 	localTopic.SetDynamicInfo(*dyConf, tcData.logMgr)
@@ -2977,9 +2973,21 @@ func (ncoord *NsqdCoordinator) updateLocalTopic(topicInfo *TopicPartitionMetaInf
 		MultiPart:                topicInfo.MultiPart,
 		Ext:                      topicInfo.Ext,
 		DisableChannelAutoCreate: topicInfo.DisableChannelAutoCreate,
-		RegisteredChannels:       topicInfo.Channels,
 	}
 	t.SetDynamicInfo(*dyConf, tcData.logMgr)
+	//sync channels
+	newChannels := make(map[string]bool)
+	for i := range topicInfo.Channels {
+		t.GetChannel(topicInfo.Channels[i])
+		newChannels[topicInfo.Channels[i]] = true
+	}
+	chMeta := t.GetChannelMeta()
+	for k, _ := range chMeta {
+		if !newChannels[chMeta[k].Name] {
+			t.DeleteExistingChannel(chMeta[k].Name)
+			coordLog.Infof("ch %v deleted", chMeta[k].Name)
+		}
+	}
 
 	if t.IsDataNeedFix() {
 		endFixErr := checkAndFixLocalLogQueueEnd(tcData, t, tcData.logMgr, true, ForceFixLeaderData)

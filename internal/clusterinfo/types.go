@@ -129,7 +129,6 @@ type TopicStats struct {
 	IsMultiPart                 bool          `json:"is_multi_part"`
 	IsExt                       bool          `json:"is_ext"`
 	IsChannelAutoCreateDisabled bool          `json:"is_channel_auto_create_disabled"`
-	RegisteredChannels          []string      `json:"registered_channels"`
 	SyncingNum                  int           `json:"syncing_num"`
 	ISRStats                    []ISRStat     `json:"isr_stats"`
 	CatchupStats                []CatchupStat `json:"catchup_stats"`
@@ -152,18 +151,6 @@ type TopicStats struct {
 	E2eProcessingLatency *quantile.E2eProcessingLatencyAggregate `json:"e2e_processing_latency"`
 
 	DC string `json:"dc,omitempty"`
-}
-
-func (t *TopicStats) isRegisteredChannel(ch string) bool {
-	if len(t.RegisteredChannels) == 0 {
-		return false
-	}
-	for _, c := range t.RegisteredChannels {
-		if c == ch {
-			return true
-		}
-	}
-	return false
 }
 
 type TopicMsgStatsInfo struct {
@@ -249,8 +236,6 @@ type ChannelStats struct {
 	//indicate whether current channel is ths only channel under topic
 	OnlyChannel bool   `json:"only_channel"`
 	DC          string `json:"dc,omitempty"`
-	//indicate whether it is a registered channel
-	IsRegistered bool `json:"is_registered"`
 }
 
 /**

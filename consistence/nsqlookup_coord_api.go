@@ -2,10 +2,12 @@ package consistence
 
 import (
 	"errors"
+	"sort"
 	"strconv"
 	"sync/atomic"
 	"time"
 
+	"github.com/youzan/nsq/internal/clusterinfo"
 	"github.com/youzan/nsq/internal/protocol"
 )
 
@@ -416,7 +418,7 @@ func (nlcoord *NsqLookupCoordinator) GetRegisteredChannel(topic string) ([]strin
 		topicInfo, err := nlcoord.leadership.GetTopicInfo(topic, i)
 		if err != nil {
 			coordLog.Infof("failed get info for topic : %v-%v, %v", topic, i, err)
-			continue
+			return nil, err
 		}
 		for _, ch := range topicInfo.Channels {
 			registeredChannelsMap[ch] = true
@@ -431,8 +433,80 @@ func (nlcoord *NsqLookupCoordinator) GetRegisteredChannel(topic string) ([]strin
 	return registeredChannels, nil
 }
 
+//Update registered channels
+func (nlcoord *NsqLookupCoordinator) UpdateRegisteredChannel(topic string, registeredChannels []string) error {
+	if nlcoord.leaderNode.GetID() != nlcoord.myNode.GetID() {
+		coordLog.Infof("not leader while create topic")
+		return ErrNotNsqLookupLeader
+	}
+
+	if !protocol.IsValidTopicName(topic) {
+		return errors.New("invalid topic name")
+	}
+
+	nlcoord.joinStateMutex.Lock()
+	state, ok := nlcoord.joinISRState[topic]
+	if !ok {
+		state = &JoinISRState{}
+		nlcoord.joinISRState[topic] = state
+	}
+	nlcoord.joinStateMutex.Unlock()
+	state.Lock()
+	defer state.Unlock()
+	if state.waitingJoin {
+		coordLog.Warningf("topic state is not ready:%v, %v ", topic, state)
+		return ErrWaitingJoinISR.ToErrorType()
+	}
+	//err list
+	var errs []error
+	if ok, _ := nlcoord.leadership.IsExistTopic(topic); !ok {
+		coordLog.Infof("topic not exist %v ", topic)
+		return ErrTopicNotCreated
+	} else {
+		meta, _, err := nlcoord.leadership.GetTopicMetaInfo(topic)
+		if err != nil {
+			coordLog.Infof("get topic key %v failed :%v", topic, err)
+			return err
+		}
+
+		//sort register channels
+		sort.Strings(registeredChannels)
+		for i := 0; i < meta.PartitionNum; i++ {
+			topicInfo, err := nlcoord.leadership.GetTopicInfo(topic, i)
+			if err != nil {
+				coordLog.Infof("failed get info for topic : %v-%v, %v", topic, i, err)
+				errs = append(errs, err)
+				continue
+			}
+			if topicInfo.TopicMetaInfo != meta {
+				coordLog.Warningf("topic partition meta info %v should match topic meta %v", topicInfo, meta)
+			}
+			topicReplicaInfo := &topicInfo.TopicPartitionReplicaInfo
+			topicReplicaInfo.Channels = registeredChannels
+			err = nlcoord.leadership.UpdateTopicNodeInfo(topic, i, topicReplicaInfo, topicReplicaInfo.Epoch)
+			if err != nil {
+				coordLog.Infof("failed update info for topic : %v-%v, %v", topic, i, err)
+				errs = append(errs, err)
+				continue
+			}
+			//override channels with registered ones
+			topicInfo.Channels = registeredChannels
+			rpcErr := nlcoord.notifyISRTopicMetaInfo(topicInfo)
+			if rpcErr != nil {
+				coordLog.Warningf("failed notify topic info : %v", rpcErr)
+			} else {
+				coordLog.Infof("topic %v update successful.", topicInfo)
+			}
+		}
+	}
+	if len(errs) > 0 {
+		return clusterinfo.ErrList(errs)
+	}
+	return nil
+}
+
 func (nlcoord *NsqLookupCoordinator) ChangeTopicMetaParam(topic string,
-	newSyncEvery int, newRetentionDay int, newReplicator int, upgradeExt string, disableChannelAutoCreate string, registeredchannels []string) error {
+	newSyncEvery int, newRetentionDay int, newReplicator int, upgradeExt string, disableChannelAutoCreate string) error {
 	if nlcoord.leaderNode.GetID() != nlcoord.myNode.GetID() {
 		coordLog.Infof("not leader while create topic")
 		return ErrNotNsqLookupLeader
@@ -516,12 +590,10 @@ func (nlcoord *NsqLookupCoordinator) ChangeTopicMetaParam(topic string,
 				coordLog.Infof("failed get info for topic : %v-%v, %v", topic, i, err)
 				continue
 			}
-			if topicInfo.TopicMetaInfo == meta {
+			if topicInfo.TopicMetaInfo != meta {
 				coordLog.Warningf("topic partition meta info %v should match topic meta %v", topicInfo, meta)
 			}
 			topicReplicaInfo := &topicInfo.TopicPartitionReplicaInfo
-			//update registered channels
-			topicReplicaInfo.Channels = registeredchannels
 			err = nlcoord.leadership.UpdateTopicNodeInfo(topic, i, topicReplicaInfo, topicReplicaInfo.Epoch)
 			if err != nil {
 				coordLog.Infof("failed update info for topic : %v-%v, %v", topic, i, err)
@@ -695,7 +767,7 @@ func (nlcoord *NsqLookupCoordinator) CreateTopic(topic string, meta TopicMetaInf
 		if oldMeta.SyncEvery >= MAX_SYNC_EVERY {
 			meta.SyncEvery = oldMeta.SyncEvery
 		}
-		if oldMeta == meta {
+		if oldMeta != meta {
 			return ErrAlreadyExist
 		}
 	}
