@@ -207,7 +207,9 @@ func (nlcoord *NsqLookupCoordinator) handleLeadership() {
 	if nlcoord.leadership != nil {
 		go nlcoord.leadership.AcquireAndWatchLeader(lookupdLeaderChan, nlcoord.stopChan)
 	}
+	ticker := time.NewTicker(time.Second * 5)
 	defer func() {
+		ticker.Stop()
 		if e := recover(); e != nil {
 			buf := make([]byte, 4096)
 			n := runtime.Stack(buf, false)
@@ -222,7 +224,6 @@ func (nlcoord *NsqLookupCoordinator) handleLeadership() {
 			nlcoord.nsqdMonitorChan = nil
 		}
 	}()
-	ticker := time.NewTicker(time.Second * 5)
 	for {
 		select {
 		case l, ok := <-lookupdLeaderChan:
@@ -616,12 +617,14 @@ func (nlcoord *NsqLookupCoordinator) triggerCheckTopicsRandom(topic string, part
 
 func (nlcoord *NsqLookupCoordinator) triggerCheckTopics(topic string, part int, delay time.Duration) {
 	time.Sleep(delay)
+	ti := time.NewTimer(time.Second)
+	defer ti.Stop()
 
 	select {
 	case nlcoord.checkTopicFailChan <- TopicNameInfo{topic, part}:
 	case <-nlcoord.stopChan:
 		return
-	case <-time.After(time.Second):
+	case <-ti.C:
 		return
 	}
 }

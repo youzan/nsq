@@ -128,11 +128,13 @@ func (self *NsqLookupdEtcdMgr) Register(value *NsqLookupdNodeInfo) error {
 }
 
 func (self *NsqLookupdEtcdMgr) refresh(stopC <-chan bool) {
+	ticker := time.NewTicker(time.Second * time.Duration(ETCD_TTL/10))
+	defer ticker.Stop()
 	for {
 		select {
 		case <-stopC:
 			return
-		case <-time.After(time.Second * time.Duration(ETCD_TTL/10)):
+		case <-ticker.C:
 			_, err := self.client.SetWithTTL(self.nodeKey, ETCD_TTL)
 			if err != nil {
 				coordLog.Errorf("update error: %s", err.Error())

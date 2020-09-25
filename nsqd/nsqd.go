@@ -951,6 +951,7 @@ exit:
 	close(closeCh)
 	workTicker.Stop()
 	refreshTicker.Stop()
+	flushTicker.Stop()
 	fastTimer.Stop()
 }
 

@@ -427,6 +427,7 @@ func (ncoord *NsqdCoordinator) getAllCoords(tmpCoords map[string]map[int]*TopicC
 func (ncoord *NsqdCoordinator) checkAndCleanOldData() {
 	defer ncoord.wg.Done()
 	ticker := time.NewTicker(time.Minute * 10)
+	defer ticker.Stop()
 
 	doCheckAndCleanOld := func(checkRetentionDay bool) {
 		tmpCoords := make(map[string]map[int]*TopicCoordinator)
@@ -476,6 +477,7 @@ func (ncoord *NsqdCoordinator) periodFlushCommitLogs() {
 	syncCounter := 0
 	defer ncoord.wg.Done()
 	flushTicker := time.NewTicker(flushTicker)
+	defer flushTicker.Stop()
 	doFlush := func() {
 		syncCounter++
 		ncoord.getAllCoords(tmpCoords)
@@ -1097,6 +1099,7 @@ func (ncoord *NsqdCoordinator) checkLocalTopicForISR(tc *coordData) *CoordErr {
 
 func (ncoord *NsqdCoordinator) checkForUnsyncedTopics() {
 	ticker := time.NewTicker(time.Minute * 10)
+	defer ticker.Stop()
 	defer ncoord.wg.Done()
 	doWork := func() {
 		// check local topic for coordinator
