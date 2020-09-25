@@ -41,7 +41,10 @@ func readLoop(conn net.Conn) {
 }
 
 func (c *FlumeClient) writeLoop() {
+	c.reconnect()
+	ticker := time.NewTicker(time.Second * 3)
 	defer func() {
+		ticker.Stop()
 		select {
 		case buf := <-c.bufList:
 			_, err := c.bw.Write(buf)
@@ -58,8 +61,6 @@ func (c *FlumeClient) writeLoop() {
 		}
 		close(c.loopDone)
 	}()
-	c.reconnect()
-	ticker := time.NewTicker(time.Second * 3)
 	for {
 		if c.conn == nil {
 			err := c.reconnect()

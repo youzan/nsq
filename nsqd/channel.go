@@ -311,7 +311,7 @@ func (c *Channel) RemoveTagClientMsgChannel(tag string) {
 		default:
 			select {
 			case c.tagChanRemovedChan <- tag:
-			case <-time.After(time.Millisecond):
+			case <-time.After(time.Millisecond * 10):
 				nsqLog.Infof("%v-%v timeout sending tag channel remove signal for %v", c.GetTopicName(), c.GetName(), tag)
 			}
 		}
@@ -334,7 +334,7 @@ func (c *Channel) GetOrCreateClientMsgChannel(tag string) chan *Message {
 		}
 		select {
 		case c.tagChanInitChan <- tag:
-		case <-time.After(time.Millisecond):
+		case <-time.After(time.Millisecond * 10):
 			nsqLog.Infof("%v-%v timeout sending tag channel init signal for %v", c.GetTopicName(), c.GetName(), tag)
 		}
 	}

@@ -73,11 +73,13 @@ func (nem *NsqdEtcdMgr) RegisterNsqd(nodeData *NsqdNodeInfo) error {
 }
 
 func (nem *NsqdEtcdMgr) refresh(stopChan chan bool) {
+	ticker := time.NewTicker(time.Second * time.Duration(ETCD_TTL/10))
+	defer ticker.Stop()
 	for {
 		select {
 		case <-stopChan:
 			return
-		case <-time.After(time.Second * time.Duration(ETCD_TTL/10)):
+		case <-ticker.C:
 			_, err := nem.client.SetWithTTL(nem.nodeKey, ETCD_TTL)
 			if err != nil {
 				coordLog.Errorf("update error: %s", err.Error())

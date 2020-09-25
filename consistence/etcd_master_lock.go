@@ -285,12 +285,14 @@ func (self *EtcdLock) stopAcquire() {
 }
 
 func (self *EtcdLock) refresh() {
+	ticker := time.NewTicker(time.Second * time.Duration(self.ttl*4/10))
+	defer ticker.Stop()
 	for {
 		select {
 		case <-self.refreshStoppedChan:
 			coordLog.Infof("[EtcdLock][refresh] Stopping refresh for lock %s", self.name)
 			return
-		case <-time.After(time.Second * time.Duration(self.ttl*4/10)):
+		case <-ticker.C:
 			self.Lock()
 			modify := self.modifiedIndex
 			self.Unlock()
