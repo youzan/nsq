@@ -346,6 +346,19 @@ func (c *ChannelStats) Add(a *ChannelStats) {
 	sort.Sort(ClientsByHost{c.Clients})
 }
 
+type ExtFilterData struct {
+	Type           int               `json:"type,omitempty"`
+	Inverse        bool              `json:"inverse,omitempty"`
+	FilterExtKey   string            `json:"filter_ext_key,omitempty"`
+	FilterData     string            `json:"filter_data,omitempty"`
+	FilterDataList []MultiFilterData `json:"filter_data_list,omitempty"`
+}
+
+type MultiFilterData struct {
+	FilterExtKey string `json:"filter_ext_key,omitempty"`
+	FilterData   string `json:"filter_data,omitempty"`
+}
+
 type ClientStats struct {
 	Node              string        `json:"node"`
 	RemoteAddress     string        `json:"remote_address"`
@@ -377,6 +390,11 @@ type ClientStats struct {
 	TLSVersion                    string `json:"tls_version"`
 	TLSNegotiatedProtocol         string `json:"tls_negotiated_protocol"`
 	TLSNegotiatedProtocolIsMutual bool   `json:"tls_negotiated_protocol_is_mutual"`
+
+	OutputBufferSize    int64         `json:"output_buffer_size"`
+	OutputBufferTimeout int64         `json:"output_buffer_timeout"`
+	MsgTimeout          int64         `json:"msg_timeout"`
+	ExtFilter           ExtFilterData `json:"ext_filter,omitempty"`
 }
 
 // UnmarshalJSON implements json.Unmarshaler and postprocesses ConnectedDuration

@@ -228,7 +228,7 @@ func (c *ClientV2) UnlockWrite() {
 }
 
 func (c *ClientV2) Identify(data IdentifyDataV2) error {
-	nsqLog.Logf("[%s]-%v IDENTIFY: %+v", c, c.ID, data)
+	nsqLog.LogDebugf("[%s]-%v IDENTIFY: %+v", c, c.ID, data)
 
 	// TODO: for backwards compatibility, remove in 1.0
 	hostname := data.Hostname
@@ -255,6 +255,11 @@ func (c *ClientV2) Identify(data IdentifyDataV2) error {
 	err = c.SetOutputBufferSize(data.OutputBufferSize)
 	if err != nil {
 		return err
+	}
+
+	if data.OutputBufferTimeout < 10 && data.OutputBufferTimeout > 0 {
+		nsqLog.Infof("output buffer timeout should not less than 10ms, set to 10ms by force: %v", data)
+		data.OutputBufferTimeout = 10
 	}
 
 	err = c.SetOutputBufferTimeout(data.OutputBufferTimeout)
@@ -314,32 +319,37 @@ func (c *ClientV2) Stats() ClientStats {
 		identity = c.AuthState.Identity
 		identityURL = c.AuthState.IdentityURL
 	}
+	extFilter := c.extFilter
 	c.metaLock.RUnlock()
 	stats := ClientStats{
 		// TODO: deprecated, remove in 1.0
 		Name: name,
 
-		Version:         "V2",
-		RemoteAddress:   c.RemoteAddr().String(),
-		ClientID:        clientID,
-		Hostname:        hostname,
-		UserAgent:       userAgent,
-		State:           atomic.LoadInt32(&c.State),
-		ReadyCount:      atomic.LoadInt64(&c.ReadyCount),
-		InFlightCount:   atomic.LoadInt64(&c.InFlightCount),
-		MessageCount:    atomic.LoadUint64(&c.MessageCount),
-		FinishCount:     atomic.LoadUint64(&c.FinishCount),
-		RequeueCount:    atomic.LoadUint64(&c.RequeueCount),
-		TimeoutCount:    int64(atomic.LoadUint64(&c.TimeoutCount)),
-		ConnectTime:     c.ConnectTime.Unix(),
-		SampleRate:      atomic.LoadInt32(&c.SampleRate),
-		TLS:             atomic.LoadInt32(&c.TLS) == 1,
-		Deflate:         atomic.LoadInt32(&c.Deflate) == 1,
-		Snappy:          atomic.LoadInt32(&c.Snappy) == 1,
-		Authed:          c.HasAuthorizations(),
-		AuthIdentity:    identity,
-		AuthIdentityURL: identityURL,
-		DesiredTag:      c.GetDesiredTag(),
+		Version:             "V2",
+		RemoteAddress:       c.RemoteAddr().String(),
+		ClientID:            clientID,
+		Hostname:            hostname,
+		UserAgent:           userAgent,
+		State:               atomic.LoadInt32(&c.State),
+		ReadyCount:          atomic.LoadInt64(&c.ReadyCount),
+		InFlightCount:       atomic.LoadInt64(&c.InFlightCount),
+		MessageCount:        atomic.LoadUint64(&c.MessageCount),
+		FinishCount:         atomic.LoadUint64(&c.FinishCount),
+		RequeueCount:        atomic.LoadUint64(&c.RequeueCount),
+		TimeoutCount:        int64(atomic.LoadUint64(&c.TimeoutCount)),
+		ConnectTime:         c.ConnectTime.Unix(),
+		SampleRate:          atomic.LoadInt32(&c.SampleRate),
+		TLS:                 atomic.LoadInt32(&c.TLS) == 1,
+		Deflate:             atomic.LoadInt32(&c.Deflate) == 1,
+		Snappy:              atomic.LoadInt32(&c.Snappy) == 1,
+		Authed:              c.HasAuthorizations(),
+		AuthIdentity:        identity,
+		AuthIdentityURL:     identityURL,
+		DesiredTag:          c.GetDesiredTag(),
+		OutputBufferSize:    c.GetOutputBufferSize(),
+		OutputBufferTimeout: int64(c.GetOutputBufferTimeout()),
+		ExtFilter:           extFilter,
+		MsgTimeout:          int64(c.GetMsgTimeout()),
 	}
 	if stats.TLS {
 		p := prettyConnectionState{c.tlsConn.ConnectionState()}
@@ -545,7 +555,9 @@ func (c *ClientV2) SwitchToConsumer(isEphemeral bool) error {
 	if isEphemeral {
 		return nil
 	}
+
 	s := atomic.LoadInt64(&c.outputBufferSize)
+	nsqLog.Logf("[%s]-%v switch to consumer: %v, %v", c, c.ID, s, c.GetOutputBufferTimeout())
 	if s > 0 {
 		return nil
 	}

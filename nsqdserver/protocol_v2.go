@@ -487,7 +487,11 @@ func (p *protocolV2) messagePump(client *nsqd.ClientV2, startedChan chan bool,
 
 	subEventChan := client.SubEventChan
 	identifyEventChan := client.IdentifyEventChan
+	// we do not need output buffer ticker for producer, since all response for producer
+	// should be flushed after send. So we init and stop it by default and restart it if sub to channel
 	outputBufferTicker := time.NewTicker(client.GetOutputBufferTimeout())
+	outputBufferTicker.Stop()
+
 	heartbeatTicker := time.NewTicker(client.GetHeartbeatInterval())
 	heartbeatChan := heartbeatTicker.C
 	heartbeatFailedCnt := 0
@@ -514,6 +518,7 @@ func (p *protocolV2) messagePump(client *nsqd.ClientV2, startedChan chan bool,
 			// the client is not ready to receive messages...
 			clientMsgChan = nil
 			flusherChan = nil
+			outputBufferTicker.Stop()
 			//shortflusherChan = nil
 			// force flush
 			client.LockWrite()
@@ -531,6 +536,7 @@ func (p *protocolV2) messagePump(client *nsqd.ClientV2, startedChan chan bool,
 				clientMsgChan = subChannel.GetClientMsgChan()
 			}
 			flusherChan = nil
+			outputBufferTicker.Stop()
 			//shortflusherChan = nil
 		} else {
 			// we're buffered (if there isn't any more data we should flush)...
@@ -538,6 +544,13 @@ func (p *protocolV2) messagePump(client *nsqd.ClientV2, startedChan chan bool,
 			clientMsgChan = client.GetTagMsgChannel()
 			if clientMsgChan == nil {
 				clientMsgChan = subChannel.GetClientMsgChan()
+			}
+			if flusherChan == nil {
+				outputBufferTicker.Stop()
+				to := client.GetOutputBufferTimeout()
+				if to > 0 {
+					outputBufferTicker = time.NewTicker(to)
+				}
 			}
 			flusherChan = outputBufferTicker.C
 			// Outputbuffer timeout is enough for most clients who want to reduce latency.
@@ -591,11 +604,6 @@ func (p *protocolV2) messagePump(client *nsqd.ClientV2, startedChan chan bool,
 		case identifyData := <-identifyEventChan:
 			// you can't IDENTIFY anymore
 			identifyEventChan = nil
-
-			outputBufferTicker.Stop()
-			if identifyData.OutputBufferTimeout > 0 {
-				outputBufferTicker = time.NewTicker(identifyData.OutputBufferTimeout)
-			}
 
 			heartbeatTicker.Stop()
 			heartbeatChan = nil
