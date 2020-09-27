@@ -171,3 +171,17 @@ queue_scan_dirty_percent = 0.1
 # commit buffer size used to reduce the memory usage by each topic
 #default_commit_buf=1000
 #max_commit_buf=4000
+
+## the disk queue reader buffer for consumer, change this only for memory saving, may affect the latency for consumer 
+#queue_read_buffer_size=1024
+
+## the disk queue writer buffer for producer, change this only for memory saving, too small size may affect the pub throughput and latency
+#queue_write_buffer_size=1024
+
+## the waiting pub queue size for each topic, the bigger size means allow more pub requests waiting in queue, 
+## but it may cause the higher latency and hot topic write.
+#pub_queue_size=500
+
+## the sleep interval between each log pulling while catchup from leader, use this to 
+## control the network bandwidth while sync the topic data.
+#sleepms_between_log_sync_pull=100
