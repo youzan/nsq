@@ -983,6 +983,75 @@ func testNsqLookupNsqdNodesChange(t *testing.T, useFakeLeadership bool) {
 	}
 }
 
+//create topic with channel auto create disable, when downgrade
+func TestNsqLookupNsqdCreateTopicWithChannelAutoCreateDisableDowngrade(t *testing.T) {
+	// on 4 nodes, we should test follow cases
+	adjustLogger(t)
+	idList := []string{"id1", "id2", "id3"}
+	lookupCoord1, nodeInfoList := prepareCluster(t, idList, false)
+	for _, n := range nodeInfoList {
+		defer os.RemoveAll(n.dataPath)
+		defer n.localNsqd.Exit()
+		defer n.nsqdCoord.Stop()
+	}
+	test.Equal(t, 3, len(nodeInfoList))
+
+	topic_p1_r1 := "test-nsqlookup-topic-unit-testdisablechannelautodg-p1-r1"
+
+	lookupLeadership := lookupCoord1.leadership
+
+	time.Sleep(time.Second)
+	checkDeleteErr(t, lookupCoord1.DeleteTopic(topic_p1_r1, "**"))
+	time.Sleep(time.Second * 3)
+	defer func() {
+		waitClusterStable(lookupCoord1, time.Second*3)
+		checkDeleteErr(t, lookupCoord1.DeleteTopic(topic_p1_r1, "**"))
+		time.Sleep(time.Second * 3)
+		lookupCoord1.Stop()
+	}()
+
+	// test new topic create
+	err := lookupCoord1.CreateTopic(topic_p1_r1, TopicMetaInfo{1, 1, 0, 0, 0, 0, false, false, false, true})
+	test.Nil(t, err)
+	waitClusterStable(lookupCoord1, time.Second*3)
+	pmeta, _, err := lookupLeadership.GetTopicMetaInfo(topic_p1_r1)
+	test.Equal(t, true, pmeta.DisableChannelAutoCreate)
+	t0, err := lookupLeadership.GetTopicInfo(topic_p1_r1, 0)
+	test.Nil(t, err)
+	test.Equal(t, len(t0.ISR), 1)
+
+	t.Logf("t0 leader is: %v", t0.Leader)
+	if nodeInfoList[t0.Leader] == nil {
+		t.Fatalf("no leader: %v, %v", t0, nodeInfoList)
+	}
+	t0LeaderCoord := nodeInfoList[t0.Leader].nsqdCoord
+	test.NotNil(t, t0LeaderCoord)
+
+	topic, err := nodeInfoList[t0.Leader].localNsqd.GetExistingTopic(topic_p1_r1, 0)
+	test.Nil(t, err)
+
+	dynamicInfo := topic.GetDynamicInfo()
+	test.Equal(t, dynamicInfo.DisableChannelAutoCreate, true)
+
+	err = lookupCoord1.ChangeTopicMetaParam(topic_p1_r1, -1, -1, -1, "", "false")
+	test.Nil(t, err)
+
+	waitClusterStable(lookupCoord1, time.Second*5)
+	lookupCoord1.triggerCheckTopics("", 0, 0)
+	waitClusterStable(lookupCoord1, time.Second*5)
+
+	pmeta, _, err = lookupLeadership.GetTopicMetaInfo(topic_p1_r1)
+	test.Equal(t, false, pmeta.DisableChannelAutoCreate)
+
+	topic, err = nodeInfoList[t0.Leader].localNsqd.GetExistingTopic(topic_p1_r1, 0)
+	test.Nil(t, err)
+
+	dynamicInfo = topic.GetDynamicInfo()
+	test.Equal(t, dynamicInfo.DisableChannelAutoCreate, false)
+
+	SetCoordLogger(newTestLogger(t), levellogger.LOG_ERR)
+}
+
 func TestNsqLookupNsqdCreateTopic(t *testing.T) {
 	// on 4 nodes, we should test follow cases
 	// 1 partition 1 replica
