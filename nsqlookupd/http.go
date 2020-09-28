@@ -631,22 +631,25 @@ func (s *httpServer) doCreateChannel(w http.ResponseWriter, req *http.Request, p
 		return nil, http_api.Err{400, err.Error()}
 	}
 
-	if topicMeta.DisableChannelAutoCreate {
-		registeredChannels, err := s.ctx.nsqlookupd.coordinator.GetRegisteredChannel(topicName)
-		if err != nil {
-			return nil, http_api.Err{400, err.Error()}
-		}
-		if existInRegisteredChannels(channelName, registeredChannels) {
-			return nil, http_api.Err{400, fmt.Sprintf("channel %v already registered", channelName)}
-		}
-
-		//append new channel and update channel
-		registeredChannels = append(registeredChannels, channelName)
-		err = s.ctx.nsqlookupd.coordinator.UpdateRegisteredChannel(topicName, registeredChannels)
-		if err != nil {
-			return nil, http_api.Err{400, err.Error()}
-		}
+	if !topicMeta.DisableChannelAutoCreate {
+		return nil, http_api.Err{400, fmt.Sprintf("channel auto create NOT disabled in topic %v", topicName)}
 	}
+
+	registeredChannels, err := s.ctx.nsqlookupd.coordinator.GetRegisteredChannel(topicName)
+	if err != nil {
+		return nil, http_api.Err{400, err.Error()}
+	}
+	if existInRegisteredChannels(channelName, registeredChannels) {
+		return nil, http_api.Err{400, fmt.Sprintf("channel %v already registered", channelName)}
+	}
+
+	//append new channel and update channel
+	registeredChannels = append(registeredChannels, channelName)
+	err = s.ctx.nsqlookupd.coordinator.UpdateRegisteredChannel(topicName, registeredChannels)
+	if err != nil {
+		return nil, http_api.Err{400, err.Error()}
+	}
+
 	return nil, nil
 }
 
