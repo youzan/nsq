@@ -108,10 +108,15 @@ POST /cluster/node/remove?remove_node=nodeid
 如果顺序要求非常严格, 则需要在流量低谷时, 临时停写, 进行topic分区重建操作, 如果业务消费延迟很低, 可以在几秒内完成, 影响较小. 因此顺序分区的规划需要考虑一个长时间的容量上限
 
 ### topic元数据调整
-以下API可以用于改变topic的元数据信息, 支持修改副本数, 刷盘策略, 保留时间, 如果不需要改,可以不需要传对应的参数.
+以下API可以用于改变topic的元数据信息, 支持修改副本数, 刷盘策略, 保留时间, 是否允许channel消费时自动创建,如果不需要改,可以不需要传对应的参数.
 <pre>
-POST /topic/meta/update?topic=xxx&replicator=xx&syncdisk=xx&retention=xxx
+POST /topic/meta/update?topic=xxx&replicator=xx&syncdisk=xx&retention=xxx&disable_channel_auto_create=xxx
 </pre>
+
+#### DiableChannelAutoCreate 元数据调整
+`/meta/update`接口支持调整topic的DiableChannelAutoCreate属性：
+1. disable_channel_auto_create=true 调用后，topic将 *不允许channel在消费者建连时自动创建*
+2. disable_channel_auto_create=false 调用后，topic将 *允许channel在消费者建连时自动创建*
 
 ### 消息跟踪
 服务端可以针对topic动态启用跟踪, 远程的跟踪系统是内部使用的, 因此无法提供, 不过可以使用默认的log跟踪模块. 以下跟踪打开时, 会把跟踪信息写入log文件. 以下API发送给对应的nsqd节点.
