@@ -449,10 +449,16 @@ func TestClientTimeout(t *testing.T) {
 	test.Equal(t, err, nil)
 	defer conn.Close()
 	topic := nsqd.GetTopicIgnPart(topicName)
-	topic.GetChannel("ch")
+	ch := topic.GetChannel("ch")
 	identify(t, conn, nil, frameTypeResponse)
 	sub(t, conn, topicName, "ch")
 
+	clients := ch.GetClients()
+	test.Equal(t, 1, len(clients))
+	for _, c := range clients {
+		cs := c.Stats()
+		test.Equal(t, int64(opts.MsgTimeout), cs.MsgTimeout)
+	}
 	time.Sleep(150 * time.Millisecond)
 
 	// depending on timing there may be 1 or 2 hearbeats sent
@@ -589,6 +595,70 @@ func TestMaxHeartbeatIntervalInvalid(t *testing.T) {
 		"heartbeat_interval": hbi,
 	}, frameTypeError)
 	test.Equal(t, string(data), "E_BAD_BODY IDENTIFY heartbeat interval (300001) is invalid")
+}
+
+func TestClientIdentifyMsgTimeout(t *testing.T) {
+	topicName := "test_client_msgtimeout_v2" + strconv.Itoa(int(time.Now().Unix()))
+
+	opts := nsqdNs.NewOptions()
+	opts.Logger = newTestLogger(t)
+	opts.ClientTimeout = 150 * time.Millisecond
+	opts.MsgTimeout = time.Second * 2
+	opts.LogLevel = 1
+	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
+	defer os.RemoveAll(opts.DataPath)
+	defer nsqdServer.Exit()
+
+	conn, err := mustConnectNSQD(tcpAddr)
+	test.Equal(t, err, nil)
+	defer conn.Close()
+	topic := nsqd.GetTopicIgnPart(topicName)
+	ch := topic.GetChannel("ch")
+	extra := make(map[string]interface{})
+	extra["msg_timeout"] = opts.MsgTimeout / 2 / time.Millisecond
+	identify(t, conn, extra, frameTypeResponse)
+	sub(t, conn, topicName, "ch")
+
+	clients := ch.GetClients()
+	test.Equal(t, 1, len(clients))
+	for _, c := range clients {
+		cs := c.Stats()
+		test.Equal(t, int64(opts.MsgTimeout/2), cs.MsgTimeout)
+	}
+}
+
+func TestClientOutputBufferTimeout(t *testing.T) {
+	topicName := "test_outputbuffer_timeout" + strconv.Itoa(int(time.Now().Unix()))
+
+	opts := nsqdNs.NewOptions()
+	opts.Logger = newTestLogger(t)
+	opts.ClientTimeout = 200 * time.Millisecond
+	outputBufferTimeout := 100
+	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
+	defer os.RemoveAll(opts.DataPath)
+	defer nsqdServer.Exit()
+
+	conn, err := mustConnectNSQD(tcpAddr)
+	test.Equal(t, err, nil)
+	defer conn.Close()
+
+	topic := nsqd.GetTopicIgnPart(topicName)
+	ch := topic.GetChannel("ch")
+
+	extra := make(map[string]interface{})
+	extra["output_buffer_timeout"] = outputBufferTimeout
+	identify(t, conn, extra, frameTypeResponse)
+	sub(t, conn, topicName, "ch")
+	_, err = nsq.Ready(1).WriteTo(conn)
+	test.Equal(t, err, nil)
+
+	time.Sleep(20 * time.Millisecond)
+	clients := ch.GetClients()
+	test.Equal(t, 1, len(clients))
+	for _, c := range clients {
+		cs := c.Stats()
+		test.Equal(t, int64(outputBufferTimeout)*int64(time.Millisecond), cs.OutputBufferTimeout)
+	}
 }
 
 func TestSkipping(t *testing.T) {

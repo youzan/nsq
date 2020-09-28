@@ -204,6 +204,7 @@ func startBenchPub(msg []byte, batch [][]byte) {
 	config.WriteTimeout = 0
 	config.ReadTimeout = 0
 	config.ProducerPoolSize = *pubPoolSize
+	config.OutputBufferTimeout = 0
 	pubMgr, err := initPubMgr()
 	if err != nil {
 		log.Printf("init error : %v", err)
@@ -292,6 +293,7 @@ func startBenchSub() {
 	config.WriteTimeout = 0
 	config.ProducerPoolSize = *pubPoolSize
 	config.ReadTimeout = 0
+	config.OutputBufferTimeout = 0
 
 	quitChan := make(chan int)
 	goChan := make(chan int)

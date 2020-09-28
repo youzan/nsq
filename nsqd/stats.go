@@ -206,6 +206,11 @@ type ClientStats struct {
 	TLSVersion                    string `json:"tls_version"`
 	TLSNegotiatedProtocol         string `json:"tls_negotiated_protocol"`
 	TLSNegotiatedProtocolIsMutual bool   `json:"tls_negotiated_protocol_is_mutual"`
+
+	OutputBufferSize    int64         `json:"output_buffer_size"`
+	OutputBufferTimeout int64         `json:"output_buffer_timeout"`
+	MsgTimeout          int64         `json:"msg_timeout"`
+	ExtFilter           ExtFilterData `json:"ext_filter,omitempty"`
 }
 
 type Topics []*Topic
