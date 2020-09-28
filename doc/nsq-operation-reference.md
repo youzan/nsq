@@ -36,6 +36,16 @@ nsqdadmin使用默认配置和nsqlookupd同机部署即可.
 ### 关于顺序topic
 顺序topic允许同一个节点存储多个分区, 创建是需要在api指定 `orderedmulti=true` 参数. 顺序topic不允许使用非顺序的方式进行消费. 因此老的官方客户端不能使用该功能
 
+### 关于channel自动创建配置
+创建topic参数支持`DisableChannelAutoCreate`配置，通过在`topic/create`api中指定`disable_channel_auto_create=true`. topic创建后，*未经过nsqlookup创建的channel将不允许在消费者建连是创建*
+
+#### 通过nsqlookupd创建channel
+nsqlookupd新增为`DisableChannelAutoCreate`属性为`true`的topic创建channel（该接口对`DisableChannelAutoCreate`属性为`true`的topic无效）
+
+<pre>
+curl POST /channel/create?topic=XXX&channel=XXX
+</pre>
+
 ## 新版新增服务端配置说明
 大部分配置的说明可以参考`contrib`目录下的配置示例, 使用默认值即可, 这里介绍几个值得注意的配置
 
