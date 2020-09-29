@@ -1039,6 +1039,7 @@ func (s *httpServer) createTopicChannelHandler(w http.ResponseWriter, req *http.
 		Channel       string `json:"channel"`
 		OrderedMulti  string `json:"orderedmulti"`
 		Ext           string `json:"extend"`
+		DisableChannelAutoCreate	string	`json:"disable_channel_auto_create"`
 	}
 	err := json.NewDecoder(req.Body).Decode(&body)
 	if err != nil {
@@ -1070,7 +1071,7 @@ func (s *httpServer) createTopicChannelHandler(w http.ResponseWriter, req *http.
 	}
 	syncDisk, _ := strconv.Atoi(body.SyncDisk)
 	err = s.ci.CreateTopic(body.Topic, pnum, replica,
-		syncDisk, body.RetentionDays, body.OrderedMulti, body.Ext,
+		syncDisk, body.RetentionDays, body.OrderedMulti, body.Ext, body.DisableChannelAutoCreate, 
 		s.ctx.nsqadmin.opts.NSQLookupdHTTPAddressesDC)
 
 	if err != nil {

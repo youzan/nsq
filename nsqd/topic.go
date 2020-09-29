@@ -65,12 +65,13 @@ type MsgIDGenerator interface {
 }
 
 type TopicDynamicConf struct {
-	AutoCommit   int32
-	RetentionDay int32
-	SyncEvery    int64
-	OrderedMulti bool
-	MultiPart    bool
-	Ext          bool
+	AutoCommit               int32
+	RetentionDay             int32
+	SyncEvery                int64
+	OrderedMulti             bool
+	MultiPart                bool
+	DisableChannelAutoCreate bool
+	Ext                      bool
 }
 
 type PubInfo struct {
@@ -131,11 +132,12 @@ type Topic struct {
 	pubLoopFunc     func(v *Topic)
 	wg              sync.WaitGroup
 
-	delayedQueue atomic.Value
-	isExt        int32
-	saveMutex    sync.Mutex
-	pubFailedCnt int64
-	metaStorage  IMetaStorage
+	delayedQueue                 atomic.Value
+	isExt                        int32
+	isChannelAutoCreatedDisabled int32
+	saveMutex                    sync.Mutex
+	pubFailedCnt                 int64
+	metaStorage                  IMetaStorage
 }
 
 func (t *Topic) setExt() {
@@ -144,6 +146,18 @@ func (t *Topic) setExt() {
 
 func (t *Topic) IsExt() bool {
 	return atomic.LoadInt32(&t.isExt) == 1
+}
+
+func (t *Topic) DisableChannelAutoCreate() {
+	atomic.StoreInt32(&t.isChannelAutoCreatedDisabled, 1)
+}
+
+func (t *Topic) EnableChannelAutoCreate() {
+	atomic.StoreInt32(&t.isChannelAutoCreatedDisabled, 0)
+}
+
+func (t *Topic) IsChannelAutoCreateDisabled() bool {
+	return atomic.LoadInt32(&t.isChannelAutoCreatedDisabled) == 1
 }
 
 func (t *Topic) IncrPubFailed() {
@@ -168,8 +182,14 @@ func NewTopic(topicName string, part int, opt *Options,
 	return NewTopicWithExt(topicName, part, false, false, opt, writeDisabled, metaStorage, notify, loopFunc)
 }
 
-// Topic constructor
 func NewTopicWithExt(topicName string, part int, ext bool, ordered bool, opt *Options,
+	writeDisabled int32, metaStorage IMetaStorage,
+	notify INsqdNotify, loopFunc func(v *Topic)) *Topic {
+	return NewTopicWithExtAndDisableChannelAutoCreate(topicName, part, ext, ordered, false, opt, writeDisabled, metaStorage, notify, loopFunc)
+}
+
+// Topic constructor
+func NewTopicWithExtAndDisableChannelAutoCreate(topicName string, part int, ext bool, ordered bool, disbaleChannelAutoCreate bool, opt *Options,
 	writeDisabled int32, metaStorage IMetaStorage,
 	notify INsqdNotify, loopFunc func(v *Topic)) *Topic {
 	if part > MAX_TOPIC_PARTITION {
@@ -198,6 +218,9 @@ func NewTopicWithExt(topicName string, part int, ext bool, ordered bool, opt *Op
 	}
 	if t.dynamicConf.SyncEvery < 1 {
 		t.dynamicConf.SyncEvery = 1
+	}
+	if disbaleChannelAutoCreate {
+		t.DisableChannelAutoCreate()
 	}
 	t.bp.New = func() interface{} {
 		return &bytes.Buffer{}
@@ -683,6 +706,13 @@ func (t *Topic) SetDynamicInfo(dynamicConf TopicDynamicConf, idGen MsgIDGenerato
 	t.dynamicConf.Ext = dynamicConf.Ext
 	if dynamicConf.Ext {
 		t.setExt()
+	}
+	t.dynamicConf.DisableChannelAutoCreate = dynamicConf.DisableChannelAutoCreate
+	channelAutoCreateDisabled := t.IsChannelAutoCreateDisabled()
+	if dynamicConf.DisableChannelAutoCreate && !channelAutoCreateDisabled {
+		t.DisableChannelAutoCreate()
+	} else if !dynamicConf.DisableChannelAutoCreate && channelAutoCreateDisabled {
+		t.EnableChannelAutoCreate()
 	}
 	nsqLog.Logf("topic dynamic configure changed to %v", dynamicConf)
 	t.channelLock.RLock()

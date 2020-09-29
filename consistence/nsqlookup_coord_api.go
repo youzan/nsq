@@ -2,10 +2,12 @@ package consistence
 
 import (
 	"errors"
+	"sort"
 	"strconv"
 	"sync/atomic"
 	"time"
 
+	"github.com/youzan/nsq/internal/clusterinfo"
 	"github.com/youzan/nsq/internal/protocol"
 )
 
@@ -402,8 +404,109 @@ func (nlcoord *NsqLookupCoordinator) deleteTopicPartition(topic string, pid int)
 	return nil
 }
 
+//return current registered channels slize under target topic
+func (nlcoord *NsqLookupCoordinator) GetRegisteredChannel(topic string) ([]string, error) {
+	topicMeta, _, err := nlcoord.leadership.GetTopicMetaInfo(topic)
+	if err != nil {
+		coordLog.Infof("get topic key %v failed :%v", topic, err)
+		return nil, err
+	}
+
+	var registeredChannels []string
+	registeredChannelsMap := make(map[string]bool)
+	for i := 0; i < topicMeta.PartitionNum; i++ {
+		topicInfo, err := nlcoord.leadership.GetTopicInfo(topic, i)
+		if err != nil {
+			coordLog.Infof("failed get info for topic : %v-%v, %v", topic, i, err)
+			return nil, err
+		}
+		for _, ch := range topicInfo.Channels {
+			registeredChannelsMap[ch] = true
+		}
+	}
+	//convert registered channels map back
+	for ch, _ := range registeredChannelsMap {
+		channelName := ch
+		registeredChannels = append(registeredChannels, channelName)
+	}
+
+	return registeredChannels, nil
+}
+
+//Update registered channels
+func (nlcoord *NsqLookupCoordinator) UpdateRegisteredChannel(topic string, registeredChannels []string) error {
+	if nlcoord.leaderNode.GetID() != nlcoord.myNode.GetID() {
+		coordLog.Infof("not leader while create topic")
+		return ErrNotNsqLookupLeader
+	}
+
+	if !protocol.IsValidTopicName(topic) {
+		return errors.New("invalid topic name")
+	}
+
+	nlcoord.joinStateMutex.Lock()
+	state, ok := nlcoord.joinISRState[topic]
+	if !ok {
+		state = &JoinISRState{}
+		nlcoord.joinISRState[topic] = state
+	}
+	nlcoord.joinStateMutex.Unlock()
+	state.Lock()
+	defer state.Unlock()
+	if state.waitingJoin {
+		coordLog.Warningf("topic state is not ready:%v, %v ", topic, state)
+		return ErrWaitingJoinISR.ToErrorType()
+	}
+	//err list
+	var errs []error
+	if ok, _ := nlcoord.leadership.IsExistTopic(topic); !ok {
+		coordLog.Infof("topic not exist %v ", topic)
+		return ErrTopicNotCreated
+	} else {
+		meta, _, err := nlcoord.leadership.GetTopicMetaInfo(topic)
+		if err != nil {
+			coordLog.Infof("get topic key %v failed :%v", topic, err)
+			return err
+		}
+
+		//sort register channels
+		sort.Strings(registeredChannels)
+		for i := 0; i < meta.PartitionNum; i++ {
+			topicInfo, err := nlcoord.leadership.GetTopicInfo(topic, i)
+			if err != nil {
+				coordLog.Infof("failed get info for topic : %v-%v, %v", topic, i, err)
+				errs = append(errs, err)
+				continue
+			}
+			if topicInfo.TopicMetaInfo != meta {
+				coordLog.Warningf("topic partition meta info %v should match topic meta %v", topicInfo, meta)
+			}
+			topicReplicaInfo := &topicInfo.TopicPartitionReplicaInfo
+			topicReplicaInfo.Channels = registeredChannels
+			err = nlcoord.leadership.UpdateTopicNodeInfo(topic, i, topicReplicaInfo, topicReplicaInfo.Epoch)
+			if err != nil {
+				coordLog.Infof("failed update info for topic : %v-%v, %v", topic, i, err)
+				errs = append(errs, err)
+				continue
+			}
+			//override channels with registered ones
+			topicInfo.Channels = registeredChannels
+			rpcErr := nlcoord.notifyISRTopicMetaInfo(topicInfo)
+			if rpcErr != nil {
+				coordLog.Warningf("failed notify topic info : %v", rpcErr)
+			} else {
+				coordLog.Infof("topic %v update successful.", topicInfo)
+			}
+		}
+	}
+	if len(errs) > 0 {
+		return clusterinfo.ErrList(errs)
+	}
+	return nil
+}
+
 func (nlcoord *NsqLookupCoordinator) ChangeTopicMetaParam(topic string,
-	newSyncEvery int, newRetentionDay int, newReplicator int, upgradeExt string) error {
+	newSyncEvery int, newRetentionDay int, newReplicator int, upgradeExt string, disableChannelAutoCreate string) error {
 	if nlcoord.leaderNode.GetID() != nlcoord.myNode.GetID() {
 		coordLog.Infof("not leader while create topic")
 		return ErrNotNsqLookupLeader
@@ -462,6 +565,12 @@ func (nlcoord *NsqLookupCoordinator) ChangeTopicMetaParam(topic string,
 		if upgradeExt == "true" && !meta.Ext {
 			meta.Ext = true
 			needDisableWrite = true
+		}
+		//update channel auto create opt
+		if disableChannelAutoCreate == "true" && !meta.DisableChannelAutoCreate {
+			meta.DisableChannelAutoCreate = true
+		} else if disableChannelAutoCreate == "false" && meta.DisableChannelAutoCreate {
+			meta.DisableChannelAutoCreate = false
 		}
 		if needDisableWrite {
 			if !atomic.CompareAndSwapInt32(&nlcoord.isUpgrading, 0, 1) {

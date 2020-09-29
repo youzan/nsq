@@ -119,20 +119,21 @@ type ClusterNodeInfo struct {
 }
 
 type TopicStats struct {
-	Node           string        `json:"node"`
-	Hostname       string        `json:"hostname"`
-	TopicName      string        `json:"topic_name"`
-	TopicPartition string        `json:"topic_partition"`
-	StatsdName     string        `json:"statsd_name"`
-	IsLeader       bool          `json:"is_leader"`
-	IsMultiOrdered bool          `json:"is_multi_ordered"`
-	IsMultiPart    bool          `json:"is_multi_part"`
-	IsExt          bool          `json:"is_ext"`
-	SyncingNum     int           `json:"syncing_num"`
-	ISRStats       []ISRStat     `json:"isr_stats"`
-	CatchupStats   []CatchupStat `json:"catchup_stats"`
-	Depth          int64         `json:"depth"`
-	MemoryDepth    int64         `json:"memory_depth"`
+	Node                        string        `json:"node"`
+	Hostname                    string        `json:"hostname"`
+	TopicName                   string        `json:"topic_name"`
+	TopicPartition              string        `json:"topic_partition"`
+	StatsdName                  string        `json:"statsd_name"`
+	IsLeader                    bool          `json:"is_leader"`
+	IsMultiOrdered              bool          `json:"is_multi_ordered"`
+	IsMultiPart                 bool          `json:"is_multi_part"`
+	IsExt                       bool          `json:"is_ext"`
+	IsChannelAutoCreateDisabled bool          `json:"is_channel_auto_create_disabled"`
+	SyncingNum                  int           `json:"syncing_num"`
+	ISRStats                    []ISRStat     `json:"isr_stats"`
+	CatchupStats                []CatchupStat `json:"catchup_stats"`
+	Depth                       int64         `json:"depth"`
+	MemoryDepth                 int64         `json:"memory_depth"`
 	// the queue maybe auto cleaned, so the start means the queue oldest offset.
 	BackendStart           int64            `json:"backend_start"`
 	BackendDepth           int64            `json:"backend_depth"`

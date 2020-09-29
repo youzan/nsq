@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/pprof"
 	"net/url"
+	"strings"
 	"sync/atomic"
 
 	"errors"
@@ -117,8 +118,8 @@ func newHTTPServer(ctx *Context) *httpServer {
 	router.Handle("POST", "/topic/partition/expand", http_api.Decorate(s.doChangeTopicPartitionNum, log, http_api.V1))
 	router.Handle("POST", "/topic/partition/move", http_api.Decorate(s.doMoveTopicParition, log, http_api.V1))
 	router.Handle("POST", "/topic/meta/update", http_api.Decorate(s.doChangeTopicDynamicParam, log, http_api.V1))
-	//router.Handle("POST", "/channel/create", http_api.Decorate(s.doCreateChannel, log, http_api.V1))
-	//router.Handle("POST", "/channel/delete", http_api.Decorate(s.doDeleteChannel, log, http_api.V1))
+	router.Handle("POST", "/channel/create", http_api.Decorate(s.doCreateChannel, log, http_api.V1))
+	router.Handle("POST", "/channel/delete", http_api.Decorate(s.doDeleteChannel, log, http_api.V1))
 	router.Handle("POST", "/topic/tombstone", http_api.Decorate(s.doTombstoneTopicProducer, log, http_api.V1))
 	router.Handle("POST", "/disable/write", http_api.Decorate(s.doDisableClusterWrite, log, http_api.V1))
 
@@ -260,10 +261,11 @@ func (s *httpServer) doTopics(w http.ResponseWriter, req *http.Request, ps httpr
 				return nil, fmt.Errorf("topic meta info for %v not exist", topic)
 			}
 			info := &clusterinfo.TopicInfo{
-				TopicName:  topic,
-				ExtSupport: topicMeta.Ext,
-				Ordered:    topicMeta.OrderedMulti,
-				MultiPart:  topicMeta.MultiPart,
+				TopicName:                topic,
+				ExtSupport:               topicMeta.Ext,
+				Ordered:                  topicMeta.OrderedMulti,
+				MultiPart:                topicMeta.MultiPart,
+				DisableChannelAutoCreate: topicMeta.DisableChannelAutoCreate,
 			}
 			topicsInfo = append(topicsInfo, info)
 		}
@@ -573,6 +575,114 @@ func (s *httpServer) doSetLogLevel(w http.ResponseWriter, req *http.Request, ps 
 	return nil, nil
 }
 
+func (s *httpServer) doDeleteChannel(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {
+	reqParams, err := url.ParseQuery(req.URL.RawQuery)
+	if err != nil {
+		return nil, http_api.Err{400, "INVALID_REQUEST"}
+	}
+
+	topicName, channelName, err := http_api.GetTopicChannelArgs(reqParams)
+	if err != nil {
+		return nil, http_api.Err{400, err.Error()}
+
+	}
+
+	topicMeta, err := s.ctx.nsqlookupd.coordinator.GetTopicMetaInfo(topicName, true)
+	if err != nil {
+		return nil, http_api.Err{400, err.Error()}
+	}
+
+	if topicMeta.DisableChannelAutoCreate {
+		registeredChannels, err := s.ctx.nsqlookupd.coordinator.GetRegisteredChannel(topicName)
+		if err != nil {
+			return nil, http_api.Err{400, err.Error()}
+		}
+		if !existInRegisteredChannels(channelName, registeredChannels) {
+			return nil, http_api.Err{400, fmt.Sprintf("channel %v not registered", channelName)}
+		}
+
+		//append new channel and update channel
+		newRegisteredChannels, removed := removeFromRegisteredChannels(channelName, registeredChannels)
+		if !removed {
+			return nil, http_api.Err{404, fmt.Sprintf("register channel %v not found", channelName)}
+		}
+		err = s.ctx.nsqlookupd.coordinator.UpdateRegisteredChannel(topicName, newRegisteredChannels)
+		if err != nil {
+			return nil, http_api.Err{400, err.Error()}
+		}
+	}
+	return nil, nil
+}
+
+func (s *httpServer) doCreateChannel(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {
+	reqParams, err := url.ParseQuery(req.URL.RawQuery)
+	if err != nil {
+		return nil, http_api.Err{400, "INVALID_REQUEST"}
+	}
+
+	topicName, channelName, err := http_api.GetTopicChannelArgs(reqParams)
+	if err != nil {
+		return nil, http_api.Err{400, err.Error()}
+
+	}
+
+	topicMeta, err := s.ctx.nsqlookupd.coordinator.GetTopicMetaInfo(topicName, true)
+	if err != nil {
+		return nil, http_api.Err{400, err.Error()}
+	}
+
+	if !topicMeta.DisableChannelAutoCreate {
+		return nil, http_api.Err{400, fmt.Sprintf("channel auto create NOT disabled in topic %v", topicName)}
+	}
+
+	registeredChannels, err := s.ctx.nsqlookupd.coordinator.GetRegisteredChannel(topicName)
+	if err != nil {
+		return nil, http_api.Err{400, err.Error()}
+	}
+	if existInRegisteredChannels(channelName, registeredChannels) {
+		return nil, http_api.Err{400, fmt.Sprintf("channel %v already registered", channelName)}
+	}
+
+	//append new channel and update channel
+	registeredChannels = append(registeredChannels, channelName)
+	err = s.ctx.nsqlookupd.coordinator.UpdateRegisteredChannel(topicName, registeredChannels)
+	if err != nil {
+		return nil, http_api.Err{400, err.Error()}
+	}
+
+	return nil, nil
+}
+
+func existInRegisteredChannels(ch string, registeredChannels []string) bool {
+	if len(registeredChannels) == 0 {
+		return false
+	}
+	for _, rch := range registeredChannels {
+		if rch == ch {
+			return true
+		}
+	}
+	return false
+}
+
+func removeFromRegisteredChannels(ch string, registeredChannels []string) ([]string, bool) {
+	if len(registeredChannels) == 0 {
+		return registeredChannels, false
+	}
+	idx := -1
+	for i, rch := range registeredChannels {
+		if rch == ch {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return registeredChannels, false
+	}
+	registeredChannels[idx] = registeredChannels[len(registeredChannels)-1]
+	return registeredChannels[:len(registeredChannels)-1], true
+}
+
 func (s *httpServer) doCreateTopic(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {
 	reqParams, err := url.ParseQuery(req.URL.RawQuery)
 	if err != nil {
@@ -634,6 +744,7 @@ func (s *httpServer) doCreateTopic(w http.ResponseWriter, req *http.Request, ps 
 	allowMultiOrdered := reqParams.Get("orderedmulti")
 	multiPart := reqParams.Get("multipart")
 	allowExt := reqParams.Get("extend")
+	disableChannelAutoCreate := reqParams.Get("disable_channel_auto_create")
 
 	if s.ctx.nsqlookupd.coordinator == nil {
 		return nil, http_api.Err{500, "MISSING_COORDINATOR"}
@@ -652,6 +763,9 @@ func (s *httpServer) doCreateTopic(w http.ResponseWriter, req *http.Request, ps 
 	meta.SuggestLF = suggestLF
 	meta.SyncEvery = syncEvery
 	meta.RetentionDay = int32(retentionDays)
+	if disableChannelAutoCreate == "true" {
+		meta.DisableChannelAutoCreate = true
+	}
 	if allowMultiOrdered == "true" {
 		meta.OrderedMulti = true
 	}
@@ -781,13 +895,22 @@ func (s *httpServer) doChangeTopicDynamicParam(w http.ResponseWriter, req *http.
 	}
 	upgradeExtStr := reqParams.Get("upgradeext")
 
+	disableChannelAutoCreate := reqParams.Get("disable_channel_auto_create")
+
 	err = s.ctx.nsqlookupd.coordinator.ChangeTopicMetaParam(topicName, syncEvery,
-		retentionDays, replicator, upgradeExtStr)
+		retentionDays, replicator, upgradeExtStr, disableChannelAutoCreate)
 	if err != nil {
 		return nil, http_api.Err{400, err.Error()}
 	}
 
 	return nil, nil
+}
+
+func parseInitRegisteredChannels(channelsPattern string) []string {
+	if len(channelsPattern) == 0 {
+		return nil
+	}
+	return strings.Split(channelsPattern, ",")
 }
 
 func (s *httpServer) doMoveTopicParition(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {

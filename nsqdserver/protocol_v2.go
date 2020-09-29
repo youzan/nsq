@@ -1068,7 +1068,16 @@ func (p *protocolV2) internalSUB(client *nsqd.ClientV2, params [][]byte, enableT
 		topic.DisableForSlave(false)
 		return nil, protocol.NewFatalClientErr(nil, FailedOnNotLeader, "")
 	}
-	channel := topic.GetChannel(channelName)
+	var channel *nsqd.Channel
+	if topic.IsChannelAutoCreateDisabled() {
+		var err error
+		channel, err = topic.GetExistingChannel(channelName)
+		if err != nil {
+			return nil, protocol.NewFatalClientErr(nil, "E_SUB_CHANNEL_NOT_REGISTERED", "channel is not registered under topic.")
+		}
+	} else {
+		channel = topic.GetChannel(channelName)
+	}
 	// need sync channel after created
 	p.ctx.SyncChannels(topic)
 	// client with tag is subscribe to topic not support tag, remove client's tag and treat it like untaged consumer

@@ -333,7 +333,12 @@ func (n *NSQD) LoadMetadata(disabled int32) {
 		if err != nil {
 			ordered = false
 		}
-		topic := n.internalGetTopic(topicName, part, ext, ordered, disabled)
+		disableChannelAutoCreate, err := topicJs.Get("disbale_channel_auto_create").Bool()
+		if err != nil {
+			disableChannelAutoCreate = false
+		}
+
+		topic := n.internalGetTopic(topicName, part, ext, ordered, disableChannelAutoCreate, disabled)
 
 		if topic == nil {
 			nsqLog.LogErrorf("failed to init topic %v - %s", topicName, err)
@@ -428,6 +433,7 @@ func (n *NSQD) persistMetadata(currentTopics []*Topic) error {
 			nsqLog.Warningf("save topic %v channel meta failed: %v", topic.GetFullName(), err)
 		}
 		topicData["channels"] = channels
+		topicData["disbale_channel_auto_create"] = topic.IsChannelAutoCreateDisabled()
 		topics = append(topics, topicData)
 	}
 	js["version"] = version.Binary
@@ -518,21 +524,21 @@ func (n *NSQD) GetTopicIgnPart(topicName string) *Topic {
 	return n.GetTopic(topicName, 0, false)
 }
 
-func (n *NSQD) GetTopicWithDisabled(topicName string, part int, ext bool, ordered bool) *Topic {
-	return n.internalGetTopic(topicName, part, ext, ordered, 1)
+func (n *NSQD) GetTopicWithDisabled(topicName string, part int, ext bool, ordered bool, disableChannelAutoCreate bool) *Topic {
+	return n.internalGetTopic(topicName, part, ext, ordered, disableChannelAutoCreate, 1)
 }
 
 // GetTopic performs a thread safe operation
 // to return a pointer to a Topic object (potentially new)
 func (n *NSQD) GetTopic(topicName string, part int, ordered bool) *Topic {
-	return n.internalGetTopic(topicName, part, false, false, 0)
+	return n.internalGetTopic(topicName, part, false, false, false, 0)
 }
 
 func (n *NSQD) GetTopicWithExt(topicName string, part int, ordered bool) *Topic {
-	return n.internalGetTopic(topicName, part, true, ordered, 0)
+	return n.internalGetTopic(topicName, part, true, ordered, false, 0)
 }
 
-func (n *NSQD) internalGetTopic(topicName string, part int, ext bool, ordered bool, disabled int32) *Topic {
+func (n *NSQD) internalGetTopic(topicName string, part int, ext bool, ordered bool, disableChannelAutoCreate bool, disabled int32) *Topic {
 	if part > MAX_TOPIC_PARTITION || part < 0 {
 		return nil
 	}
@@ -566,7 +572,7 @@ func (n *NSQD) internalGetTopic(topicName string, part int, ext bool, ordered bo
 		n.topicMap[topicName] = topics
 	}
 	var t *Topic
-	t = NewTopicWithExt(topicName, part, ext, ordered, n.GetOpts(), disabled, n.metaStorage, n,
+	t = NewTopicWithExtAndDisableChannelAutoCreate(topicName, part, ext, ordered, disableChannelAutoCreate, n.GetOpts(), disabled, n.metaStorage, n,
 		n.pubLoopFunc)
 	if t == nil {
 		nsqLog.Errorf("TOPIC(%s): create failed", topicName)

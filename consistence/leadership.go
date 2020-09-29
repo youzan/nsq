@@ -84,6 +84,8 @@ type TopicMetaInfo struct {
 	MultiPart bool
 	//used for message ext
 	Ext bool
+	//whether channel auto create upon sub
+	DisableChannelAutoCreate bool
 }
 
 func (tmi *TopicMetaInfo) AllowMulti() bool {

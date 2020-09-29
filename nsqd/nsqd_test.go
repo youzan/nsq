@@ -339,6 +339,64 @@ func TestZantestSkipMetaData(t *testing.T) {
 	equal(t, b, true)
 }
 
+func TestDisableChannelAutoCreateMetaData(t *testing.T) {
+	opts := NewOptions()
+	opts.Logger = newTestLogger(t)
+	_, _, nsqd := mustStartNSQD(opts)
+	defer os.RemoveAll(opts.DataPath)
+	defer nsqd.Exit()
+
+	// avoid concurrency issue of async persistMetadata() calls
+	atomic.StoreInt32(&nsqd.isLoading, 1)
+	topicName := "disabel_channel_auto_create_metadata" + strconv.Itoa(int(time.Now().Unix()))
+	topic := nsqd.GetTopicWithExt(topicName, 0, false)
+	topic.DisableChannelAutoCreate()
+
+	atomic.StoreInt32(&nsqd.isLoading, 0)
+	nsqd.persistMetadata(nsqd.GetTopicMapCopy())
+
+	metaData, err := getMetadata(nsqd)
+	equal(t, err, nil)
+	topics, err := metaData.Get("topics").Array()
+	found := false
+	for ti := range topics {
+		topicJs := metaData.Get("topics").GetIndex(ti)
+
+		topic, err := topicJs.Get("name").String()
+		equal(t, err, nil)
+		if topicName == topic {
+			disableChannelAutoCreated, err := topicJs.Get("disbale_channel_auto_create").Bool()
+			equal(t, err, nil)
+			equal(t, disableChannelAutoCreated, true)
+			found = true
+			break
+		}
+	}
+	equal(t, found, true)
+
+	topic.EnableChannelAutoCreate()
+	nsqd.persistMetadata(nsqd.GetTopicMapCopy())
+
+	metaData, err = getMetadata(nsqd)
+	equal(t, err, nil)
+	topics, err = metaData.Get("topics").Array()
+	found = false
+	for ti := range topics {
+		topicJs := metaData.Get("topics").GetIndex(ti)
+
+		topic, err := topicJs.Get("name").String()
+		equal(t, err, nil)
+		if topicName == topic {
+			disableChannelAutoCreated, err := topicJs.Get("disbale_channel_auto_create").Bool()
+			equal(t, err, nil)
+			equal(t, disableChannelAutoCreated, false)
+			found = true
+			break
+		}
+	}
+	equal(t, found, true)
+}
+
 func TestSkipMetaData(t *testing.T) {
 	opts := NewOptions()
 	opts.Logger = newTestLogger(t)

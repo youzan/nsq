@@ -36,6 +36,16 @@ nsqdadmin使用默认配置和nsqlookupd同机部署即可.
 ### 关于顺序topic
 顺序topic允许同一个节点存储多个分区, 创建是需要在api指定 `orderedmulti=true` 参数. 顺序topic不允许使用非顺序的方式进行消费. 因此老的官方客户端不能使用该功能
 
+### 关于channel自动创建配置
+创建topic参数支持`DisableChannelAutoCreate`配置，通过在`topic/create`api中指定`disable_channel_auto_create=true`. topic创建后，*未经过nsqlookup创建的channel将不允许在消费者建连时创建*
+
+#### 通过nsqlookupd创建channel
+nsqlookupd新增为`DisableChannelAutoCreate`属性为`true`的topic创建channel（该接口对`DisableChannelAutoCreate`属性为`true`的topic无效）
+
+<pre>
+curl POST /channel/create?topic=XXX&channel=XXX
+</pre>
+
 ## 新版新增服务端配置说明
 大部分配置的说明可以参考`contrib`目录下的配置示例, 使用默认值即可, 这里介绍几个值得注意的配置
 
@@ -108,10 +118,17 @@ POST /cluster/node/remove?remove_node=nodeid
 如果顺序要求非常严格, 则需要在流量低谷时, 临时停写, 进行topic分区重建操作, 如果业务消费延迟很低, 可以在几秒内完成, 影响较小. 因此顺序分区的规划需要考虑一个长时间的容量上限
 
 ### topic元数据调整
-以下API可以用于改变topic的元数据信息, 支持修改副本数, 刷盘策略, 保留时间, 如果不需要改,可以不需要传对应的参数.
+以下API可以用于改变topic的元数据信息, 支持修改副本数, 刷盘策略, 保留时间, 是否允许channel消费时自动创建,如果不需要改,可以不需要传对应的参数.
 <pre>
-POST /topic/meta/update?topic=xxx&replicator=xx&syncdisk=xx&retention=xxx
+POST /topic/meta/update?topic=xxx&replicator=xx&syncdisk=xx&retention=xxx&disable_channel_auto_create=xxx
 </pre>
+
+#### DisableChannelAutoCreate 元数据调整
+`/meta/update`接口支持调整topic的DisableChannelAutoCreate属性：
+1. disable_channel_auto_create=true 调用后，topic将 *不允许channel在消费者建连时自动创建*
+2. disable_channel_auto_create=false 调用后，topic将 *允许channel在消费者建连时自动创建*
+
+*** !!!NOTICE: 原本支持channel自动创建的topic在禁止channel自动创建生效后，原有的channel将被删除!!! ***
 
 ### 消息跟踪
 服务端可以针对topic动态启用跟踪, 远程的跟踪系统是内部使用的, 因此无法提供, 不过可以使用默认的log跟踪模块. 以下跟踪打开时, 会把跟踪信息写入log文件. 以下API发送给对应的nsqd节点.

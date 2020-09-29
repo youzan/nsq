@@ -1956,6 +1956,42 @@ func TestSubWTagToOldTopic(t *testing.T) {
 	test.Equal(t, "msg for old topic", string(msgOut.Body))
 }
 
+func TestSubToChannelNotRegistered(t *testing.T) {
+	topicName := "test_ch_notregistered" + strconv.Itoa(int(time.Now().Unix()))
+
+	opts := nsqdNs.NewOptions()
+	opts.Logger = newTestLogger(t)
+	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
+	defer os.RemoveAll(opts.DataPath)
+	defer nsqdServer.Exit()
+	topic := nsqd.GetTopicIgnPart(topicName)
+	topicDynConf := nsqdNs.TopicDynamicConf{
+		AutoCommit:               1,
+		SyncEvery:                1,
+		Ext:                      false,
+		DisableChannelAutoCreate: true,
+	}
+	topic.SetDynamicInfo(topicDynConf, nil)
+
+	//pub without ext content
+	body := fmt.Sprintf("msg for old topic")
+	msg := nsqdNs.NewMessageWithExt(0, []byte(body), ext.NO_EXT_VER, nil)
+	_, _, _, _, putErr := topic.PutMessage(msg)
+	test.Nil(t, putErr)
+
+	conn, err := mustConnectNSQD(tcpAddr)
+	defer conn.Close()
+	test.Equal(t, err, nil)
+	client1Params := make(map[string]interface{})
+	client1Params["client_id"] = "client"
+	client1Params["hostname"] = "client"
+	identify(t, conn, client1Params, frameTypeResponse)
+
+	resp, err := subWaitResp(t, conn, topicName, "ch")
+	test.Equal(t, nil, err)
+	test.Assert(t, strings.HasPrefix(string(resp), "E_SUB_CHANNEL_NOT_REGISTERED"), "sub to registered channel shoudl fail")
+}
+
 func TestInvalidTagSub(t *testing.T) {
 	topicName := "test_tag_invalid" + strconv.Itoa(int(time.Now().Unix()))
 
