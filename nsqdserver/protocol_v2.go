@@ -1496,6 +1496,37 @@ func getTracedReponse(id nsqd.MessageID, traceID uint64, offset nsqd.BackendOffs
 	return buf, nil
 }
 
+func internalMPubAsync(topic *nsqd.Topic, msgs []*nsqd.Message) error {
+	if topic.Exiting() {
+		return nsqd.ErrExiting
+	}
+	info := &nsqd.MPubInfo{
+		Done:     make(chan struct{}),
+		Msgs:     msgs,
+		StartPub: time.Now(),
+	}
+
+	select {
+	case topic.GetMWaitChan() <- info:
+	default:
+		clientTimer := time.NewTimer(pubWaitTimeout * 2)
+		defer clientTimer.Stop()
+		select {
+		case topic.GetMWaitChan() <- info:
+		case <-topic.QuitChan():
+			nsqd.NsqLogger().Infof("topic %v put messages failed at exiting", topic.GetFullName())
+			return nsqd.ErrExiting
+		case <-clientTimer.C:
+			nsqd.NsqLogger().Infof("topic %v put messages timeout ", topic.GetFullName())
+			topic.IncrPubFailed()
+			incrServerPubFailed()
+			return ErrPubToWaitTimeout
+		}
+	}
+	<-info.Done
+	return info.Err
+}
+
 func internalPubAsync(clientTimer *time.Timer, msgBody []byte, topic *nsqd.Topic, extContent ext.IExtContent) error {
 	if topic.Exiting() {
 		return nsqd.ErrExiting
@@ -1657,6 +1688,11 @@ func (p *protocolV2) internalPubExtAndTrace(client *nsqd.ClientV2, params [][]by
 		if client.PubStats != nil {
 			client.PubStats.IncrCounter(1, true)
 		}
+		if !asyncAction {
+			// async will add failed counter in loop
+			topic.IncrPubFailed()
+			incrServerPubFailed()
+		}
 		nsqd.NsqLogger().LogErrorf("topic %v put message failed: %v, from: %v", topic.GetFullName(), err, client.String())
 		if !p.ctx.checkForMasterWrite(topicName, partition) {
 			return nil, protocol.NewClientErr(err, FailedOnNotLeader, "")
@@ -1704,34 +1740,7 @@ func (p *protocolV2) internalMPUBEXTAndTrace(client *nsqd.ClientV2, params [][]b
 
 	topicName := topic.GetTopicName()
 	partition := topic.GetTopicPart()
-	if p.ctx.checkForMasterWrite(topicName, partition) {
-		id, offset, rawSize, err := p.ctx.PutMessages(topic, messages)
-		//p.ctx.setHealth(err)
-		if err != nil {
-			topic.IncrPubFailed()
-			incrServerPubFailed()
-			if client.PubStats != nil {
-				client.PubStats.IncrCounter(int64(len(messages)), true)
-			}
-			nsqd.NsqLogger().LogErrorf("topic %v put message failed: %v", topic.GetFullName(), err)
-
-			if clusterErr, ok := err.(*consistence.CommonCoordErr); ok {
-				if !clusterErr.IsLocalErr() {
-					return nil, protocol.NewClientErr(err, FailedOnNotWritable, "")
-				}
-			}
-			return nil, protocol.NewFatalClientErr(err, "E_MPUB_FAILED", err.Error())
-		}
-		if client.PubStats != nil {
-			client.PubStats.IncrCounter(int64(len(messages)), false)
-		}
-		cost := time.Now().UnixNano() - startPub
-		topic.GetDetailStats().BatchUpdateTopicLatencyStats(cost/int64(time.Microsecond), int64(len(messages)))
-		if !traceEnable {
-			return okBytes, nil
-		}
-		return getTracedReponse(id, 0, offset, rawSize)
-	} else {
+	if !p.ctx.checkForMasterWrite(topicName, partition) {
 		topic.IncrPubFailed()
 		incrServerPubFailed()
 		if client.PubStats != nil {
@@ -1742,6 +1751,40 @@ func (p *protocolV2) internalMPUBEXTAndTrace(client *nsqd.ClientV2, params [][]b
 			topic.GetFullName(), client.String())
 		return nil, protocol.NewClientErr(preErr, FailedOnNotLeader, "")
 	}
+	id := nsqd.MessageID(0)
+	offset := nsqd.BackendOffset(0)
+	rawSize := int32(0)
+	var err error
+	asyncAction := !traceEnable && (atomic.LoadInt32(&topic.EnableTrace) != 1)
+
+	if asyncAction {
+		err = internalMPubAsync(topic, messages)
+	} else {
+		id, offset, rawSize, err = p.ctx.PutMessages(topic, messages)
+	}
+	if client.PubStats != nil {
+		client.PubStats.IncrCounter(int64(len(messages)), err != nil)
+	}
+	if err != nil {
+		if !asyncAction {
+			topic.IncrPubFailed()
+			incrServerPubFailed()
+		}
+		nsqd.NsqLogger().LogErrorf("topic %v put message failed: %v", topic.GetFullName(), err)
+
+		if clusterErr, ok := err.(*consistence.CommonCoordErr); ok {
+			if !clusterErr.IsLocalErr() {
+				return nil, protocol.NewClientErr(err, FailedOnNotWritable, "")
+			}
+		}
+		return nil, protocol.NewClientErr(err, "E_MPUB_FAILED", err.Error())
+	}
+	cost := time.Now().UnixNano() - startPub
+	topic.GetDetailStats().BatchUpdateTopicLatencyStats(cost/int64(time.Microsecond), int64(len(messages)))
+	if !traceEnable {
+		return okBytes, nil
+	}
+	return getTracedReponse(id, 0, offset, rawSize)
 }
 
 func (p *protocolV2) TOUCH(client *nsqd.ClientV2, params [][]byte) ([]byte, error) {
