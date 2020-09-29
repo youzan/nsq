@@ -997,6 +997,7 @@ func TestNsqLookupNsqdCreateTopicWithChannelAutoCreateDisableDowngrade(t *testin
 	test.Equal(t, 3, len(nodeInfoList))
 
 	topic_p1_r1 := "test-nsqlookup-topic-unit-testdisablechannelautodg-p1-r1"
+	ch := "ch"
 
 	lookupLeadership := lookupCoord1.leadership
 
@@ -1033,6 +1034,22 @@ func TestNsqLookupNsqdCreateTopicWithChannelAutoCreateDisableDowngrade(t *testin
 	dynamicInfo := topic.GetDynamicInfo()
 	test.Equal(t, dynamicInfo.DisableChannelAutoCreate, true)
 
+	//create registered channel
+	err = lookupCoord1.UpdateRegisteredChannel(topic_p1_r1, []string{ch})
+
+	tmeta, _, _ := lookupLeadership.GetTopicMetaInfo(topic_p1_r1)
+	for i := 0; i < tmeta.PartitionNum; i++ {
+		info, err := lookupLeadership.GetTopicInfo(topic_p1_r1, i)
+		test.Nil(t, err)
+		for _, nid := range info.ISR {
+			localNsqd := nodeInfoList[nid].localNsqd
+			localTopic, err := localNsqd.GetExistingTopic(topic_p1_r1, i)
+			test.Nil(t, err)
+			_, err = localTopic.GetExistingChannel(ch)
+			test.Equal(t, nil, err)
+		}
+	}
+
 	err = lookupCoord1.ChangeTopicMetaParam(topic_p1_r1, -1, -1, -1, "", "false")
 	test.Nil(t, err)
 
@@ -1048,6 +1065,20 @@ func TestNsqLookupNsqdCreateTopicWithChannelAutoCreateDisableDowngrade(t *testin
 
 	dynamicInfo = topic.GetDynamicInfo()
 	test.Equal(t, dynamicInfo.DisableChannelAutoCreate, false)
+
+	//check ch is still there
+	tmeta, _, _ = lookupLeadership.GetTopicMetaInfo(topic_p1_r1)
+	for i := 0; i < tmeta.PartitionNum; i++ {
+		info, err := lookupLeadership.GetTopicInfo(topic_p1_r1, i)
+		test.Nil(t, err)
+		for _, nid := range info.ISR {
+			localNsqd := nodeInfoList[nid].localNsqd
+			localTopic, err := localNsqd.GetExistingTopic(topic_p1_r1, i)
+			test.Nil(t, err)
+			_, err = localTopic.GetExistingChannel(ch)
+			test.Equal(t, nil, err)
+		}
+	}
 
 	SetCoordLogger(newTestLogger(t), levellogger.LOG_ERR)
 }

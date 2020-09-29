@@ -2975,17 +2975,19 @@ func (ncoord *NsqdCoordinator) updateLocalTopic(topicInfo *TopicPartitionMetaInf
 		DisableChannelAutoCreate: topicInfo.DisableChannelAutoCreate,
 	}
 	t.SetDynamicInfo(*dyConf, tcData.logMgr)
-	//sync channels
-	newChannels := make(map[string]bool)
-	for i := range topicInfo.Channels {
-		t.GetChannel(topicInfo.Channels[i])
-		newChannels[topicInfo.Channels[i]] = true
-	}
-	chMeta := t.GetChannelMeta()
-	for k, _ := range chMeta {
-		if !newChannels[chMeta[k].Name] {
-			t.DeleteExistingChannel(chMeta[k].Name)
-			coordLog.Infof("ch %v deleted", chMeta[k].Name)
+	//sync channels when disable channel auto create is true
+	if topicInfo.DisableChannelAutoCreate {
+		newChannels := make(map[string]bool)
+		for i := range topicInfo.Channels {
+			t.GetChannel(topicInfo.Channels[i])
+			newChannels[topicInfo.Channels[i]] = true
+		}
+		chMeta := t.GetChannelMeta()
+		for k, _ := range chMeta {
+			if !newChannels[chMeta[k].Name] {
+				t.DeleteExistingChannel(chMeta[k].Name)
+				coordLog.Infof("ch %v deleted", chMeta[k].Name)
+			}
 		}
 	}
 
