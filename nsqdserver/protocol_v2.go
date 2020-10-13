@@ -1509,7 +1509,7 @@ func internalMPubAsync(topic *nsqd.Topic, msgs []*nsqd.Message) error {
 	select {
 	case topic.GetMWaitChan() <- info:
 	default:
-		clientTimer := time.NewTimer(pubWaitTimeout * 2)
+		clientTimer := time.NewTimer(pubWaitTimeout)
 		defer clientTimer.Stop()
 		select {
 		case topic.GetMWaitChan() <- info:
