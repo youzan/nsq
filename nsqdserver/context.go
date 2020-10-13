@@ -17,6 +17,7 @@ import (
 const (
 	FailedOnNotLeader   = consistence.ErrFailedOnNotLeader
 	FailedOnNotWritable = consistence.ErrFailedOnNotWritable
+	maxBatchNum         = 1000
 )
 
 var (
@@ -385,6 +386,7 @@ func (c *context) SetChannelOffset(ch *nsqd.Channel, startFrom *ConsumeOffset, f
 func (c *context) internalPubLoop(topic *nsqd.Topic) {
 	messages := make([]*nsqd.Message, 0, 100)
 	pubInfoList := make([]*nsqd.PubInfo, 0, 100)
+	mpubInfoList := make([]*nsqd.MPubInfo, 0, 100)
 	topicName := topic.GetTopicName()
 	partition := topic.GetTopicPart()
 	nsqd.NsqLogger().Logf("start pub loop for topic: %v ", topic.GetFullName())
@@ -394,22 +396,47 @@ func (c *context) internalPubLoop(topic *nsqd.Topic) {
 			select {
 			case info := <-topic.GetWaitChan():
 				pubInfoList = append(pubInfoList, info)
+			case minfo := <-topic.GetMWaitChan():
+				mpubInfoList = append(mpubInfoList, minfo)
 			default:
 				done = true
 			}
 		}
-		nsqd.NsqLogger().Logf("quit pub loop for topic: %v, left: %v ", topic.GetFullName(), len(pubInfoList))
+		nsqd.NsqLogger().Logf("quit pub loop for topic: %v, left: %v, %v ", topic.GetFullName(), len(pubInfoList), len(mpubInfoList))
 		for _, info := range pubInfoList {
+			info.Err = nsqd.ErrExiting
+			close(info.Done)
+		}
+		for _, info := range mpubInfoList {
 			info.Err = nsqd.ErrExiting
 			close(info.Done)
 		}
 	}()
 	quitChan := topic.QuitChan()
 	infoChan := topic.GetWaitChan()
+	minfoChan := topic.GetMWaitChan()
 	for {
+		if len(messages) > maxBatchNum {
+			infoChan = nil
+			minfoChan = nil
+		} else {
+			infoChan = topic.GetWaitChan()
+			minfoChan = topic.GetMWaitChan()
+		}
 		select {
 		case <-quitChan:
 			return
+		case minfo := <-minfoChan:
+			if time.Since(minfo.StartPub) >= pubWaitTimeout || atomic.LoadInt32(&testPopQueueTimeout) == 1 {
+				topic.IncrPubFailed()
+				incrServerPubFailed()
+				minfo.Err = ErrPubPopQueueTimeout
+				close(minfo.Done)
+				nsqd.NsqLogger().LogErrorf("topic %v put message timeout while pop queue, pub start: %s", topic.GetFullName(), minfo.StartPub)
+				continue
+			}
+			messages = append(messages, minfo.Msgs...)
+			mpubInfoList = append(mpubInfoList, minfo)
 		case info := <-infoChan:
 			if len(info.MsgBody) <= 0 {
 				nsqd.NsqLogger().Logf("empty msg body")
@@ -428,9 +455,8 @@ func (c *context) internalPubLoop(topic *nsqd.Topic) {
 				messages = append(messages, nsqd.NewMessageWithExt(0, info.MsgBody, info.ExtContent.ExtVersion(), info.ExtContent.GetBytes()))
 			}
 			pubInfoList = append(pubInfoList, info)
-			// TODO: avoid too much in a batch
 		default:
-			if len(pubInfoList) == 0 {
+			if len(messages) == 0 {
 				select {
 				case <-quitChan:
 					return
@@ -449,6 +475,17 @@ func (c *context) internalPubLoop(topic *nsqd.Topic) {
 						messages = append(messages, nsqd.NewMessageWithExt(0, info.MsgBody, info.ExtContent.ExtVersion(), info.ExtContent.GetBytes()))
 					}
 					pubInfoList = append(pubInfoList, info)
+				case minfo := <-minfoChan:
+					if time.Since(minfo.StartPub) >= pubWaitTimeout || atomic.LoadInt32(&testPopQueueTimeout) == 1 {
+						topic.IncrPubFailed()
+						incrServerPubFailed()
+						minfo.Err = ErrPubPopQueueTimeout
+						close(minfo.Done)
+						nsqd.NsqLogger().LogErrorf("topic %v put message timeout while pop queue, pub start: %s", topic.GetFullName(), minfo.StartPub)
+						continue
+					}
+					messages = append(messages, minfo.Msgs...)
+					mpubInfoList = append(mpubInfoList, minfo)
 				}
 				continue
 			}
@@ -481,7 +518,12 @@ func (c *context) internalPubLoop(topic *nsqd.Topic) {
 				info.Err = retErr
 				close(info.Done)
 			}
+			for _, minfo := range mpubInfoList {
+				minfo.Err = retErr
+				close(minfo.Done)
+			}
 			pubInfoList = pubInfoList[:0]
+			mpubInfoList = mpubInfoList[:0]
 			messages = messages[:0]
 		}
 	}

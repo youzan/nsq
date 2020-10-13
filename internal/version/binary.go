@@ -5,7 +5,7 @@ import (
 	"runtime"
 )
 
-const Binary = "0.3.7-HA.1.12.1"
+const Binary = "0.3.7-HA.1.12.2"
 
 var (
 	Commit    = "unset"

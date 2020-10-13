@@ -557,26 +557,24 @@ func (s *httpServer) doMPUB(w http.ResponseWriter, req *http.Request, ps httprou
 		}
 	}
 
-	if s.ctx.checkForMasterWrite(topic.GetTopicName(), topic.GetTopicPart()) {
-		_, _, _, err := s.ctx.PutMessages(topic, msgs)
-		//s.ctx.setHealth(err)
-		if err != nil {
-			nsqd.NsqLogger().LogErrorf("topic %v put message failed: %v", topic.GetFullName(), err)
-			if clusterErr, ok := err.(*consistence.CommonCoordErr); ok {
-				if !clusterErr.IsLocalErr() {
-					return nil, http_api.Err{400, FailedOnNotWritable}
-				}
-			}
-			return nil, http_api.Err{503, err.Error()}
-		}
-	} else {
+	if !s.ctx.checkForMasterWrite(topic.GetTopicName(), topic.GetTopicPart()) {
 		//should we forward to master of topic?
 		nsqd.NsqLogger().LogDebugf("should put to master: %v, from %v",
 			topic.GetFullName(), req.RemoteAddr)
 		topic.DisableForSlave(s.ctx.checkConsumeForMasterWrite(topic.GetTopicName(), topic.GetTopicPart()))
 		return nil, http_api.Err{400, FailedOnNotLeader}
 	}
-
+	err = internalMPubAsync(topic, msgs)
+	//s.ctx.setHealth(err)
+	if err != nil {
+		nsqd.NsqLogger().LogErrorf("topic %v put message failed: %v", topic.GetFullName(), err)
+		if clusterErr, ok := err.(*consistence.CommonCoordErr); ok {
+			if !clusterErr.IsLocalErr() {
+				return nil, http_api.Err{400, FailedOnNotWritable}
+			}
+		}
+		return nil, http_api.Err{503, err.Error()}
+	}
 	cost := time.Now().UnixNano() - startPub
 	topic.GetDetailStats().UpdateTopicMsgStats(0, cost/1000/int64(len(msgs)))
 	return "OK", nil

@@ -84,6 +84,14 @@ type PubInfo struct {
 
 type PubInfoChan chan *PubInfo
 
+type MPubInfo struct {
+	Done     chan struct{}
+	Msgs     []*Message
+	StartPub time.Time
+	Err      error
+}
+type MPubInfoChan chan *MPubInfo
+
 type ChannelMetaInfo struct {
 	Name           string `json:"name"`
 	Paused         bool   `json:"paused"`
@@ -128,6 +136,7 @@ type Topic struct {
 	detailStats     *DetailStatsInfo
 	needFixData     int32
 	pubWaitingChan  PubInfoChan
+	mpubWaitingChan MPubInfoChan
 	quitChan        chan struct{}
 	pubLoopFunc     func(v *Topic)
 	wg              sync.WaitGroup
@@ -196,19 +205,20 @@ func NewTopicWithExtAndDisableChannelAutoCreate(topicName string, part int, ext 
 		return nil
 	}
 	t := &Topic{
-		tname:          topicName,
-		partition:      part,
-		channelMap:     make(map[string]*Channel),
-		flushChan:      make(chan int, 10),
-		option:         opt,
-		dynamicConf:    &TopicDynamicConf{SyncEvery: opt.SyncEvery, AutoCommit: 1},
-		putBuffer:      bytes.Buffer{},
-		nsqdNotify:     notify,
-		writeDisabled:  writeDisabled,
-		pubWaitingChan: make(PubInfoChan, PubQueue),
-		quitChan:       make(chan struct{}),
-		pubLoopFunc:    loopFunc,
-		metaStorage:    metaStorage,
+		tname:           topicName,
+		partition:       part,
+		channelMap:      make(map[string]*Channel),
+		flushChan:       make(chan int, 10),
+		option:          opt,
+		dynamicConf:     &TopicDynamicConf{SyncEvery: opt.SyncEvery, AutoCommit: 1},
+		putBuffer:       bytes.Buffer{},
+		nsqdNotify:      notify,
+		writeDisabled:   writeDisabled,
+		pubWaitingChan:  make(PubInfoChan, PubQueue),
+		mpubWaitingChan: make(MPubInfoChan, PubQueue),
+		quitChan:        make(chan struct{}),
+		pubLoopFunc:     loopFunc,
+		metaStorage:     metaStorage,
 	}
 	if ext {
 		t.setExt()
@@ -322,7 +332,9 @@ func (t *Topic) GetOrCreateDelayedQueueNoLock(idGen MsgIDGenerator) (*DelayQueue
 func (t *Topic) GetWaitChan() PubInfoChan {
 	return t.pubWaitingChan
 }
-
+func (t *Topic) GetMWaitChan() MPubInfoChan {
+	return t.mpubWaitingChan
+}
 func (t *Topic) QuitChan() <-chan struct{} {
 	return t.quitChan
 }

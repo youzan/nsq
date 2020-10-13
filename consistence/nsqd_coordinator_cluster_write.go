@@ -347,8 +347,12 @@ func (ncoord *NsqdCoordinator) doSyncOpToCluster(isWrite bool, coord *TopicCoord
 	doLocalExit localExitFunc, doLocalCommit localCommitFunc, doLocalRollback localRollbackFunc,
 	doRefresh refreshCoordFunc, doSlaveSync slaveSyncFunc, handleSyncResult handleSyncResultFunc) *CoordErr {
 
+	wstart := time.Now()
 	if isWrite {
 		coord.writeHold.Lock()
+		if time.Since(wstart) > maxWriteWaitTimeout {
+			return ErrOperationExpired
+		}
 		defer coord.writeHold.Unlock()
 	}
 
@@ -536,8 +540,8 @@ retrysync:
 			halfSuccess = false
 		}
 
-		if retryCnt > MAX_WRITE_RETRY*2 {
-			coordLog.Errorf("topic %v sync write failed due to max retry: %v", topicFullName, retryCnt)
+		if retryCnt > MAX_WRITE_RETRY*2 || time.Since(wstart) > maxWriteWaitTimeout*2 {
+			coordLog.Errorf("topic %v sync write failed due to max retry: %v, wait: %s", topicFullName, retryCnt, time.Since(wstart))
 			goto exitsync
 		}
 

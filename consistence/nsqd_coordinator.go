@@ -22,6 +22,7 @@ import (
 
 const (
 	MAX_WRITE_RETRY             = 8
+	maxWriteWaitTimeout         = time.Second * 5
 	MAX_CATCHUP_RETRY           = 5
 	MAX_LOG_PULL                = 10000
 	MAX_LOG_PULL_BYTES          = 1024 * 1024 * 32
