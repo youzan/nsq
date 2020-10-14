@@ -79,6 +79,12 @@ POST /topic/tombstone?topic=xxx&node=ip:httpport&restore=true
 PUT -d '10000' /config/max_conn_for_client 
 </pre>
 
+### 动态调整topic单分区待完成pub流量限制
+1.12.2之后的新版本nsqd服务端除了会限制写入排队的队列大小, 还会限制写入待发送流量, 避免读取过多待发送数据, 导致内存占用过多, 初始化可以在nsqd的配置文件配置, 可以动态调整此参数, 默认限制200MB.
+<pre>
+PUT -d '100000000' /config/max_pub_wait_size
+</pre>
+
 ### 动态调整服务端日志级别
 <pre>
 nsqd: curl -X POST "http://127.0.0.1:4151/loglevel/set?loglevel=3"
