@@ -91,6 +91,39 @@ func (c *ClusterInfo) GetVersion(addr string) (semver.Version, error) {
 	return v, err
 }
 
+//helper to find whether topic has channl auto create disable
+func (c *ClusterInfo) IsTopicDisableChanelAutoCreate(lookupdHTTPAddrs []LookupdAddressDC, topic string) (bool, error) {
+	var errs []error
+
+	type meta struct {
+		DisableChannelAutoCreate bool `json:"disable_channel_auto_create"`
+	}
+
+	type respType struct {
+		Producers Producers `json:"producers"`
+		MetaInfo  *meta     `json:"meta,omitempty"`
+	}
+
+	for _, addr := range lookupdHTTPAddrs {
+		lookupd := addr
+		endpoint := fmt.Sprintf("http://%s/lookup?topic=%s&metainfo=true", lookupd.Addr, topic)
+		c.logf("CI: querying nsqlookupd %s", endpoint)
+
+		var resp respType
+		err := c.client.NegotiateV1(endpoint, &resp)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+
+		if resp.MetaInfo != nil && len(resp.Producers) > 0 {
+			return resp.MetaInfo.DisableChannelAutoCreate, nil
+		}
+	}
+
+	return false, fmt.Errorf("Failed to query any nsqlookupd: %s for topic %s", ErrList(errs), topic)
+}
+
 func (c *ClusterInfo) GetLookupdTopicsMeta(lookupdHTTPAddrs []LookupdAddressDC, metaInfo bool) ([]*TopicInfo, error) {
 	var topics []*TopicInfo
 	var lock sync.Mutex
@@ -1124,8 +1157,70 @@ func (c *ClusterInfo) CreateTopicChannelAfterTopicCreation(topicName string, cha
 	return nil
 }
 
+func (c *ClusterInfo) UnregisterTopicChannel(topicName string, channelName string, lookupdHTTPAddrs []LookupdAddressDC) error {
+	qs := fmt.Sprintf("topic=%s&channel=%s", url.QueryEscape(topicName), url.QueryEscape(channelName))
+	lookupdNodesDC, err := c.ListAllLookupdNodes(lookupdHTTPAddrs)
+	if err != nil {
+		c.logf("failed to list lookupd nodes while create topic: %v", err)
+		return err
+	}
+	var errs []error
+	leaderAddr := make([]string, 0)
+	for _, lookupdNodes := range lookupdNodesDC {
+		leaderAddr = append(leaderAddr, net.JoinHostPort(lookupdNodes.LeaderNode.NodeIP, lookupdNodes.LeaderNode.HttpPort))
+	}
+	err = c.versionPivotNSQLookupd(leaderAddr, "", "channel/delete", qs)
+	if err != nil {
+		pe, ok := err.(PartialErr)
+		if !ok {
+			return err
+		}
+		errs = append(errs, pe.Errors()...)
+	}
+
+	if len(errs) > 0 {
+		return ErrList(errs)
+	}
+	return nil
+}
+
+//register channel to nsqlookupd
+func (c *ClusterInfo) RegisterTopicChannel(topicName string, channelName string, lookupdHTTPAddrs []LookupdAddressDC) error {
+	qs := fmt.Sprintf("topic=%s&channel=%s", url.QueryEscape(topicName), url.QueryEscape(channelName))
+	lookupdNodesDC, err := c.ListAllLookupdNodes(lookupdHTTPAddrs)
+	if err != nil {
+		c.logf("failed to list lookupd nodes while create topic: %v", err)
+		return err
+	}
+	var errs []error
+	leaderAddr := make([]string, 0)
+	for _, lookupdNodes := range lookupdNodesDC {
+		leaderAddr = append(leaderAddr, net.JoinHostPort(lookupdNodes.LeaderNode.NodeIP, lookupdNodes.LeaderNode.HttpPort))
+	}
+	err = c.versionPivotNSQLookupd(leaderAddr, "", "channel/create", qs)
+	if err != nil {
+		pe, ok := err.(PartialErr)
+		if !ok {
+			return err
+		}
+		errs = append(errs, pe.Errors()...)
+	}
+
+	if len(errs) > 0 {
+		return ErrList(errs)
+	}
+	return nil
+}
+
 func (c *ClusterInfo) CreateTopicChannel(topicName string, channelName string, lookupdHTTPAddrs []LookupdAddressDC) error {
 	var errs []error
+
+	if disabled, _ := c.IsTopicDisableChanelAutoCreate(lookupdHTTPAddrs, topicName); disabled {
+		err := c.RegisterTopicChannel(topicName, channelName, lookupdHTTPAddrs)
+		if err != nil {
+			return err
+		}
+	}
 
 	producers, partitionProducers, err := c.GetTopicProducers(topicName, lookupdHTTPAddrs, nil)
 	if err != nil {
@@ -1229,6 +1324,13 @@ func (c *ClusterInfo) DeleteTopic(topicName string, lookupdHTTPAddrs []LookupdAd
 }
 
 func (c *ClusterInfo) DeleteChannel(topicName string, channelName string, lookupdHTTPAddrs []LookupdAddressDC, nsqdHTTPAddrs []string) error {
+	if disabled, _ := c.IsTopicDisableChanelAutoCreate(lookupdHTTPAddrs, topicName); disabled {
+		err := c.UnregisterTopicChannel(topicName, channelName, lookupdHTTPAddrs)
+		if err != nil {
+			return err
+		}
+	}
+
 	var errs []error
 	retry := true
 	producers, partitionProducers, err := c.GetTopicProducers(topicName, lookupdHTTPAddrs, nsqdHTTPAddrs)

@@ -526,17 +526,22 @@ func (s *httpServer) topicHandler(w http.ResponseWriter, req *http.Request, ps h
 
 	isOrdered := false
 	isMultiPart := false
+	isExt := false
+	isChannelAutoCreateDisabled := false
 	if len(topicStats) > 0 {
 		isOrdered = topicStats[0].IsMultiOrdered
 		isMultiPart = topicStats[0].IsMultiPart
+		isExt = topicStats[0].IsExt
+		isChannelAutoCreateDisabled = topicStats[0].IsChannelAutoCreateDisabled
 	}
-	isExt := topicStats[0].IsExt
+
 	allNodesTopicStats := &clusterinfo.TopicStats{
 		TopicName:      topicName,
 		StatsdName:     topicName,
 		IsMultiOrdered: isOrdered,
 		IsMultiPart:    isMultiPart,
 		IsExt:          isExt,
+		IsChannelAutoCreateDisabled: isChannelAutoCreateDisabled,
 	}
 	for _, t := range topicStats {
 		stat, ok := statsMap[t.TopicName]
