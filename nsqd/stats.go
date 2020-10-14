@@ -39,6 +39,7 @@ type TopicStats struct {
 	IsMultiOrdered       bool             `json:"is_multi_ordered"`
 	IsMultiPart          bool             `json:"is_multi_part"`
 	IsExt                bool             `json:"is_ext"`
+	IsChannelAutoCreateDisabled bool			`json:"is_channel_auto_create_disabled"`
 	StatsdName           string           `json:"statsd_name"`
 	PubFailedCnt         int64            `json:"pub_failed_cnt"`
 
@@ -70,6 +71,7 @@ func NewTopicStats(t *Topic, channels []ChannelStats, filterClients bool) TopicS
 		IsMultiOrdered:       t.IsOrdered(),
 		IsMultiPart:          t.GetDynamicInfo().MultiPart,
 		IsExt:                t.IsExt(),
+		IsChannelAutoCreateDisabled:	t.IsChannelAutoCreateDisabled(),
 		PubFailedCnt:         t.PubFailed(),
 		StatsdName:           statsdName,
 

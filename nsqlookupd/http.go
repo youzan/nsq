@@ -409,11 +409,12 @@ func (s *httpServer) doLookup(w http.ResponseWriter, req *http.Request, ps httpr
 		return map[string]interface{}{
 			"channels": channels,
 			"meta": map[string]interface{}{
-				"partition_num":  meta.PartitionNum,
-				"replica":        meta.Replica,
-				"extend_support": meta.Ext,
-				"ordered":        meta.OrderedMulti,
-				"multi_part":     meta.MultiPart,
+				"partition_num":               meta.PartitionNum,
+				"replica":                     meta.Replica,
+				"extend_support":              meta.Ext,
+				"ordered":                     meta.OrderedMulti,
+				"multi_part":                  meta.MultiPart,
+				"disable_channel_auto_create": meta.DisableChannelAutoCreate,
 			},
 			"producers":  peers,
 			"partitions": partitionProducers,
