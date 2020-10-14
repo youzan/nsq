@@ -1099,6 +1099,14 @@ func (c *ClusterInfo) TombstoneNodeForTopic(topic string, node string, lookupdHT
 func (c *ClusterInfo) CreateTopicChannelAfterTopicCreation(topicName string, channelName string, lookupdHTTPAddrs []LookupdAddressDC, partitionNum int) error {
 	var errs []error
 
+	if disabled, _ := c.IsTopicDisableChanelAutoCreate(lookupdHTTPAddrs, topicName); disabled {
+		err := c.RegisterTopicChannel(topicName, channelName, lookupdHTTPAddrs)
+		if err != nil {
+			c.logf("failed to register channel %v, topic: %v", channelName, topicName)
+			return err
+		}
+	}
+
 	//fetch nsqd from leader only
 	lookupdNodesDC, err := c.ListAllLookupdNodes(lookupdHTTPAddrs)
 	if err != nil {
