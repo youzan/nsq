@@ -52,10 +52,12 @@ type Options struct {
 	QueueScanDirtyPercent      float64       `flag:"queue-scan-dirty-percent"`
 
 	// msg and command options
-	MsgTimeout            time.Duration `flag:"msg-timeout" arg:"60s"`
-	MaxMsgTimeout         time.Duration `flag:"max-msg-timeout"`
-	MaxMsgSize            int64         `flag:"max-msg-size" deprecated:"max-message-size" cfg:"max_msg_size"`
-	MaxBodySize           int64         `flag:"max-body-size"`
+	MsgTimeout    time.Duration `flag:"msg-timeout" arg:"60s"`
+	MaxMsgTimeout time.Duration `flag:"max-msg-timeout"`
+	MaxMsgSize    int64         `flag:"max-msg-size" deprecated:"max-message-size" cfg:"max_msg_size"`
+	MaxBodySize   int64         `flag:"max-body-size"`
+	// max for each topic partition
+	MaxPubWaitingSize     int64         `flag:"max-pub-waiting-size"`
 	MaxReqTimeout         time.Duration `flag:"max-req-timeout"`
 	MaxConfirmWin         int64         `flag:"max-confirm-win"`
 	MaxChannelDelayedQNum int64         `flag:"max-channel-delayed-qnum"`
@@ -154,6 +156,7 @@ func NewOptions() *Options {
 		MaxMsgTimeout:     15 * time.Minute,
 		MaxMsgSize:        1024 * 1024,
 		MaxBodySize:       5 * 1024 * 1024,
+		MaxPubWaitingSize: 200 * 1024 * 1024,
 		MaxReqTimeout:     3 * 24 * time.Hour,
 		ClientTimeout:     60 * time.Second,
 		ReqToEndThreshold: 15 * time.Minute,

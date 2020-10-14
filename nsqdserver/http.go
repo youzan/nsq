@@ -328,6 +328,12 @@ func (s *httpServer) internalPUB(w http.ResponseWriter, req *http.Request, ps ht
 	}
 
 	readMax := req.ContentLength + 1
+	wb := topic.IncrPubWaitingBytes(int64(readMax))
+	defer topic.IncrPubWaitingBytes(-1 * int64(readMax))
+	if wb > s.ctx.getOpts().MaxPubWaitingSize {
+		nsqd.NsqLogger().Logf("topic %s pub too much waiting : %v", topic.GetFullName(), wb)
+		return nil, http_api.Err{http.StatusTooManyRequests, fmt.Sprintf("E_PUB_TOO_MUCH_WAITING pub too much waiting in the queue: %d", wb)}
+	}
 	b := topic.BufferPoolGet(int(req.ContentLength))
 	defer topic.BufferPoolPut(b)
 	asyncAction := !enableTrace
@@ -496,6 +502,13 @@ func (s *httpServer) doMPUB(w http.ResponseWriter, req *http.Request, ps httprou
 	reqParams, topic, err := s.getExistingTopicFromQuery(req)
 	if err != nil {
 		return nil, err
+	}
+
+	wb := topic.IncrPubWaitingBytes(int64(req.ContentLength))
+	defer topic.IncrPubWaitingBytes(-1 * int64(req.ContentLength))
+	if wb > s.ctx.getOpts().MaxPubWaitingSize {
+		nsqd.NsqLogger().Logf("topic %s pub too much waiting : %v", topic.GetFullName(), wb)
+		return nil, http_api.Err{http.StatusTooManyRequests, fmt.Sprintf("E_PUB_TOO_MUCH_WAITING pub too much waiting in the queue: %d", wb)}
 	}
 
 	var msgs []*nsqd.Message
@@ -1393,6 +1406,13 @@ func (s *httpServer) doConfig(w http.ResponseWriter, req *http.Request, ps httpr
 				return nil, http_api.Err{400, "INVALID_VALUE"}
 			}
 			nsqd.NsqLogger().Logf("max conn for client set to : %v", opts.MaxConnForClient)
+		case "max_pub_waiting_size":
+			err := json.Unmarshal(body, &opts.MaxPubWaitingSize)
+			if err != nil {
+				nsqd.NsqLogger().Logf("invalid value : %v", string(body))
+				return nil, http_api.Err{400, "INVALID_VALUE"}
+			}
+			nsqd.NsqLogger().Logf("max pub waiting size set to : %v", opts.MaxPubWaitingSize)
 		default:
 			return nil, http_api.Err{400, "INVALID_OPTION"}
 		}

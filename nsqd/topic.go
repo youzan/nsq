@@ -147,6 +147,8 @@ type Topic struct {
 	saveMutex                    sync.Mutex
 	pubFailedCnt                 int64
 	metaStorage                  IMetaStorage
+	// the pub data waiting pub ok returned
+	pubWaitingBytes int64
 }
 
 func (t *Topic) setExt() {
@@ -167,6 +169,10 @@ func (t *Topic) EnableChannelAutoCreate() {
 
 func (t *Topic) IsChannelAutoCreateDisabled() bool {
 	return atomic.LoadInt32(&t.isChannelAutoCreatedDisabled) == 1
+}
+
+func (t *Topic) IncrPubWaitingBytes(sz int64) int64 {
+	return atomic.AddInt64(&t.pubWaitingBytes, sz)
 }
 
 func (t *Topic) IncrPubFailed() {
