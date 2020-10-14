@@ -1598,6 +1598,12 @@ func (p *protocolV2) internalPubExtAndTrace(client *nsqd.ClientV2, params [][]by
 		return nil, protocol.NewFatalClientErr(nil, "E_BAD_BODY",
 			fmt.Sprintf("invalid body size %d with ext json header enabled", bodyLen))
 	}
+	wb := topic.IncrPubWaitingBytes(int64(bodyLen))
+	defer topic.IncrPubWaitingBytes(-1 * int64(bodyLen))
+	if wb > p.ctx.getOpts().MaxPubWaitingSize ||
+		(topic.IsWaitChanFull() && wb > p.ctx.getOpts().MaxPubWaitingSize/10) {
+		return nil, protocol.NewFatalClientErr(nil, "E_PUB_TOO_MUCH_WAITING", fmt.Sprintf("pub too much waiting in the queue: %d", wb))
+	}
 
 	messageBodyBuffer := topic.BufferPoolGet(int(bodyLen))
 	defer topic.BufferPoolPut(messageBodyBuffer)
@@ -1721,9 +1727,15 @@ func (p *protocolV2) internalPubExtAndTrace(client *nsqd.ClientV2, params [][]by
 
 func (p *protocolV2) internalMPUBEXTAndTrace(client *nsqd.ClientV2, params [][]byte, mpubExt bool, traceEnable bool) ([]byte, error) {
 	startPub := time.Now().UnixNano()
-	_, topic, preErr := p.preparePub(client, params, p.ctx.getOpts().MaxBodySize, true)
+	bodyLen, topic, preErr := p.preparePub(client, params, p.ctx.getOpts().MaxBodySize, true)
 	if preErr != nil {
 		return nil, preErr
+	}
+	wb := topic.IncrPubWaitingBytes(int64(bodyLen))
+	defer topic.IncrPubWaitingBytes(-1 * int64(bodyLen))
+	if wb > p.ctx.getOpts().MaxPubWaitingSize ||
+		(topic.IsMWaitChanFull() && wb > p.ctx.getOpts().MaxPubWaitingSize/10) {
+		return nil, protocol.NewFatalClientErr(nil, "E_PUB_TOO_MUCH_WAITING", fmt.Sprintf("pub too much waiting in the queue: %d", wb))
 	}
 
 	messages, buffers, preErr := readMPUBEXT(client.Reader, client.LenSlice, topic,

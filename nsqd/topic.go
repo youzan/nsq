@@ -147,6 +147,8 @@ type Topic struct {
 	saveMutex                    sync.Mutex
 	pubFailedCnt                 int64
 	metaStorage                  IMetaStorage
+	// the pub data waiting pub ok returned
+	pubWaitingBytes int64
 }
 
 func (t *Topic) setExt() {
@@ -167,6 +169,10 @@ func (t *Topic) EnableChannelAutoCreate() {
 
 func (t *Topic) IsChannelAutoCreateDisabled() bool {
 	return atomic.LoadInt32(&t.isChannelAutoCreatedDisabled) == 1
+}
+
+func (t *Topic) IncrPubWaitingBytes(sz int64) int64 {
+	return atomic.AddInt64(&t.pubWaitingBytes, sz)
 }
 
 func (t *Topic) IncrPubFailed() {
@@ -215,7 +221,7 @@ func NewTopicWithExtAndDisableChannelAutoCreate(topicName string, part int, ext 
 		nsqdNotify:      notify,
 		writeDisabled:   writeDisabled,
 		pubWaitingChan:  make(PubInfoChan, PubQueue),
-		mpubWaitingChan: make(MPubInfoChan, PubQueue),
+		mpubWaitingChan: make(MPubInfoChan, PubQueue/2),
 		quitChan:        make(chan struct{}),
 		pubLoopFunc:     loopFunc,
 		metaStorage:     metaStorage,
@@ -331,6 +337,12 @@ func (t *Topic) GetOrCreateDelayedQueueNoLock(idGen MsgIDGenerator) (*DelayQueue
 
 func (t *Topic) GetWaitChan() PubInfoChan {
 	return t.pubWaitingChan
+}
+func (t *Topic) IsWaitChanFull() bool {
+	return len(t.pubWaitingChan) >= cap(t.pubWaitingChan)-1
+}
+func (t *Topic) IsMWaitChanFull() bool {
+	return len(t.mpubWaitingChan) >= cap(t.mpubWaitingChan)-1
 }
 func (t *Topic) GetMWaitChan() MPubInfoChan {
 	return t.mpubWaitingChan
