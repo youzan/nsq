@@ -330,7 +330,8 @@ func (s *httpServer) internalPUB(w http.ResponseWriter, req *http.Request, ps ht
 	readMax := req.ContentLength + 1
 	wb := topic.IncrPubWaitingBytes(int64(readMax))
 	defer topic.IncrPubWaitingBytes(-1 * int64(readMax))
-	if wb > s.ctx.getOpts().MaxPubWaitingSize {
+	if wb > s.ctx.getOpts().MaxPubWaitingSize ||
+		(topic.IsWaitChanFull() && wb > s.ctx.getOpts().MaxPubWaitingSize/10) {
 		nsqd.NsqLogger().Logf("topic %s pub too much waiting : %v", topic.GetFullName(), wb)
 		return nil, http_api.Err{http.StatusTooManyRequests, fmt.Sprintf("E_PUB_TOO_MUCH_WAITING pub too much waiting in the queue: %d", wb)}
 	}
@@ -506,7 +507,8 @@ func (s *httpServer) doMPUB(w http.ResponseWriter, req *http.Request, ps httprou
 
 	wb := topic.IncrPubWaitingBytes(int64(req.ContentLength))
 	defer topic.IncrPubWaitingBytes(-1 * int64(req.ContentLength))
-	if wb > s.ctx.getOpts().MaxPubWaitingSize {
+	if wb > s.ctx.getOpts().MaxPubWaitingSize ||
+		(topic.IsMWaitChanFull() && wb > s.ctx.getOpts().MaxPubWaitingSize/10) {
 		nsqd.NsqLogger().Logf("topic %s pub too much waiting : %v", topic.GetFullName(), wb)
 		return nil, http_api.Err{http.StatusTooManyRequests, fmt.Sprintf("E_PUB_TOO_MUCH_WAITING pub too much waiting in the queue: %d", wb)}
 	}

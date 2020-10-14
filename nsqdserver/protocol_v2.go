@@ -1600,7 +1600,8 @@ func (p *protocolV2) internalPubExtAndTrace(client *nsqd.ClientV2, params [][]by
 	}
 	wb := topic.IncrPubWaitingBytes(int64(bodyLen))
 	defer topic.IncrPubWaitingBytes(-1 * int64(bodyLen))
-	if wb > p.ctx.getOpts().MaxPubWaitingSize {
+	if wb > p.ctx.getOpts().MaxPubWaitingSize ||
+		(topic.IsWaitChanFull() && wb > p.ctx.getOpts().MaxPubWaitingSize/10) {
 		return nil, protocol.NewFatalClientErr(nil, "E_PUB_TOO_MUCH_WAITING", fmt.Sprintf("pub too much waiting in the queue: %d", wb))
 	}
 
@@ -1732,7 +1733,8 @@ func (p *protocolV2) internalMPUBEXTAndTrace(client *nsqd.ClientV2, params [][]b
 	}
 	wb := topic.IncrPubWaitingBytes(int64(bodyLen))
 	defer topic.IncrPubWaitingBytes(-1 * int64(bodyLen))
-	if wb > p.ctx.getOpts().MaxPubWaitingSize {
+	if wb > p.ctx.getOpts().MaxPubWaitingSize ||
+		(topic.IsMWaitChanFull() && wb > p.ctx.getOpts().MaxPubWaitingSize/10) {
 		return nil, protocol.NewFatalClientErr(nil, "E_PUB_TOO_MUCH_WAITING", fmt.Sprintf("pub too much waiting in the queue: %d", wb))
 	}
 

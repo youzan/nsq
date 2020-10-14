@@ -3105,6 +3105,94 @@ func TestTcpMPubWaitQueueFullAndTimeout(t *testing.T) {
 	test.Equal(t, int32(0), timeoutCnt)
 }
 
+func TestTcpPubWaitTooMuchBytes(t *testing.T) {
+	opts := nsqdNs.NewOptions()
+	opts.Logger = newTestLogger(t)
+	opts.LogLevel = 3
+	opts.MaxMsgSize = 100
+	opts.MaxBodySize = 1000
+	opts.MaxPubWaitingSize = 150
+	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
+	defer os.RemoveAll(opts.DataPath)
+	defer nsqdServer.Exit()
+
+	topicName := "test_tcp_pub_toomuch" + strconv.Itoa(int(time.Now().Unix()))
+	nsqd.GetTopicIgnPart(topicName).GetChannel("ch")
+
+	errCnt := int32(0)
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			conn, err := mustConnectNSQD(tcpAddr)
+			test.Equal(t, err, nil)
+			defer conn.Close()
+			identify(t, conn, nil, frameTypeResponse)
+			s := time.Now()
+			cmd := nsq.Publish(topicName, []byte("1234500000000000000000000000000000000000000"))
+			cmd.WriteTo(conn)
+			resp, _ := nsq.ReadResponse(conn)
+			frameType, data, _ := nsq.UnpackResponse(resp)
+			cost := time.Since(s)
+			t.Logf("frameType: %d, data: %s, cost: %s", frameType, data, cost)
+			if frameType == 0 {
+				return
+			}
+			atomic.AddInt32(&errCnt, 1)
+			test.Equal(t, frameType, frameTypeError)
+			test.Equal(t, true, strings.Contains(string(data), "E_PUB_TOO_MUCH_WAITING"))
+		}()
+	}
+	wg.Wait()
+	t.Logf("timeout pub cnt : %v", errCnt)
+	test.Equal(t, true, errCnt >= 1)
+}
+
+func TestTcpMPubWaitTooMuchBytes(t *testing.T) {
+	opts := nsqdNs.NewOptions()
+	opts.Logger = newTestLogger(t)
+	opts.LogLevel = 3
+	opts.MaxMsgSize = 100
+	opts.MaxBodySize = 1000
+	opts.MaxPubWaitingSize = 200
+	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
+	defer os.RemoveAll(opts.DataPath)
+	defer nsqdServer.Exit()
+
+	topicName := "test_tcp_mpub_timeout" + strconv.Itoa(int(time.Now().Unix()))
+	nsqd.GetTopicIgnPart(topicName).GetChannel("ch")
+
+	timeoutCnt := int32(0)
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			conn, err := mustConnectNSQD(tcpAddr)
+			test.Equal(t, err, nil)
+			defer conn.Close()
+			identify(t, conn, nil, frameTypeResponse)
+			s := time.Now()
+			cmd, _ := nsq.MultiPublish(topicName, [][]byte{[]byte("12345000000000000000000000000000")})
+			cmd.WriteTo(conn)
+			resp, _ := nsq.ReadResponse(conn)
+			frameType, data, _ := nsq.UnpackResponse(resp)
+			cost := time.Since(s)
+			t.Logf("frameType: %d, data: %s, cost: %s", frameType, data, cost)
+			if frameType == 0 {
+				return
+			}
+			atomic.AddInt32(&timeoutCnt, 1)
+			test.Equal(t, frameType, frameTypeError)
+			test.Equal(t, true, strings.Contains(string(data), "E_PUB_TOO_MUCH_WAITING"))
+		}()
+	}
+	wg.Wait()
+	t.Logf("timeout pub cnt : %v", timeoutCnt)
+	test.Equal(t, true, timeoutCnt >= 1)
+}
+
 func TestTcpMpubExt(t *testing.T) {
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)

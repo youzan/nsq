@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -295,6 +296,47 @@ func TestHTTPPubExt(t *testing.T) {
 
 }
 
+func TestHTTPpubTooMuch(t *testing.T) {
+	opts := nsqd.NewOptions()
+	opts.MaxPubWaitingSize = 100
+	opts.Logger = newTestLogger(t)
+	_, httpAddr, nsqd, nsqdServer := mustStartNSQD(opts)
+	defer os.RemoveAll(opts.DataPath)
+	defer nsqdServer.Exit()
+
+	topicName := "test_http_pub" + strconv.Itoa(int(time.Now().Unix()))
+	nsqd.GetTopicIgnPart(topicName)
+
+	msg := []byte("test message00000000000000000000000000000000000")
+	var wg sync.WaitGroup
+	errCnt := int32(0)
+	for i := 0; i < 30; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			buf := bytes.NewBuffer(msg)
+			url := fmt.Sprintf("http://%s/pub?topic=%s", httpAddr, topicName)
+			req, _ := http.NewRequest("POST", url, buf)
+
+			req.Header.Set("Content-Type", "application/octet-stream")
+			req.Header.Set("accept", "application/vnd.nsq; version=1.0")
+			resp, err := http.DefaultClient.Do(req)
+			test.Equal(t, err, nil)
+			defer resp.Body.Close()
+			if resp.StatusCode == 200 {
+				body, _ := ioutil.ReadAll(resp.Body)
+				test.Equal(t, string(body), "OK")
+			} else {
+				test.Equal(t, http.StatusTooManyRequests, resp.StatusCode)
+				atomic.AddInt32(&errCnt, 1)
+			}
+		}()
+	}
+	wg.Wait()
+	test.Equal(t, true, errCnt > 0)
+
+	time.Sleep(5 * time.Millisecond)
+}
 func TestHTTPPubExtToOldTopicNotAllow(t *testing.T) {
 	testHTTPPubExtToOldTopic(t, false, true)
 }
@@ -554,6 +596,52 @@ func TestHTTPmpubBinary(t *testing.T) {
 
 	time.Sleep(5 * time.Millisecond)
 
+}
+
+func TestHTTPmpubTooMuch(t *testing.T) {
+	opts := nsqd.NewOptions()
+	opts.MaxPubWaitingSize = 1024
+	opts.Logger = newTestLogger(t)
+	_, httpAddr, nsqd, nsqdServer := mustStartNSQD(opts)
+	defer os.RemoveAll(opts.DataPath)
+	defer nsqdServer.Exit()
+
+	topicName := "test_http_mpub" + strconv.Itoa(int(time.Now().Unix()))
+	nsqd.GetTopicIgnPart(topicName)
+
+	msg := []byte("test message")
+	msgs := make([][]byte, 50)
+	for i := range msgs {
+		msgs[i] = msg
+	}
+	var wg sync.WaitGroup
+	errCnt := int32(0)
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			buf := bytes.NewBuffer(bytes.Join(msgs, []byte("\n")))
+			url := fmt.Sprintf("http://%s/mpub?topic=%s", httpAddr, topicName)
+			req, _ := http.NewRequest("POST", url, buf)
+
+			req.Header.Set("Content-Type", "application/octet-stream")
+			req.Header.Set("accept", "application/vnd.nsq; version=1.0")
+			resp, err := http.DefaultClient.Do(req)
+			test.Equal(t, err, nil)
+			defer resp.Body.Close()
+			if resp.StatusCode == 200 {
+				body, _ := ioutil.ReadAll(resp.Body)
+				test.Equal(t, string(body), "OK")
+			} else {
+				test.Equal(t, http.StatusTooManyRequests, resp.StatusCode)
+				atomic.AddInt32(&errCnt, 1)
+			}
+		}()
+	}
+	wg.Wait()
+	test.Equal(t, true, errCnt > 0)
+
+	time.Sleep(5 * time.Millisecond)
 }
 
 func TestHTTPFinish(t *testing.T) {
