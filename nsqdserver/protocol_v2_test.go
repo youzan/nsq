@@ -3120,31 +3120,20 @@ func TestTcpPubWaitTooMuchBytes(t *testing.T) {
 	nsqd.GetTopicIgnPart(topicName).GetChannel("ch")
 
 	errCnt := int32(0)
-	var wg sync.WaitGroup
-	for i := 0; i < 3; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			conn, err := mustConnectNSQD(tcpAddr)
-			test.Equal(t, err, nil)
-			defer conn.Close()
-			identify(t, conn, nil, frameTypeResponse)
-			s := time.Now()
-			cmd := nsq.Publish(topicName, make([]byte, opts.MaxPubWaitingSize))
-			cmd.WriteTo(conn)
-			resp, _ := nsq.ReadResponse(conn)
-			frameType, data, _ := nsq.UnpackResponse(resp)
-			cost := time.Since(s)
-			t.Logf("frameType: %d, data: %s, cost: %s", frameType, data, cost)
-			if frameType == 0 {
-				return
-			}
-			atomic.AddInt32(&errCnt, 1)
-			test.Equal(t, frameType, frameTypeError)
-			test.Equal(t, true, strings.Contains(string(data), "E_PUB_TOO_MUCH_WAITING"))
-		}()
-	}
-	wg.Wait()
+	conn, err := mustConnectNSQD(tcpAddr)
+	test.Equal(t, err, nil)
+	defer conn.Close()
+	identify(t, conn, nil, frameTypeResponse)
+	s := time.Now()
+	cmd := nsq.Publish(topicName, make([]byte, opts.MaxPubWaitingSize+1))
+	cmd.WriteTo(conn)
+	resp, _ := nsq.ReadResponse(conn)
+	frameType, data, _ := nsq.UnpackResponse(resp)
+	cost := time.Since(s)
+	t.Logf("frameType: %d, data: %s, cost: %s", frameType, data, cost)
+	atomic.AddInt32(&errCnt, 1)
+	test.Equal(t, frameType, frameTypeError)
+	test.Equal(t, true, strings.Contains(string(data), "E_PUB_TOO_MUCH_WAITING"))
 	t.Logf("timeout pub cnt : %v", errCnt)
 	test.Equal(t, true, errCnt >= 1)
 }
