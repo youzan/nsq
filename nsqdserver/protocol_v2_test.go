@@ -3121,7 +3121,7 @@ func TestTcpPubWaitTooMuchBytes(t *testing.T) {
 
 	errCnt := int32(0)
 	var wg sync.WaitGroup
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 3; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -3130,7 +3130,7 @@ func TestTcpPubWaitTooMuchBytes(t *testing.T) {
 			defer conn.Close()
 			identify(t, conn, nil, frameTypeResponse)
 			s := time.Now()
-			cmd := nsq.Publish(topicName, make([]byte, opts.MaxPubWaitingSize/2+1))
+			cmd := nsq.Publish(topicName, make([]byte, opts.MaxPubWaitingSize))
 			cmd.WriteTo(conn)
 			resp, _ := nsq.ReadResponse(conn)
 			frameType, data, _ := nsq.UnpackResponse(resp)
@@ -3165,7 +3165,7 @@ func TestTcpMPubWaitTooMuchBytes(t *testing.T) {
 
 	timeoutCnt := int32(0)
 	var wg sync.WaitGroup
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 3; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -3174,7 +3174,7 @@ func TestTcpMPubWaitTooMuchBytes(t *testing.T) {
 			defer conn.Close()
 			identify(t, conn, nil, frameTypeResponse)
 			s := time.Now()
-			cmd, _ := nsq.MultiPublish(topicName, [][]byte{make([]byte, opts.MaxPubWaitingSize/2+1)})
+			cmd, _ := nsq.MultiPublish(topicName, [][]byte{make([]byte, opts.MaxPubWaitingSize)})
 			cmd.WriteTo(conn)
 			resp, _ := nsq.ReadResponse(conn)
 			frameType, data, _ := nsq.UnpackResponse(resp)
