@@ -3111,7 +3111,7 @@ func TestTcpPubWaitTooMuchBytes(t *testing.T) {
 	opts.LogLevel = 3
 	opts.MaxMsgSize = 100
 	opts.MaxBodySize = 1000
-	opts.MaxPubWaitingSize = 150
+	opts.MaxPubWaitingSize = 50
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqdServer.Exit()
@@ -3153,9 +3153,9 @@ func TestTcpMPubWaitTooMuchBytes(t *testing.T) {
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
 	opts.LogLevel = 3
-	opts.MaxMsgSize = 100
+	opts.MaxMsgSize = 200
 	opts.MaxBodySize = 1000
-	opts.MaxPubWaitingSize = 150
+	opts.MaxPubWaitingSize = 50
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqdServer.Exit()
