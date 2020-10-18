@@ -185,3 +185,6 @@ queue_scan_dirty_percent = 0.1
 ## the sleep interval between each log pulling while catchup from leader, use this to 
 ## control the network bandwidth while sync the topic data.
 #sleepms_between_log_sync_pull=100
+
+## the rate limit in kilobytes for each channel consume, the default is 100MB
+#channel_ratelimit_kb=102400

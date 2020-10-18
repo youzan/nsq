@@ -40,6 +40,7 @@ require (
 	github.com/youzan/go-nsq v1.7.2-HA
 	golang.org/x/net v0.0.0-20190613194153-d28f0bde5980
 	golang.org/x/sync v0.0.0-20190911185100-cd5d95a43a6e
+	golang.org/x/time v0.0.0-20200630173020-3af7569d3a1e
 	google.golang.org/grpc v1.26.0
 	gopkg.in/stretchr/testify.v1 v1.2.2 // indirect
 )

@@ -69,6 +69,7 @@ type Options struct {
 	MaxRdyCount            int64         `flag:"max-rdy-count"`
 	MaxOutputBufferSize    int64         `flag:"max-output-buffer-size"`
 	MaxOutputBufferTimeout time.Duration `flag:"max-output-buffer-timeout"`
+	ChannelRateLimitKB     int64         `flag:"channel-ratelimit-kb"`
 
 	// statsd integration
 	StatsdAddress  string        `flag:"statsd-address"`
@@ -165,6 +166,7 @@ func NewOptions() *Options {
 		MaxRdyCount:            2500,
 		MaxOutputBufferSize:    64 * 1024,
 		MaxOutputBufferTimeout: 1 * time.Second,
+		ChannelRateLimitKB:     100 * 1024,
 		MaxConfirmWin:          500,
 		MaxChannelDelayedQNum:  DefaultMaxChDelayedQNum,
 

@@ -307,10 +307,11 @@ func TestHTTPpubTooMuch(t *testing.T) {
 	topicName := "test_http_pub" + strconv.Itoa(int(time.Now().Unix()))
 	nsqd.GetTopicIgnPart(topicName)
 
-	msg := []byte("test message00000000000000000000000000000000000")
+	msg := make([]byte, opts.MaxPubWaitingSize)
+	msg = append(msg, []byte("test")...)
 	var wg sync.WaitGroup
 	errCnt := int32(0)
-	for i := 0; i < 30; i++ {
+	for i := 0; i < 3; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -609,14 +610,15 @@ func TestHTTPmpubTooMuch(t *testing.T) {
 	topicName := "test_http_mpub" + strconv.Itoa(int(time.Now().Unix()))
 	nsqd.GetTopicIgnPart(topicName)
 
-	msg := []byte("test message")
-	msgs := make([][]byte, 50)
+	msg := make([]byte, opts.MaxPubWaitingSize)
+	msg = append(msg, []byte("test")...)
+	msgs := make([][]byte, 10)
 	for i := range msgs {
 		msgs[i] = msg
 	}
 	var wg sync.WaitGroup
 	errCnt := int32(0)
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 3; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()

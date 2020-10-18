@@ -25,6 +25,8 @@ func (c *fakeConsumer) UnPause() {
 }
 func (c *fakeConsumer) Pause() {
 }
+func (c *fakeConsumer) SetLimitedRdy(cnt int) {
+}
 func (c *fakeConsumer) TimedOutMessage() {
 }
 func (c *fakeConsumer) RequeuedMessage() {
