@@ -92,6 +92,19 @@ nsqlookupd: curl -X POST "http://127.0.0.1:4161/loglevel/set?loglevel=3"
 </pre>
 loglevel数字越大, 日志越详细
 
+### 调整channel的消费限流值
+默认每个channel都有一个限流值用于大流量消息限流(大于1KB的消息消费), 避免某个channel占用过大的网卡流量, 默认配置使用nsqd的启动配置, 一般不需要调整, 如果临时调整可以使用如下API针对性处理(注意修改后的限流仅当前有效, 重启后或者channel迁移重建后失效)
+<pre>
+nsqd: curl -X POST "http://127.0.0.1:4151/channel/ratelimit?topic=xx&partition=xx&channel=xx&ratekilobytes=xxx"
+</pre>
+
+### 限制channel的某个客户端连接ready值
+一般来说,客户端的ready值控制着消费速度, 一般由客户端动态自由调整, 在某些异常情况下, 可以使用如下API限制某些客户端消费的最大ready值, 从而控制单个消费者的消费速度.
+<pre>
+nsqd: curl -X POST "http://127.0.0.1:4151/channel/setclientlimit?topic=xx&partition=xx&channel=xx&ready=xxx&client_prefix=xxx"
+</pre>
+所有符合条件包含client_prefix前缀的客户端都会生效限制, 仅在当前会话有效(连接重连后失效).
+
 ### 集群节点维护
 以下几个API是nsqlookupd的HTTP接口, 对于修改API, 只能发送到nsqlookupd的leader节点, 可以通过listlookup
 判断哪个节点是当前的leader.
