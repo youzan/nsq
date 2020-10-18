@@ -129,6 +129,7 @@ func nsqdFlagSet(opts *nsqd.Options) *flag.FlagSet {
 	flagSet.Duration("max-output-buffer-timeout", opts.MaxOutputBufferTimeout, "maximum client configurable duration of time between flushing to a client")
 	flagSet.Int64("max-confirm-win", opts.MaxConfirmWin, "maximum confirm window (in bytes)")
 	flagSet.Int64("max-channel-delayed-qnum", opts.MaxChannelDelayedQNum, "maximum messages in delayed queue for each channel")
+	flagSet.Int64("channel-ratelimit-kb", opts.ChannelRateLimitKB, "the default rate limit kilobytes for each channel")
 
 	// statsd integration options
 	flagSet.String("statsd-address", opts.StatsdAddress, " <addr>:<port> of a statsd daemon for pushing stats")

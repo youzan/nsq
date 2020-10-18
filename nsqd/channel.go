@@ -33,9 +33,7 @@ const (
 	memSizeForSmall            = 2
 	delayedReqToEndMinInterval = time.Millisecond * 64
 	DefaultMaxChDelayedQNum    = 10000 * 16
-	// should large than max ready
-	defaultLimiterKB   = 1024 * 100
-	limitSmallMsgBytes = 1024
+	limitSmallMsgBytes         = 1024
 )
 
 var (
@@ -197,7 +195,7 @@ func NewChannel(topicName string, part int, topicOrdered bool, channelName strin
 		Ext:                ext,
 		// we use KB as tokens, and ignore any less than 1KB messages
 		// so the limiter only limit the large messages.
-		limiter: rate.NewLimiter(defaultLimiterKB, defaultLimiterKB*4),
+		limiter: rate.NewLimiter(rate.Limit(opt.ChannelRateLimitKB), int(opt.ChannelRateLimitKB)*4),
 	}
 
 	if protocol.IsEphemeral(channelName) {
