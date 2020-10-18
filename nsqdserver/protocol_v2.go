@@ -17,6 +17,7 @@ import (
 	"unsafe"
 
 	simpleJson "github.com/bitly/go-simplejson"
+	ps "github.com/prometheus/client_golang/prometheus"
 	"github.com/youzan/nsq/consistence"
 	"github.com/youzan/nsq/internal/ext"
 	"github.com/youzan/nsq/internal/levellogger"
@@ -1602,6 +1603,9 @@ func (p *protocolV2) internalPubExtAndTrace(client *nsqd.ClientV2, params [][]by
 	defer topic.IncrPubWaitingBytes(-1 * int64(bodyLen))
 	if wb > p.ctx.getOpts().MaxPubWaitingSize ||
 		(topic.IsWaitChanFull() && wb > p.ctx.getOpts().MaxPubWaitingSize/10) {
+		nsqd.TopicPubRefusedByLimitedCnt.With(ps.Labels{
+			"topic": topic.GetTopicName(),
+		}).Inc()
 		return nil, protocol.NewFatalClientErr(nil, "E_PUB_TOO_MUCH_WAITING", fmt.Sprintf("pub too much waiting in the queue: %d", wb))
 	}
 
@@ -1735,6 +1739,9 @@ func (p *protocolV2) internalMPUBEXTAndTrace(client *nsqd.ClientV2, params [][]b
 	defer topic.IncrPubWaitingBytes(-1 * int64(bodyLen))
 	if wb > p.ctx.getOpts().MaxPubWaitingSize ||
 		(topic.IsMWaitChanFull() && wb > p.ctx.getOpts().MaxPubWaitingSize/10) {
+		nsqd.TopicPubRefusedByLimitedCnt.With(ps.Labels{
+			"topic": topic.GetTopicName(),
+		}).Inc()
 		return nil, protocol.NewFatalClientErr(nil, "E_PUB_TOO_MUCH_WAITING", fmt.Sprintf("pub too much waiting in the queue: %d", wb))
 	}
 

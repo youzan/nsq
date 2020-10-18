@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/julienschmidt/httprouter"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/youzan/nsq/consistence"
 	"github.com/youzan/nsq/internal/clusterinfo"
@@ -86,6 +87,7 @@ func newHTTPServer(ctx *context, tlsEnabled bool, tlsRequired bool) *httpServer 
 	router.Handle("POST", "/channel/emptydelayed", http_api.Decorate(s.doEmptyChannelDelayed, log, http_api.V1))
 	router.Handle("POST", "/channel/setoffset", http_api.Decorate(s.doSetChannelOffset, log, http_api.V1))
 	router.Handle("POST", "/channel/setorder", http_api.Decorate(s.doSetChannelOrder, log, http_api.V1))
+	router.Handle("POST", "/channel/setclientlimit", http_api.Decorate(s.doSetChannelClientLimit, log, http_api.V1))
 	router.Handle("GET", "/config/:opt", http_api.Decorate(s.doConfig, log, http_api.V1))
 	router.Handle("PUT", "/config/:opt", http_api.Decorate(s.doConfig, log, http_api.V1))
 	router.Handle("PUT", "/delayqueue/enable", http_api.Decorate(s.doEnableDelayedQueue, log, http_api.V1))
@@ -332,7 +334,9 @@ func (s *httpServer) internalPUB(w http.ResponseWriter, req *http.Request, ps ht
 	defer topic.IncrPubWaitingBytes(-1 * int64(readMax))
 	if wb > s.ctx.getOpts().MaxPubWaitingSize ||
 		(topic.IsWaitChanFull() && wb > s.ctx.getOpts().MaxPubWaitingSize/10) {
-		nsqd.NsqLogger().Logf("topic %s pub too much waiting : %v", topic.GetFullName(), wb)
+		nsqd.TopicPubRefusedByLimitedCnt.With(prometheus.Labels{
+			"topic": topic.GetTopicName(),
+		}).Inc()
 		return nil, http_api.Err{http.StatusTooManyRequests, fmt.Sprintf("E_PUB_TOO_MUCH_WAITING pub too much waiting in the queue: %d", wb)}
 	}
 	b := topic.BufferPoolGet(int(req.ContentLength))
@@ -509,7 +513,9 @@ func (s *httpServer) doMPUB(w http.ResponseWriter, req *http.Request, ps httprou
 	defer topic.IncrPubWaitingBytes(-1 * int64(req.ContentLength))
 	if wb > s.ctx.getOpts().MaxPubWaitingSize ||
 		(topic.IsMWaitChanFull() && wb > s.ctx.getOpts().MaxPubWaitingSize/10) {
-		nsqd.NsqLogger().Logf("topic %s pub too much waiting : %v", topic.GetFullName(), wb)
+		nsqd.TopicPubRefusedByLimitedCnt.With(prometheus.Labels{
+			"topic": topic.GetTopicName(),
+		}).Inc()
 		return nil, http_api.Err{http.StatusTooManyRequests, fmt.Sprintf("E_PUB_TOO_MUCH_WAITING pub too much waiting in the queue: %d", wb)}
 	}
 
@@ -701,6 +707,26 @@ func (s *httpServer) doEmptyChannelDelayed(w http.ResponseWriter, req *http.Requ
 			topic.GetFullName(), req.RemoteAddr)
 		return nil, http_api.Err{400, FailedOnNotLeader}
 	}
+	return nil, nil
+}
+
+func (s *httpServer) doSetChannelClientLimit(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {
+	reqParams, topic, channelName, err := s.getExistingTopicChannelFromQuery(req)
+	if err != nil {
+		return nil, err
+	}
+
+	channel, err := topic.GetExistingChannel(channelName)
+	if err != nil {
+		return nil, http_api.Err{404, "CHANNEL_NOT_FOUND"}
+	}
+	rdyStr := reqParams.Get("ready")
+	rdy, err := strconv.Atoi(rdyStr)
+	if err != nil {
+		return nil, http_api.Err{400, "INVALID_OPTION"}
+	}
+	clientAddrPrefix := reqParams.Get("client_prefix")
+	channel.SetClientLimitedRdy(clientAddrPrefix, rdy)
 	return nil, nil
 }
 

@@ -37,6 +37,10 @@ var (
 		Name: "topic_pub_client_cnt",
 		Help: "the current producer connections for topic",
 	}, []string{"topic", "partition"})
+	TopicPubRefusedByLimitedCnt = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "topic_pub_refused_by_limited_cnt",
+		Help: "topic pub refused by the waiting limit cnt",
+	}, []string{"topic"})
 
 	// metric for channel
 	ChannelDepth = promauto.NewGaugeVec(prometheus.GaugeOpts{

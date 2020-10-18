@@ -17,8 +17,11 @@ import (
 )
 
 // default is used for producer
-const defaultWriteBufferSize = 100
-const defaultConsumerWriteBufferSize = 4 * 1024
+const (
+	defaultWriteBufferSize         = 100
+	defaultConsumerWriteBufferSize = 4 * 1024
+	defaultLimitedRdy              = 50000
+)
 
 const slowDownThreshold = 5
 
@@ -135,6 +138,7 @@ type ClientV2 struct {
 	TagMsgChannel   chan *Message
 	extFilter       ExtFilterData
 	PubStats        *ClientPubStats
+	LimitedRdy      int32
 }
 
 func NewClientV2(id int64, conn net.Conn, opts *Options, tls *tls.Config) *ClientV2 {
@@ -177,7 +181,7 @@ func NewClientV2(id int64, conn net.Conn, opts *Options, tls *tls.Config) *Clien
 		// heartbeats are client configurable but default to 30s
 		heartbeatInterval: int64(opts.ClientTimeout / 2),
 		tlsConfig:         tls,
-		//PubTimeout:        time.NewTimer(time.Second * 5),
+		LimitedRdy:        defaultLimitedRdy,
 	}
 	if c.outputBufferTimeout > int64(opts.MaxOutputBufferTimeout) {
 		c.outputBufferTimeout = int64(opts.MaxOutputBufferTimeout)
@@ -446,7 +450,16 @@ func (c *ClientV2) IsReadyForMessages() bool {
 	if inFlightCount >= readyCount || readyCount <= 0 {
 		return false
 	}
+	limitedRdy := atomic.LoadInt32(&c.LimitedRdy)
+	if inFlightCount >= int64(limitedRdy) || limitedRdy <= 0 {
+		return false
+	}
 	return true
+}
+
+func (c *ClientV2) SetLimitedRdy(cnt int) {
+	atomic.StoreInt32(&c.LimitedRdy, int32(cnt))
+	c.tryUpdateReadyState()
 }
 
 func (c *ClientV2) SetReadyCount(count int64) {
