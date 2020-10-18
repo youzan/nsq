@@ -211,6 +211,7 @@ type ClientStats struct {
 	OutputBufferTimeout int64         `json:"output_buffer_timeout"`
 	MsgTimeout          int64         `json:"msg_timeout"`
 	ExtFilter           ExtFilterData `json:"ext_filter,omitempty"`
+	LimitedRdy          int32         `json:"limited_rdy"`
 }
 
 type Topics []*Topic

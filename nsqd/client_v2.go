@@ -354,6 +354,7 @@ func (c *ClientV2) Stats() ClientStats {
 		OutputBufferTimeout: int64(c.GetOutputBufferTimeout()),
 		ExtFilter:           extFilter,
 		MsgTimeout:          int64(c.GetMsgTimeout()),
+		LimitedRdy:          atomic.LoadInt32(&c.LimitedRdy),
 	}
 	if stats.TLS {
 		p := prettyConnectionState{c.tlsConn.ConnectionState()}

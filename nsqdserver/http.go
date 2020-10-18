@@ -88,6 +88,7 @@ func newHTTPServer(ctx *context, tlsEnabled bool, tlsRequired bool) *httpServer 
 	router.Handle("POST", "/channel/setoffset", http_api.Decorate(s.doSetChannelOffset, log, http_api.V1))
 	router.Handle("POST", "/channel/setorder", http_api.Decorate(s.doSetChannelOrder, log, http_api.V1))
 	router.Handle("POST", "/channel/setclientlimit", http_api.Decorate(s.doSetChannelClientLimit, log, http_api.V1))
+	router.Handle("POST", "/channel/ratelimit", http_api.Decorate(s.doSetChannelRateLimit, log, http_api.V1))
 	router.Handle("GET", "/config/:opt", http_api.Decorate(s.doConfig, log, http_api.V1))
 	router.Handle("PUT", "/config/:opt", http_api.Decorate(s.doConfig, log, http_api.V1))
 	router.Handle("PUT", "/delayqueue/enable", http_api.Decorate(s.doEnableDelayedQueue, log, http_api.V1))
@@ -727,6 +728,25 @@ func (s *httpServer) doSetChannelClientLimit(w http.ResponseWriter, req *http.Re
 	}
 	clientAddrPrefix := reqParams.Get("client_prefix")
 	channel.SetClientLimitedRdy(clientAddrPrefix, rdy)
+	return nil, nil
+}
+
+func (s *httpServer) doSetChannelRateLimit(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {
+	reqParams, topic, channelName, err := s.getExistingTopicChannelFromQuery(req)
+	if err != nil {
+		return nil, err
+	}
+
+	channel, err := topic.GetExistingChannel(channelName)
+	if err != nil {
+		return nil, http_api.Err{404, "CHANNEL_NOT_FOUND"}
+	}
+	rateStr := reqParams.Get("ratekilobytes")
+	rateKB, err := strconv.Atoi(rateStr)
+	if err != nil {
+		return nil, http_api.Err{400, "INVALID_OPTION"}
+	}
+	channel.ChangeLimiterBytes(int64(rateKB))
 	return nil, nil
 }
 

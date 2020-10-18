@@ -2,11 +2,13 @@ package nsqd
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"math"
 	"path"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -18,6 +20,7 @@ import (
 	"github.com/youzan/nsq/internal/ext"
 	"github.com/youzan/nsq/internal/levellogger"
 	"github.com/youzan/nsq/internal/quantile"
+	"golang.org/x/time/rate"
 )
 
 const (
@@ -30,6 +33,9 @@ const (
 	memSizeForSmall            = 2
 	delayedReqToEndMinInterval = time.Millisecond * 64
 	DefaultMaxChDelayedQNum    = 10000 * 16
+	// should large than max ready
+	defaultLimiterKB   = 1024 * 100
+	limitSmallMsgBytes = 1024
 )
 
 var (
@@ -55,6 +61,7 @@ type Consumer interface {
 	Empty()
 	String() string
 	GetID() int64
+	SetLimitedRdy(cnt int)
 }
 
 type resetChannelData struct {
@@ -158,6 +165,7 @@ type Channel struct {
 	channelStatsInfo      *ChannelStatsInfo
 	topicOrdered          bool
 	lastDelayedReqToEndTs int64
+	limiter               *rate.Limiter
 }
 
 // NewChannel creates a new instance of the Channel type and returns a pointer
@@ -187,6 +195,9 @@ func NewChannel(topicName string, part int, topicOrdered bool, channelName strin
 		nsqdNotify:         notify,
 		consumeDisabled:    consumeDisabled,
 		Ext:                ext,
+		// we use KB as tokens, and ignore any less than 1KB messages
+		// so the limiter only limit the large messages.
+		limiter: rate.NewLimiter(defaultLimiterKB, defaultLimiterKB*4),
 	}
 
 	if protocol.IsEphemeral(channelName) {
@@ -260,6 +271,14 @@ func (c *Channel) GetTopicName() string {
 
 func (c *Channel) GetTopicPart() int {
 	return c.topicPart
+}
+
+func (c *Channel) ChangeLimiterBytes(kb int64) {
+	if kb <= 0 {
+		return
+	}
+	c.limiter.SetLimit(rate.Limit(kb))
+	c.limiter.SetBurst(int(kb) * 4)
 }
 
 func (c *Channel) checkAndFixStart(start BackendQueueEnd) {
@@ -1420,6 +1439,16 @@ func (c *Channel) GetClients() map[int64]Consumer {
 	return results
 }
 
+func (c *Channel) SetClientLimitedRdy(clientAddr string, rdy int) {
+	c.RLock()
+	defer c.RUnlock()
+	for _, client := range c.clients {
+		if strings.HasPrefix(client.String(), clientAddr) {
+			client.SetLimitedRdy(rdy)
+		}
+	}
+}
+
 func (c *Channel) AddClient(clientID int64, client Consumer) error {
 	c.Lock()
 	defer c.Unlock()
@@ -2108,6 +2137,10 @@ LOOP:
 		}
 
 	msgDefaultLoop:
+		// for large message, check if we need limit the network bandwidth for this channel
+		if len(msg.Body) > limitSmallMsgBytes {
+			c.limiter.WaitN(context.TODO(), len(msg.Body)/limitSmallMsgBytes)
+		}
 		select {
 		case newTag := <-c.tagChanInitChan:
 			if !extParsed || newTag == msgTag {

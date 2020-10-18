@@ -1159,6 +1159,61 @@ func TestPubJsonHeaderIgnored(t *testing.T) {
 	test.Equal(t, true, strings.Contains(string(data), ext.E_EXT_NOT_SUPPORT))
 }
 
+func TestConsumeRateLimit(t *testing.T) {
+	topicName := "test_consume_normal" + strconv.Itoa(int(time.Now().Unix()))
+
+	opts := nsqdNs.NewOptions()
+	opts.Logger = newTestLogger(t)
+	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
+	defer os.RemoveAll(opts.DataPath)
+	defer nsqdServer.Exit()
+	topic := nsqd.GetTopicIgnPart(topicName)
+	topicDynConf := nsqdNs.TopicDynamicConf{
+		AutoCommit: 1,
+		SyncEvery:  1,
+		Ext:        true,
+	}
+	topic.SetDynamicInfo(topicDynConf, nil)
+
+	ch := topic.GetChannel("ch")
+	ch.ChangeLimiterBytes(1)
+	// limit the message above 1KB
+	for i := 0; i < 10; i++ {
+		msg := nsqdNs.NewMessage(0, make([]byte, 1025))
+		_, _, _, _, putErr := topic.PutMessage(msg)
+		test.Nil(t, putErr)
+	}
+
+	//subscribe client
+	conn1, err := mustConnectNSQD(tcpAddr)
+	defer conn1.Close()
+	test.Equal(t, err, nil)
+	params := make(map[string]interface{})
+	params["client_id"] = "client"
+	params["hostname"] = "client"
+	params["extend_support"] = true
+	identify(t, conn1, params, frameTypeResponse)
+	sub(t, conn1, topicName, "ch")
+	_, err = nsq.Ready(10).WriteTo(conn1)
+	test.Equal(t, err, nil)
+
+	last := time.Now()
+	start := last
+	for i := 0; i < 10; i++ {
+		msgOut := recvNextMsgAndCheckExt(t, conn1, 0, 0, true, true)
+		test.NotNil(t, msgOut)
+		current := time.Now()
+		t.Logf("subscribe got messages at %s", current)
+		// allow the burst
+		if i > 4 {
+			test.Equal(t, true, current.Sub(last) > time.Second/4)
+		}
+		last = current
+	}
+	test.Equal(t, true, time.Since(start) > time.Second*5)
+	test.Equal(t, true, time.Since(start) < time.Second*9)
+}
+
 func TestConsumeMessageWhileUpgrade(t *testing.T) {
 	topicName := "test_ext_topic_upgrade" + strconv.Itoa(int(time.Now().Unix()))
 
