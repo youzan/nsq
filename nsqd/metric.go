@@ -80,4 +80,8 @@ var (
 		Help:    "the latency ms cost between delivery to client and ack from client",
 		Buckets: prometheus.ExponentialBuckets(8, 2, 12),
 	}, []string{"topic", "partition", "channel"})
+	ChannelRateLimitCnt = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "channel_ratelimit_cnt",
+		Help: "total ratelimit cnt for channel consumer",
+	}, []string{"topic", "channel"})
 )

@@ -2,7 +2,6 @@ package nsqd
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"fmt"
 	"math"
@@ -2137,7 +2136,21 @@ LOOP:
 	msgDefaultLoop:
 		// for large message, check if we need limit the network bandwidth for this channel
 		if len(msg.Body) > limitSmallMsgBytes {
-			c.limiter.WaitN(context.TODO(), len(msg.Body)/limitSmallMsgBytes)
+			now := time.Now()
+			re := c.limiter.ReserveN(now, len(msg.Body)/limitSmallMsgBytes)
+			if re.OK() {
+				du := re.DelayFrom(now)
+				if du > 0 {
+					if du > time.Second {
+						du = time.Second
+					}
+					ChannelRateLimitCnt.With(prometheus.Labels{
+						"topic":   c.GetTopicName(),
+						"channel": c.GetName(),
+					}).Inc()
+					time.Sleep(du)
+				}
+			}
 		}
 		select {
 		case newTag := <-c.tagChanInitChan:
