@@ -2148,7 +2148,10 @@ LOOP:
 						"topic":   c.GetTopicName(),
 						"channel": c.GetName(),
 					}).Inc()
-					time.Sleep(du)
+					// we allow small exceed to avoid sleep too often in short time
+					if du > time.Millisecond {
+						time.Sleep(du)
+					}
 				}
 			}
 		}
