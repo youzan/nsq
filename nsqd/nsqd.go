@@ -58,7 +58,7 @@ type INsqdNotify interface {
 	NotifyDeleteTopic(*Topic)
 	NotifyStateChanged(v interface{}, needPersist bool)
 	ReqToEnd(*Channel, *Message, time.Duration) error
-	NotifyScanDelayed(*Channel)
+	NotifyScanChannel(c *Channel, wait bool) bool
 	PushTopicJob(*Topic, func())
 }
 
@@ -130,7 +130,7 @@ func New(opts *Options) *NSQD {
 		OptsNotificationChan: make(chan struct{}, 1),
 		ci:                   clusterinfo.New(opts.Logger, http_api.NewClient(nil)),
 		dl:                   dirlock.New(dataPath),
-		scanTriggerChan:      make(chan *Channel, 1),
+		scanTriggerChan:      make(chan *Channel, 100),
 		persistNotifyCh:      make(chan struct{}, 2),
 		persistClosed:        make(chan struct{}),
 	}
@@ -751,10 +751,19 @@ func (n *NSQD) NotifyDeleteTopic(t *Topic) {
 	n.DeleteExistingTopic(t.GetTopicName(), t.GetTopicPart())
 }
 
-func (n *NSQD) NotifyScanDelayed(ch *Channel) {
+func (n *NSQD) NotifyScanChannel(ch *Channel, wait bool) bool {
+	if wait {
+		select {
+		case n.scanTriggerChan <- ch:
+		case <-n.exitChan:
+		}
+		return true
+	}
 	select {
 	case n.scanTriggerChan <- ch:
+		return true
 	default:
+		return false
 	}
 }
 

@@ -2,7 +2,6 @@ package nsqd
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"fmt"
 	"math"
@@ -38,6 +37,7 @@ const (
 
 var (
 	ErrMsgNotInFlight                 = errors.New("Message ID not in flight")
+	ErrMsgTooMuchReq                  = errors.New("Message too much requeue")
 	ErrMsgDeferredTooMuch             = errors.New("Too much deferred messages in flight")
 	ErrMsgAlreadyInFlight             = errors.New("Message ID already in flight")
 	ErrConsumeDisabled                = errors.New("Consume is disabled currently")
@@ -891,7 +891,7 @@ func (c *Channel) ConfirmDelayedMessage(msg *Message) (BackendOffset, int64, boo
 			nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "FIN_DELAYED", msg.TraceID, msg, "", cost.Nanoseconds())
 		}
 		if atomic.AddInt64(&c.deferredFromDelay, -1) <= 0 {
-			c.nsqdNotify.NotifyScanDelayed(c)
+			c.nsqdNotify.NotifyScanChannel(c, false)
 			needNotify = true
 		}
 	}
@@ -1316,7 +1316,17 @@ func (c *Channel) ShouldRequeueToEnd(clientID int64, clientAddr string, id Messa
 func (c *Channel) RequeueMessage(clientID int64, clientAddr string, id MessageID, timeout time.Duration, byClient bool) error {
 	c.inFlightMutex.Lock()
 	defer c.inFlightMutex.Unlock()
+	msg, ok := c.inFlightMessages[id]
+	if !ok {
+		nsqLog.LogDebugf("failed requeue for delay: %v, msg not exist", id)
+		return ErrMsgNotInFlight
+	}
 	if timeout == 0 {
+		// we should avoid too frequence 0 req if by client
+		if msg.Attempts >= MaxAttempts/2 && byClient {
+			return ErrMsgTooMuchReq
+		}
+
 		// remove from inflight first
 		msg, err := c.popInFlightMessage(clientID, id, false)
 		if err != nil {
@@ -1334,12 +1344,6 @@ func (c *Channel) RequeueMessage(clientID int64, clientAddr string, id MessageID
 		}
 		return c.doRequeue(msg, clientAddr)
 	}
-	// change the timeout for inflight
-	msg, ok := c.inFlightMessages[id]
-	if !ok {
-		nsqLog.LogDebugf("failed requeue for delay: %v, msg not exist", id)
-		return ErrMsgNotInFlight
-	}
 	// one message should not defer again before the old defer timeout
 	if msg.IsDeferred() {
 		return ErrMsgDeferred
@@ -1350,6 +1354,7 @@ func (c *Channel) RequeueMessage(clientID int64, clientAddr string, id MessageID
 		return fmt.Errorf("client does not own message %v: %v vs %v", id,
 			msg.GetClientID(), clientID)
 	}
+	// change the timeout for inflight
 	newTimeout := time.Now().Add(timeout)
 	if (timeout > c.option.ReqToEndThreshold) ||
 		(newTimeout.Sub(msg.deliveryTS) >=
@@ -1489,7 +1494,9 @@ func (c *Channel) StartInFlightTimeout(msg *Message, client Consumer, clientAddr
 	msg.belongedConsumer = client
 	msg.deliveryTS = now
 	msg.pri = now.Add(timeout).UnixNano()
-	msg.Attempts++
+	if msg.Attempts < MaxAttempts {
+		msg.Attempts++
+	}
 	old, err := c.pushInFlightMessage(msg)
 	shouldSend := true
 	if err != nil {
@@ -1964,6 +1971,19 @@ LOOP:
 				nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "READ_REQ", msg.TraceID, msg, "0", time.Now().UnixNano()-msg.Timestamp)
 			}
 		default:
+			// notify to refill requeue chan if any waiting
+			c.inFlightMutex.Lock()
+			waitingReq := len(c.waitingRequeueMsgs)
+			c.inFlightMutex.Unlock()
+			if waitingReq > 0 {
+				notified := c.nsqdNotify.NotifyScanChannel(c, false)
+				if !notified {
+					// try later
+					go func() {
+						c.nsqdNotify.NotifyScanChannel(c, true)
+					}()
+				}
+			}
 			select {
 			case <-c.exitChan:
 				goto exit
@@ -2137,7 +2157,24 @@ LOOP:
 	msgDefaultLoop:
 		// for large message, check if we need limit the network bandwidth for this channel
 		if len(msg.Body) > limitSmallMsgBytes {
-			c.limiter.WaitN(context.TODO(), len(msg.Body)/limitSmallMsgBytes)
+			now := time.Now()
+			re := c.limiter.ReserveN(now, len(msg.Body)/limitSmallMsgBytes)
+			if re.OK() {
+				du := re.DelayFrom(now)
+				if du > 0 {
+					if du > time.Second {
+						du = time.Second
+					}
+					ChannelRateLimitCnt.With(prometheus.Labels{
+						"topic":   c.GetTopicName(),
+						"channel": c.GetName(),
+					}).Inc()
+					// we allow small exceed to avoid sleep too often in short time
+					if du > time.Millisecond {
+						time.Sleep(du)
+					}
+				}
+			}
 		}
 		select {
 		case newTag := <-c.tagChanInitChan:
@@ -2385,6 +2422,7 @@ exit:
 				requeuedCnt++
 			default:
 				stopScan = true
+				// we need check next time soon to refill while the requeue chan pop empty
 			}
 			if stopScan {
 				break

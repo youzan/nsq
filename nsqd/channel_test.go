@@ -207,6 +207,139 @@ func TestChannelEmpty(t *testing.T) {
 	equal(t, channel.Depth(), int64(0))
 }
 
+func TestChannelReqRefillSoon(t *testing.T) {
+	// test the overflow requeued in waiting map should be refilled soon after the requeue chan is empty
+	count := 50
+	opts := NewOptions()
+	opts.SyncEvery = 1
+	opts.MaxRdyCount = 100
+	opts.Logger = newTestLogger(t)
+	opts.MsgTimeout = 100 * time.Millisecond
+	// use large to delay the period scan
+	opts.QueueScanRefreshInterval = 10 * time.Second
+	opts.QueueScanInterval = 10 * time.Second
+	_, _, nsqd := mustStartNSQD(opts)
+	defer os.RemoveAll(opts.DataPath)
+	defer nsqd.Exit()
+
+	topicName := "test_requeued_refill" + strconv.Itoa(int(time.Now().Unix()))
+	topic := nsqd.GetTopicIgnPart(topicName)
+	channel := topic.GetChannel("channel")
+
+	for i := 0; i < count; i++ {
+		msg := NewMessage(0, []byte("test"))
+		_, _, _, _, err := topic.PutMessage(msg)
+		equal(t, err, nil)
+	}
+
+	channel.AddClient(1, NewFakeConsumer(1))
+	lastTime := time.Now()
+	start := time.Now()
+	recvCnt := 0
+	for time.Since(start) < time.Second*20 {
+		select {
+		case <-time.After(time.Second):
+			t.Error("timeout recv")
+			return
+		case outputMsg, ok := <-channel.clientMsgChan:
+			if !ok {
+				t.Error("eror recv")
+				return
+			}
+			channel.inFlightMutex.Lock()
+			waitingReq := len(channel.waitingRequeueMsgs)
+			reqChanLen := len(channel.requeuedMsgChan)
+			channel.inFlightMutex.Unlock()
+
+			recvCnt++
+			now := time.Now()
+			t.Logf("recv: %v, consume %v at %s last %s, %v, %v", recvCnt, outputMsg.ID, now, lastTime, waitingReq, reqChanLen)
+			if time.Since(lastTime) > time.Second {
+				t.Errorf("too long waiting")
+			}
+			lastTime = now
+			channel.StartInFlightTimeout(outputMsg, NewFakeConsumer(1), "", opts.MsgTimeout)
+			if recvCnt == count {
+				go func() {
+					time.Sleep(time.Millisecond * 10)
+					channel.nsqdNotify.NotifyScanChannel(channel, false)
+				}()
+			}
+			if recvCnt >= count {
+				channel.FinishMessage(1, "", outputMsg.ID)
+			} else {
+				channel.RequeueMessage(1, "", outputMsg.ID, time.Millisecond*10, true)
+			}
+			if channel.Depth() == 0 {
+				return
+			}
+		}
+	}
+	t.Errorf("should return early")
+}
+
+func TestChannelReqNowTooMuch(t *testing.T) {
+	// test the 0 requeued message should be avoided if too much attempts
+	count := 5
+	opts := NewOptions()
+	opts.SyncEvery = 1
+	opts.MaxRdyCount = 100
+	opts.Logger = newTestLogger(t)
+	opts.MsgTimeout = 100 * time.Millisecond
+	// use large to delay the period scan
+	opts.QueueScanRefreshInterval = 10 * time.Second
+	opts.QueueScanInterval = 5 * time.Second
+	_, _, nsqd := mustStartNSQD(opts)
+	defer os.RemoveAll(opts.DataPath)
+	defer nsqd.Exit()
+
+	topicName := "test_requeued_refill" + strconv.Itoa(int(time.Now().Unix()))
+	topic := nsqd.GetTopicIgnPart(topicName)
+	channel := topic.GetChannel("channel")
+
+	for i := 0; i < count; i++ {
+		msg := NewMessage(0, []byte("test"))
+		_, _, _, _, err := topic.PutMessage(msg)
+		equal(t, err, nil)
+	}
+
+	channel.AddClient(1, NewFakeConsumer(1))
+	start := time.Now()
+	reqCnt := 0
+	timeout := 0
+	for time.Since(start) < time.Second*5 {
+		select {
+		case <-time.After(time.Second):
+			timeout++
+		case outputMsg, ok := <-channel.clientMsgChan:
+			if !ok {
+				t.Error("eror recv")
+				return
+			}
+			channel.inFlightMutex.Lock()
+			waitingReq := len(channel.waitingRequeueMsgs)
+			reqChanLen := len(channel.requeuedMsgChan)
+			channel.inFlightMutex.Unlock()
+
+			reqCnt++
+			now := time.Now()
+			t.Logf("consume %v at %s , %v, %v", outputMsg.ID, now, waitingReq, reqChanLen)
+			channel.StartInFlightTimeout(outputMsg, NewFakeConsumer(1), "", opts.MsgTimeout)
+			err := channel.RequeueMessage(1, "", outputMsg.ID, 0, true)
+			ast.True(t, outputMsg.Attempts <= MaxAttempts)
+			if outputMsg.Attempts >= MaxAttempts/2 {
+				ast.NotNil(t, err)
+			}
+		}
+	}
+
+	t.Logf("total req cnt: %v, timeout: %v", reqCnt, timeout)
+	if timeout <= count/2 {
+		t.Errorf("should waiting for req 0 too much")
+	}
+	ast.True(t, reqCnt >= count*MaxAttempts/2)
+}
+
 func TestChannelEmptyWhileConfirmDelayMsg(t *testing.T) {
 	// test confirm delay counter while empty channel
 	opts := NewOptions()
