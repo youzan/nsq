@@ -13,6 +13,8 @@ import (
 	"google.golang.org/grpc"
 )
 
+var testRPCTimeoutAndWait bool
+
 const (
 	RPC_TIMEOUT            = time.Duration(time.Second * 5)
 	RPC_TIMEOUT_SHORT      = time.Duration(time.Second * 3)
@@ -158,6 +160,13 @@ func (nrpc *NsqdRpcClient) CallWithRetry(method string, arg interface{}) (interf
 	for retry < 5 {
 		retry++
 		reply, err = nrpc.dc.Call(method, arg)
+		if testRPCTimeoutAndWait {
+			time.Sleep(maxWriteWaitTimeout)
+			e := gorpc.ErrCanceled
+			e.Timeout = true
+			e.Connection = true
+			err = e
+		}
 		if err != nil {
 			cerr, ok := err.(*gorpc.ClientError)
 			if (ok && cerr.Connection) || nrpc.ShouldRemoved() {
