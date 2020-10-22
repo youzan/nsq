@@ -445,6 +445,7 @@ func (self *NsqdCoordRpcServer) EnableTopicWrite(rpcTopicReq *RpcAdminTopicInfo)
 	}
 	begin := time.Now()
 	tp.writeHold.Lock()
+	defer tp.writeHold.Unlock()
 	if time.Since(begin) > time.Second*3 {
 		// timeout for waiting
 		coordLog.Infof("timeout while enable write for topic: %v", tp.GetData().topicInfo.GetTopicDesp())
@@ -465,7 +466,6 @@ func (self *NsqdCoordRpcServer) EnableTopicWrite(rpcTopicReq *RpcAdminTopicInfo)
 			}
 		}
 	}
-	tp.writeHold.Unlock()
 
 	if err != nil {
 		ret = *err
@@ -499,6 +499,7 @@ func (self *NsqdCoordRpcServer) DisableTopicWrite(rpcTopicReq *RpcAdminTopicInfo
 	begin := time.Now()
 
 	tp.writeHold.Lock()
+	defer tp.writeHold.Unlock()
 	if time.Since(begin) > time.Second*3 {
 		// timeout for waiting
 		err = ErrOperationExpired
@@ -522,7 +523,6 @@ func (self *NsqdCoordRpcServer) DisableTopicWrite(rpcTopicReq *RpcAdminTopicInfo
 			self.nsqdCoord.switchStateForMaster(tp, localTopic, false)
 		}
 	}
-	tp.writeHold.Unlock()
 	if err != nil {
 		ret = *err
 		return &ret
