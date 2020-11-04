@@ -1873,6 +1873,7 @@ LOOP:
 		}
 
 		resetReaderFlag := atomic.LoadInt32(&c.needResetReader)
+		deCnt := atomic.LoadInt64(&c.deferredCount)
 		if resetReaderFlag > 0 {
 			nsqLog.Infof("reset the reader : %v", c.GetConfirmed())
 			err = c.resetReaderToConfirmed()
@@ -1903,12 +1904,14 @@ LOOP:
 		} else if readBackendWait {
 			readChan = nil
 			needReadBackend = false
-		} else if atomic.LoadInt32(&c.waitingConfirm) > maxWin {
+		} else if atomic.LoadInt32(&c.waitingConfirm) > maxWin ||
+			c.isTooMuchDeferredInMem(deCnt) {
 			if nsqLog.Level() >= levellogger.LOG_DEBUG {
-				nsqLog.LogDebugf("channel %v reader is holding: %v, %v",
+				nsqLog.LogDebugf("channel %v-%v reader is holding: %v, %v,  mem defer: %v",
+					c.GetTopicName(),
 					c.GetName(),
 					atomic.LoadInt32(&c.waitingConfirm),
-					c.GetConfirmed())
+					c.GetConfirmed(), deCnt)
 			}
 			atomic.StoreInt32(&c.needNotifyRead, 1)
 
