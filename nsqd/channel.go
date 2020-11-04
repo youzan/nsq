@@ -1978,10 +1978,13 @@ LOOP:
 			if waitingReq > 0 {
 				notified := c.nsqdNotify.NotifyScanChannel(c, false)
 				if !notified {
-					// try later
-					go func() {
+					// try later, avoid too much
+					c.nsqdNotify.PushTopicJob(c.GetTopicName(), func() {
 						c.nsqdNotify.NotifyScanChannel(c, true)
-					}()
+						nsqLog.LogDebugf("notify refill req done %v-%v from requeue", c.GetTopicName(), c.GetName())
+					})
+				} else {
+					nsqLog.LogDebugf("notify refill req done %v-%v from requeue", c.GetTopicName(), c.GetName())
 				}
 			}
 			select {

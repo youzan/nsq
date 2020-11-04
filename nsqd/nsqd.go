@@ -59,7 +59,7 @@ type INsqdNotify interface {
 	NotifyStateChanged(v interface{}, needPersist bool)
 	ReqToEnd(*Channel, *Message, time.Duration) error
 	NotifyScanChannel(c *Channel, wait bool) bool
-	PushTopicJob(*Topic, func())
+	PushTopicJob(string, func())
 }
 
 type ReqToEndFunc func(*Channel, *Message, time.Duration) error
@@ -1002,8 +1002,8 @@ func (n *NSQD) resizeTopicJobPool(tnum int, jobCh chan func(), closeCh chan int)
 	})
 }
 
-func (n *NSQD) PushTopicJob(t *Topic, job func()) {
-	h := int(murmur3.Sum32([]byte(t.GetFullName())))
+func (n *NSQD) PushTopicJob(shardingName string, job func()) {
+	h := int(murmur3.Sum32([]byte(shardingName)))
 	index := h % len(n.topicJobChList)
 	for i := 0; i < len(n.topicJobChList); i++ {
 		ch := n.topicJobChList[(index+i)%len(n.topicJobChList)]
@@ -1013,7 +1013,7 @@ func (n *NSQD) PushTopicJob(t *Topic, job func()) {
 		default:
 		}
 	}
-	nsqLog.LogDebugf("%v topic job push ignored: %T", t.GetFullName(), job)
+	nsqLog.LogDebugf("%v topic job push ignored: %T", shardingName, job)
 }
 
 func doJob(job func()) {

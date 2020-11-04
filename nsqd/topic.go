@@ -973,7 +973,7 @@ func (t *Topic) ForceFlushForChannels(wait bool) {
 }
 
 func (t *Topic) notifyChEndChanged(force bool) {
-	t.nsqdNotify.PushTopicJob(t, func() { t.flushForChannels(force) })
+	t.nsqdNotify.PushTopicJob(t.GetTopicName(), func() { t.flushForChannels(force) })
 }
 
 func (t *Topic) flushForChannels(forceUpdate bool) {
