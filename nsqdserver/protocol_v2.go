@@ -1641,7 +1641,7 @@ func (p *protocolV2) internalPubExtAndTrace(client *nsqd.ClientV2, params [][]by
 				fmt.Sprintf("invalid body size %d in ext json header content length", bodyLen))
 		}
 		extJsonBytes := messageBody[nsqd.MsgJsonHeaderLength : nsqd.MsgJsonHeaderLength+extJsonLen]
-		jsonHeader = jsoniter.Get(extJsonBytes, '*')
+		jsonHeader = jsoniter.Get(extJsonBytes)
 		if jsonHeader.LastError() != nil {
 			return nil, protocol.NewClientErr(jsonHeader.LastError(), ext.E_INVALID_JSON_HEADER, "fail to parse json header:"+jsonHeader.LastError().Error())
 		}
@@ -1915,7 +1915,7 @@ func readMPUBEXT(r io.Reader, tmp []byte, topic *nsqd.Topic, maxMessageSize int6
 					return nil, buffers, protocol.NewClientErr(nil, ext.E_EXT_NOT_SUPPORT,
 						fmt.Sprintf("ext content not supported in topic %v", topicName))
 				}
-				jsonHeader := jsoniter.Get(extJsonBytes, '*')
+				jsonHeader := jsoniter.Get(extJsonBytes)
 				if jsonHeader.LastError() != nil {
 					return nil, buffers, protocol.NewClientErr(jsonHeader.LastError(), ext.E_INVALID_JSON_HEADER, "fail to parse json header:"+jsonHeader.LastError().Error())
 				}
