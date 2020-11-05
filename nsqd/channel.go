@@ -15,7 +15,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/youzan/nsq/internal/protocol"
 
-	jsoniter "github.com/json-iterator/go"
 	"github.com/youzan/nsq/internal/ext"
 	"github.com/youzan/nsq/internal/levellogger"
 	"github.com/youzan/nsq/internal/quantile"
@@ -2212,20 +2211,12 @@ exit:
 func (c *Channel) shouldSkipZanTest(msg *Message) bool {
 	if c.IsZanTestSkipped() && msg.ExtVer == ext.JSON_HEADER_EXT_VER {
 		//check if zan_test header contained in json header
-		extHeader := jsoniter.Get(msg.ExtBytes, ext.ZAN_TEST_KEY)
-		if extHeader.LastError() != nil {
+		extHeader, err := NewJsonExt(msg.ExtBytes)
+		if err != nil {
 			return false
 		}
-		if extHeader.ValueType() == jsoniter.BoolValue {
-			return extHeader.ToBool()
-		} else if extHeader.ValueType() == jsoniter.StringValue {
-			ts := extHeader.ToString()
-			tb := false
-			if ts != "" {
-				tb, _ = strconv.ParseBool(ts)
-			}
-			return tb
-		}
+		zanTest, _ := extHeader.GetBoolOrStringBool(ext.ZAN_TEST_KEY)
+		return zanTest
 	}
 	return false
 }
@@ -2237,12 +2228,10 @@ func parseTagIfAny(msg *Message) (string, error) {
 	case ext.TAG_EXT_VER:
 		msgTag = string(msg.ExtBytes)
 	case ext.JSON_HEADER_EXT_VER:
-		jsonExt := jsoniter.Get(msg.ExtBytes, ext.CLIENT_DISPATCH_TAG_KEY)
-		err = jsonExt.LastError()
+		var extHeader IJsonExt
+		extHeader, err = NewJsonExt(msg.ExtBytes)
 		if err == nil {
-			if jsonExt.ValueType() == jsoniter.StringValue {
-				msgTag = jsonExt.ToString()
-			}
+			msgTag, _ = extHeader.GetString(ext.CLIENT_DISPATCH_TAG_KEY)
 		} else if len(msg.ExtBytes) == 0 {
 			err = nil
 			msgTag = ""

@@ -16,7 +16,6 @@ import (
 	"time"
 	"unsafe"
 
-	jsoniter "github.com/json-iterator/go"
 	ps "github.com/prometheus/client_golang/prometheus"
 	"github.com/youzan/nsq/consistence"
 	"github.com/youzan/nsq/internal/ext"
@@ -1626,7 +1625,7 @@ func (p *protocolV2) internalPubExtAndTrace(client *nsqd.ClientV2, params [][]by
 	var needTraceRsp bool
 	var realBody []byte
 	var extContent ext.IExtContent
-	var jsonHeader jsoniter.Any
+	var jsonHeader nsqd.IJsonExt
 	extContent = ext.NewNoExt()
 	if traceEnable && !pubExt {
 		traceID = binary.BigEndian.Uint64(messageBody[:nsqd.MsgTraceIDLength])
@@ -1641,17 +1640,16 @@ func (p *protocolV2) internalPubExtAndTrace(client *nsqd.ClientV2, params [][]by
 				fmt.Sprintf("invalid body size %d in ext json header content length", bodyLen))
 		}
 		extJsonBytes := messageBody[nsqd.MsgJsonHeaderLength : nsqd.MsgJsonHeaderLength+extJsonLen]
-		jsonHeader = jsoniter.Get(extJsonBytes)
-		if jsonHeader.LastError() != nil {
-			return nil, protocol.NewClientErr(jsonHeader.LastError(), ext.E_INVALID_JSON_HEADER, "fail to parse json header:"+jsonHeader.LastError().Error())
+		jsonHeader, err = nsqd.NewJsonExt(extJsonBytes)
+		if err != nil {
+			return nil, protocol.NewClientErr(err, ext.E_INVALID_JSON_HEADER, "fail to parse json header:"+err.Error())
 		}
 		//parse traceID, if there is any
-		traceIDJson := jsonHeader.Get(ext.TRACE_ID_KEY)
-		if traceIDJson.LastError() == nil {
-			if traceIDJson.ValueType() != jsoniter.StringValue {
-				return nil, protocol.NewClientErr(nil, "INVALID_TRACE_ID", "passin trace id should be string")
-			}
-			traceIDStr := traceIDJson.ToString()
+		traceIDStr, jerr := jsonHeader.GetString(ext.TRACE_ID_KEY)
+		if jerr != nil && !nsqd.IsNotFoundJsonKey(jerr) {
+			return nil, protocol.NewClientErr(nil, "INVALID_TRACE_ID", "passin trace id should be string")
+		}
+		if jerr == nil {
 			traceID, err = strconv.ParseUint(traceIDStr, 10, 0)
 			if err != nil {
 				return nil, protocol.NewClientErr(err, "INVALID_TRACE_ID", "invalid trace id")
@@ -1915,18 +1913,17 @@ func readMPUBEXT(r io.Reader, tmp []byte, topic *nsqd.Topic, maxMessageSize int6
 					return nil, buffers, protocol.NewClientErr(nil, ext.E_EXT_NOT_SUPPORT,
 						fmt.Sprintf("ext content not supported in topic %v", topicName))
 				}
-				jsonHeader := jsoniter.Get(extJsonBytes)
-				if jsonHeader.LastError() != nil {
-					return nil, buffers, protocol.NewClientErr(jsonHeader.LastError(), ext.E_INVALID_JSON_HEADER, "fail to parse json header:"+jsonHeader.LastError().Error())
+				jsonHeader, jerr := nsqd.NewJsonExt(extJsonBytes)
+				if jerr != nil {
+					return nil, buffers, protocol.NewClientErr(jerr, ext.E_INVALID_JSON_HEADER, "fail to parse json header:"+jerr.Error())
 				}
 
 				//parse traceID, if there is any
-				traceIDJson := jsonHeader.Get(ext.TRACE_ID_KEY)
-				if traceIDJson.LastError() == nil {
-					if traceIDJson.ValueType() != jsoniter.StringValue {
-						return nil, buffers, protocol.NewClientErr(err, "INVALID_TRACE_ID", "passin trace id should be string")
-					}
-					traceIDStr := traceIDJson.ToString()
+				traceIDStr, jerr := jsonHeader.GetString(ext.TRACE_ID_KEY)
+				if jerr != nil && !nsqd.IsNotFoundJsonKey(jerr) {
+					return nil, buffers, protocol.NewClientErr(err, "INVALID_TRACE_ID", "passin trace id should be string")
+				}
+				if jerr == nil {
 					traceID, err = strconv.ParseUint(traceIDStr, 10, 0)
 					if err != nil {
 						return nil, buffers, protocol.NewClientErr(err, "INVALID_TRACE_ID", "invalid trace id")
@@ -1965,23 +1962,24 @@ func readMPUBEXT(r io.Reader, tmp []byte, topic *nsqd.Topic, maxMessageSize int6
 }
 
 //return true when there are only preserved kv in json header, and false otherwise
-func canIgnoreJsonHeader(topicName string, jsonHeader jsoniter.Any) bool {
+func canIgnoreJsonHeader(topicName string, jsonHeader nsqd.IJsonExt) bool {
 	canIgnoreExt := true
 	if jsonHeader != nil {
 		// if only internal header, we can ignore
-		m := jsonHeader.Keys()
-		for _, k := range m {
+		jsonHeader.KeysCheck(func(k string) bool {
 			// for future, if any internal header can not be ignored, we should check here
 			if k == ext.ZAN_TEST_KEY {
 				nsqd.NsqLogger().Debugf("illegal zan test header ignored in topic: %v", topicName)
-				continue
+				return true
 			}
 			if !strings.HasPrefix(k, "##") {
 				canIgnoreExt = false
 				nsqd.NsqLogger().Debugf("custom ext content can not be ignored in topic: %v, %v", topicName, k)
-				break
+				// stop early
+				return false
 			}
-		}
+			return true
+		})
 	}
 	return canIgnoreExt
 }

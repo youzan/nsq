@@ -347,9 +347,8 @@ func TestChannelReqTooMuchInDeferShouldNotContinueReadBackend(t *testing.T) {
 	opts.MaxRdyCount = 100
 	opts.MaxConfirmWin = 10
 	opts.Logger = newTestLogger(t)
-	opts.MsgTimeout = 100 * time.Millisecond
-	// use large to delay the period scan
-	opts.QueueScanRefreshInterval = 10 * time.Second
+	opts.MsgTimeout = time.Second * 3
+	opts.QueueScanRefreshInterval = time.Second / 10
 	opts.QueueScanInterval = time.Millisecond * 100
 	_, _, nsqd := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
@@ -372,7 +371,7 @@ func TestChannelReqTooMuchInDeferShouldNotContinueReadBackend(t *testing.T) {
 	lastDelay := time.Now()
 	for time.Since(start) < time.Second*5 {
 		select {
-		case <-time.After(time.Second):
+		case <-time.After(time.Second * 2):
 			timeout++
 		case outputMsg, ok := <-channel.clientMsgChan:
 			if !ok {
@@ -393,7 +392,8 @@ func TestChannelReqTooMuchInDeferShouldNotContinueReadBackend(t *testing.T) {
 			// requeue with different timeout to make sure the memory deferred cnt is high
 			// since after timeout deferred cnt will be reset
 			lastDelay = lastDelay.Add(time.Millisecond * 101)
-			delay := time.Since(lastDelay)
+			delay := lastDelay.Sub(now)
+			t.Logf("consume %v delay to %s, %s", outputMsg.ID, lastDelay, delay)
 			channel.RequeueMessage(1, "", outputMsg.ID, delay, false)
 		}
 	}

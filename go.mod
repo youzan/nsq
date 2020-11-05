@@ -36,6 +36,7 @@ require (
 	github.com/tidwall/gjson v1.1.3
 	github.com/tidwall/match v1.0.1 // indirect
 	github.com/twinj/uuid v1.0.0
+	github.com/valyala/fastjson v1.6.1
 	github.com/viki-org/dnscache v0.0.0-20130720023526-c70c1f23c5d8
 	github.com/wendal/errors v0.0.0-20181209125328-7f31f4b264ec // indirect
 	github.com/youzan/go-nsq v1.7.2-HA

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/bitly/go-simplejson"
+	jsoniter "github.com/json-iterator/go"
 	"github.com/youzan/nsq/internal/http_api"
 	"github.com/youzan/nsq/internal/levellogger"
 )
@@ -548,5 +549,33 @@ func TestLoadTopicChannel(t *testing.T) {
 	_, err = topic.GetExistingChannel("ch_closed")
 	if err == nil {
 		t.Errorf("should closed this channel after reload")
+	}
+}
+
+func BenchmarkJsonExtV1(b *testing.B) {
+	jb := []byte("{\"key\":\"true\", \"##key\":\"v1\", \"keybool\":true}")
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		extHeader := &JsonExtObj{
+			jsonExt: jsoniter.Get(jb),
+		}
+		extHeader.GetBoolOrStringBool("key")
+		extHeader.GetBoolOrStringBool("keybool")
+		extHeader.GetBoolOrStringBool("keynoexsit")
+		extHeader.GetString("key")
+		extHeader.GetString("keynoexsit")
+	}
+}
+
+func BenchmarkJsonExtV2(b *testing.B) {
+	jb := []byte("{\"key\":\"true\", \"##key\":\"v1\", \"keybool\":true}")
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		extHeader, _ := newJsonExtObjV2(jb)
+		extHeader.GetBoolOrStringBool("key")
+		extHeader.GetBoolOrStringBool("keybool")
+		extHeader.GetBoolOrStringBool("keynoexsit")
+		extHeader.GetString("key")
+		extHeader.GetString("keynoexsit")
 	}
 }
