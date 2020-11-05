@@ -24,6 +24,7 @@ require (
 	github.com/golang/snappy v0.0.1
 	github.com/gorilla/sessions v1.1.3
 	github.com/hashicorp/golang-lru v0.5.3
+	github.com/json-iterator/go v1.1.10
 	github.com/judwhite/go-svc v1.0.0
 	github.com/julienschmidt/httprouter v1.2.0
 	github.com/kr/pretty v0.2.0 // indirect
