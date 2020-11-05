@@ -350,10 +350,10 @@ func (ncoord *NsqdCoordinator) doSyncOpToCluster(isWrite bool, coord *TopicCoord
 	wstart := time.Now()
 	if isWrite {
 		coord.writeHold.Lock()
+		defer coord.writeHold.Unlock()
 		if time.Since(wstart) > maxWriteWaitTimeout {
 			return ErrOperationExpired
 		}
-		defer coord.writeHold.Unlock()
 	}
 
 	if coord.IsExiting() {
