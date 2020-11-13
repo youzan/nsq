@@ -23,25 +23,25 @@ const (
 )
 
 type TopicStats struct {
-	TopicName            string           `json:"topic_name"`
-	TopicFullName        string           `json:"topic_full_name"`
-	TopicPartition       string           `json:"topic_partition"`
-	Channels             []ChannelStats   `json:"channels"`
-	Depth                int64            `json:"depth"`
-	BackendDepth         int64            `json:"backend_depth"`
-	BackendStart         int64            `json:"backend_start"`
-	MessageCount         uint64           `json:"message_count"`
-	IsLeader             bool             `json:"is_leader"`
-	HourlyPubSize        int64            `json:"hourly_pubsize"`
-	Clients              []ClientPubStats `json:"client_pub_stats"`
-	MsgSizeStats         []int64          `json:"msg_size_stats"`
-	MsgWriteLatencyStats []int64          `json:"msg_write_latency_stats"`
-	IsMultiOrdered       bool             `json:"is_multi_ordered"`
-	IsMultiPart          bool             `json:"is_multi_part"`
-	IsExt                bool             `json:"is_ext"`
-	IsChannelAutoCreateDisabled bool			`json:"is_channel_auto_create_disabled"`
-	StatsdName           string           `json:"statsd_name"`
-	PubFailedCnt         int64            `json:"pub_failed_cnt"`
+	TopicName                   string           `json:"topic_name"`
+	TopicFullName               string           `json:"topic_full_name"`
+	TopicPartition              string           `json:"topic_partition"`
+	Channels                    []ChannelStats   `json:"channels"`
+	Depth                       int64            `json:"depth"`
+	BackendDepth                int64            `json:"backend_depth"`
+	BackendStart                int64            `json:"backend_start"`
+	MessageCount                uint64           `json:"message_count"`
+	IsLeader                    bool             `json:"is_leader"`
+	HourlyPubSize               int64            `json:"hourly_pubsize"`
+	Clients                     []ClientPubStats `json:"client_pub_stats"`
+	MsgSizeStats                []int64          `json:"msg_size_stats"`
+	MsgWriteLatencyStats        []int64          `json:"msg_write_latency_stats"`
+	IsMultiOrdered              bool             `json:"is_multi_ordered"`
+	IsMultiPart                 bool             `json:"is_multi_part"`
+	IsExt                       bool             `json:"is_ext"`
+	IsChannelAutoCreateDisabled bool             `json:"is_channel_auto_create_disabled"`
+	StatsdName                  string           `json:"statsd_name"`
+	PubFailedCnt                int64            `json:"pub_failed_cnt"`
 
 	E2eProcessingLatency *quantile.Result `json:"e2e_processing_latency"`
 }
@@ -56,24 +56,24 @@ func NewTopicStats(t *Topic, channels []ChannelStats, filterClients bool) TopicS
 		clients = t.detailStats.GetPubClientStats()
 	}
 	return TopicStats{
-		TopicName:            t.GetTopicName(),
-		TopicFullName:        t.GetFullName(),
-		TopicPartition:       strconv.Itoa(t.GetTopicPart()),
-		Channels:             channels,
-		Depth:                t.TotalDataSize(),
-		BackendDepth:         t.TotalDataSize(),
-		BackendStart:         t.GetQueueReadStart(),
-		MessageCount:         t.TotalMessageCnt(),
-		IsLeader:             !t.IsWriteDisabled(),
-		Clients:              clients,
-		MsgSizeStats:         t.detailStats.GetMsgSizeStats(),
-		MsgWriteLatencyStats: t.detailStats.GetMsgWriteLatencyStats(),
-		IsMultiOrdered:       t.IsOrdered(),
-		IsMultiPart:          t.GetDynamicInfo().MultiPart,
-		IsExt:                t.IsExt(),
-		IsChannelAutoCreateDisabled:	t.IsChannelAutoCreateDisabled(),
-		PubFailedCnt:         t.PubFailed(),
-		StatsdName:           statsdName,
+		TopicName:                   t.GetTopicName(),
+		TopicFullName:               t.GetFullName(),
+		TopicPartition:              strconv.Itoa(t.GetTopicPart()),
+		Channels:                    channels,
+		Depth:                       t.TotalDataSize(),
+		BackendDepth:                t.TotalDataSize(),
+		BackendStart:                t.GetQueueReadStart(),
+		MessageCount:                t.TotalMessageCnt(),
+		IsLeader:                    !t.IsWriteDisabled(),
+		Clients:                     clients,
+		MsgSizeStats:                t.detailStats.GetMsgSizeStats(),
+		MsgWriteLatencyStats:        t.detailStats.GetMsgWriteLatencyStats(),
+		IsMultiOrdered:              t.IsOrdered(),
+		IsMultiPart:                 t.GetDynamicInfo().MultiPart,
+		IsExt:                       t.IsExt(),
+		IsChannelAutoCreateDisabled: t.IsChannelAutoCreateDisabled(),
+		PubFailedCnt:                t.PubFailed(),
+		StatsdName:                  statsdName,
 
 		E2eProcessingLatency: t.AggregateChannelE2eProcessingLatency().Result(),
 	}
@@ -423,7 +423,7 @@ func (self *TopicMsgStatsInfo) UpdateMsgSizeStats(msgSize int64) {
 		bucket = len(self.MsgSizeStats) - 1
 	}
 	atomic.AddInt64(&self.MsgSizeStats[bucket], 1)
-	if msgSize >= 100 {
+	if msgSize >= 1024 {
 		TopicWriteByteSize.With(prometheus.Labels{
 			"topic":     self.topicName,
 			"partition": self.topicPart,

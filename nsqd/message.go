@@ -5,9 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"sync/atomic"
 	"time"
 
+	jsoniter "github.com/json-iterator/go"
+	"github.com/valyala/fastjson"
 	"github.com/youzan/nsq/internal/ext"
 )
 
@@ -510,4 +513,180 @@ func DecodeDelayedMessage(b []byte, isExt bool) (*Message, error) {
 	}
 	msg.Body = b[pos:]
 	return &msg, nil
+}
+
+var errJsonKeyNotFound = errors.New("json key not found")
+var errJsonTypeNotMatch = errors.New("json value type not match")
+
+func IsNotFoundJsonKey(err error) bool {
+	return errJsonKeyNotFound == err
+}
+
+type IJsonExt interface {
+	KeysCheck(func(string) bool)
+	GetString(string) (string, error)
+	GetBool(string) (bool, error)
+	GetBoolOrStringBool(string) (bool, error)
+}
+
+func NewJsonExt(b []byte) (IJsonExt, error) {
+	return newJsonExtObjV2(b)
+	//return &JsonExtObj{
+	//	jsonExt: jsoniter.Get(b),
+	//}, nil
+}
+
+type JsonExtObj struct {
+	jsonExt jsoniter.Any
+}
+
+func (jeo *JsonExtObj) KeysCheck(ck func(key string) bool) {
+	if jeo.jsonExt == nil {
+		return
+	}
+	if jeo.jsonExt.LastError() != nil {
+		return
+	}
+	keys := jeo.jsonExt.Keys()
+	for _, k := range keys {
+		run := ck(k)
+		if !run {
+			break
+		}
+	}
+}
+
+func (jeo *JsonExtObj) GetString(key string) (string, error) {
+	if jeo.jsonExt == nil {
+		return "", errJsonKeyNotFound
+	}
+	if jeo.jsonExt.LastError() != nil {
+		return "", jeo.jsonExt.LastError()
+	}
+	extHeader := jeo.jsonExt.Get(key)
+	if extHeader.LastError() != nil {
+		return "", errJsonKeyNotFound
+	}
+	if extHeader.ValueType() == jsoniter.StringValue {
+		return extHeader.ToString(), nil
+	}
+	return "", errJsonTypeNotMatch
+}
+
+func (jeo *JsonExtObj) GetBool(key string) (bool, error) {
+	if jeo.jsonExt == nil {
+		return false, errJsonKeyNotFound
+	}
+	if jeo.jsonExt.LastError() != nil {
+		return false, jeo.jsonExt.LastError()
+	}
+	extHeader := jeo.jsonExt.Get(key)
+	if extHeader.LastError() != nil {
+		return false, errJsonKeyNotFound
+	}
+	if extHeader.ValueType() == jsoniter.BoolValue {
+		return extHeader.ToBool(), nil
+	}
+	return false, errJsonTypeNotMatch
+}
+
+func (jeo *JsonExtObj) GetBoolOrStringBool(key string) (bool, error) {
+	if jeo.jsonExt == nil {
+		return false, errJsonKeyNotFound
+	}
+	if jeo.jsonExt.LastError() != nil {
+		return false, jeo.jsonExt.LastError()
+	}
+	extHeader := jeo.jsonExt.Get(key)
+	if extHeader.LastError() != nil {
+		return false, errJsonKeyNotFound
+	}
+	if extHeader.ValueType() == jsoniter.BoolValue {
+		return extHeader.ToBool(), nil
+	}
+	if extHeader.ValueType() == jsoniter.StringValue {
+		ts := extHeader.ToString()
+		tb := false
+		if ts != "" {
+			tb, _ = strconv.ParseBool(ts)
+		}
+		return tb, nil
+	}
+	return false, errJsonTypeNotMatch
+}
+
+type jsonExtObjV2 struct {
+	jsonExt *fastjson.Value
+}
+
+func newJsonExtObjV2(b []byte) (IJsonExt, error) {
+	v, err := fastjson.ParseBytes(b)
+	if err != nil {
+		return nil, err
+	}
+	return &jsonExtObjV2{
+		jsonExt: v,
+	}, nil
+}
+func (jeo *jsonExtObjV2) KeysCheck(ck func(string) bool) {
+	if jeo.jsonExt == nil {
+		return
+	}
+	o, err := jeo.jsonExt.Object()
+	if err != nil {
+		return
+	}
+	o.Visit(func(k []byte, v *fastjson.Value) {
+		ck(string(k))
+	})
+}
+
+func (jeo *jsonExtObjV2) GetString(key string) (string, error) {
+	if jeo.jsonExt == nil {
+		return "", errJsonKeyNotFound
+	}
+	extHeader := jeo.jsonExt.Get(key)
+	if extHeader == nil {
+		return "", errJsonKeyNotFound
+	}
+	if extHeader.Type() != fastjson.TypeString {
+		return "", errJsonTypeNotMatch
+	}
+	v, err := extHeader.StringBytes()
+	return string(v), err
+}
+
+func (jeo *jsonExtObjV2) GetBool(key string) (bool, error) {
+	if jeo.jsonExt == nil {
+		return false, errJsonKeyNotFound
+	}
+	extHeader := jeo.jsonExt.Get(key)
+	if extHeader == nil {
+		return false, errJsonKeyNotFound
+	}
+	if extHeader.Type() != fastjson.TypeTrue && extHeader.Type() != fastjson.TypeFalse {
+		return false, errJsonTypeNotMatch
+	}
+	return extHeader.GetBool(), nil
+}
+
+func (jeo *jsonExtObjV2) GetBoolOrStringBool(key string) (bool, error) {
+	if jeo.jsonExt == nil {
+		return false, errJsonKeyNotFound
+	}
+	extHeader := jeo.jsonExt.Get(key)
+	if extHeader == nil {
+		return false, errJsonKeyNotFound
+	}
+
+	if extHeader.Type() == fastjson.TypeString {
+		ts, _ := extHeader.StringBytes()
+		tb := false
+		if len(ts) > 0 {
+			tb, _ = strconv.ParseBool(string(ts))
+		}
+		return tb, nil
+	}
+
+	return extHeader.GetBool(), nil
 }

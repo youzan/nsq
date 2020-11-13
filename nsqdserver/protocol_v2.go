@@ -16,7 +16,6 @@ import (
 	"time"
 	"unsafe"
 
-	simpleJson "github.com/bitly/go-simplejson"
 	ps "github.com/prometheus/client_golang/prometheus"
 	"github.com/youzan/nsq/consistence"
 	"github.com/youzan/nsq/internal/ext"
@@ -1626,7 +1625,7 @@ func (p *protocolV2) internalPubExtAndTrace(client *nsqd.ClientV2, params [][]by
 	var needTraceRsp bool
 	var realBody []byte
 	var extContent ext.IExtContent
-	var jsonHeader *simpleJson.Json
+	var jsonHeader nsqd.IJsonExt
 	extContent = ext.NewNoExt()
 	if traceEnable && !pubExt {
 		traceID = binary.BigEndian.Uint64(messageBody[:nsqd.MsgTraceIDLength])
@@ -1641,19 +1640,16 @@ func (p *protocolV2) internalPubExtAndTrace(client *nsqd.ClientV2, params [][]by
 				fmt.Sprintf("invalid body size %d in ext json header content length", bodyLen))
 		}
 		extJsonBytes := messageBody[nsqd.MsgJsonHeaderLength : nsqd.MsgJsonHeaderLength+extJsonLen]
-		//validate json header passin
-		jsonHeader, err = simpleJson.NewJson(extJsonBytes)
+		jsonHeader, err = nsqd.NewJsonExt(extJsonBytes)
 		if err != nil {
-			return nil, protocol.NewClientErr(err, ext.E_INVALID_JSON_HEADER, "fail to parse json header")
+			return nil, protocol.NewClientErr(err, ext.E_INVALID_JSON_HEADER, "fail to parse json header:"+err.Error())
 		}
-
 		//parse traceID, if there is any
-		traceIDJson, existInJsonHeader := jsonHeader.CheckGet(ext.TRACE_ID_KEY)
-		if existInJsonHeader {
-			traceIDStr, err := traceIDJson.String()
-			if err != nil {
-				return nil, protocol.NewClientErr(err, "INVALID_TRACE_ID", "passin trace id should be string")
-			}
+		traceIDStr, jerr := jsonHeader.GetString(ext.TRACE_ID_KEY)
+		if jerr != nil && !nsqd.IsNotFoundJsonKey(jerr) {
+			return nil, protocol.NewClientErr(nil, "INVALID_TRACE_ID", "passin trace id should be string")
+		}
+		if jerr == nil {
 			traceID, err = strconv.ParseUint(traceIDStr, 10, 0)
 			if err != nil {
 				return nil, protocol.NewClientErr(err, "INVALID_TRACE_ID", "invalid trace id")
@@ -1672,14 +1668,16 @@ func (p *protocolV2) internalPubExtAndTrace(client *nsqd.ClientV2, params [][]by
 		asyncAction = false
 	}
 	if !topic.IsExt() && extContent.ExtVersion() != ext.NO_EXT_VER {
+		notOK := true
 		if p.ctx.getOpts().AllowExtCompatible {
-			filterIllegalZanTestHeader(topicName, jsonHeader)
+			canIgnoreExt := canIgnoreJsonHeader(topicName, jsonHeader)
+			if canIgnoreExt {
+				extContent = ext.NewNoExt()
+				nsqd.NsqLogger().Debugf("ext content ignored in topic: %v", topicName)
+				notOK = false
+			}
 		}
-		canIgnoreExt := canIgnoreJsonHeader(topicName, jsonHeader)
-		if p.ctx.getOpts().AllowExtCompatible && canIgnoreExt {
-			extContent = ext.NewNoExt()
-			nsqd.NsqLogger().Debugf("ext content ignored in topic: %v", topicName)
-		} else {
+		if notOK {
 			nsqd.NsqLogger().Infof("ext content not supported in topic: %v", topicName)
 			return nil, protocol.NewClientErr(nil, ext.E_EXT_NOT_SUPPORT,
 				fmt.Sprintf("ext content not supported in topic %v", topicName))
@@ -1910,18 +1908,22 @@ func readMPUBEXT(r io.Reader, tmp []byte, topic *nsqd.Topic, maxMessageSize int6
 			extJsonBytes = msgBody[nsqd.MsgJsonHeaderLength : nsqd.MsgJsonHeaderLength+extJsonLen]
 			//parse trace id, if there is a json ext
 			if extJsonLen > 0 {
-				jsonHeader, err := simpleJson.NewJson(extJsonBytes)
-				if err != nil {
-					return nil, buffers, protocol.NewClientErr(err, ext.E_INVALID_JSON_HEADER, "fail to parse json header")
+				if !topicExt && !allowExtCompatible {
+					nsqd.NsqLogger().Infof("ext content not supported in topic: %v", topicName)
+					return nil, buffers, protocol.NewClientErr(nil, ext.E_EXT_NOT_SUPPORT,
+						fmt.Sprintf("ext content not supported in topic %v", topicName))
+				}
+				jsonHeader, jerr := nsqd.NewJsonExt(extJsonBytes)
+				if jerr != nil {
+					return nil, buffers, protocol.NewClientErr(jerr, ext.E_INVALID_JSON_HEADER, "fail to parse json header:"+jerr.Error())
 				}
 
 				//parse traceID, if there is any
-				traceIDJson, existInJsonHeader := jsonHeader.CheckGet(ext.TRACE_ID_KEY)
-				if existInJsonHeader {
-					traceIDStr, err := traceIDJson.String()
-					if err != nil {
-						return nil, buffers, protocol.NewClientErr(err, "INVALID_TRACE_ID", "passin trace id should be string")
-					}
+				traceIDStr, jerr := jsonHeader.GetString(ext.TRACE_ID_KEY)
+				if jerr != nil && !nsqd.IsNotFoundJsonKey(jerr) {
+					return nil, buffers, protocol.NewClientErr(err, "INVALID_TRACE_ID", "passin trace id should be string")
+				}
+				if jerr == nil {
 					traceID, err = strconv.ParseUint(traceIDStr, 10, 0)
 					if err != nil {
 						return nil, buffers, protocol.NewClientErr(err, "INVALID_TRACE_ID", "invalid trace id")
@@ -1929,11 +1931,8 @@ func readMPUBEXT(r io.Reader, tmp []byte, topic *nsqd.Topic, maxMessageSize int6
 				}
 				//check compatibility when topic does not support ext
 				if !topicExt {
-					if allowExtCompatible {
-						filterIllegalZanTestHeader(topicName, jsonHeader)
-					}
 					canIgnoreExt = canIgnoreJsonHeader(topicName, jsonHeader)
-					if allowExtCompatible && canIgnoreExt {
+					if canIgnoreExt {
 						nsqd.NsqLogger().Debugf("ext content ignored in topic: %v", topicName)
 					} else {
 						nsqd.NsqLogger().Infof("ext content not supported in topic: %v", topicName)
@@ -1962,40 +1961,25 @@ func readMPUBEXT(r io.Reader, tmp []byte, topic *nsqd.Topic, maxMessageSize int6
 	return messages, buffers, nil
 }
 
-//remove any zan_test header in json ext if value != true(bool, string)
-func filterIllegalZanTestHeader(topicName string, jsonHeader *simpleJson.Json) {
-	if jsonHeader != nil {
-		flag, exist := jsonHeader.CheckGet(ext.ZAN_TEST_KEY)
-		if exist {
-			tb, err := flag.Bool()
-			if err != nil {
-				ts, _ := flag.String()
-				if ts != "" {
-					tb, _ = strconv.ParseBool(ts)
-				}
-			}
-			if !tb {
-				jsonHeader.Del(ext.ZAN_TEST_KEY)
-				nsqd.NsqLogger().Debugf("illegal zan test header removed in topic: %v, %v", topicName, flag)
-			}
-		}
-	}
-}
-
 //return true when there are only preserved kv in json header, and false otherwise
-func canIgnoreJsonHeader(topicName string, jsonHeader *simpleJson.Json) bool {
+func canIgnoreJsonHeader(topicName string, jsonHeader nsqd.IJsonExt) bool {
 	canIgnoreExt := true
 	if jsonHeader != nil {
 		// if only internal header, we can ignore
-		m, _ := jsonHeader.Map()
-		for k, _ := range m {
+		jsonHeader.KeysCheck(func(k string) bool {
 			// for future, if any internal header can not be ignored, we should check here
+			if k == ext.ZAN_TEST_KEY {
+				nsqd.NsqLogger().Debugf("illegal zan test header ignored in topic: %v", topicName)
+				return true
+			}
 			if !strings.HasPrefix(k, "##") {
 				canIgnoreExt = false
 				nsqd.NsqLogger().Debugf("custom ext content can not be ignored in topic: %v, %v", topicName, k)
-				break
+				// stop early
+				return false
 			}
-		}
+			return true
+		})
 	}
 	return canIgnoreExt
 }

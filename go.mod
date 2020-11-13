@@ -24,6 +24,7 @@ require (
 	github.com/golang/snappy v0.0.1
 	github.com/gorilla/sessions v1.1.3
 	github.com/hashicorp/golang-lru v0.5.3
+	github.com/json-iterator/go v1.1.10
 	github.com/judwhite/go-svc v1.0.0
 	github.com/julienschmidt/httprouter v1.2.0
 	github.com/kr/pretty v0.2.0 // indirect
@@ -35,6 +36,7 @@ require (
 	github.com/tidwall/gjson v1.1.3
 	github.com/tidwall/match v1.0.1 // indirect
 	github.com/twinj/uuid v1.0.0
+	github.com/valyala/fastjson v1.6.1
 	github.com/viki-org/dnscache v0.0.0-20130720023526-c70c1f23c5d8
 	github.com/wendal/errors v0.0.0-20181209125328-7f31f4b264ec // indirect
 	github.com/youzan/go-nsq v1.7.2-HA
