@@ -1139,7 +1139,7 @@ func (c *Channel) isTooMuchDeferredInMem(deCnt int64) bool {
 	// timeout not requeue to defer
 	cnt := c.GetChannelWaitingConfirmCnt()
 	if cnt >= c.option.MaxConfirmWin && float64(deCnt) > float64(cnt)*0.5 {
-		nsqLog.Logf("too much delayed in memory: %v vs %v", deCnt, cnt)
+		nsqLog.Debugf("%v-%v too much delayed in memory: %v vs %v", c.GetTopicName(), c.GetName(), deCnt, cnt)
 		return true
 	}
 	return false
@@ -1200,8 +1200,8 @@ func (c *Channel) ShouldRequeueToEnd(clientID int64, clientAddr string, id Messa
 			blocking := tn.UnixNano()-dqDepthTs > threshold.Nanoseconds()
 			waitingDelayCnt := atomic.LoadInt64(&c.deferredFromDelay)
 			if dqDepthTs > 0 && blocking && int64(dqCnt) > waitingDelayCnt {
-				nsqLog.Logf("channel %v delayed queue message %v req to end, timestamp:%v, attempt:%v, delayed depth timestamp: %v, delay waiting : %v, %v",
-					c.GetName(), id, msg.Timestamp,
+				nsqLog.Logf("%v channel %v delayed queue message %v req to end, timestamp:%v, attempt:%v, delayed depth timestamp: %v, delay waiting : %v, %v",
+					c.GetTopicName(), c.GetName(), id, msg.Timestamp,
 					msg.Attempts, dqDepthTs, waitingDelayCnt, dqCnt)
 				atomic.StoreInt64(&c.lastDelayedReqToEndTs, tn.UnixNano())
 				return msg.GetCopy(), true
