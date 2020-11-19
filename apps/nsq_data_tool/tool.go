@@ -241,9 +241,30 @@ func main() {
 			MaxBytesPerFile: 1024 * 1024 * 100,
 		}
 		nsqd.NsqLogger().Infof("checking delayed")
-		delayQ, err := nsqd.NewDelayQueueForRead(*topic, *partition, topicDataPath, opts, nil, false)
+		delayQ, err := nsqd.NewDelayQueueForRead(*topic, *partition, topicDataPath, opts, nil, *isExt)
 		if err != nil {
 			log.Fatalf("init delayed queue failed: %v", err)
+		}
+		if *viewStartID != 0 {
+			// check if it is in the delayed queue
+			// if exist, we need read index to get the delayedts
+			// and then scan from that delayed ts to get the actually delayed message
+			if !delayQ.IsChannelMessageDelayed(nsqd.MessageID(*viewStartID), *viewCh) {
+				nsqd.NsqLogger().Infof("channel %v msg id %v is not in the delayed queue", *viewStartID, *viewCh)
+				return
+			}
+			msg, err := delayQ.FindChannelMessageDelayed(nsqd.MessageID(*viewStartID), *viewCh)
+			if err != nil {
+				nsqd.NsqLogger().Infof("channel %v msg id %v find error: %v", *viewStartID, *viewCh, err.Error())
+				return
+			}
+			if msg == nil {
+				nsqd.NsqLogger().Infof("not found msg: %v", *viewStartID)
+				return
+			}
+			nsqd.NsqLogger().Infof("found msg: %v", msg)
+			fmt.Printf("%v:%v:%v:%v, body: %v\n", msg.ID, msg.TraceID, msg.Timestamp, msg.Attempts, string(msg.Body))
+			return
 		}
 		recentKeys, cntList, chCntList := delayQ.GetOldestConsumedState([]string{*viewCh}, true)
 		for _, k := range recentKeys {
@@ -254,7 +275,8 @@ func main() {
 			nsqd.NsqLogger().Infof("channel %v cnt : %v", k, v)
 		}
 		rets := make([]nsqd.Message, *viewCnt)
-		cnt, err := delayQ.PeekRecentChannelTimeout(time.Now().UnixNano(), rets, *viewCh)
+		untilTime := time.Now().UnixNano()
+		cnt, err := delayQ.PeekRecentChannelTimeout(untilTime, rets, *viewCh)
 		if err != nil {
 			nsqd.NsqLogger().Infof("peek recent timeout failed: %v", err.Error())
 			return

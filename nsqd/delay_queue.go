@@ -1205,6 +1205,42 @@ func (q *DelayQueue) ConfirmedMessage(msg *Message) error {
 	return err
 }
 
+func (q *DelayQueue) FindChannelMessageDelayed(msgID MessageID, ch string) (*Message, error) {
+	var msg *Message
+	prefix := getDelayedMsgDBPrefixKey(ChannelDelayed, ch)
+	err := q.getStore().View(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketDelayedMsg)
+		c := b.Cursor()
+		for k, v := c.Seek(prefix); k != nil && bytes.HasPrefix(k, prefix); k, v = c.Next() {
+			_, _, _, delayedCh, err := decodeDelayedMsgDBKey(k)
+			if err != nil {
+				nsqLog.Infof("decode key failed : %v, %v", k, err)
+				continue
+			}
+			if delayedCh != ch {
+				continue
+			}
+			if v == nil {
+				continue
+			}
+			buf := make([]byte, len(v))
+			copy(buf, v)
+			m, err := DecodeDelayedMessage(buf, q.IsExt())
+			if err != nil {
+				nsqLog.LogErrorf("topic %v failed to decode delayed message: %v, %v, %v",
+					q.fullName, v, k, err)
+				continue
+			}
+			if m.DelayedOrigID == msgID {
+				msg = m
+				break
+			}
+		}
+		return nil
+	})
+	return msg, err
+}
+
 func (q *DelayQueue) IsChannelMessageDelayed(msgID MessageID, ch string) bool {
 	found := false
 	msgKey := getDelayedMsgDBIndexKey(ChannelDelayed, ch, msgID)
