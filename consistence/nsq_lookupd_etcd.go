@@ -452,6 +452,7 @@ func (self *NsqLookupdEtcdMgr) watchTopics() {
 						if rsp.Node.ModifiedIndex > atomic.LoadUint64(&self.maxTopicModifyIndex) {
 							atomic.StoreUint64(&self.maxTopicModifyIndex, rsp.Node.ModifiedIndex)
 						}
+						coordLog.Debugf("topic changed: %v, max: %v", rsp, atomic.LoadUint64(&self.maxTopicModifyIndex))
 					}
 					watcher = self.client.Watch(self.topicRoot, rsp.Index+1, true)
 					// watch expired should be treated as changed of node
@@ -541,6 +542,10 @@ func (self *NsqLookupdEtcdMgr) scanTopics() ([]TopicPartitionMetaInfo, error) {
 
 	self.tmiMutex.Lock()
 	if curMaxIndex > atomic.LoadUint64(&self.topicCurrentMaxIndex) {
+		coordLog.Debugf("scan data %v current: %v, max watched: %v",
+			curMaxIndex, atomic.LoadUint64(&self.topicCurrentMaxIndex),
+			atomic.LoadUint64(&self.maxTopicModifyIndex),
+		)
 		self.topicMetaInfos = topicMetaInfos
 		atomic.StoreUint64(&self.topicCurrentMaxIndex, curMaxIndex)
 		self.topicMetaMap = topicMetaMap
@@ -558,6 +563,7 @@ func (self *NsqLookupdEtcdMgr) scanTopics() ([]TopicPartitionMetaInfo, error) {
 			curMaxIndex, atomic.LoadUint64(&self.topicCurrentMaxIndex),
 			atomic.LoadUint64(&self.maxTopicModifyIndex),
 		)
+		topicMetaInfos = self.topicMetaInfos
 	}
 	self.tmiMutex.Unlock()
 	self.cache.Purge()
