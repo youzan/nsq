@@ -72,6 +72,18 @@ func IsValidDelayedMessage(m *Message) bool {
 	return false
 }
 
+func decodeDelayedMsgDBIndexValue(b []byte) (int64, MessageID, error) {
+	if len(b) != 1+8+8 {
+		return 0, 0, errors.New("invalid data")
+	}
+	if b[0] != byte(1) {
+		return 0, 0, errors.New("invalid data")
+	}
+	ts := binary.BigEndian.Uint64(b[1 : 1+8])
+	id := binary.BigEndian.Uint64(b[1+8 : 1+8+8])
+	return int64(ts), MessageID(id), nil
+}
+
 func getDelayedMsgDBIndexValue(ts int64, id MessageID) []byte {
 	d := make([]byte, 1+8+8)
 	pos := 0
@@ -160,6 +172,20 @@ func getDelayedMsgDBPrefixKey(dt int, ch string) []byte {
 	binary.BigEndian.PutUint16(msgKey[pos:pos+2], uint16(len(ch)))
 	pos += 2
 	copy(msgKey[pos:pos+len(ch)], []byte(ch))
+	return msgKey
+}
+
+func getDelayedMsgDBPrefixKeyWithTs(dt int, ch string, ts int64) []byte {
+	msgKey := make([]byte, len(ch)+2+1+2+8)
+	binary.BigEndian.PutUint16(msgKey[:2], uint16(dt))
+	pos := 2
+	msgKey[pos] = '-'
+	pos++
+	binary.BigEndian.PutUint16(msgKey[pos:pos+2], uint16(len(ch)))
+	pos += 2
+	copy(msgKey[pos:pos+len(ch)], []byte(ch))
+	pos += len(ch)
+	binary.BigEndian.PutUint64(msgKey[pos:pos+8], uint64(ts))
 	return msgKey
 }
 
@@ -1207,8 +1233,22 @@ func (q *DelayQueue) ConfirmedMessage(msg *Message) error {
 
 func (q *DelayQueue) FindChannelMessageDelayed(msgID MessageID, ch string) (*Message, error) {
 	var msg *Message
-	prefix := getDelayedMsgDBPrefixKey(ChannelDelayed, ch)
+	msgKey := getDelayedMsgDBIndexKey(ChannelDelayed, ch, msgID)
 	err := q.getStore().View(func(tx *bolt.Tx) error {
+		ib := tx.Bucket(bucketDelayedMsgIndex)
+		v := ib.Get(msgKey)
+		var ts int64
+		var err error
+		if v != nil {
+			ts, _, err = decodeDelayedMsgDBIndexValue(v)
+			if err != nil {
+				return err
+			}
+		} else {
+			// no index means no data for this msgid
+			return nil
+		}
+		prefix := getDelayedMsgDBPrefixKeyWithTs(ChannelDelayed, ch, ts)
 		b := tx.Bucket(bucketDelayedMsg)
 		c := b.Cursor()
 		for k, v := c.Seek(prefix); k != nil && bytes.HasPrefix(k, prefix); k, v = c.Next() {
