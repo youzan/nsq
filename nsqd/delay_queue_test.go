@@ -51,6 +51,13 @@ func TestDelayQueuePutChannelDelayed(t *testing.T) {
 	test.Equal(t, cnt, int(newCnt))
 	_, err = os.Stat(dq.dataPath)
 	test.Nil(t, err)
+	for i := 0; i < cnt; i++ {
+		msgID := MessageID(i + 1)
+		m, err := dq.FindChannelMessageDelayed(msgID, "test")
+		test.Nil(t, err)
+		test.NotNil(t, m)
+		test.Equal(t, m.DelayedOrigID, msgID)
+	}
 	dq.Delete()
 	_, err = os.Stat(dq.dataPath)
 	test.Nil(t, err)
@@ -260,7 +267,13 @@ func TestDelayQueueWithExtPutChannelDelayed(t *testing.T) {
 		test.Equal(t, tag.ExtVersion(), m.ExtVer)
 		test.Equal(t, tag.GetBytes(), m.ExtBytes)
 	}
-
+	for i := 0; i < cnt; i++ {
+		msgID := MessageID(i + 1)
+		m, err := dq.FindChannelMessageDelayed(msgID, "test")
+		test.Nil(t, err)
+		test.NotNil(t, m)
+		test.Equal(t, m.DelayedOrigID, msgID)
+	}
 	dq.Delete()
 	_, err = os.Stat(dq.dataPath)
 	test.Nil(t, err)

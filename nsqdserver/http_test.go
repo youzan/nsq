@@ -774,6 +774,135 @@ func TestHTTPFinishMemDelayed(t *testing.T) {
 	conn.Close()
 }
 
+func TestHTTPGetMessage(t *testing.T) {
+	opts := nsqd.NewOptions()
+	opts.LogLevel = 2
+	opts.Logger = newTestLogger(t)
+	if testing.Verbose() {
+		opts.LogLevel = 4
+		nsqd.SetLogger(opts.Logger)
+	}
+
+	//opts.Logger = &levellogger.SimpleLogger{}
+	tcpAddr, httpAddr, nsqd, nsqdServer := mustStartNSQD(opts)
+	defer os.RemoveAll(opts.DataPath)
+	defer nsqdServer.Exit()
+
+	topicName := "test_http_get" + strconv.Itoa(int(time.Now().Unix()))
+	topic := nsqd.GetTopicIgnPart(topicName)
+	conn, err := mustConnectNSQD(tcpAddr)
+	test.Equal(t, err, nil)
+	identify(t, conn, nil, frameTypeResponse)
+	sub(t, conn, topicName, "ch")
+
+	buf := bytes.NewBuffer([]byte("test message"))
+	url := fmt.Sprintf("http://%s/pub?topic=%s", httpAddr, topicName)
+	resp, err := http.Post(url, "application/octet-stream", buf)
+	test.Equal(t, err, nil)
+	defer resp.Body.Close()
+	body, _ := ioutil.ReadAll(resp.Body)
+	test.Equal(t, string(body), "OK")
+
+	buf = bytes.NewBuffer([]byte("test message2"))
+	url = fmt.Sprintf("http://%s/pub?topic=%s", httpAddr, topicName)
+	resp, err = http.Post(url, "application/octet-stream", buf)
+	test.Equal(t, err, nil)
+	defer resp.Body.Close()
+	body, _ = ioutil.ReadAll(resp.Body)
+	test.Equal(t, string(body), "OK")
+
+	time.Sleep(5 * time.Millisecond)
+
+	_, err = nsq.Ready(1).WriteTo(conn)
+	test.Equal(t, err, nil)
+	// sleep to allow the RDY state to take effect
+	time.Sleep(50 * time.Millisecond)
+	_, err = topic.GetExistingChannel("ch")
+	test.Nil(t, err)
+	defer conn.Close()
+
+	cnt := 0
+	for cnt < 2 {
+		resp, _ := nsq.ReadResponse(conn)
+		frameType, data, err := nsq.UnpackResponse(resp)
+		test.Nil(t, err)
+		test.NotEqual(t, frameTypeError, frameType)
+		if frameType == frameTypeResponse {
+			t.Logf("got response data: %v", string(data))
+			continue
+		}
+		msgOut, err := nsq.DecodeMessage(data)
+		nsq.Requeue(msgOut.ID, time.Minute*30).WriteTo(conn)
+		time.Sleep(time.Second)
+
+		url := fmt.Sprintf("http://%s/message/get?topic=%s&channel=%s&search_mode=id&search_pos=%d&delayed_queue=true", httpAddr,
+			topicName, "ch", nsq.GetNewMessageID(msgOut.ID[:]))
+		ret, err := http.Get(url)
+		test.Equal(t, err, nil)
+		t.Log(ret)
+		rsp, err := ioutil.ReadAll(ret.Body)
+		test.Nil(t, err)
+		t.Log(string(rsp))
+		test.Equal(t, 200, ret.StatusCode)
+		ret.Body.Close()
+		msgrsp := struct {
+			ID        uint64 `json:"id"`
+			OrigID    uint64 `json:"orig_id"`
+			TraceID   uint64 `json:"trace_id"`
+			Body      string `json:"body"`
+			Timestamp int64  `json:"timestamp"`
+			Attempts  uint16 `json:"attempts"`
+
+			Offset int64 `json:"offset"`
+		}{}
+		json.Unmarshal(rsp, &msgrsp)
+		test.Equal(t, msgrsp.OrigID, uint64(nsq.GetNewMessageID(msgOut.ID[:])))
+		if msgrsp.OrigID == 1 {
+			test.Equal(t, msgrsp.Body, "test message")
+			test.Equal(t, msgrsp.Offset, int64(0))
+		} else if msgrsp.OrigID == 2 {
+			test.Equal(t, msgrsp.Body, "test message2")
+			test.Equal(t, msgrsp.Offset, int64(42))
+		} else {
+			t.Errorf("unexpected msg id: %v", msgrsp.OrigID)
+		}
+
+		url = fmt.Sprintf("http://%s/message/get?topic=%s&channel=%s&search_mode=id&search_pos=%d&delayed_queue=true", httpAddr,
+			topicName, "ch", 20)
+		ret, err = http.Get(url)
+		test.Equal(t, err, nil)
+		t.Log(ret)
+		rsp, err = ioutil.ReadAll(ret.Body)
+		test.Nil(t, err)
+		t.Log(string(rsp))
+		test.Equal(t, 404, ret.StatusCode)
+		ret.Body.Close()
+
+		url = fmt.Sprintf("http://%s/message/get?topic=%s&channel=%s&search_mode=id&search_pos=%d&delayed_queue=true", httpAddr,
+			"not_exist_topic", "ch", 20)
+		ret, err = http.Get(url)
+		test.Equal(t, err, nil)
+		t.Log(ret)
+		rsp, err = ioutil.ReadAll(ret.Body)
+		test.Nil(t, err)
+		t.Log(string(rsp))
+		test.Equal(t, 400, ret.StatusCode)
+		ret.Body.Close()
+
+		url = fmt.Sprintf("http://%s/message/get?topic=%s&channel=%s&search_mode=id&search_pos=%d&delayed_queue=true", httpAddr,
+			topicName, "ch_not_exist", nsq.GetNewMessageID(msgOut.ID[:]))
+		ret, err = http.Get(url)
+		test.Equal(t, err, nil)
+		t.Log(ret)
+		rsp, err = ioutil.ReadAll(ret.Body)
+		test.Nil(t, err)
+		t.Log(string(rsp))
+		test.Equal(t, 404, ret.StatusCode)
+		ret.Body.Close()
+		cnt++
+	}
+}
+
 func TestHTTPSRequire(t *testing.T) {
 	opts := nsqd.NewOptions()
 	opts.Logger = newTestLogger(t)

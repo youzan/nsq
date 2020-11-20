@@ -1127,6 +1127,40 @@ func (s *httpServer) doMessageGet(w http.ResponseWriter, req *http.Request, ps h
 	}
 
 	t, err := s.ctx.getExistingTopic(topicName, topicPart)
+	if err != nil {
+		return nil, http_api.Err{400, err.Error()}
+	}
+	searchDelayedQueue := reqParams.Get("delayed_queue")
+	if searchDelayedQueue == "true" {
+		dq := t.GetDelayedQueue()
+		if dq == nil {
+			return nil, http_api.Err{404, "no delayed queue on the topic"}
+		}
+		if searchMode != "id" {
+			return nil, http_api.Err{400, "delayed queue search mode must be id"}
+		}
+		ch := reqParams.Get("channel")
+		if ch == "" {
+			return nil, http_api.Err{400, "delayed queue search channel must be given"}
+		}
+		msg, err := dq.FindChannelMessageDelayed(nsqd.MessageID(searchPos), ch)
+		if err != nil {
+			return nil, http_api.Err{400, err.Error()}
+		}
+		if msg == nil {
+			return nil, http_api.Err{404, "no message found in delayed queue"}
+		}
+		return struct {
+			ID        nsqd.MessageID `json:"id"`
+			OrigID    uint64         `json:"orig_id"`
+			TraceID   uint64         `json:"trace_id"`
+			Body      string         `json:"body"`
+			Timestamp int64          `json:"timestamp"`
+			Attempts  uint16         `json:"attempts"`
+
+			Offset nsqd.BackendOffset `json:"offset"`
+		}{msg.ID, uint64(msg.DelayedOrigID), msg.TraceID, string(msg.Body), msg.Timestamp, msg.Attempts, msg.Offset}, nil
+	}
 	var realOffset int64
 	var curCnt int64
 	if searchMode == "count" {
