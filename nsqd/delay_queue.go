@@ -939,16 +939,20 @@ func (q *DelayQueue) emptyDelayedUntil(dt int, peekTs int64, id MessageID, ch st
 			return cleanedTs, nil
 		}
 	}
-	q.compactMutex.Lock()
-	defer q.compactMutex.Unlock()
+	// 0. to reduce the lock, we first search the possible messages without write lock
 	// 1. to avoid too much in batch, we should empty at most 10000 at each tx
 	// 2. some large db size with less data may need long time to scan the batch size, so
 	// we need check the scan time also (however, we can not handle the slow if the first seek is slow)
 	scanStart := time.Now()
 	batched := 0
 	exceedMaxBatch := false
+	bufLen := txMaxBatch
+	if totalCnt < uint64(bufLen) {
+		bufLen = int(totalCnt)
+	}
+	searchedKeys := make([][]byte, 0, bufLen)
 
-	err = db.Update(func(tx *bolt.Tx) error {
+	err = db.View(func(tx *bolt.Tx) error {
 		dbSize := tx.Size()
 		b := tx.Bucket(bucketDelayedMsg)
 		c := b.Cursor()
@@ -987,35 +991,10 @@ func (q *DelayQueue) emptyDelayedUntil(dt int, peekTs int64, id MessageID, ch st
 					continue
 				}
 			}
-			err = deleteBucketKey(dt, delayedCh, delayedTs, delayedID, tx, q.IsExt())
-			if err != nil {
-				if err != errBucketKeyNotFound {
-					nsqLog.Warningf("failed to delete : %v, %v", k, err)
-					return err
-				}
-			}
+			searchedKeys = append(searchedKeys, k)
+
 			cleanedTs = delayedTs
 			batched++
-		}
-		if batched == 0 && !exceedMaxBatch && emptyAll && ch != "" {
-			bm := tx.Bucket(bucketMeta)
-			cntKey := append([]byte("counter_"), getDelayedMsgDBPrefixKey(dt, ch)...)
-			cnt := uint64(0)
-			cntBytes := bm.Get(cntKey)
-			if cntBytes != nil && len(cntBytes) == 8 {
-				cnt = binary.BigEndian.Uint64(cntBytes)
-			}
-			if cnt > 0 {
-				nsqLog.Warningf("topic %v empty delayed counter need fix: %v, %v", q.GetFullName(), string(prefix), cnt)
-				cnt = 0
-				cntBytes = make([]byte, 8)
-				binary.BigEndian.PutUint64(cntBytes[:8], cnt)
-				err = bm.Put(cntKey, cntBytes)
-				if err != nil {
-					nsqLog.Infof("failed to update the meta count: %v, %v", cntKey, err)
-					return err
-				}
-			}
 		}
 		return nil
 	})
@@ -1025,6 +1004,57 @@ func (q *DelayQueue) emptyDelayedUntil(dt int, peekTs int64, id MessageID, ch st
 		}
 		return cleanedTs, err
 	}
+	q.compactMutex.Lock()
+	defer q.compactMutex.Unlock()
+	err = db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketDelayedMsg)
+		for _, k := range searchedKeys {
+			_, delayedTs, delayedID, delayedCh, err := decodeDelayedMsgDBKey(k)
+			if err != nil {
+				nsqLog.Infof("decode key failed : %v, %v", k, err)
+				continue
+			}
+			err = deleteBucketKey(dt, delayedCh, delayedTs, delayedID, tx, q.IsExt())
+			if err != nil {
+				if err != errBucketKeyNotFound {
+					nsqLog.Warningf("failed to delete : %v, %v", k, err.Error())
+					continue
+				}
+			}
+		}
+		if batched == 0 && !exceedMaxBatch && emptyAll && ch != "" {
+			bm := tx.Bucket(bucketMeta)
+			cntKey := append([]byte("counter_"), getDelayedMsgDBPrefixKey(dt, ch)...)
+			cnt := uint64(0)
+			cntBytes := bm.Get(cntKey)
+			if cntBytes != nil && len(cntBytes) == 8 {
+				cnt = binary.BigEndian.Uint64(cntBytes)
+			}
+			if cnt <= 0 {
+				return nil
+			}
+			nsqLog.Warningf("topic %v empty delayed counter need fix: %v, %v", q.GetFullName(), string(prefix), cnt)
+			// we need scan again to make sure no other changed during last read scan
+			c := b.Cursor()
+			for k, _ := c.Seek(prefix); k != nil && bytes.HasPrefix(k, prefix); k, _ = c.Next() {
+				// not empty , we do not reset the cnt
+				return nil
+			}
+			cnt = 0
+			cntBytes = make([]byte, 8)
+			binary.BigEndian.PutUint64(cntBytes[:8], cnt)
+			err = bm.Put(cntKey, cntBytes)
+			if err != nil {
+				nsqLog.Infof("failed to update the meta count: %v, %v", cntKey, err)
+				// we can ignore error for this, since reset count should not affect the channel empty
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return cleanedTs, err
+	}
+
 	if exceedMaxBatch {
 		err = errOnlyPartialEmpty
 	}
