@@ -550,20 +550,20 @@ func (self *NsqLookupdEtcdMgr) scanTopics() ([]TopicPartitionMetaInfo, error) {
 		atomic.StoreUint64(&self.topicCurrentMaxIndex, curMaxIndex)
 		self.topicMetaMap = topicMetaMap
 		self.topicReplicasMap = topicReplicasMap
-		if curMaxIndex < atomic.LoadUint64(&self.maxTopicModifyIndex) {
-			// we did not read the most newest, so we need scan next time
-			atomic.StoreInt32(&self.ifTopicChanged, 1)
-			coordLog.Infof("scan data %v older then max watched: %v, need scan next time",
-				curMaxIndex,
-				atomic.LoadUint64(&self.maxTopicModifyIndex),
-			)
-		}
 	} else {
 		coordLog.Infof("ignore scan data since %v older then current: %v, max watched: %v",
 			curMaxIndex, atomic.LoadUint64(&self.topicCurrentMaxIndex),
 			atomic.LoadUint64(&self.maxTopicModifyIndex),
 		)
 		topicMetaInfos = self.topicMetaInfos
+	}
+	if curMaxIndex < atomic.LoadUint64(&self.maxTopicModifyIndex) {
+		// we did not read the most newest, so we need scan next time
+		atomic.StoreInt32(&self.ifTopicChanged, 1)
+		coordLog.Infof("scan data %v older then max watched: %v, need scan next time",
+			curMaxIndex,
+			atomic.LoadUint64(&self.maxTopicModifyIndex),
+		)
 	}
 	self.tmiMutex.Unlock()
 	self.cache.Purge()
