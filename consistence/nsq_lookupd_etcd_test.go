@@ -9,6 +9,9 @@ import (
 )
 
 func TestLookupd(t *testing.T) {
+	if testing.Verbose() {
+		SetCoordLogger(newTestLogger(t), 4)
+	}
 	ClusterID := "test-nsq-cluster-unit-test-etcd-leadership"
 	NsqdID := "n-1"
 	LookupId1 := "l-1"
@@ -93,29 +96,29 @@ func TestLookupd(t *testing.T) {
 			}
 		}
 	}()
-	//	luLeader2 := make(chan *NsqLookupdNodeInfo)
-	//	lookupdMgr2.AcquireAndWatchLeader(luLeader2, stop)
-	//	go func() {
-	//		for {
-	//			select {
-	//			case <-stop:
-	//				fmt.Println("[lookup node 2] watch lookup leader for loop stop.")
-	//				return
-	//			case leader := <-luLeader2:
-	//				fmt.Printf("[lookup node 2] watch lookup leader: %v\n", leader)
-	//			}
-	//		}
-	//	}()
 
+	go func() {
+		for {
+			_, err := lookupdMgr.ScanTopics()
+			test.Nil(t, err)
+			time.Sleep(time.Millisecond)
+		}
+	}()
 	// lookup node 1 create topic
 	topicName := "ree-topic"
 	partition := 0
 	// delete topic if exist
 	lookupdMgr.DeleteTopic(topicName, partition)
+
+	allTopics, err := lookupdMgr.ScanTopics()
+	test.Nil(t, err)
+	test.Equal(t, 0, len(allTopics))
 	err = lookupdMgr.CreateTopicPartition(topicName, partition)
 	test.Nil(t, err)
 	fmt.Printf("[lookup node 1] topic[%s] partition[%d] create topic partition success.\n", topicName, partition)
 
+	allTopics, err = lookupdMgr.ScanTopics()
+	test.Nil(t, err)
 	topicMetainfo := &TopicMetaInfo{
 		PartitionNum: 2,
 		Replica:      2,
@@ -129,7 +132,13 @@ func TestLookupd(t *testing.T) {
 		CatchupList: []string{"2222"},
 		Channels:    []string{"3333"},
 	}
+	allTopics, err = lookupdMgr.ScanTopics()
+	test.Nil(t, err)
 	err = lookupdMgr.UpdateTopicNodeInfo(topicName, partition, topicReplicasInfo, 0)
+
+	allTopics, err = lookupdMgr.ScanTopics()
+	test.Nil(t, err)
+	test.Equal(t, 1, len(allTopics))
 
 	// nsqd node 1 get topic info
 	topicInfo, err := nodeMgr.GetTopicInfo(topicName, partition)
@@ -140,6 +149,8 @@ func TestLookupd(t *testing.T) {
 	err = nodeMgr.AcquireTopicLeader(topicName, partition, nodeInfo, 0)
 	test.Nil(t, err)
 
+	allTopics, err = lookupdMgr.ScanTopics()
+	test.Nil(t, err)
 	// lookup node 1 get topic leader session
 	topicLeaderS, err := lookupdMgr.GetTopicLeaderSession(topicName, partition)
 	test.Nil(t, err)
@@ -156,6 +167,10 @@ func TestLookupd(t *testing.T) {
 
 	time.Sleep(3 * time.Second)
 	close(stop)
+
+	allTopics, err = lookupdMgr.ScanTopics()
+	test.Nil(t, err)
+	test.Equal(t, 1, len(allTopics))
 
 	time.Sleep(15 * time.Second)
 

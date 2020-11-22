@@ -3,6 +3,7 @@ package nsqd
 import (
 	"bytes"
 	"encoding/binary"
+	"sync/atomic"
 
 	//"github.com/youzan/nsq/internal/levellogger"
 	"encoding/json"
@@ -326,6 +327,93 @@ func TestDelayQueueEmptyAll(t *testing.T) {
 	test.Equal(t, cnt, int(newCnt))
 	newCnt, _ = dq.GetCurrentDelayedCnt(ChannelDelayed, "test2")
 	test.Equal(t, cnt, int(newCnt))
+	// should at most empty one max batch size
+	err = dq.EmptyDelayedChannel("test2")
+	test.Nil(t, err)
+
+	newCnt, _ = dq.GetCurrentDelayedCnt(ChannelDelayed, "test2")
+	test.Equal(t, 1, int(newCnt))
+	newCnt, _ = dq.GetCurrentDelayedCnt(ChannelDelayed, "test")
+	test.Equal(t, cnt, int(newCnt))
+	err = dq.EmptyDelayedChannel("test")
+	test.Nil(t, err)
+	newCnt, _ = dq.GetCurrentDelayedCnt(ChannelDelayed, "test")
+	test.Equal(t, 1, int(newCnt))
+
+	// empty again
+	err = dq.EmptyDelayedChannel("test2")
+	test.Nil(t, err)
+	newCnt, _ = dq.GetCurrentDelayedCnt(ChannelDelayed, "test2")
+	test.Equal(t, 0, int(newCnt))
+	err = dq.EmptyDelayedChannel("test")
+	test.Nil(t, err)
+	newCnt, _ = dq.GetCurrentDelayedCnt(ChannelDelayed, "test")
+	test.Equal(t, 0, int(newCnt))
+}
+
+func TestDelayQueueEmptyAllWhileCompacted(t *testing.T) {
+	testEmptyDelay = true
+	defer func() {
+		testEmptyDelay = false
+	}()
+	// test compact done between the empty scan and empty clear, which change the db object
+	tmpDir, err := ioutil.TempDir("", fmt.Sprintf("nsq-test-delay-%d", time.Now().UnixNano()))
+	if err != nil {
+		panic(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	opts := NewOptions()
+	opts.Logger = newTestLogger(t)
+	opts.SyncEvery = 1
+	if testing.Verbose() {
+		SetLogger(opts.Logger)
+	}
+
+	dq, err := NewDelayQueue("test", 0, tmpDir, opts, nil, false)
+	test.Nil(t, err)
+	defer dq.Close()
+	oldMaxBatch := txMaxBatch
+	txMaxBatch = 100
+	defer func() {
+		txMaxBatch = oldMaxBatch
+	}()
+	cnt := txMaxBatch + 2
+	for i := 0; i < cnt; i++ {
+		msg := NewMessage(0, []byte("body"))
+		msg.DelayedType = ChannelDelayed
+		msg.DelayedTs = time.Now().Add(time.Second).UnixNano()
+		msg.DelayedChannel = "test"
+		msg.DelayedOrigID = MessageID(i + 1)
+		_, _, _, _, err := dq.PutDelayMessage(msg)
+		test.Nil(t, err)
+		msg = NewMessage(0, []byte("body"))
+		msg.DelayedType = ChannelDelayed
+		msg.DelayedTs = time.Now().Add(time.Second).UnixNano()
+		msg.DelayedChannel = "test2"
+		msg.DelayedOrigID = MessageID(i + 1)
+		_, _, _, _, err = dq.PutDelayMessage(msg)
+		test.Nil(t, err)
+		time.Sleep(time.Millisecond * 100)
+	}
+
+	go func() {
+		for {
+			if atomic.LoadInt32(&dq.exitFlag) == 1 {
+				return
+			}
+			dq.compactStore(true)
+			time.Sleep(time.Millisecond)
+			if atomic.LoadInt32(&dq.exitFlag) == 1 {
+				return
+			}
+		}
+	}()
+	newCnt, _ := dq.GetCurrentDelayedCnt(ChannelDelayed, "test")
+	test.Equal(t, cnt, int(newCnt))
+	newCnt, _ = dq.GetCurrentDelayedCnt(ChannelDelayed, "test2")
+	test.Equal(t, cnt, int(newCnt))
+
 	// should at most empty one max batch size
 	err = dq.EmptyDelayedChannel("test2")
 	test.Nil(t, err)

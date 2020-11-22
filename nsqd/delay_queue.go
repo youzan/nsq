@@ -32,6 +32,7 @@ var (
 	errDBSizeTooLarge            = errors.New("db size too large")
 	errTooMuchRunningEmpty       = errors.New("too much running empty")
 	errOnlyPartialEmpty          = errors.New("only partial empty")
+	testEmptyDelay               = false
 )
 
 const (
@@ -44,6 +45,12 @@ const (
 	CompactCntThreshold = 40000
 	maxEmptyRunning     = 5
 )
+
+type searchedItem struct {
+	delayedTs int64
+	delayedID MessageID
+	ch        string
+}
 
 type RecentKeyList [][]byte
 
@@ -950,7 +957,7 @@ func (q *DelayQueue) emptyDelayedUntil(dt int, peekTs int64, id MessageID, ch st
 	if totalCnt < uint64(bufLen) {
 		bufLen = int(totalCnt)
 	}
-	searchedKeys := make([][]byte, 0, bufLen)
+	searchedKeys := make([]searchedItem, 0, bufLen)
 
 	err = db.View(func(tx *bolt.Tx) error {
 		dbSize := tx.Size()
@@ -991,8 +998,11 @@ func (q *DelayQueue) emptyDelayedUntil(dt int, peekTs int64, id MessageID, ch st
 					continue
 				}
 			}
-			searchedKeys = append(searchedKeys, k)
-
+			searchedKeys = append(searchedKeys, searchedItem{
+				delayedTs: delayedTs,
+				delayedID: delayedID,
+				ch:        delayedCh,
+			})
 			cleanedTs = delayedTs
 			batched++
 		}
@@ -1004,17 +1014,15 @@ func (q *DelayQueue) emptyDelayedUntil(dt int, peekTs int64, id MessageID, ch st
 		}
 		return cleanedTs, err
 	}
+	if testEmptyDelay {
+		time.Sleep(time.Second)
+	}
 	q.compactMutex.Lock()
 	defer q.compactMutex.Unlock()
-	err = db.Update(func(tx *bolt.Tx) error {
+	err = q.getStore().Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket(bucketDelayedMsg)
 		for _, k := range searchedKeys {
-			_, delayedTs, delayedID, delayedCh, err := decodeDelayedMsgDBKey(k)
-			if err != nil {
-				nsqLog.Infof("decode key failed : %v, %v", k, err)
-				continue
-			}
-			err = deleteBucketKey(dt, delayedCh, delayedTs, delayedID, tx, q.IsExt())
+			err = deleteBucketKey(dt, k.ch, k.delayedTs, k.delayedID, tx, q.IsExt())
 			if err != nil {
 				if err != errBucketKeyNotFound {
 					nsqLog.Warningf("failed to delete : %v, %v", k, err.Error())
