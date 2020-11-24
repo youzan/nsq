@@ -155,6 +155,35 @@ func TestLookupd(t *testing.T) {
 	topicLeaderS, err := lookupdMgr.GetTopicLeaderSession(topicName, partition)
 	test.Nil(t, err)
 	fmt.Printf("[lookup node 1] topic[%s] get topic leader session leader: %v\n", topicName, topicLeaderS)
+	// check delete topic will trigger scan topic newest data
+	partition1 := 1
+	// delete topic if exist
+	lookupdMgr.DeleteTopic(topicName, partition1)
+
+	err = lookupdMgr.CreateTopicPartition(topicName, partition1)
+	test.Nil(t, err)
+	fmt.Printf("[lookup node 1] topic[%s] partition[%d] create topic partition success.\n", topicName, partition1)
+
+	allTopics, err = lookupdMgr.ScanTopics()
+	test.Nil(t, err)
+	// lookup node 1 update topic info
+	topicReplicasInfo = &TopicPartitionReplicaInfo{
+		Leader:      "127.0.0.1:2223",
+		ISR:         []string{"1111"},
+		CatchupList: []string{"2222"},
+		Channels:    []string{"3333"},
+	}
+	lookupdMgr.UpdateTopicNodeInfo(topicName, partition1, topicReplicasInfo, 0)
+
+	time.Sleep(time.Second)
+	allTopics, err = lookupdMgr.ScanTopics()
+	test.Nil(t, err)
+	test.Equal(t, 2, len(allTopics))
+	lookupdMgr.DeleteTopic(topicName, partition1)
+	time.Sleep(time.Second)
+	allTopics, err = lookupdMgr.ScanTopics()
+	test.Nil(t, err)
+	test.Equal(t, 1, len(allTopics))
 
 	go func() {
 		<-nodeWatchLookupLeaderStopped
