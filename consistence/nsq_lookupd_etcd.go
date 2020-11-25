@@ -483,6 +483,10 @@ func (self *NsqLookupdEtcdMgr) scanTopics() ([]TopicPartitionMetaInfo, error) {
 			atomic.LoadUint64(&self.currentClusterIndex),
 			atomic.LoadUint64(&self.watchedClusterIndex),
 		)
+		if rsp.Index < atomic.LoadUint64(&self.watchedClusterIndex) {
+			// we did not read the most newest, so we need scan next time
+			atomic.StoreInt32(&self.ifTopicChanged, 1)
+		}
 		self.tmiMutex.Unlock()
 		return tmi, nil
 	}
