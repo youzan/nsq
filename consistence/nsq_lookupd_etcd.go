@@ -53,28 +53,28 @@ type NsqLookupdEtcdMgr struct {
 	tmiMutex sync.RWMutex
 	cache    *lru.ARCCache
 
-	client               *EtcdClient
-	clusterID            string
-	topicRoot            string
-	clusterPath          string
-	leaderSessionPath    string
-	leaderStr            string
-	lookupdRootPath      string
-	topicMetaInfos       []TopicPartitionMetaInfo
-	topicCurrentMaxIndex uint64
-	topicMetaMap         map[string]TopicMetaInfo
-	ifTopicChanged       int32
-	ifTopicScanning      int32
-	nodeInfo             *NsqLookupdNodeInfo
-	nodeKey              string
-	nodeValue            string
+	client              *EtcdClient
+	clusterID           string
+	topicRoot           string
+	clusterPath         string
+	leaderSessionPath   string
+	leaderStr           string
+	lookupdRootPath     string
+	topicMetaInfos      []TopicPartitionMetaInfo
+	currentClusterIndex uint64
+	topicMetaMap        map[string]TopicMetaInfo
+	ifTopicChanged      int32
+	ifTopicScanning     int32
+	nodeInfo            *NsqLookupdNodeInfo
+	nodeKey             string
+	nodeValue           string
 
 	refreshStopCh        chan bool
 	watchTopicsStopCh    chan bool
 	watchNsqdNodesStopCh chan bool
 
 	topicReplicasMap    map[string]map[int]TopicPartitionReplicaInfo
-	maxTopicModifyIndex uint64
+	watchedClusterIndex uint64
 }
 
 func NewNsqLookupdEtcdMgr(host, username, pwd string) (*NsqLookupdEtcdMgr, error) {
@@ -388,26 +388,6 @@ func (self *NsqLookupdEtcdMgr) ScanTopics() ([]TopicPartitionMetaInfo, error) {
 	return topicMetaInfos, nil
 }
 
-func getMaxModifyIndex(nodes client.Nodes) uint64 {
-	if nodes == nil {
-		return 0
-	}
-	max := uint64(0)
-	for _, n := range nodes {
-		mi := n.ModifiedIndex
-		if n.Nodes != nil {
-			cmi := getMaxModifyIndex(n.Nodes)
-			if cmi > max {
-				max = cmi
-			}
-		}
-		if mi > max {
-			max = mi
-		}
-	}
-	return max
-}
-
 // watch topics if changed
 func (self *NsqLookupdEtcdMgr) watchTopics() {
 	initIndex := uint64(0)
@@ -418,6 +398,7 @@ func (self *NsqLookupdEtcdMgr) watchTopics() {
 		if rsp.Index > 0 {
 			initIndex = rsp.Index - 1
 		}
+		atomic.StoreUint64(&self.watchedClusterIndex, rsp.Index)
 	}
 	watcher := self.client.Watch(self.topicRoot, initIndex, true)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -444,16 +425,11 @@ func (self *NsqLookupdEtcdMgr) watchTopics() {
 						time.Sleep(time.Second)
 						continue
 					}
-					if rsp.Node != nil {
-						maxModify := getMaxModifyIndex(rsp.Node.Nodes)
-						if maxModify > atomic.LoadUint64(&self.maxTopicModifyIndex) {
-							atomic.StoreUint64(&self.maxTopicModifyIndex, maxModify)
-						}
-						if rsp.Node.ModifiedIndex > atomic.LoadUint64(&self.maxTopicModifyIndex) {
-							atomic.StoreUint64(&self.maxTopicModifyIndex, rsp.Node.ModifiedIndex)
-						}
-						coordLog.Debugf("topic changed: %v, max: %v", rsp, atomic.LoadUint64(&self.maxTopicModifyIndex))
-					}
+					//since the max modified may become less if some node deleted, we can not determin the current max, so we need
+					//  use the cluster index to check if changed to new.
+					coordLog.Infof("rewatched topic max changed from %v to: %v",
+						atomic.LoadUint64(&self.watchedClusterIndex), rsp.Index)
+					atomic.StoreUint64(&self.watchedClusterIndex, rsp.Index)
 					watcher = self.client.Watch(self.topicRoot, rsp.Index+1, true)
 					// watch expired should be treated as changed of node
 				} else {
@@ -462,17 +438,15 @@ func (self *NsqLookupdEtcdMgr) watchTopics() {
 				}
 			}
 		} else {
-			if rsp.Node != nil {
-				maxModify := getMaxModifyIndex(rsp.Node.Nodes)
-				if maxModify > atomic.LoadUint64(&self.maxTopicModifyIndex) {
-					atomic.StoreUint64(&self.maxTopicModifyIndex, maxModify)
-				}
-				if rsp.Node.ModifiedIndex > atomic.LoadUint64(&self.maxTopicModifyIndex) {
-					atomic.StoreUint64(&self.maxTopicModifyIndex, rsp.Node.ModifiedIndex)
-				}
-			}
+			//since the max modified may become less if some node deleted, and the watch event only notify the changed
+			// node, we can not get the max modify index by only check the event(it may delete any modify index node)
+			coordLog.Infof("topic max modify changed %v from %v to: %v",
+				rsp, atomic.LoadUint64(&self.watchedClusterIndex), rsp.Index)
+			// cluster index is used to tell the different if the max modify index is equal because of the delete of node
+			// Max 1->2->3, this time we have 3(first time) as max modify and then new added become 4 then delete 4, max will be 3(second time)
+			// without the cluster index, we can not tell the different from the second time and the first time, so we need this.
+			atomic.StoreUint64(&self.watchedClusterIndex, rsp.Index)
 		}
-		coordLog.Debugf("topic changed: %v, max: %v", rsp, atomic.LoadUint64(&self.maxTopicModifyIndex))
 		atomic.StoreInt32(&self.ifTopicChanged, 1)
 	}
 }
@@ -499,18 +473,20 @@ func (self *NsqLookupdEtcdMgr) scanTopics() ([]TopicPartitionMetaInfo, error) {
 		}
 		return nil, err
 	}
-	curMaxIndex := getMaxModifyIndex(rsp.Node.Nodes)
-	if rsp.Node.ModifiedIndex > curMaxIndex {
-		curMaxIndex = rsp.Node.ModifiedIndex
-	}
+
 	self.tmiMutex.Lock()
 	// we read the stale data, we can just return the last data
-	if curMaxIndex <= atomic.LoadUint64(&self.topicCurrentMaxIndex) {
+	if rsp.Index <= atomic.LoadUint64(&self.currentClusterIndex) {
 		tmi := self.topicMetaInfos
 		coordLog.Infof("ignore scan data since %v older then current: %v, max watched: %v",
-			curMaxIndex, atomic.LoadUint64(&self.topicCurrentMaxIndex),
-			atomic.LoadUint64(&self.maxTopicModifyIndex),
+			rsp.Index,
+			atomic.LoadUint64(&self.currentClusterIndex),
+			atomic.LoadUint64(&self.watchedClusterIndex),
 		)
+		if rsp.Index < atomic.LoadUint64(&self.watchedClusterIndex) {
+			// we did not read the most newest, so we need scan next time
+			atomic.StoreInt32(&self.ifTopicChanged, 1)
+		}
 		self.tmiMutex.Unlock()
 		return tmi, nil
 	}
@@ -541,29 +517,30 @@ func (self *NsqLookupdEtcdMgr) scanTopics() ([]TopicPartitionMetaInfo, error) {
 	}
 
 	self.tmiMutex.Lock()
-	if curMaxIndex > atomic.LoadUint64(&self.topicCurrentMaxIndex) {
+	if rsp.Index > atomic.LoadUint64(&self.currentClusterIndex) {
 		coordLog.Debugf("scan data %v current: %v, max watched: %v",
-			curMaxIndex, atomic.LoadUint64(&self.topicCurrentMaxIndex),
-			atomic.LoadUint64(&self.maxTopicModifyIndex),
+			rsp.Index, atomic.LoadUint64(&self.currentClusterIndex),
+			atomic.LoadUint64(&self.watchedClusterIndex),
 		)
 		self.topicMetaInfos = topicMetaInfos
-		atomic.StoreUint64(&self.topicCurrentMaxIndex, curMaxIndex)
+		atomic.StoreUint64(&self.currentClusterIndex, rsp.Index)
 		self.topicMetaMap = topicMetaMap
 		self.topicReplicasMap = topicReplicasMap
-		if curMaxIndex < atomic.LoadUint64(&self.maxTopicModifyIndex) {
-			// we did not read the most newest, so we need scan next time
-			atomic.StoreInt32(&self.ifTopicChanged, 1)
-			coordLog.Infof("scan data %v older then max watched: %v, need scan next time",
-				curMaxIndex,
-				atomic.LoadUint64(&self.maxTopicModifyIndex),
-			)
-		}
 	} else {
 		coordLog.Infof("ignore scan data since %v older then current: %v, max watched: %v",
-			curMaxIndex, atomic.LoadUint64(&self.topicCurrentMaxIndex),
-			atomic.LoadUint64(&self.maxTopicModifyIndex),
+			rsp.Index, atomic.LoadUint64(&self.currentClusterIndex),
+			atomic.LoadUint64(&self.watchedClusterIndex),
 		)
 		topicMetaInfos = self.topicMetaInfos
+	}
+	// note it is possible rsp.Index may greater than watched, since non-topic root changed will also increase the cluster index
+	if rsp.Index < atomic.LoadUint64(&self.watchedClusterIndex) {
+		// we did not read the most newest, so we need scan next time
+		atomic.StoreInt32(&self.ifTopicChanged, 1)
+		coordLog.Infof("scan data %v not the same as the max watched: %v, need scan next time",
+			rsp.Index,
+			atomic.LoadUint64(&self.watchedClusterIndex),
+		)
 	}
 	self.tmiMutex.Unlock()
 	self.cache.Purge()
