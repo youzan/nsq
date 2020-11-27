@@ -254,38 +254,15 @@ func (c *context) SyncChannels(topic *nsqd.Topic) error {
 func (c *context) DeleteExistingChannel(topic *nsqd.Topic, channelName string) error {
 	if c.nsqdCoord == nil {
 		err := topic.DeleteExistingChannel(channelName)
-		if err == nil {
-			err = topic.SaveChannelMeta()
-		}
 		return err
 	}
 	return c.nsqdCoord.DeleteChannel(topic, channelName)
 }
 
-func (c *context) UpdateChannelState(ch *nsqd.Channel, paused int, skipped int, zanTestSkipped int) error {
+func (c *context) UpdateChannelState(topic *nsqd.Topic, ch *nsqd.Channel, paused int, skipped int, zanTestSkipped int) error {
 	var err error
 	if c.nsqdCoord == nil {
-		switch paused {
-		case 1:
-			err = ch.Pause()
-		case 0:
-			err = ch.UnPause()
-		}
-
-		switch skipped {
-		case 1:
-			err = ch.Skip()
-		case 0:
-			err = ch.UnSkip()
-		}
-
-		switch int32(zanTestSkipped) {
-		case nsqd.ZanTestSkip:
-			err = ch.SkipZanTest()
-		case nsqd.ZanTestUnskip:
-			err = ch.UnskipZanTest()
-		}
-
+		err = topic.UpdateChannelMeta(ch, paused, skipped, zanTestSkipped)
 	} else {
 		err = c.nsqdCoord.UpdateChannelStateToCluster(ch, paused, skipped, zanTestSkipped)
 	}

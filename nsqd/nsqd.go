@@ -428,10 +428,6 @@ func (n *NSQD) persistMetadata(currentTopics []*Topic) error {
 		topicData["ordered"] = topic.IsOrdered()
 		// we save the channels to topic, but for compatible we need save empty channels to json
 		channels := []interface{}{}
-		err := topic.SaveChannelMeta()
-		if err != nil {
-			nsqLog.Warningf("save topic %v channel meta failed: %v", topic.GetFullName(), err)
-		}
 		topicData["channels"] = channels
 		topicData["disbale_channel_auto_create"] = topic.IsChannelAutoCreateDisabled()
 		topics = append(topics, topicData)

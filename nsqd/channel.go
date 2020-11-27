@@ -253,7 +253,7 @@ func NewChannel(topicName string, part int, topicOrdered bool, channelName strin
 	}
 	go c.messagePump()
 
-	c.nsqdNotify.NotifyStateChanged(c, true)
+	c.nsqdNotify.NotifyStateChanged(c, false)
 
 	return c
 }
@@ -581,7 +581,7 @@ func (c *Channel) exit(deleted bool) error {
 
 		// since we are explicitly deleting a channel (not just at system exit time)
 		// de-register this from the lookupd
-		c.nsqdNotify.NotifyStateChanged(c, true)
+		c.nsqdNotify.NotifyStateChanged(c, false)
 	} else {
 		nsqLog.Logf("CHANNEL(%s): closing", c.name)
 	}
@@ -654,15 +654,15 @@ func (c *Channel) IsZanTestSkipped() bool {
 	return c.IsExt() && c.option.AllowZanTestSkip && atomic.LoadInt32(&c.zanTestSkip) == ZanTestSkip
 }
 
-func (c *Channel) SkipZanTest() error {
-	return c.doSkipZanTest(true)
+func (c *Channel) SkipZanTest() {
+	c.doSkipZanTest(true)
 }
 
-func (c *Channel) UnskipZanTest() error {
-	return c.doSkipZanTest(false)
+func (c *Channel) UnskipZanTest() {
+	c.doSkipZanTest(false)
 }
 
-func (c *Channel) doSkipZanTest(skipped bool) error {
+func (c *Channel) doSkipZanTest(skipped bool) {
 	if skipped {
 		atomic.StoreInt32(&c.zanTestSkip, ZanTestSkip)
 		//
@@ -679,19 +679,17 @@ func (c *Channel) doSkipZanTest(skipped bool) error {
 		}
 	}
 	c.RUnlock()
-
-	return nil
 }
 
-func (c *Channel) Pause() error {
-	return c.doPause(true)
+func (c *Channel) Pause() {
+	c.doPause(true)
 }
 
-func (c *Channel) UnPause() error {
-	return c.doPause(false)
+func (c *Channel) UnPause() {
+	c.doPause(false)
 }
 
-func (c *Channel) doPause(pause bool) error {
+func (c *Channel) doPause(pause bool) {
 	if pause {
 		atomic.StoreInt32(&c.paused, 1)
 	} else {
@@ -707,26 +705,25 @@ func (c *Channel) doPause(pause bool) error {
 		}
 	}
 	c.RUnlock()
-	return nil
 }
 
 func (c *Channel) IsPaused() bool {
 	return atomic.LoadInt32(&c.paused) == 1
 }
 
-func (c *Channel) Skip() error {
-	return c.doSkip(true)
+func (c *Channel) Skip() {
+	c.doSkip(true)
 }
 
-func (c *Channel) UnSkip() error {
-	return c.doSkip(false)
+func (c *Channel) UnSkip() {
+	c.doSkip(false)
 }
 
 func (c *Channel) IsSkipped() bool {
 	return atomic.LoadInt32(&c.skipped) == 1
 }
 
-func (c *Channel) doSkip(skipped bool) error {
+func (c *Channel) doSkip(skipped bool) {
 	if skipped {
 		atomic.StoreInt32(&c.skipped, 1)
 		if c.GetDelayedQueue() != nil {
@@ -736,7 +733,6 @@ func (c *Channel) doSkip(skipped bool) error {
 		atomic.StoreInt32(&c.skipped, 0)
 		c.TryRefreshChannelEnd()
 	}
-	return nil
 }
 
 // When topic message is put, update the new end of the queue

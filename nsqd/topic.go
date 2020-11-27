@@ -534,6 +534,30 @@ func (t *Topic) LoadChannelMeta() error {
 	return nil
 }
 
+func (t *Topic) UpdateChannelMeta(ch *Channel, paused int, skipped int, zanTestSkipped int) error {
+	switch paused {
+	case 1:
+		ch.Pause()
+	case 0:
+		ch.UnPause()
+	}
+
+	switch skipped {
+	case 1:
+		ch.Skip()
+	case 0:
+		ch.UnSkip()
+	}
+
+	switch int32(zanTestSkipped) {
+	case ZanTestSkip:
+		ch.SkipZanTest()
+	case ZanTestUnskip:
+		ch.UnskipZanTest()
+	}
+	return t.SaveChannelMeta()
+}
+
 func (t *Topic) GetChannelMeta() []ChannelMetaInfo {
 	t.channelLock.RLock()
 	channels := make([]ChannelMetaInfo, 0, len(t.channelMap))
@@ -555,7 +579,6 @@ func (t *Topic) GetChannelMeta() []ChannelMetaInfo {
 }
 
 func (t *Topic) SaveChannelMeta() error {
-	fileName := t.getChannelMetaFileName()
 	channels := make([]*ChannelMetaInfo, 0)
 	t.channelLock.RLock()
 	for _, channel := range t.channelMap {
@@ -576,6 +599,7 @@ func (t *Topic) SaveChannelMeta() error {
 	if err != nil {
 		return err
 	}
+	fileName := t.getChannelMetaFileName()
 	t.saveMutex.Lock()
 	defer t.saveMutex.Unlock()
 	tmpFileName := fmt.Sprintf("%s.%d.tmp", fileName, rand.Int())
@@ -776,10 +800,13 @@ func (t *Topic) GetTopicPart() int {
 // for the given Topic
 func (t *Topic) GetChannel(channelName string) *Channel {
 	t.channelLock.Lock()
-	defer t.channelLock.Unlock()
 	channel, isNew := t.getOrCreateChannel(channelName)
+	t.channelLock.Unlock()
 
 	if isNew {
+		if !channel.IsEphemeral() {
+			t.SaveChannelMeta()
+		}
 		// update messagePump state
 		t.NotifyReloadChannels()
 	}
@@ -860,7 +887,11 @@ func (t *Topic) CloseExistingChannel(channelName string, deleteData bool) error 
 	t.channelLock.Lock()
 	channel, ok := t.channelMap[channelName]
 	if !ok {
+		numChannels := len(t.channelMap)
 		t.channelLock.Unlock()
+		if numChannels == 0 && t.ephemeral == true {
+			go t.deleter.Do(func() { t.nsqdNotify.NotifyDeleteTopic(t) })
+		}
 		return errors.New("channel does not exist")
 	}
 	t.channelMap[channelName] = nil
@@ -888,7 +919,11 @@ func (t *Topic) CloseExistingChannel(channelName string, deleteData bool) error 
 
 // DeleteExistingChannel removes a channel from the topic only if it exists
 func (t *Topic) DeleteExistingChannel(channelName string) error {
-	return t.CloseExistingChannel(channelName, true)
+	err := t.CloseExistingChannel(channelName, true)
+	if err == nil {
+		t.SaveChannelMeta()
+	}
+	return err
 }
 
 func (t *Topic) RollbackNoLock(vend BackendOffset, diffCnt uint64) error {

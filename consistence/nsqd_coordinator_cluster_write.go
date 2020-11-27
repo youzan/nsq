@@ -1038,42 +1038,16 @@ func (ncoord *NsqdCoordinator) UpdateChannelStateToCluster(channel *nsqd.Channel
 	if checkErr != nil {
 		return checkErr.ToErrorType()
 	}
+	topic, err := ncoord.localNsqd.GetExistingTopic(topicName, partition)
+	if err != nil {
+		return err
+	}
 
 	doLocalWrite := func(d *coordData) *CoordErr {
-		var pauseErr error
-		switch paused {
-		case 1:
-			pauseErr = channel.Pause()
-		case 0:
-			pauseErr = channel.UnPause()
-		}
-		if pauseErr != nil {
-			coordLog.Warningf("update channel(%v) state pause:%v failed: %v, topic %v,%v", channel.GetName(), paused, pauseErr, topicName, partition)
-			return &CoordErr{pauseErr.Error(), RpcNoErr, CoordLocalErr}
-		}
-
-		var skipErr error
-		switch skipped {
-		case 1:
-			skipErr = channel.Skip()
-		case 0:
-			skipErr = channel.UnSkip()
-		}
-		if skipErr != nil {
-			coordLog.Warningf("update channel(%v) state skip:%v failed: %v, topic %v,%v", channel.GetName(), skipped, pauseErr, topicName, partition)
-			return &CoordErr{pauseErr.Error(), RpcNoErr, CoordLocalErr}
-		}
-
-		var zanTestSkippedErr error
-		switch zanTestSkipped {
-		case nsqd.ZanTestSkip:
-			zanTestSkippedErr = channel.SkipZanTest()
-		case nsqd.ZanTestUnskip:
-			zanTestSkippedErr = channel.UnskipZanTest()
-		}
-		if zanTestSkippedErr != nil {
-			coordLog.Warningf("update channel(%v) state skip zan test :%v failed: %v, topic %v,%v", channel.GetName(), zanTestSkipped, pauseErr, topicName, partition)
-			return &CoordErr{zanTestSkippedErr.Error(), RpcNoErr, CoordLocalErr}
+		err := topic.UpdateChannelMeta(channel, paused, skipped, zanTestSkipped)
+		if err != nil {
+			coordLog.Warningf("update channel(%v) state failed: %v, topic %v,%v", channel.GetName(), err.Error(), topicName, partition)
+			return &CoordErr{err.Error(), RpcNoErr, CoordLocalErr}
 		}
 
 		return nil
@@ -1239,45 +1213,14 @@ func (ncoord *NsqdCoordinator) updateChannelStateOnSlave(tc *coordData, channelN
 	}
 	if ch.IsEphemeral() {
 		coordLog.Errorf("ephemeral channel %v should not be synced on slave", channelName)
+		return nil
 	}
 
-	var pauseErr error
-	switch paused {
-	case 1:
-		pauseErr = ch.Pause()
-	case 0:
-		pauseErr = ch.UnPause()
+	localErr = topic.UpdateChannelMeta(ch, paused, skipped, zanTestSkipped)
+	if localErr != nil {
+		coordLog.Errorf("fail to update state for channel: %v, %v, err:%v", topic.GetTopicName(), channelName, localErr.Error())
+		return ErrLocalChannelStateUpdateFailed
 	}
-	if pauseErr != nil {
-		coordLog.Errorf("fail to pause/unpause %v, channel: %v, %v", paused, topic.GetTopicName(), channelName)
-		return ErrLocalChannelPauseFailed
-	}
-
-	var skipErr error
-	switch skipped {
-	case 1:
-		skipErr = ch.Skip()
-	case 0:
-		skipErr = ch.UnSkip()
-	}
-	if skipErr != nil {
-		coordLog.Errorf("fail to skip/unskip %v, channel: %v, %v", skipped, topic.GetTopicName(), channelName)
-		return ErrLocalChannelSkipFailed
-	}
-
-	var zanTestSkipErr error
-	switch zanTestSkipped {
-	case nsqd.ZanTestSkip:
-		zanTestSkipErr = ch.SkipZanTest()
-	case nsqd.ZanTestUnskip:
-		zanTestSkipErr = ch.UnskipZanTest()
-	}
-	if zanTestSkipErr != nil {
-		coordLog.Errorf("fail to skip/unskip zan test %v, channel: %v, %v", zanTestSkipped, topic.GetTopicName(), channelName)
-		return ErrLocalChannelSkipZanTestFailed
-	}
-
-	topic.SaveChannelMeta()
 	return nil
 }
 
@@ -1381,8 +1324,6 @@ func (ncoord *NsqdCoordinator) DeleteChannel(topic *nsqd.Topic, channelName stri
 		if localErr != nil {
 			coordLog.Infof("topic %v deleteing local channel %v error: %v",
 				topicName, channelName, localErr)
-		} else {
-			topic.SaveChannelMeta()
 		}
 		return nil
 	}
@@ -1440,7 +1381,6 @@ func (ncoord *NsqdCoordinator) deleteChannelOnSlave(tc *coordData, channelName s
 		coordLog.Logf("topic %v delete channel %v on slave failed: %v ", topicName, channelName, localErr)
 	} else {
 		tc.syncedConsumeMgr.Clear()
-		topic.SaveChannelMeta()
 	}
 	return nil
 }
@@ -1557,7 +1497,11 @@ func (ncoord *NsqdCoordinator) updateChannelListOnSlave(tc *coordData, chList []
 			changed = true
 		}
 		if changed {
-			topic.SaveChannelMeta()
+			err := topic.SaveChannelMeta()
+			if err != nil {
+				coordLog.Warningf("topic %v save channel meta on slave failed: %v", topicName, err.Error())
+				return ErrLocalChannelStateUpdateFailed
+			}
 		}
 	}
 	return nil
