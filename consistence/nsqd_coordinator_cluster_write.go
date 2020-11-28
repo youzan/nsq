@@ -1493,7 +1493,7 @@ func (ncoord *NsqdCoordinator) updateChannelListOnSlave(tc *coordData, chList []
 		changed := false
 		for chName, _ := range oldChList {
 			coordLog.Infof("topic %v local channel not on leader: %v", topicName, chName)
-			topic.CloseExistingChannel(chName, false)
+			topic.CloseExistingChannel(chName, true)
 			changed = true
 		}
 		if changed {

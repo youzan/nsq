@@ -2,12 +2,9 @@ package nsqd
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
-	"math/rand"
 	"os"
 	"path"
 	"strconv"
@@ -144,7 +141,6 @@ type Topic struct {
 	delayedQueue                 atomic.Value
 	isExt                        int32
 	isChannelAutoCreatedDisabled int32
-	saveMutex                    sync.Mutex
 	pubFailedCnt                 int64
 	metaStorage                  IMetaStorage
 	// the pub data waiting pub ok returned
@@ -225,6 +221,9 @@ func NewTopicWithExtAndDisableChannelAutoCreate(topicName string, part int, ext 
 		quitChan:        make(chan struct{}),
 		pubLoopFunc:     loopFunc,
 		metaStorage:     metaStorage,
+	}
+	if metaStorage == nil {
+		t.metaStorage = &fileMetaStorage{}
 	}
 	if ext {
 		t.setExt()
@@ -497,17 +496,9 @@ func (t *Topic) getChannelMetaFileName() string {
 
 func (t *Topic) LoadChannelMeta() error {
 	fn := t.getChannelMetaFileName()
-	data, err := ioutil.ReadFile(fn)
+	channels, err := t.metaStorage.LoadChannelMeta(fn)
 	if err != nil {
-		if !os.IsNotExist(err) {
-			nsqLog.LogErrorf("failed to read channel metadata from %s - %s", fn, err)
-		}
-		return err
-	}
-	channels := make([]*ChannelMetaInfo, 0)
-	err = json.Unmarshal(data, &channels)
-	if err != nil {
-		nsqLog.LogErrorf("failed to parse metadata - %s", err)
+		nsqLog.LogErrorf("failed to load metadata - %s", err)
 		return err
 	}
 
@@ -595,26 +586,8 @@ func (t *Topic) SaveChannelMeta() error {
 		channel.RUnlock()
 	}
 	t.channelLock.RUnlock()
-	d, err := json.Marshal(channels)
-	if err != nil {
-		return err
-	}
 	fileName := t.getChannelMetaFileName()
-	t.saveMutex.Lock()
-	defer t.saveMutex.Unlock()
-	tmpFileName := fmt.Sprintf("%s.%d.tmp", fileName, rand.Int())
-	f, err := os.OpenFile(tmpFileName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
-	if err != nil {
-		return err
-	}
-	_, err = f.Write(d)
-	if err != nil {
-		f.Close()
-		return err
-	}
-	f.Sync()
-	f.Close()
-	err = util.AtomicRename(tmpFileName, fileName)
+	err := t.metaStorage.SaveChannelMeta(fileName, t.option.UseFsync, channels)
 	if err != nil {
 		return err
 	}
@@ -623,10 +596,7 @@ func (t *Topic) SaveChannelMeta() error {
 
 func (t *Topic) RemoveChannelMeta() {
 	fileName := t.getChannelMetaFileName()
-	err := os.Remove(fileName)
-	if err != nil {
-		nsqLog.Infof("remove file %v failed:%v", fileName, err)
-	}
+	t.metaStorage.RemoveChannelMeta(fileName)
 }
 
 func (t *Topic) getHistoryStatsFileName() string {

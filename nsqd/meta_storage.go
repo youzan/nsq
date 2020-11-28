@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"math/rand"
 	"os"
 	"path"
@@ -41,6 +42,9 @@ type IMetaStorage interface {
 	PersistWriter(key string, fsync bool, wend diskQueueEndInfo) error
 	RetrieveWriter(key string, readOnly bool) (diskQueueEndInfo, error)
 	RemoveWriter(key string)
+	LoadChannelMeta(key string) ([]*ChannelMetaInfo, error)
+	SaveChannelMeta(key string, fsync bool, channels []*ChannelMetaInfo) error
+	RemoveChannelMeta(key string)
 	Sync()
 	Close()
 }
@@ -278,6 +282,53 @@ func (fs *fileMetaStorage) PersistWriter(fileName string, fsync bool, writeEnd d
 	return err
 }
 
+func (fs *fileMetaStorage) SaveChannelMeta(key string, fsync bool, channels []*ChannelMetaInfo) error {
+	d, err := json.Marshal(channels)
+	if err != nil {
+		return err
+	}
+	fs.metaLock.Lock()
+	defer fs.metaLock.Unlock()
+	tmpFileName := fmt.Sprintf("%s.%d.tmp", key, rand.Int())
+	f, err := os.OpenFile(tmpFileName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+	if err != nil {
+		return err
+	}
+	_, err = f.Write(d)
+	if err != nil {
+		f.Close()
+		return err
+	}
+	if fsync {
+		f.Sync()
+	}
+	f.Close()
+	return util.AtomicRename(tmpFileName, key)
+}
+
+func (fs *fileMetaStorage) LoadChannelMeta(key string) ([]*ChannelMetaInfo, error) {
+	data, err := ioutil.ReadFile(key)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			nsqLog.LogErrorf("failed to read channel metadata from %s - %s", key, err)
+		}
+		return nil, err
+	}
+	channels := make([]*ChannelMetaInfo, 0)
+	err = json.Unmarshal(data, &channels)
+	if err != nil {
+		nsqLog.LogErrorf("failed to parse metadata - %s", err)
+		return nil, err
+	}
+	return channels, nil
+}
+
+func (fs *fileMetaStorage) RemoveChannelMeta(key string) {
+	fs.metaLock.Lock()
+	defer fs.metaLock.Unlock()
+	os.Remove(key)
+}
+
 type dbMetaData struct {
 	EndOffset   diskQueueOffset
 	VirtualEnd  BackendOffset
@@ -500,6 +551,64 @@ func (dbs *dbMetaStorage) RetrieveWriter(key string, readOnly bool) (diskQueueEn
 	return queueEnd, err
 }
 
+func (dbs *dbMetaStorage) SaveChannelMeta(key string, fsync bool, channels []*ChannelMetaInfo) error {
+	err := dbs.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(metaDataBucket))
+		ek := []byte(key + "-channelmeta")
+		newV, _ := json.Marshal(channels)
+		oldV := b.Get(ek)
+		exists := oldV != nil
+		if exists && bytes.Equal(oldV, newV) {
+		} else {
+			err := b.Put(ek, newV)
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if fsync && err == nil {
+		dbs.Sync()
+	}
+	if err != nil {
+		nsqLog.LogErrorf("failed to save meta key %v to db: %v , %v ", key, dbs.dataPath, err)
+	}
+	return err
+}
+
+func (dbs *dbMetaStorage) LoadChannelMeta(key string) ([]*ChannelMetaInfo, error) {
+	fallback := false
+	var meta []*ChannelMetaInfo
+	err := dbs.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(metaDataBucket))
+		ek := []byte(key + "-channelmeta")
+		v := b.Get(ek)
+		if v == nil {
+			fallback = true
+			return errMetaNotFound
+		}
+		return json.Unmarshal(v, &meta)
+	})
+	if err != nil {
+		nsqLog.Infof("failed to read meta key %v from db: %v , %v ", key, dbs.dataPath, err)
+	}
+	if fallback || err != nil {
+		nsqLog.Logf("fallback to read meta key %v from file meta", key)
+		return dbs.fileMeta.LoadChannelMeta(key)
+	}
+	return meta, err
+}
+
+func (dbs *dbMetaStorage) RemoveChannelMeta(key string) {
+	dbs.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(metaDataBucket))
+		ek := []byte(key + "-channelmeta")
+		b.Delete(ek)
+		return nil
+	})
+	dbs.fileMeta.RemoveChannelMeta(key)
+}
+
 func (dbs *dbMetaStorage) Sync() {
 	if dbs.readOnly {
 		return
@@ -600,6 +709,24 @@ func (ss *shardedDBMetaStorage) RetrieveWriter(key string, readOnly bool) (diskQ
 	h := int(murmur3.Sum32([]byte(key))) % len(ss.writedbShards)
 	d := ss.writedbShards[h]
 	return d.RetrieveWriter(key, readOnly)
+}
+
+func (ss *shardedDBMetaStorage) SaveChannelMeta(key string, fsync bool, channels []*ChannelMetaInfo) error {
+	h := int(murmur3.Sum32([]byte(key))) % len(ss.dbShards)
+	d := ss.dbShards[h]
+	return d.SaveChannelMeta(key, fsync, channels)
+}
+
+func (ss *shardedDBMetaStorage) LoadChannelMeta(key string) ([]*ChannelMetaInfo, error) {
+	h := int(murmur3.Sum32([]byte(key))) % len(ss.dbShards)
+	d := ss.dbShards[h]
+	return d.LoadChannelMeta(key)
+}
+
+func (ss *shardedDBMetaStorage) RemoveChannelMeta(key string) {
+	h := int(murmur3.Sum32([]byte(key))) % len(ss.dbShards)
+	d := ss.dbShards[h]
+	d.RemoveChannelMeta(key)
 }
 
 func (ss *shardedDBMetaStorage) Sync() {

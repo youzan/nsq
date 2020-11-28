@@ -2188,7 +2188,7 @@ func (ncoord *NsqdCoordinator) syncChannelsFromOther(c *NsqdRpcClient, topicInfo
 			if len(oldChList) > 0 {
 				coordLog.Infof("topic %v local channel not on leader: %v", topicInfo.GetTopicDesp(), oldChList)
 				for chName, _ := range oldChList {
-					localTopic.CloseExistingChannel(chName, false)
+					localTopic.CloseExistingChannel(chName, true)
 				}
 			}
 			err = localTopic.SaveChannelMeta()
@@ -3046,7 +3046,7 @@ func (ncoord *NsqdCoordinator) prepareLeavingCluster() {
 			// TODO: if we release leader first, we can not transfer the leader properly,
 			// if we leave isr first, we would get the state that the leader not in isr
 			// wait lookup choose new node for isr/leader
-			retry := 3
+			retry := 2
 			for retry > 0 {
 				retry--
 				err := ncoord.requestLeaveFromISRFast(topicName, pid)
@@ -3059,7 +3059,7 @@ func (ncoord *NsqdCoordinator) prepareLeavingCluster() {
 					coordLog.Infof("======= topic %v request leave isr failed: %v", topicName, err)
 					break
 				}
-				time.Sleep(time.Millisecond * 10)
+				time.Sleep(time.Millisecond)
 			}
 
 			if tcData.IsMineLeaderSessionReady(ncoord.GetMyID()) {
