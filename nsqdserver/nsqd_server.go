@@ -263,6 +263,7 @@ func (s *NsqdServer) Main() error {
 		s.lookupLoop(opts.LookupPingInterval, s.ctx.nsqd.MetaNotifyChan, s.ctx.nsqd.OptsNotificationChan, s.exitChan)
 	})
 
+	s.waitGroup.Wrap(s.historySaveLoop)
 	s.waitGroup.Wrap(s.statsdLoop)
 	return nil
 }

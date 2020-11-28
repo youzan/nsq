@@ -89,7 +89,7 @@ func (nlrpc *NsqLookupRpcClient) Reconnect() error {
 }
 
 func (nlrpc *NsqLookupRpcClient) CallFast(method string, arg interface{}) (interface{}, error) {
-	reply, err := nlrpc.dc.CallTimeout(method, arg, time.Millisecond*10)
+	reply, err := nlrpc.dc.CallTimeout(method, arg, time.Millisecond*5)
 	return reply, err
 }
 

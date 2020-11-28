@@ -257,16 +257,12 @@ func TestStartup(t *testing.T) {
 	<-doneExitChan
 }
 
-func metadataForChannel(n *NSQD, topic *Topic, channelIndex int) *simplejson.Json {
+func metadataForChannel(t *testing.T, n *NSQD, topic *Topic, channelIndex int) *ChannelMetaInfo {
 	fn := topic.getChannelMetaFileName()
-	data, err := ioutil.ReadFile(fn)
-	if err != nil {
-		panic(err)
-	}
-	js, _ := simplejson.NewJson(data)
-
-	mChannels := js
-	return mChannels.GetIndex(channelIndex)
+	metas, err := topic.metaStorage.LoadChannelMeta(fn)
+	equal(t, err, nil)
+	equal(t, len(metas) > channelIndex, true)
+	return metas[channelIndex]
 }
 
 func TestPauseMetadata(t *testing.T) {
@@ -282,25 +278,25 @@ func TestPauseMetadata(t *testing.T) {
 	topic := nsqd.GetTopicIgnPart(topicName)
 	channel := topic.GetChannel("ch")
 	atomic.StoreInt32(&nsqd.isLoading, 0)
-	nsqd.persistMetadata(nsqd.GetTopicMapCopy())
+	topic.SaveChannelMeta()
 
-	b, _ := metadataForChannel(nsqd, topic, 0).Get("paused").Bool()
+	b := metadataForChannel(t, nsqd, topic, 0).Paused
 	equal(t, b, false)
 
 	channel.Pause()
-	b, _ = metadataForChannel(nsqd, topic, 0).Get("paused").Bool()
+	b = metadataForChannel(t, nsqd, topic, 0).Paused
 	equal(t, b, false)
 
-	nsqd.persistMetadata(nsqd.GetTopicMapCopy())
-	b, _ = metadataForChannel(nsqd, topic, 0).Get("paused").Bool()
+	topic.SaveChannelMeta()
+	b = metadataForChannel(t, nsqd, topic, 0).Paused
 	equal(t, b, true)
 
 	channel.UnPause()
-	b, _ = metadataForChannel(nsqd, topic, 0).Get("paused").Bool()
+	b = metadataForChannel(t, nsqd, topic, 0).Paused
 	equal(t, b, true)
 
-	nsqd.persistMetadata(nsqd.GetTopicMapCopy())
-	b, _ = metadataForChannel(nsqd, topic, 0).Get("paused").Bool()
+	topic.SaveChannelMeta()
+	b = metadataForChannel(t, nsqd, topic, 0).Paused
 	equal(t, b, false)
 }
 
@@ -320,23 +316,23 @@ func TestZantestSkipMetaData(t *testing.T) {
 	atomic.StoreInt32(&nsqd.isLoading, 0)
 	nsqd.persistMetadata(nsqd.GetTopicMapCopy())
 
-	b, _ := metadataForChannel(nsqd, topic, 0).Get("zanTestSkipped").Bool()
+	b := metadataForChannel(t, nsqd, topic, 0).ZanTestSkipped
 	equal(t, b, true)
 
 	channel.UnskipZanTest()
-	b, _ = metadataForChannel(nsqd, topic, 0).Get("zanTestSkipped").Bool()
+	b = metadataForChannel(t, nsqd, topic, 0).ZanTestSkipped
 	equal(t, b, true)
 
-	nsqd.persistMetadata(nsqd.GetTopicMapCopy())
-	b, _ = metadataForChannel(nsqd, topic, 0).Get("zanTestSkipped").Bool()
+	topic.SaveChannelMeta()
+	b = metadataForChannel(t, nsqd, topic, 0).IsZanTestSkipepd()
 	equal(t, b, false)
 
 	channel.SkipZanTest()
-	b, _ = metadataForChannel(nsqd, topic, 0).Get("zanTestSkipped").Bool()
+	b = metadataForChannel(t, nsqd, topic, 0).IsZanTestSkipepd()
 	equal(t, b, false)
 
-	nsqd.persistMetadata(nsqd.GetTopicMapCopy())
-	b, _ = metadataForChannel(nsqd, topic, 0).Get("zanTestSkipped").Bool()
+	topic.SaveChannelMeta()
+	b = metadataForChannel(t, nsqd, topic, 0).IsZanTestSkipepd()
 	equal(t, b, true)
 }
 
@@ -411,25 +407,25 @@ func TestSkipMetaData(t *testing.T) {
 	topic := nsqd.GetTopicIgnPart(topicName)
 	channel := topic.GetChannel("ch")
 	atomic.StoreInt32(&nsqd.isLoading, 0)
-	nsqd.persistMetadata(nsqd.GetTopicMapCopy())
+	topic.SaveChannelMeta()
 
-	b, _ := metadataForChannel(nsqd, topic, 0).Get("skipped").Bool()
+	b := metadataForChannel(t, nsqd, topic, 0).Skipped
 	equal(t, b, false)
 
 	channel.Skip()
-	b, _ = metadataForChannel(nsqd, topic, 0).Get("skipped").Bool()
+	b = metadataForChannel(t, nsqd, topic, 0).Skipped
 	equal(t, b, false)
 
-	nsqd.persistMetadata(nsqd.GetTopicMapCopy())
-	b, _ = metadataForChannel(nsqd, topic, 0).Get("skipped").Bool()
+	topic.SaveChannelMeta()
+	b = metadataForChannel(t, nsqd, topic, 0).Skipped
 	equal(t, b, true)
 
 	channel.UnSkip()
-	b, _ = metadataForChannel(nsqd, topic, 0).Get("skipped").Bool()
+	b = metadataForChannel(t, nsqd, topic, 0).Skipped
 	equal(t, b, true)
 
-	nsqd.persistMetadata(nsqd.GetTopicMapCopy())
-	b, _ = metadataForChannel(nsqd, topic, 0).Get("skipped").Bool()
+	topic.SaveChannelMeta()
+	b = metadataForChannel(t, nsqd, topic, 0).Skipped
 	equal(t, b, false)
 }
 

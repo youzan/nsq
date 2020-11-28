@@ -27,6 +27,20 @@ func (s Uint64Slice) Less(i, j int) bool {
 	return s[i] < s[j]
 }
 
+func (n *NsqdServer) historySaveLoop() {
+	opts := n.ctx.getOpts()
+	ticker := time.NewTicker(opts.StatsdInterval * 10)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-n.exitChan:
+			return
+		case <-ticker.C:
+			n.ctx.nsqd.UpdateTopicHistoryStats()
+		}
+	}
+}
+
 func (n *NsqdServer) statsdLoop() {
 	var lastMemStats runtime.MemStats
 	var lastStats []nsqd.TopicStats
@@ -37,8 +51,6 @@ func (n *NsqdServer) statsdLoop() {
 		case <-n.exitChan:
 			goto exit
 		case <-ticker.C:
-			n.ctx.nsqd.UpdateTopicHistoryStats()
-
 			stats := n.ctx.nsqd.GetStats(false, true)
 			var client *statsd.Client
 			if opts.StatsdAddress != "" {

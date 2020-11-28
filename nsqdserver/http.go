@@ -867,14 +867,14 @@ func (s *httpServer) doSkipZanTest(w http.ResponseWriter, req *http.Request, ps 
 
 	if strings.Contains(req.URL.Path, "unskipZanTest") {
 		//update channel state before set channel consume offset
-		err = s.ctx.UpdateChannelState(channel, -1, -1, nsqd.ZanTestUnskip)
+		err = s.ctx.UpdateChannelState(topic, channel, -1, -1, nsqd.ZanTestUnskip)
 		if err != nil {
 			nsqd.NsqLogger().LogErrorf("failure in %s - %s", req.URL.Path, err)
 			return nil, http_api.Err{500, "INTERNAL_ERROR"}
 		}
 		nsqd.NsqLogger().Logf("skip zan test messages")
 	} else {
-		err = s.ctx.UpdateChannelState(channel, -1, -1, nsqd.ZanTestSkip)
+		err = s.ctx.UpdateChannelState(topic, channel, -1, -1, nsqd.ZanTestSkip)
 		if err != nil {
 			nsqd.NsqLogger().LogErrorf("failure in %s - %s", req.URL.Path, err)
 			return nil, http_api.Err{500, "INTERNAL_ERROR"}
@@ -882,8 +882,6 @@ func (s *httpServer) doSkipZanTest(w http.ResponseWriter, req *http.Request, ps 
 		nsqd.NsqLogger().Logf("unskip zan test messages")
 	}
 
-	// pro-actively persist metadata so in case of process failure
-	topic.SaveChannelMeta()
 	return nil, nil
 }
 
@@ -902,13 +900,13 @@ func (s *httpServer) doSkipChannel(w http.ResponseWriter, req *http.Request, ps 
 
 	if strings.Contains(req.URL.Path, "unskip") {
 		//update channel state before set channel consume offset
-		err = s.ctx.UpdateChannelState(channel, -1, 0, -1)
+		err = s.ctx.UpdateChannelState(topic, channel, -1, 0, -1)
 		if err != nil {
 			nsqd.NsqLogger().LogErrorf("failure in %s - %s", req.URL.Path, err)
 			return nil, http_api.Err{500, "INTERNAL_ERROR"}
 		}
 	} else {
-		err = s.ctx.UpdateChannelState(channel, -1, 1, -1)
+		err = s.ctx.UpdateChannelState(topic, channel, -1, 1, -1)
 		if err != nil {
 			nsqd.NsqLogger().LogErrorf("failure in %s - %s", req.URL.Path, err)
 			return nil, http_api.Err{500, "INTERNAL_ERROR"}
@@ -930,8 +928,6 @@ func (s *httpServer) doSkipChannel(w http.ResponseWriter, req *http.Request, ps 
 			channelName, err, req.RemoteAddr)
 	}
 
-	// pro-actively persist metadata so in case of process failure
-	topic.SaveChannelMeta()
 	return nil, nil
 }
 
@@ -948,17 +944,15 @@ func (s *httpServer) doPauseChannel(w http.ResponseWriter, req *http.Request, ps
 
 	nsqd.NsqLogger().Logf("topic:%v channel:%v ", topic.GetTopicName(), channel.GetName())
 	if strings.Contains(req.URL.Path, "unpause") {
-		err = s.ctx.UpdateChannelState(channel, 0, -1, -1)
+		err = s.ctx.UpdateChannelState(topic, channel, 0, -1, -1)
 	} else {
-		err = s.ctx.UpdateChannelState(channel, 1, -1, -1)
+		err = s.ctx.UpdateChannelState(topic, channel, 1, -1, -1)
 	}
 	if err != nil {
 		nsqd.NsqLogger().LogErrorf("failure in %s - %s", req.URL.Path, err)
 		return nil, http_api.Err{500, "INTERNAL_ERROR"}
 	}
 
-	// pro-actively persist metadata so in case of process failure
-	topic.SaveChannelMeta()
 	return nil, nil
 }
 

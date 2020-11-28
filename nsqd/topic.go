@@ -2,12 +2,9 @@ package nsqd
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
-	"math/rand"
 	"os"
 	"path"
 	"strconv"
@@ -144,7 +141,6 @@ type Topic struct {
 	delayedQueue                 atomic.Value
 	isExt                        int32
 	isChannelAutoCreatedDisabled int32
-	saveMutex                    sync.Mutex
 	pubFailedCnt                 int64
 	metaStorage                  IMetaStorage
 	// the pub data waiting pub ok returned
@@ -225,6 +221,9 @@ func NewTopicWithExtAndDisableChannelAutoCreate(topicName string, part int, ext 
 		quitChan:        make(chan struct{}),
 		pubLoopFunc:     loopFunc,
 		metaStorage:     metaStorage,
+	}
+	if metaStorage == nil {
+		t.metaStorage = &fileMetaStorage{}
 	}
 	if ext {
 		t.setExt()
@@ -497,17 +496,9 @@ func (t *Topic) getChannelMetaFileName() string {
 
 func (t *Topic) LoadChannelMeta() error {
 	fn := t.getChannelMetaFileName()
-	data, err := ioutil.ReadFile(fn)
+	channels, err := t.metaStorage.LoadChannelMeta(fn)
 	if err != nil {
-		if !os.IsNotExist(err) {
-			nsqLog.LogErrorf("failed to read channel metadata from %s - %s", fn, err)
-		}
-		return err
-	}
-	channels := make([]*ChannelMetaInfo, 0)
-	err = json.Unmarshal(data, &channels)
-	if err != nil {
-		nsqLog.LogErrorf("failed to parse metadata - %s", err)
+		nsqLog.LogErrorf("failed to load metadata - %s", err)
 		return err
 	}
 
@@ -534,6 +525,30 @@ func (t *Topic) LoadChannelMeta() error {
 	return nil
 }
 
+func (t *Topic) UpdateChannelMeta(ch *Channel, paused int, skipped int, zanTestSkipped int) error {
+	switch paused {
+	case 1:
+		ch.Pause()
+	case 0:
+		ch.UnPause()
+	}
+
+	switch skipped {
+	case 1:
+		ch.Skip()
+	case 0:
+		ch.UnSkip()
+	}
+
+	switch int32(zanTestSkipped) {
+	case ZanTestSkip:
+		ch.SkipZanTest()
+	case ZanTestUnskip:
+		ch.UnskipZanTest()
+	}
+	return t.SaveChannelMeta()
+}
+
 func (t *Topic) GetChannelMeta() []ChannelMetaInfo {
 	t.channelLock.RLock()
 	channels := make([]ChannelMetaInfo, 0, len(t.channelMap))
@@ -555,7 +570,6 @@ func (t *Topic) GetChannelMeta() []ChannelMetaInfo {
 }
 
 func (t *Topic) SaveChannelMeta() error {
-	fileName := t.getChannelMetaFileName()
 	channels := make([]*ChannelMetaInfo, 0)
 	t.channelLock.RLock()
 	for _, channel := range t.channelMap {
@@ -572,25 +586,8 @@ func (t *Topic) SaveChannelMeta() error {
 		channel.RUnlock()
 	}
 	t.channelLock.RUnlock()
-	d, err := json.Marshal(channels)
-	if err != nil {
-		return err
-	}
-	t.saveMutex.Lock()
-	defer t.saveMutex.Unlock()
-	tmpFileName := fmt.Sprintf("%s.%d.tmp", fileName, rand.Int())
-	f, err := os.OpenFile(tmpFileName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
-	if err != nil {
-		return err
-	}
-	_, err = f.Write(d)
-	if err != nil {
-		f.Close()
-		return err
-	}
-	f.Sync()
-	f.Close()
-	err = util.AtomicRename(tmpFileName, fileName)
+	fileName := t.getChannelMetaFileName()
+	err := t.metaStorage.SaveChannelMeta(fileName, t.option.UseFsync, channels)
 	if err != nil {
 		return err
 	}
@@ -599,10 +596,7 @@ func (t *Topic) SaveChannelMeta() error {
 
 func (t *Topic) RemoveChannelMeta() {
 	fileName := t.getChannelMetaFileName()
-	err := os.Remove(fileName)
-	if err != nil {
-		nsqLog.Infof("remove file %v failed:%v", fileName, err)
-	}
+	t.metaStorage.RemoveChannelMeta(fileName)
 }
 
 func (t *Topic) getHistoryStatsFileName() string {
@@ -776,10 +770,13 @@ func (t *Topic) GetTopicPart() int {
 // for the given Topic
 func (t *Topic) GetChannel(channelName string) *Channel {
 	t.channelLock.Lock()
-	defer t.channelLock.Unlock()
 	channel, isNew := t.getOrCreateChannel(channelName)
+	t.channelLock.Unlock()
 
 	if isNew {
+		if !channel.IsEphemeral() {
+			t.SaveChannelMeta()
+		}
 		// update messagePump state
 		t.NotifyReloadChannels()
 	}
@@ -860,7 +857,11 @@ func (t *Topic) CloseExistingChannel(channelName string, deleteData bool) error 
 	t.channelLock.Lock()
 	channel, ok := t.channelMap[channelName]
 	if !ok {
+		numChannels := len(t.channelMap)
 		t.channelLock.Unlock()
+		if numChannels == 0 && t.ephemeral == true {
+			go t.deleter.Do(func() { t.nsqdNotify.NotifyDeleteTopic(t) })
+		}
 		return errors.New("channel does not exist")
 	}
 	t.channelMap[channelName] = nil
@@ -888,7 +889,11 @@ func (t *Topic) CloseExistingChannel(channelName string, deleteData bool) error 
 
 // DeleteExistingChannel removes a channel from the topic only if it exists
 func (t *Topic) DeleteExistingChannel(channelName string) error {
-	return t.CloseExistingChannel(channelName, true)
+	err := t.CloseExistingChannel(channelName, true)
+	if err == nil {
+		t.SaveChannelMeta()
+	}
+	return err
 }
 
 func (t *Topic) RollbackNoLock(vend BackendOffset, diffCnt uint64) error {
