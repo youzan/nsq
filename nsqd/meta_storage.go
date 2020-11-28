@@ -573,6 +573,9 @@ func (dbs *dbMetaStorage) SaveChannelMeta(key string, fsync bool, channels []*Ch
 	if err != nil {
 		nsqLog.LogErrorf("failed to save meta key %v to db: %v , %v ", key, dbs.dataPath, err)
 	}
+	if atomic.LoadInt32(&alwaysEnableFileMetaWriter) == 1 {
+		dbs.fileMeta.SaveChannelMeta(key, fsync, channels)
+	}
 	return err
 }
 
