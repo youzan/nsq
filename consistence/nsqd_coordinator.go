@@ -712,7 +712,10 @@ func (ncoord *NsqdCoordinator) loadLocalTopicData() error {
 		return nil
 	}
 
+	totalCnt := len(topicParts)
+	loadingCnt := 0
 	for _, topic := range topicParts {
+		loadingCnt++
 		topicName := topic.GetTopicName()
 		partition := topic.GetTopicPart()
 		if tc, err := ncoord.getTopicCoordData(topicName, partition); err == nil && tc != nil {
@@ -744,7 +747,7 @@ func (ncoord *NsqdCoordinator) loadLocalTopicData() error {
 			}
 			continue
 		}
-		coordLog.Infof("loading topic: %v-%v", topicName, partition)
+		coordLog.Infof("loading topic: %v-%v, loaded: %v, total: %v", topicName, partition, loadingCnt, totalCnt)
 		if topicName == "" {
 			continue
 		}

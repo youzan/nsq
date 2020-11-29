@@ -112,6 +112,8 @@ type NsqLookupCoordinator struct {
 	balanceWaiting     int32
 	doChecking         int32
 	enableTopNBalance  int32
+	cachedNodeStats    map[string]cachedNodeTopicStats
+	cachedMutex        sync.Mutex
 }
 
 func NewNsqLookupCoordinator(cluster string, n *NsqLookupdNodeInfo, opts *Options) *NsqLookupCoordinator {
@@ -127,6 +129,7 @@ func NewNsqLookupCoordinator(cluster string, n *NsqLookupdNodeInfo, opts *Option
 		joinISRState:       make(map[string]*JoinISRState),
 		failedRpcList:      make([]RpcFailedInfo, 0),
 		nsqdMonitorChan:    make(chan struct{}),
+		cachedNodeStats:    make(map[string]cachedNodeTopicStats),
 	}
 	if coord.leadership != nil {
 		coord.leadership.InitClusterID(coord.clusterKey)
@@ -751,6 +754,7 @@ func (nlcoord *NsqLookupCoordinator) doCheckTopics(monitorChan chan struct{}, fa
 			wj := state.waitingJoin
 			state.Unlock()
 			if wj {
+				coordLog.Infof("topic %v is in waiting join state", t.GetTopicDesp())
 				checkOK = false
 				go nlcoord.triggerCheckTopics(t.Name, t.Partition, time.Second)
 				continue
@@ -913,6 +917,7 @@ func (nlcoord *NsqLookupCoordinator) doCheckTopics(monitorChan chan struct{}, fa
 			wj := state.waitingJoin
 			state.Unlock()
 			if wj {
+				coordLog.Infof("topic %v is in waiting join state", t.GetTopicDesp())
 				checkOK = false
 				go nlcoord.triggerCheckTopics(t.Name, t.Partition, time.Second)
 				continue

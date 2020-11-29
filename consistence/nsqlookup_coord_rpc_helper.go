@@ -361,11 +361,33 @@ func (nlcoord *NsqLookupCoordinator) isTopicWriteDisabled(topicInfo *TopicPartit
 }
 
 func (nlcoord *NsqLookupCoordinator) getNsqdTopicStat(node NsqdNodeInfo) (*NodeTopicStats, error) {
+	// cache node stats, since it may not change very often, and it may cost if too many topics
+	nlcoord.cachedMutex.Lock()
+	item, ok := nlcoord.cachedNodeStats[node.GetID()]
+	nlcoord.cachedMutex.Unlock()
+	if ok && item.stats != nil && time.Since(item.lastTime) < time.Minute {
+		return item.stats, nil
+	}
 	c, err := nlcoord.acquireRpcClient(node.GetID())
 	if err != nil {
 		return nil, err.ToErrorType()
 	}
-	return c.GetTopicStats("")
+	stats, serr := c.GetTopicStats("")
+	if serr != nil {
+		return nil, serr
+	}
+	nlcoord.cachedMutex.Lock()
+	old, ok := nlcoord.cachedNodeStats[node.GetID()]
+	if ok {
+		old.stats = nil
+	}
+	item = cachedNodeTopicStats{
+		stats:    stats,
+		lastTime: time.Now(),
+	}
+	nlcoord.cachedNodeStats[node.GetID()] = item
+	nlcoord.cachedMutex.Unlock()
+	return item.stats, nil
 }
 
 func (nlcoord *NsqLookupCoordinator) getNsqdLastCommitLogID(nid string, topicInfo *TopicPartitionMetaInfo) (int64, *CoordErr) {

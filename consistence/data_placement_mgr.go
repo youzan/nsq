@@ -140,6 +140,11 @@ type WrapChannelConsumerOffset struct {
 	ChannelConsumerOffset
 }
 
+type cachedNodeTopicStats struct {
+	stats    *NodeTopicStats
+	lastTime time.Time
+}
+
 type NodeTopicStats struct {
 	NodeID string
 	// the data (MB) need to be consumed on the leader for all channels in the topic.

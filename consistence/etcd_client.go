@@ -33,7 +33,7 @@ func NewEClient(host, userName, pwd string) (*EtcdClient, error) {
 	cfg := client.Config{
 		Endpoints:               machines,
 		Transport:               etcdTransport,
-		HeaderTimeoutPerRequest: time.Second,
+		HeaderTimeoutPerRequest: time.Second * 5,
 		Username:                userName,
 		Password:                pwd,
 	}
