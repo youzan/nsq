@@ -639,6 +639,7 @@ func (nlcoord *NsqLookupCoordinator) checkTopics(monitorChan chan struct{}) {
 	ticker := time.NewTicker(doCheckInterval)
 	waitingMigrateTopic := make(map[string]map[int]time.Time)
 	lostLeaderSessions := make(map[string]bool)
+	lastFullCheck := time.Now()
 	defer func() {
 		ticker.Stop()
 		coordLog.Infof("check topics quit.")
@@ -652,7 +653,11 @@ func (nlcoord *NsqLookupCoordinator) checkTopics(monitorChan chan struct{}) {
 			if nlcoord.leadership == nil {
 				continue
 			}
+			if time.Since(lastFullCheck) < doCheckInterval {
+				continue
+			}
 			nlcoord.doCheckTopics(monitorChan, nil, waitingMigrateTopic, lostLeaderSessions, true)
+			lastFullCheck = time.Now()
 		case failedInfo := <-nlcoord.checkTopicFailChan:
 			if nlcoord.leadership == nil {
 				continue
@@ -667,6 +672,7 @@ func (nlcoord *NsqLookupCoordinator) doCheckTopics(monitorChan chan struct{}, fa
 
 	time.Sleep(time.Millisecond * 10)
 	coordLog.Infof("do check topics...")
+	defer coordLog.Infof("do check topics done")
 	if !atomic.CompareAndSwapInt32(&nlcoord.doChecking, 0, 1) {
 		return
 	}

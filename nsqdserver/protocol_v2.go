@@ -1073,6 +1073,7 @@ func (p *protocolV2) internalSUB(client *nsqd.ClientV2, params [][]byte, enableT
 		var err error
 		channel, err = topic.GetExistingChannel(channelName)
 		if err != nil {
+			nsqd.NsqLogger().Logf("sub failed on not registered: %v-%v, channel: %s", topicName, partition, channelName)
 			return nil, protocol.NewFatalClientErr(nil, "E_SUB_CHANNEL_NOT_REGISTERED", "channel is not registered under topic.")
 		}
 	} else {
