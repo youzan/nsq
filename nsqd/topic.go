@@ -145,6 +145,7 @@ type Topic struct {
 	metaStorage                  IMetaStorage
 	// the pub data waiting pub ok returned
 	pubWaitingBytes int64
+	tpLog           *levellogger.LevelLogger
 }
 
 func (t *Topic) setExt() {
@@ -222,6 +223,9 @@ func NewTopicWithExtAndDisableChannelAutoCreate(topicName string, part int, ext 
 		pubLoopFunc:     loopFunc,
 		metaStorage:     metaStorage,
 	}
+	t.fullName = GetTopicFullName(t.tname, t.partition)
+	t.tpLog = nsqLog.WrappedWithPrefix("["+t.fullName+"]", 0)
+
 	if metaStorage == nil {
 		t.metaStorage = &fileMetaStorage{}
 	}
@@ -240,12 +244,11 @@ func NewTopicWithExtAndDisableChannelAutoCreate(topicName string, part int, ext 
 	t.bp.New = func() interface{} {
 		return &bytes.Buffer{}
 	}
-	t.fullName = GetTopicFullName(t.tname, t.partition)
 
 	t.dataPath = path.Join(opt.DataPath, topicName)
 	err := os.MkdirAll(t.dataPath, 0755)
 	if err != nil {
-		nsqLog.LogErrorf("topic(%v) failed to create directory: %v ", t.fullName, err)
+		t.tpLog.LogErrorf("failed to create directory: %v ", err)
 		return nil
 	}
 
@@ -260,7 +263,7 @@ func NewTopicWithExtAndDisableChannelAutoCreate(topicName string, part int, ext 
 	)
 
 	if err != nil {
-		nsqLog.LogErrorf("topic(%v) failed to init disk queue: %v ", t.fullName, err)
+		t.tpLog.LogErrorf("failed to init disk queue: %v ", err)
 		if err == ErrNeedFixQueueStart || err == ErrNeedFixQueueEnd {
 			t.SetDataFixState(true)
 		} else {
@@ -274,12 +277,12 @@ func NewTopicWithExtAndDisableChannelAutoCreate(topicName string, part int, ext 
 	}
 	err = t.loadMagicCode()
 	if err != nil {
-		nsqLog.LogErrorf("topic %v failed to load magic code: %v", t.fullName, err)
+		t.tpLog.LogErrorf("failed to load magic code: %v", err)
 		return nil
 	}
 	t.detailStats = NewDetailStatsInfo(t.tname, strconv.Itoa(t.partition), t.TotalDataSize(), t.getHistoryStatsFileName())
 	t.nsqdNotify.NotifyStateChanged(t, true)
-	nsqLog.LogDebugf("new topic created: %v", t.tname)
+	t.tpLog.LogDebugf("new topic created: %v", t.tname)
 
 	if t.pubLoopFunc != nil {
 		t.wg.Add(1)
@@ -309,7 +312,7 @@ func (t *Topic) GetOrCreateDelayedQueueForReadNoLock() (*DelayQueue, error) {
 		if err == nil {
 			t.delayedQueue.Store(delayedQueue)
 		} else {
-			nsqLog.LogWarningf("topic %v init delayed queue error %v", t.tname, err)
+			t.tpLog.LogWarningf("init delayed queue error %v", err)
 			return nil, err
 		}
 	}
@@ -327,7 +330,7 @@ func (t *Topic) GetOrCreateDelayedQueueNoLock(idGen MsgIDGenerator) (*DelayQueue
 			}
 			t.channelLock.RUnlock()
 		} else {
-			nsqLog.LogWarningf("topic %v init delayed queue error %v", t.tname, err)
+			t.tpLog.LogWarningf("init delayed queue error %v", err)
 			return nil, err
 		}
 	}
@@ -383,7 +386,7 @@ func (t *Topic) saveMagicCode() error {
 		return err
 	}
 	f.Sync()
-	nsqLog.Infof("saved topic %v as magic code: %v", t.fullName, atomic.LoadInt64(&t.magicCode))
+	t.tpLog.Infof("saved as magic code: %v", atomic.LoadInt64(&t.magicCode))
 	return nil
 }
 
@@ -391,7 +394,7 @@ func (t *Topic) removeMagicCode() {
 	fileName := t.getMagicCodeFileName()
 	err := os.Remove(fileName)
 	if err != nil {
-		nsqLog.Infof("remove the magic file %v failed:%v", fileName, err)
+		t.tpLog.Infof("remove the magic file %v failed:%v", fileName, err)
 	}
 }
 
@@ -416,7 +419,7 @@ func (t *Topic) loadMagicCode() error {
 		return err
 	}
 	atomic.StoreInt64(&t.magicCode, code)
-	nsqLog.Infof("loading topic %v as magic code: %v", t.fullName, code)
+	t.tpLog.Infof("loading topic as magic code: %v", code)
 	return nil
 }
 
@@ -424,7 +427,7 @@ func (t *Topic) removeHistoryStat() {
 	fileName := t.getHistoryStatsFileName()
 	err := os.Remove(fileName)
 	if err != nil {
-		nsqLog.Infof("remove file %v failed:%v", fileName, err)
+		t.tpLog.Infof("remove file %v failed:%v", fileName, err)
 	}
 }
 
@@ -432,7 +435,7 @@ func (t *Topic) MarkAsRemoved() (string, error) {
 	t.Lock()
 	defer t.Unlock()
 	atomic.CompareAndSwapInt32(&t.exitFlag, 0, 1)
-	nsqLog.Logf("TOPIC(%s): deleting", t.GetFullName())
+	t.tpLog.Logf("TOPIC(%s): deleting", t.GetFullName())
 	// since we are explicitly deleting a topic (not just at system exit time)
 	// de-register this from the lookupd
 	t.nsqdNotify.NotifyStateChanged(t, true)
@@ -446,11 +449,11 @@ func (t *Topic) MarkAsRemoved() (string, error) {
 	t.channelLock.Unlock()
 	// we should move our partition only
 	renamePath := t.dataPath + "-removed-" + strconv.Itoa(int(time.Now().Unix()))
-	nsqLog.Warningf("mark the topic %v as removed: %v", t.GetFullName(), renamePath)
+	t.tpLog.Warningf("mark the topic as removed: %v", renamePath)
 	os.MkdirAll(renamePath, 0755)
 	err := t.backend.RemoveTo(renamePath)
 	if err != nil {
-		nsqLog.Errorf("failed to mark the topic %v as removed %v failed: %v", t.GetFullName(), renamePath, err)
+		t.tpLog.Errorf("failed to mark the topic as removed %v failed: %v", renamePath, err)
 	}
 	util.AtomicRename(t.getMagicCodeFileName(), path.Join(renamePath, "magic"+strconv.Itoa(t.partition)))
 	t.removeHistoryStat()
@@ -467,7 +470,7 @@ func (t *Topic) SetMagicCode(code int64) error {
 	if t.magicCode == code {
 		return nil
 	} else if t.magicCode > 0 {
-		nsqLog.Errorf("magic code set more than once :%v, %v", t.magicCode, code)
+		t.tpLog.Errorf("magic code set more than once :%v, %v", t.magicCode, code)
 		return errors.New("magic code can not be changed.")
 	}
 	t.magicCode = code
@@ -498,14 +501,14 @@ func (t *Topic) LoadChannelMeta() error {
 	fn := t.getChannelMetaFileName()
 	channels, err := t.metaStorage.LoadChannelMeta(fn)
 	if err != nil {
-		nsqLog.LogErrorf("failed to load metadata - %s", err)
+		t.tpLog.LogErrorf("failed to load metadata - %s", err)
 		return err
 	}
 
 	for _, ch := range channels {
 		channelName := ch.Name
 		if !protocol.IsValidChannelName(channelName) {
-			nsqLog.LogWarningf("skipping creation of invalid channel %s", channelName)
+			t.tpLog.LogWarningf("skipping creation of invalid channel %s", channelName)
 			continue
 		}
 		channel := t.GetChannel(channelName)
@@ -635,7 +638,7 @@ func (t *Topic) UpdateCommittedOffset(offset BackendQueueEnd) {
 	}
 	cur := t.GetCommitted()
 	if cur != nil && offset.Offset() < cur.Offset() {
-		nsqLog.LogDebugf("committed is rollbacked: %v, %v", cur, offset)
+		t.tpLog.LogDebugf("committed is rollbacked: %v, %v", cur, offset)
 	}
 	t.committedOffset.Store(offset)
 	syncEvery := atomic.LoadInt64(&t.dynamicConf.SyncEvery)
@@ -732,7 +735,7 @@ func (t *Topic) SetDynamicInfo(dynamicConf TopicDynamicConf, idGen MsgIDGenerato
 	} else if !dynamicConf.DisableChannelAutoCreate && channelAutoCreateDisabled {
 		t.EnableChannelAutoCreate()
 	}
-	nsqLog.Logf("topic dynamic configure changed to %v", dynamicConf)
+	t.tpLog.Logf("topic dynamic configure changed to %v", dynamicConf)
 	t.channelLock.RLock()
 	for _, ch := range t.channelMap {
 		ext := dynamicConf.Ext
@@ -798,7 +801,7 @@ func (t *Topic) GetTopicChannelDebugStat(channelName string) string {
 	t.channelLock.RUnlock()
 	dq := t.GetDelayedQueue()
 	if dq != nil {
-		nsqLog.Logf("delayed queue stats: %v", dq.Stats())
+		t.tpLog.Logf("delayed queue stats: %v", dq.Stats())
 	}
 	return statStr
 }
@@ -813,8 +816,8 @@ func (t *Topic) getOrCreateChannel(channelName string) (*Channel, bool) {
 		readEnd := t.backend.GetQueueReadEnd()
 		curCommit := t.GetCommitted()
 		if curCommit != nil && readEnd.Offset() > curCommit.Offset() {
-			if nsqLog.Level() >= levellogger.LOG_DEBUG {
-				nsqLog.Logf("channel %v, end to commit: %v, read end: %v", channelName, curCommit, readEnd)
+			if t.tpLog.Level() >= levellogger.LOG_DEBUG {
+				t.tpLog.Logf("channel %v, end to commit: %v, read end: %v", channelName, curCommit, readEnd)
 			}
 			readEnd = curCommit
 		}
@@ -836,7 +839,7 @@ func (t *Topic) getOrCreateChannel(channelName string) (*Channel, bool) {
 			channel.DisableConsume(true)
 		}
 		t.channelMap[channelName] = channel
-		nsqLog.Logf("TOPIC(%s): new channel(%s), end: %v", t.GetFullName(),
+		t.tpLog.Logf("TOPIC new channel(%s), end: %v",
 			channel.name, channel.GetChannelEnd())
 		return channel, true
 	}
@@ -870,7 +873,7 @@ func (t *Topic) CloseExistingChannel(channelName string, deleteData bool) error 
 	numChannels := len(t.channelMap)
 	t.channelLock.Unlock()
 
-	nsqLog.Logf("TOPIC(%s): deleting channel %s", t.GetFullName(), channel.name)
+	t.tpLog.Logf("TOPIC deleting channel %s", channel.name)
 
 	// delete empties the channel before closing
 	// (so that we dont leave any messages around)
@@ -898,7 +901,7 @@ func (t *Topic) DeleteExistingChannel(channelName string) error {
 
 func (t *Topic) RollbackNoLock(vend BackendOffset, diffCnt uint64) error {
 	old := t.backend.GetQueueWriteEnd()
-	nsqLog.Logf("reset the backend from %v to : %v, %v", old, vend, diffCnt)
+	t.tpLog.Logf("reset the backend from %v to : %v, %v", old, vend, diffCnt)
 	dend, err := t.backend.RollbackWriteV2(vend, diffCnt)
 	if err == nil {
 		t.UpdateCommittedOffset(&dend)
@@ -912,10 +915,10 @@ func (t *Topic) ResetBackendEndNoLock(vend BackendOffset, totalCnt int64) error 
 	if old.Offset() == vend && old.TotalMsgCnt() == totalCnt {
 		return nil
 	}
-	nsqLog.Logf("topic %v reset the backend from %v to : %v, %v", t.GetFullName(), old, vend, totalCnt)
+	t.tpLog.Logf("topic reset the backend from %v to : %v, %v", old, vend, totalCnt)
 	dend, err := t.backend.ResetWriteEndV2(vend, totalCnt)
 	if err != nil {
-		nsqLog.LogErrorf("reset backend to %v error: %v", vend, err)
+		t.tpLog.LogErrorf("reset backend to %v error: %v", vend, err)
 	} else {
 		t.UpdateCommittedOffset(&dend)
 		t.updateChannelsEnd(true, true)
@@ -927,7 +930,7 @@ func (t *Topic) ResetBackendEndNoLock(vend BackendOffset, totalCnt int64) error 
 // PutMessage writes a Message to the queue
 func (t *Topic) PutMessage(m *Message) (MessageID, BackendOffset, int32, BackendQueueEnd, error) {
 	if m.ID > 0 {
-		nsqLog.Logf("should not pass id in message while pub: %v", m.ID)
+		t.tpLog.Logf("should not pass id in message while pub: %v", m.ID)
 		return 0, 0, 0, nil, ErrInvalidMessageID
 	}
 	t.Lock()
@@ -945,7 +948,7 @@ func (t *Topic) PutMessageNoLock(m *Message) (MessageID, BackendOffset, int32, B
 		return 0, 0, 0, nil, errors.New("exiting")
 	}
 	if m.ID > 0 {
-		nsqLog.Logf("should not pass id in message while pub: %v", m.ID)
+		t.tpLog.Logf("should not pass id in message while pub: %v", m.ID)
 		return 0, 0, 0, nil, ErrInvalidMessageID
 	}
 
@@ -1011,12 +1014,12 @@ func (t *Topic) PutRawDataOnReplica(rawData []byte, offset BackendOffset, checkS
 	}
 	wend := t.backend.GetQueueWriteEnd()
 	if wend.Offset() != offset {
-		nsqLog.LogErrorf("topic %v: write offset mismatch: %v, %v", t.GetFullName(), offset, wend)
+		t.tpLog.LogErrorf("topic write offset mismatch: %v, %v", offset, wend)
 		return nil, ErrWriteOffsetMismatch
 	}
 	_, writeBytes, dend, err := t.backend.PutRawV2(rawData, msgNum)
 	if err != nil {
-		nsqLog.LogErrorf("topic %v: write to disk error: %v, %v", t.GetFullName(), offset, err.Error())
+		t.tpLog.LogErrorf("topic write to disk error: %v, %v", offset, err.Error())
 		return &dend, err
 	}
 	if checkSize > 0 && int64(writeBytes) != checkSize {
@@ -1037,7 +1040,7 @@ func (t *Topic) PutMessageOnReplica(m *Message, offset BackendOffset, checkSize 
 	}
 	wend := t.backend.GetQueueWriteEnd()
 	if wend.Offset() != offset {
-		nsqLog.LogErrorf("topic %v: write offset mismatch: %v, %v", t.GetFullName(), offset, wend)
+		t.tpLog.LogErrorf("topic write offset mismatch: %v, %v", offset, wend)
 		return nil, ErrWriteOffsetMismatch
 	}
 	_, _, _, dend, err := t.put(m, false, checkSize)
@@ -1054,9 +1057,9 @@ func (t *Topic) PutMessagesOnReplica(msgs []*Message, offset BackendOffset, chec
 
 	wend := t.backend.GetQueueWriteEnd()
 	if wend.Offset() != offset {
-		nsqLog.LogErrorf(
-			"TOPIC(%s) : write message offset mismatch %v, %v",
-			t.GetFullName(), offset, wend)
+		t.tpLog.LogErrorf(
+			"TOPIC write message offset mismatch %v, %v",
+			offset, wend)
 		return nil, ErrWriteOffsetMismatch
 	}
 
@@ -1093,7 +1096,7 @@ func (t *Topic) PutMessagesNoLock(msgs []*Message) (MessageID, BackendOffset, in
 	batchBytes := int32(0)
 	for _, m := range msgs {
 		if m.ID > 0 {
-			nsqLog.Logf("should not pass id in message while pub: %v", m.ID)
+			t.tpLog.Logf("should not pass id in message while pub: %v", m.ID)
 			t.ResetBackendEndNoLock(wend.Offset(), wend.TotalMsgCnt())
 			return 0, 0, 0, 0, nil, ErrInvalidMessageID
 		}
@@ -1121,7 +1124,7 @@ func (t *Topic) PutMessages(msgs []*Message) (MessageID, BackendOffset, int32, i
 	firstMsgID, firstOffset, batchBytes, totalCnt, dend, err := t.PutMessagesNoLock(msgs)
 	cost := time.Since(s)
 	if cost >= slowCost {
-		nsqLog.Infof("topic %v put batch local cost: %v", t.GetFullName(), cost)
+		t.tpLog.Infof("topic put batch local cost: %v", cost)
 	}
 	return firstMsgID, firstOffset, batchBytes, totalCnt, dend, err
 }
@@ -1133,9 +1136,9 @@ func (t *Topic) put(m *Message, trace bool, checkSize int64) (MessageID, Backend
 	offset, writeBytes, dend, err := writeMessageToBackendWithCheck(t.IsExt(), &t.putBuffer, m, checkSize, t.backend)
 	atomic.StoreInt32(&t.needFlush, 1)
 	if err != nil {
-		nsqLog.LogErrorf(
-			"TOPIC(%s) : failed to write message to backend - %s",
-			t.GetFullName(), err)
+		t.tpLog.LogErrorf(
+			"TOPIC failed to write message to backend - %s",
+			err)
 		return m.ID, offset, writeBytes, dend, err
 	}
 
@@ -1144,7 +1147,7 @@ func (t *Topic) put(m *Message, trace bool, checkSize int64) (MessageID, Backend
 	}
 
 	if trace {
-		if m.TraceID != 0 || atomic.LoadInt32(&t.EnableTrace) == 1 || nsqLog.Level() >= levellogger.LOG_DETAIL {
+		if m.TraceID != 0 || atomic.LoadInt32(&t.EnableTrace) == 1 || t.tpLog.Level() >= levellogger.LOG_DETAIL {
 			nsqMsgTracer.TracePub(t.GetTopicName(), t.GetTopicPart(), "PUB", m.TraceID, m, offset, dend.TotalMsgCnt())
 		}
 	}
@@ -1161,7 +1164,8 @@ func updateChannelEnd(forceReload bool, e BackendQueueEnd, ch *Channel) {
 	if err != nil {
 		if err != ErrExiting {
 			nsqLog.LogErrorf(
-				"failed to update topic end to channel(%s) - %s",
+				"%v failed to update topic end to channel(%s) - %s",
+				ch.GetTopicName(),
 				ch.name, err)
 		}
 	}
@@ -1172,8 +1176,8 @@ func (t *Topic) getCommittedEnd() BackendQueueEnd {
 	curCommit := t.GetCommitted()
 	// if not committed, we need wait to notify channel.
 	if curCommit != nil && e.Offset() > curCommit.Offset() {
-		if nsqLog.Level() >= levellogger.LOG_DEBUG {
-			nsqLog.Logf("topic %v, end to commit: %v, read end: %v", t.fullName, curCommit, e)
+		if t.tpLog.Level() >= levellogger.LOG_DEBUG {
+			t.tpLog.Logf("topic end to commit: %v, read end: %v", curCommit, e)
 		}
 		e = curCommit
 	}
@@ -1194,7 +1198,7 @@ func (t *Topic) updateChannelsEnd(forceReload bool, forceUpdate bool) {
 	t.channelLock.RUnlock()
 	cost := time.Since(s)
 	if cost > time.Second/2 {
-		nsqLog.LogWarningf("topic(%s): update channels end cost: %v", t.GetFullName(), cost)
+		t.tpLog.LogWarningf("topic update channels end cost: %v", cost)
 	}
 }
 
@@ -1230,12 +1234,12 @@ func (t *Topic) exit(deleted bool) error {
 	}
 
 	if deleted {
-		nsqLog.Logf("TOPIC(%s): deleting", t.GetFullName())
+		t.tpLog.Logf("TOPIC deleting")
 		// since we are explicitly deleting a topic (not just at system exit time)
 		// de-register this from the lookupd
 		t.nsqdNotify.NotifyStateChanged(t, true)
 	} else {
-		nsqLog.Logf("TOPIC(%s): closing", t.GetFullName())
+		t.tpLog.Logf("TOPIC closing")
 	}
 	close(t.quitChan)
 	// this will wait pub loop,
@@ -1268,16 +1272,16 @@ func (t *Topic) exit(deleted bool) error {
 	// write anything leftover to disk
 	t.flushData()
 	t.updateChannelsEnd(false, true)
-	nsqLog.Logf("[TRACE_DATA] exiting topic end: %v, cnt: %v", t.TotalDataSize(), t.TotalMessageCnt())
+	t.tpLog.Logf("[TRACE_DATA] exiting topic end: %v, cnt: %v", t.TotalDataSize(), t.TotalMessageCnt())
 	t.SaveChannelMeta()
 	t.channelLock.RLock()
 	// close all the channels
 	for _, channel := range t.channelMap {
-		nsqLog.Logf("[TRACE_DATA] exiting channel : %v, %v, %v, %v", channel.GetName(), channel.GetConfirmed(), channel.Depth(), channel.backend.GetQueueReadEnd())
+		t.tpLog.Logf("[TRACE_DATA] exiting channel : %v, %v, %v, %v", channel.GetName(), channel.GetConfirmed(), channel.Depth(), channel.backend.GetQueueReadEnd())
 		err := channel.Close()
 		if err != nil {
 			// we need to continue regardless of error to close all the channels
-			nsqLog.Logf(" channel(%s) close - %s", channel.name, err)
+			t.tpLog.Logf(" channel(%s) close - %s", channel.name, err)
 		}
 	}
 	t.channelLock.RUnlock()
@@ -1295,7 +1299,7 @@ func (t *Topic) IsWriteDisabled() bool {
 // for leader, we can continue consume on disabled leader
 func (t *Topic) DisableForSlave(keepConsume bool) {
 	if atomic.CompareAndSwapInt32(&t.writeDisabled, 0, 1) {
-		nsqLog.Logf("[TRACE_DATA] while disable topic %v end: %v, cnt: %v, queue start: %v", t.GetFullName(),
+		t.tpLog.Logf("[TRACE_DATA] while disable topic end: %v, cnt: %v, queue start: %v",
 			t.TotalDataSize(), t.TotalMessageCnt(), t.backend.GetQueueReadStart())
 	}
 
@@ -1308,7 +1312,7 @@ func (t *Topic) DisableForSlave(keepConsume bool) {
 			curRead = d.GetQueueCurrentRead()
 		}
 
-		nsqLog.Logf("[TRACE_DATA] while disable channel : %v, %v, %v, %v, %v", c.GetName(),
+		t.tpLog.Logf("[TRACE_DATA] while disable channel : %v, %v, %v, %v, %v", c.GetName(),
 			c.GetConfirmed(), c.Depth(), c.backend.GetQueueReadEnd(), curRead)
 	}
 	t.channelLock.RUnlock()
@@ -1318,7 +1322,7 @@ func (t *Topic) DisableForSlave(keepConsume bool) {
 
 func (t *Topic) EnableForMaster() {
 	if atomic.CompareAndSwapInt32(&t.writeDisabled, 1, 0) {
-		nsqLog.Logf("[TRACE_DATA] while enable topic %v end: %v, cnt: %v", t.GetFullName(), t.TotalDataSize(), t.TotalMessageCnt())
+		t.tpLog.Logf("[TRACE_DATA] while enable topic end: %v, cnt: %v", t.TotalDataSize(), t.TotalMessageCnt())
 	}
 	t.channelLock.RLock()
 	for _, c := range t.channelMap {
@@ -1328,7 +1332,7 @@ func (t *Topic) EnableForMaster() {
 		if ok {
 			curRead = d.GetQueueCurrentRead()
 		}
-		nsqLog.Logf("[TRACE_DATA] while enable channel : %v, %v, %v, %v, %v", c.GetName(),
+		t.tpLog.Logf("[TRACE_DATA] while enable channel : %v, %v, %v, %v, %v", c.GetName(),
 			c.GetConfirmed(), c.Depth(), c.backend.GetQueueReadEnd(), curRead)
 	}
 	t.channelLock.RUnlock()
@@ -1337,15 +1341,15 @@ func (t *Topic) EnableForMaster() {
 }
 
 func (t *Topic) Empty() error {
-	nsqLog.Logf("TOPIC(%s): empty", t.GetFullName())
+	t.tpLog.Logf("TOPIC empty")
 	return t.backend.Empty()
 }
 
 func (t *Topic) ForceFlush() {
-	if nsqLog.Level() >= levellogger.LOG_DETAIL {
+	if t.tpLog.Level() >= levellogger.LOG_DETAIL {
 		e := t.backend.GetQueueReadEnd()
 		curCommit := t.GetCommitted()
-		nsqLog.Logf("topic %v, end to commit: %v, read end: %v", t.fullName, curCommit, e)
+		t.tpLog.Logf("topic end to commit: %v, read end: %v", curCommit, e)
 	}
 
 	t.flushData()
@@ -1359,13 +1363,13 @@ func (t *Topic) ForceFlush() {
 		channel.Flush(useFsync)
 		cost := time.Since(s)
 		if cost > slowCost*10 {
-			nsqLog.Logf("topic(%s): flush channel %v cost: %v", t.GetFullName(), channel.GetName(), cost)
+			t.tpLog.Logf("topic flush channel %v cost: %v", channel.GetName(), cost)
 		}
 	}
 	t.channelLock.RUnlock()
 	cost := time.Since(s)
 	if cost > slowCost*10 {
-		nsqLog.Logf("topic(%s): flush channel cost: %v", t.GetFullName(), cost)
+		t.tpLog.Logf("topic flush channel cost: %v", cost)
 	}
 }
 
@@ -1400,21 +1404,21 @@ func (t *Topic) flushData() (error, bool) {
 	atomic.StoreInt64(&t.lastSyncCnt, t.backend.GetQueueWriteEnd().TotalMsgCnt())
 	err := t.backend.Flush(useFsync)
 	if err != nil {
-		nsqLog.LogErrorf("failed flush: %v", err)
+		t.tpLog.LogErrorf("failed flush: %v", err)
 		return err, false
 	}
 	cost2 := time.Since(s)
 	if cost2 >= slowCost {
-		nsqLog.LogWarningf("topic(%s): flush cost: %v, %v", t.GetFullName(), cost1, cost2)
+		t.tpLog.LogWarningf("topic flush cost: %v, %v", cost1, cost2)
 	}
 	return err, true
 }
 
 func (t *Topic) PrintCurrentStats() {
-	nsqLog.Logf("topic(%s) status: start: %v, write end %v", t.GetFullName(), t.backend.GetQueueReadStart(), t.backend.GetQueueWriteEnd())
+	t.tpLog.Logf("topic status: start: %v, write end %v", t.backend.GetQueueReadStart(), t.backend.GetQueueWriteEnd())
 	t.channelLock.RLock()
 	for _, ch := range t.channelMap {
-		nsqLog.Logf("channel(%s) depth: %v, confirmed: %v, debug: %v", ch.GetName(), ch.Depth(),
+		t.tpLog.Logf("channel(%s) depth: %v, confirmed: %v, debug: %v", ch.GetName(), ch.Depth(),
 			ch.GetConfirmed(), ch.GetChannelDebugStats())
 	}
 	t.channelLock.RUnlock()
@@ -1457,12 +1461,12 @@ func (t *Topic) TryCleanOldData(retentionSize int64, noRealClean bool, maxCleanO
 	}
 	t.channelLock.RUnlock()
 	if oldestPos == nil {
-		nsqLog.Debugf("no consume position found for topic: %v", t.GetFullName())
+		t.tpLog.Debugf("no consume position found for topic: %v", t.GetFullName())
 		return nil, nil
 	}
 	cleanStart := t.backend.GetQueueReadStart()
-	nsqLog.Debugf("clean topic %v data current start: %v, oldest confirmed %v, max clean end: %v",
-		t.GetFullName(), cleanStart, oldestPos, maxCleanOffset)
+	t.tpLog.Debugf("clean topic data current start: %v, oldest confirmed %v, max clean end: %v",
+		cleanStart, oldestPos, maxCleanOffset)
 	if cleanStart.Offset()+BackendOffset(retentionSize) >= oldestPos.Offset() {
 		return nil, nil
 	}
@@ -1479,7 +1483,7 @@ func (t *Topic) TryCleanOldData(retentionSize int64, noRealClean bool, maxCleanO
 	}
 	err := snapReader.SeekTo(cleanStart.Offset(), seekCnt)
 	if err != nil {
-		nsqLog.Errorf("topic: %v failed to seek to %v: %v", t.GetFullName(), cleanStart, err)
+		t.tpLog.Errorf("topic failed to seek to %v: %v", cleanStart, err)
 		return nil, err
 	}
 
@@ -1498,10 +1502,10 @@ func (t *Topic) TryCleanOldData(retentionSize int64, noRealClean bool, maxCleanO
 			if data.Err == io.EOF {
 				break
 			}
-			nsqLog.Warningf("failed to read at %v - %s", readInfo, data.Err)
+			t.tpLog.Warningf("failed to read at %v - %s", readInfo, data.Err)
 			err := snapReader.SkipToNext()
 			if err != nil {
-				nsqLog.Logf("failed to skip - %s ", err)
+				t.tpLog.Logf("failed to skip - %s ", err)
 				break
 			}
 			continue
@@ -1516,7 +1520,7 @@ func (t *Topic) TryCleanOldData(retentionSize int64, noRealClean bool, maxCleanO
 		} else {
 			msg, decodeErr := decodeMessage(data.Data, t.IsExt())
 			if decodeErr != nil {
-				nsqLog.LogErrorf("failed to decode message - %s - %v", decodeErr, data)
+				t.tpLog.LogErrorf("failed to decode message - %s - %v", decodeErr, data)
 			} else {
 				if msg.Timestamp >= cleanTime.UnixNano() {
 					break
@@ -1529,20 +1533,20 @@ func (t *Topic) TryCleanOldData(retentionSize int64, noRealClean bool, maxCleanO
 		}
 		err = snapReader.SkipToNext()
 		if err != nil {
-			nsqLog.Logf("failed to skip - %s ", err)
+			t.tpLog.Logf("failed to skip - %s ", err)
 			break
 		}
 	}
 
 	if cleanEndInfo == nil || cleanEndInfo.Offset()+BackendOffset(retentionSize) >= maxCleanOffset {
 		if cleanEndInfo != nil {
-			nsqLog.Infof("clean topic %v data at position: %v could not exceed current oldest confirmed %v and max clean end: %v",
-				t.GetFullName(), cleanEndInfo, oldestPos, maxCleanOffset)
+			t.tpLog.Infof("clean topic data at position: %v could not exceed current oldest confirmed %v and max clean end: %v",
+				cleanEndInfo, oldestPos, maxCleanOffset)
 		}
 		return nil, nil
 	}
-	nsqLog.Infof("clean topic %v data from %v under retention %v, %v",
-		t.GetFullName(), cleanEndInfo, cleanTime, retentionSize)
+	t.tpLog.Infof("clean topic data from %v under retention %v, %v",
+		cleanEndInfo, cleanTime, retentionSize)
 	return t.backend.CleanOldDataByRetention(cleanEndInfo, noRealClean, maxCleanOffset)
 }
 
@@ -1551,10 +1555,10 @@ func (t *Topic) TryFixQueueEnd(vend BackendOffset, totalCnt int64) error {
 	if old.Offset() == vend && old.TotalMsgCnt() == totalCnt {
 		return nil
 	}
-	nsqLog.Logf("topic %v try fix the backend end from %v to : %v, %v", t.GetFullName(), old, vend, totalCnt)
+	t.tpLog.Logf("topic try fix the backend end from %v to : %v, %v", old, vend, totalCnt)
 	dend, err := t.backend.TryFixWriteEnd(vend, totalCnt)
 	if err != nil {
-		nsqLog.LogErrorf("fix backend to %v error: %v", vend, err)
+		t.tpLog.LogErrorf("fix backend to %v error: %v", vend, err)
 	} else {
 		t.UpdateCommittedOffset(&dend)
 		t.updateChannelsEnd(true, true)
@@ -1564,7 +1568,7 @@ func (t *Topic) TryFixQueueEnd(vend BackendOffset, totalCnt int64) error {
 
 func (t *Topic) ResetBackendWithQueueStartNoLock(queueStartOffset int64, queueStartCnt int64) error {
 	if !t.IsWriteDisabled() {
-		nsqLog.Warningf("reset the topic %v backend only allow while write disabled", t.GetFullName())
+		t.tpLog.Warningf("reset the topic backend only allow while write disabled")
 		return ErrOperationInvalidState
 	}
 	if queueStartOffset < 0 || queueStartCnt < 0 {
@@ -1573,7 +1577,7 @@ func (t *Topic) ResetBackendWithQueueStartNoLock(queueStartOffset int64, queueSt
 	queueStart := t.backend.GetQueueWriteEnd().(*diskQueueEndInfo)
 	queueStart.virtualEnd = BackendOffset(queueStartOffset)
 	queueStart.totalMsgCnt = queueStartCnt
-	nsqLog.Warningf("reset the topic %v backend with queue start: %v", t.GetFullName(), queueStart)
+	t.tpLog.Warningf("reset the topic backend with queue start: %v", queueStart)
 	err := t.backend.ResetWriteWithQueueStart(queueStart)
 	if err != nil {
 		return err
@@ -1583,7 +1587,7 @@ func (t *Topic) ResetBackendWithQueueStartNoLock(queueStartOffset int64, queueSt
 
 	t.channelLock.RLock()
 	for _, ch := range t.channelMap {
-		nsqLog.Infof("channel stats: %v", ch.GetChannelDebugStats())
+		t.tpLog.Infof("channel stats: %v", ch.GetChannelDebugStats())
 		ch.UpdateQueueEnd(newEnd, true)
 		ch.ConfirmBackendQueueOnSlave(newEnd.Offset(), newEnd.TotalMsgCnt(), true)
 	}
@@ -1624,12 +1628,12 @@ func (t *Topic) GetDelayedQueueConsumedState() (int64, RecentKeyList, map[int]ui
 
 func (t *Topic) UpdateDelayedQueueConsumedState(ts int64, keyList RecentKeyList, cntList map[int]uint64, channelCntList map[string]uint64) error {
 	if t.IsOrdered() {
-		nsqLog.Infof("should never delayed queue in ordered topic: %v", t.GetFullName())
+		t.tpLog.Infof("should never delayed queue in ordered topic")
 		return nil
 	}
 	dq := t.GetDelayedQueue()
 	if dq == nil {
-		nsqLog.Infof("no delayed queue while update delayed state on topic: %v", t.GetFullName())
+		t.tpLog.Infof("no delayed queue while update delayed state on topic")
 		return nil
 	}
 

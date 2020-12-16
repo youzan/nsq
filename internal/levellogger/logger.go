@@ -2,10 +2,11 @@ package levellogger
 
 import (
 	"fmt"
-	"github.com/absolute8511/glog"
 	"log"
 	"os"
 	"sync/atomic"
+
+	"github.com/absolute8511/glog"
 )
 
 type Logger interface {
@@ -74,12 +75,24 @@ const (
 type LevelLogger struct {
 	Logger Logger
 	level  int32
+	prefix string
+	depth  int
 }
 
 func NewLevelLogger(level int32, l Logger) *LevelLogger {
 	return &LevelLogger{
 		Logger: l,
 		level:  level,
+		depth:  2,
+	}
+}
+
+func (self *LevelLogger) WrappedWithPrefix(prefix string, incredDepth int) *LevelLogger {
+	return &LevelLogger{
+		Logger: self.Logger,
+		level:  self.level,
+		depth:  self.depth + incredDepth,
+		prefix: prefix + self.prefix,
 	}
 }
 
@@ -93,54 +106,54 @@ func (self *LevelLogger) Level() int32 {
 
 func (self *LevelLogger) Logf(f string, args ...interface{}) {
 	if self.Logger != nil && self.Level() >= LOG_INFO {
-		self.Logger.Output(2, fmt.Sprintf(f, args...))
+		self.Logger.Output(self.depth, self.prefix+fmt.Sprintf(f, args...))
 	}
 }
 
 func (self *LevelLogger) LogDebugf(f string, args ...interface{}) {
 	if self.Logger != nil && self.Level() >= LOG_DEBUG {
-		self.Logger.Output(2, fmt.Sprintf(f, args...))
+		self.Logger.Output(self.depth, self.prefix+fmt.Sprintf(f, args...))
 	}
 }
 
 func (self *LevelLogger) LogErrorf(f string, args ...interface{}) {
 	if self.Logger != nil {
-		self.Logger.OutputErr(2, fmt.Sprintf(f, args...))
+		self.Logger.OutputErr(self.depth, self.prefix+fmt.Sprintf(f, args...))
 	}
 }
 
 func (self *LevelLogger) LogWarningf(f string, args ...interface{}) {
 	if self.Logger != nil && self.Level() >= LOG_WARN {
-		self.Logger.OutputWarning(2, fmt.Sprintf(f, args...))
+		self.Logger.OutputWarning(self.depth, self.prefix+fmt.Sprintf(f, args...))
 	}
 }
 
 func (self *LevelLogger) Infof(f string, args ...interface{}) {
 	if self.Logger != nil && self.Level() >= LOG_INFO {
-		self.Logger.Output(2, fmt.Sprintf(f, args...))
+		self.Logger.Output(self.depth, self.prefix+fmt.Sprintf(f, args...))
 	}
 }
 
 func (self *LevelLogger) Debugf(f string, args ...interface{}) {
 	if self.Logger != nil && self.Level() >= LOG_DEBUG {
-		self.Logger.Output(2, fmt.Sprintf(f, args...))
+		self.Logger.Output(self.depth, self.prefix+fmt.Sprintf(f, args...))
 	}
 }
 
 func (self *LevelLogger) Errorf(f string, args ...interface{}) {
 	if self.Logger != nil {
-		self.Logger.OutputErr(2, fmt.Sprintf(f, args...))
+		self.Logger.OutputErr(self.depth, self.prefix+fmt.Sprintf(f, args...))
 	}
 }
 
 func (self *LevelLogger) Warningf(f string, args ...interface{}) {
 	if self.Logger != nil && self.Level() >= LOG_WARN {
-		self.Logger.OutputWarning(2, fmt.Sprintf(f, args...))
+		self.Logger.OutputWarning(self.depth, self.prefix+fmt.Sprintf(f, args...))
 	}
 }
 
 func (self *LevelLogger) Warningln(f string) {
 	if self.Logger != nil && self.Level() >= LOG_WARN {
-		self.Logger.OutputWarning(2, f)
+		self.Logger.OutputWarning(self.depth, self.prefix+f)
 	}
 }
