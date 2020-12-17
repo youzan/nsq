@@ -501,7 +501,10 @@ func (t *Topic) LoadChannelMeta() error {
 	fn := t.getChannelMetaFileName()
 	channels, err := t.metaStorage.LoadChannelMeta(fn)
 	if err != nil {
-		t.tpLog.LogErrorf("failed to load metadata - %s", err)
+		if IsMetaNotFound(err) {
+			return nil
+		}
+		t.tpLog.LogWarningf("failed to load metadata - %s", err)
 		return err
 	}
 

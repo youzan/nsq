@@ -49,6 +49,16 @@ type IMetaStorage interface {
 	Close()
 }
 
+func IsMetaNotFound(err error) bool {
+	if os.IsNotExist(err) {
+		return true
+	}
+	if err == errMetaNotFound {
+		return true
+	}
+	return false
+}
+
 type fileMetaStorage struct {
 	metaLock sync.Mutex
 }
