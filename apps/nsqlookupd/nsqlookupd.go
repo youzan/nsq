@@ -29,6 +29,7 @@ var (
 
 	tcpAddress         = flagSet.String("tcp-address", "0.0.0.0:4160", "<addr>:<port> to listen on for TCP clients")
 	httpAddress        = flagSet.String("http-address", "0.0.0.0:4161", "<addr>:<port> to listen on for HTTP clients")
+	metricAddress      = flagSet.String("metric-address", "0.0.0.0:8800", "<addr>:<port> to listen on for HTTP metric clients")
 	rpcPort            = flagSet.String("rpc-port", "", "<port> to listen on for Rpc call")
 	broadcastAddress   = flagSet.String("broadcast-address", "", "address of this lookupd node, (default to the OS hostname)")
 	broadcastInterface = flagSet.String("broadcast-interface", "", "address of this lookupd node, (default to the OS hostname)")
