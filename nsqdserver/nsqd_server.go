@@ -272,8 +272,9 @@ func (s *NsqdServer) Main() error {
 		metricAddr = ":8800"
 	}
 	go func() {
-		http.Handle("/metrics", promhttp.Handler())
-		http.ListenAndServe(metricAddr, nil)
+		mux := http.NewServeMux()
+		mux.Handle("/metrics", promhttp.Handler())
+		http.ListenAndServe(metricAddr, mux)
 	}()
 	return nil
 }
