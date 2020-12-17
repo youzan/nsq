@@ -163,6 +163,7 @@ type Channel struct {
 	topicOrdered          bool
 	lastDelayedReqToEndTs int64
 	limiter               *rate.Limiter
+	chLog                 *levellogger.LevelLogger
 }
 
 // NewChannel creates a new instance of the Channel type and returns a pointer
@@ -197,6 +198,7 @@ func NewChannel(topicName string, part int, topicOrdered bool, channelName strin
 		limiter: rate.NewLimiter(rate.Limit(opt.ChannelRateLimitKB), int(opt.ChannelRateLimitKB)*4),
 	}
 
+	c.chLog = nsqLog.WrappedWithPrefix("["+c.GetTopicName()+"("+c.GetName()+")]", 0)
 	if protocol.IsEphemeral(channelName) {
 		c.ephemeral = true
 	}
@@ -282,18 +284,18 @@ func (c *Channel) checkAndFixStart(start BackendQueueEnd) {
 	if c.GetConfirmed().Offset() >= start.Offset() {
 		return
 	}
-	nsqLog.Infof("%v-%v confirm start need be fixed %v, %v", c.GetTopicName(), c.GetName(),
+	c.chLog.Infof("confirm start need be fixed %v, %v",
 		start, c.GetConfirmed())
 	newStart, err := c.backend.SkipReadToOffset(start.Offset(), start.TotalMsgCnt())
 	if err != nil {
-		nsqLog.Warningf("%v-%v skip to new start failed: %v", c.GetTopicName(), c.GetName(),
+		c.chLog.Warningf("skip to new start failed: %v",
 			err)
 		newStart, err = c.backend.SkipReadToEnd()
 		if err != nil {
-			nsqLog.Warningf("%v-%v skip to new start failed: %v", c.GetTopicName(), c.GetName(),
+			c.chLog.Warningf("skip to new start failed: %v",
 				err)
 		} else {
-			nsqLog.Infof("%v-%v skip to end : %v", c.GetTopicName(), c.GetName(),
+			c.chLog.Infof("skip to end : %v",
 				newStart)
 		}
 	}
@@ -328,7 +330,7 @@ func (c *Channel) RemoveTagClientMsgChannel(tag string) {
 			select {
 			case c.tagChanRemovedChan <- tag:
 			case <-time.After(time.Millisecond * 10):
-				nsqLog.Infof("%v-%v timeout sending tag channel remove signal for %v", c.GetTopicName(), c.GetName(), tag)
+				c.chLog.Infof("timeout sending tag channel remove signal for %v", tag)
 			}
 		}
 	}
@@ -351,7 +353,7 @@ func (c *Channel) GetOrCreateClientMsgChannel(tag string) chan *Message {
 		select {
 		case c.tagChanInitChan <- tag:
 		case <-time.After(time.Millisecond * 10):
-			nsqLog.Infof("%v-%v timeout sending tag channel init signal for %v", c.GetTopicName(), c.GetName(), tag)
+			c.chLog.Infof("timeout sending tag channel init signal for %v", tag)
 		}
 	}
 
@@ -370,7 +372,7 @@ func (c *Channel) GetClientTagMsgChan(tag string) (chan *Message, bool) {
 	defer c.tagMsgChansMutex.RUnlock()
 	msgChanData, exist := c.tagMsgChans[tag]
 	if !exist {
-		nsqLog.Debugf("channel %v for tag %v not found.", c.GetName(), tag)
+		c.chLog.Debugf("channel tag %v not found.", tag)
 		return nil, false
 	}
 	return msgChanData.MsgChan, true
@@ -456,12 +458,12 @@ func (c *Channel) SetConsumeOffset(offset BackendOffset, cnt int64, force bool) 
 		select {
 		case c.readerChanged <- resetChannelData{offset, cnt, true}:
 		default:
-			nsqLog.Logf("ignored the reader reset: %v:%v", offset, cnt)
+			c.chLog.Logf("ignored the reader reset: %v:%v", offset, cnt)
 			if offset > 0 && cnt > 0 {
 				select {
 				case c.readerChanged <- resetChannelData{offset, cnt, true}:
 				case <-time.After(time.Millisecond * 10):
-					nsqLog.Logf("ignored the reader reset finally: %v:%v", offset, cnt)
+					c.chLog.Logf("ignored the reader reset finally: %v:%v", offset, cnt)
 				}
 			}
 		}
@@ -577,13 +579,13 @@ func (c *Channel) exit(deleted bool) error {
 	}
 
 	if deleted {
-		nsqLog.Logf("CHANNEL(%s): deleting", c.name)
+		c.chLog.Logf("CHANNEL deleting")
 
 		// since we are explicitly deleting a channel (not just at system exit time)
 		// de-register this from the lookupd
 		c.nsqdNotify.NotifyStateChanged(c, false)
 	} else {
-		nsqLog.Logf("CHANNEL(%s): closing", c.name)
+		c.chLog.Logf("CHANNEL closing")
 	}
 
 	// this forceably closes clients, client will be removed by client before the
@@ -617,7 +619,7 @@ func (c *Channel) skipChannelToEnd() (BackendQueueEnd, error) {
 	defer c.Unlock()
 	e, err := c.backend.SkipReadToEnd()
 	if err != nil {
-		nsqLog.Infof("failed to reset reader to end %v", err)
+		c.chLog.Infof("failed to reset reader to end %v", err)
 	} else {
 		c.drainChannelWaiting(true, nil, nil)
 	}
@@ -761,7 +763,7 @@ func (c *Channel) TouchMessage(clientID int64, id MessageID, clientMsgTimeout ti
 	msg, ok := c.inFlightMessages[id]
 	if !ok {
 		c.inFlightMutex.Unlock()
-		nsqLog.Logf("failed while touch: %v, msg not exist", id)
+		c.chLog.Logf("failed while touch: %v, msg not exist", id)
 		return ErrMsgNotInFlight
 	}
 	if msg.GetClientID() != clientID {
@@ -786,7 +788,7 @@ func (c *Channel) TouchMessage(clientID int64, id MessageID, clientMsgTimeout ti
 
 func (c *Channel) ConfirmBackendQueueOnSlave(offset BackendOffset, cnt int64, allowBackward bool) error {
 	if cnt == 0 && offset != 0 {
-		nsqLog.LogWarningf("channel (%v) the count is not valid: %v:%v. (This may happen while upgrade from old)", c.GetName(), offset, cnt)
+		c.chLog.LogWarningf("channel count is not valid: %v:%v. (This may happen while upgrade from old)", offset, cnt)
 		return nil
 	}
 	// confirm on slave may exceed the current end, because the buffered write
@@ -796,14 +798,14 @@ func (c *Channel) ConfirmBackendQueueOnSlave(offset BackendOffset, cnt int64, al
 	var err error
 	var newConfirmed BackendQueueEnd
 	if offset < c.GetConfirmed().Offset() {
-		if nsqLog.Level() > levellogger.LOG_DEBUG {
-			nsqLog.LogDebugf("confirm offset less than current: %v, %v", offset, c.GetConfirmed())
+		if c.chLog.Level() > levellogger.LOG_DEBUG {
+			c.chLog.LogDebugf("confirm offset less than current: %v, %v", offset, c.GetConfirmed())
 		}
 		if allowBackward {
 			d, ok := c.backend.(*diskQueueReader)
 			if ok {
 				newConfirmed, err = d.ResetReadToOffset(offset, cnt)
-				nsqLog.LogDebugf("topic %v channel (%v) reset to backward: %v", c.GetTopicName(), c.GetName(), newConfirmed)
+				c.chLog.LogDebugf("channel reset to backward: %v", newConfirmed)
 			}
 		}
 	} else {
@@ -811,7 +813,7 @@ func (c *Channel) ConfirmBackendQueueOnSlave(offset BackendOffset, cnt int64, al
 			d, ok := c.backend.(*diskQueueReader)
 			if ok {
 				newConfirmed, err = d.ResetReadToOffset(offset, cnt)
-				nsqLog.LogDebugf("topic %v channel (%v) reset to backward: %v", c.GetTopicName(), c.GetName(), newConfirmed)
+				c.chLog.LogDebugf("channel reset to backward: %v", newConfirmed)
 			}
 		} else {
 			_, err = c.backend.SkipReadToOffset(offset, cnt)
@@ -821,7 +823,7 @@ func (c *Channel) ConfirmBackendQueueOnSlave(offset BackendOffset, cnt int64, al
 	}
 	if err != nil {
 		if err != ErrExiting {
-			nsqLog.Logf("confirm read failed: %v, offset: %v", err, offset)
+			c.chLog.Logf("confirm read failed: %v, offset: %v", err, offset)
 		}
 	}
 
@@ -902,11 +904,11 @@ func (c *Channel) ConfirmBackendQueue(msg *Message) (BackendOffset, int64, bool)
 	defer c.confirmMutex.Unlock()
 	curConfirm := c.GetConfirmed()
 	if msg.DelayedType == ChannelDelayed {
-		nsqLog.Logf("should not confirm delayed here: %v", msg)
+		c.chLog.Logf("should not confirm delayed here: %v", msg)
 		return curConfirm.Offset(), curConfirm.TotalMsgCnt(), false
 	}
 	if msg.Offset < curConfirm.Offset() {
-		nsqLog.LogDebugf("confirmed msg is less than current confirmed offset: %v-%v, %v", msg.ID, msg.Offset, curConfirm)
+		c.chLog.LogDebugf("confirmed msg is less than current confirmed offset: %v-%v, %v", msg.ID, msg.Offset, curConfirm)
 		return curConfirm.Offset(), curConfirm.TotalMsgCnt(), false
 	}
 	//c.confirmedMsgs[int64(msg.offset)] = msg
@@ -931,8 +933,8 @@ func (c *Channel) ConfirmBackendQueue(msg *Message) (BackendOffset, int64, bool)
 		err := c.backend.ConfirmRead(newConfirmed, confirmedCnt)
 		if err != nil {
 			if err != ErrExiting {
-				nsqLog.LogWarningf("channel (%v): confirm read failed: %v, msg: %v",
-					c.GetName(), err, msg)
+				c.chLog.LogWarningf("channel confirm read failed: %v, msg: %v",
+					err, msg)
 				// rollback removed confirmed messages
 				//for _, m := range c.tmpRemovedConfirmed {
 				//	c.confirmedMsgs[int64(msg.offset)] = m
@@ -941,8 +943,8 @@ func (c *Channel) ConfirmBackendQueue(msg *Message) (BackendOffset, int64, bool)
 			}
 			return curConfirm.Offset(), curConfirm.TotalMsgCnt(), reduced
 		} else {
-			if nsqLog.Level() >= levellogger.LOG_DETAIL {
-				nsqLog.Debugf("channel %v merge msg %v( %v) to interval %v, confirmed to %v", c.GetName(),
+			if c.chLog.Level() >= levellogger.LOG_DETAIL {
+				c.chLog.Debugf("channel merge msg %v( %v) to interval %v, confirmed to %v",
 					msg.Offset, msg.queueCntIndex, mergedInterval, newConfirmed)
 			}
 			c.confirmedMsgs.DeleteLower(int64(newConfirmed))
@@ -957,11 +959,11 @@ func (c *Channel) ConfirmBackendQueue(msg *Message) (BackendOffset, int64, bool)
 			}
 		}
 	}
-	if nsqLog.Level() >= levellogger.LOG_DEBUG && int64(c.confirmedMsgs.Len()) > c.option.MaxConfirmWin {
+	if c.chLog.Level() >= levellogger.LOG_DEBUG && int64(c.confirmedMsgs.Len()) > c.option.MaxConfirmWin {
 		curConfirm = c.GetConfirmed()
 		flightCnt := len(c.inFlightMessages)
 		if flightCnt == 0 {
-			nsqLog.LogDebugf("lots of confirmed messages : %v, %v, %v",
+			c.chLog.LogDebugf("lots of confirmed messages : %v, %v, %v",
 				c.confirmedMsgs.Len(), curConfirm, flightCnt)
 		}
 	}
@@ -987,7 +989,7 @@ func (c *Channel) ShouldWaitDelayed(msg *Message) bool {
 	if dq != nil {
 		if dq.IsChannelMessageDelayed(msg.ID, c.GetName()) {
 			if c.isTracedOrDebugTraceLog(msg) {
-				nsqLog.LogDebugf("non-delayed msg %v should be delayed since in delayed queue", msg)
+				c.chLog.LogDebugf("non-delayed msg %v should be delayed since in delayed queue", msg)
 				nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "IGNORE_DELAY_CONFIRMED", msg.TraceID, msg, "", 0)
 			}
 			return true
@@ -1009,7 +1011,7 @@ func (c *Channel) IsConfirmed(msg *Message) bool {
 
 	if ok {
 		if c.isTracedOrDebugTraceLog(msg) {
-			nsqLog.LogDebugf("msg %v is already confirmed", msg)
+			c.chLog.LogDebugf("msg %v is already confirmed", msg)
 			nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "IGNORE_CONFIRMED", msg.TraceID, msg, "", 0)
 		}
 	}
@@ -1024,7 +1026,7 @@ func (c *Channel) FinishMessage(clientID int64, clientAddr string,
 func (c *Channel) FinishMessageForce(clientID int64, clientAddr string,
 	id MessageID, forceFin bool) (BackendOffset, int64, bool, *Message, error) {
 	if forceFin {
-		nsqLog.Logf("topic %v channel %v force finish msg %v", c.GetTopicName(), c.GetName(), id)
+		c.chLog.Logf("force finish msg %v", id)
 	}
 	return c.internalFinishMessage(clientID, clientAddr, id, forceFin)
 }
@@ -1043,13 +1045,13 @@ func (c *Channel) internalFinishMessage(clientID int64, clientAddr string,
 	}
 	msg, err := c.popInFlightMessage(clientID, id, true)
 	if err != nil {
-		nsqLog.LogDebugf("channel (%v): message %v fin error: %v from client %v", c.GetName(), id, err,
+		c.chLog.LogDebugf("channel message %v fin error: %v from client %v", id, err,
 			clientID)
 		return 0, 0, false, nil, err
 	}
 	ackCost := now.UnixNano() - msg.deliveryTS.UnixNano()
 	isOldDeferred := msg.IsDeferred()
-	if msg.TraceID != 0 || c.IsTraced() || nsqLog.Level() >= levellogger.LOG_DETAIL {
+	if msg.TraceID != 0 || c.IsTraced() || c.chLog.Level() >= levellogger.LOG_DETAIL {
 		// if fin by no client address, means fin by internal delayed queue or by http api
 		if clientAddr != "" {
 			nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "FIN", msg.TraceID, msg, clientAddr, ackCost)
@@ -1095,12 +1097,12 @@ func (c *Channel) internalFinishMessage(clientID int64, clientAddr string,
 		if clientAddr != "" {
 			// delayed message should be requeued and then send to client
 			// if some client finish delayed message directly, something may be wrong.
-			nsqLog.Infof("channel %v delayed msg %v finished by client %v ", c.GetName(),
+			c.chLog.Infof("channel delayed msg %v finished by client %v ",
 				msg, clientAddr)
 		}
-		if nsqLog.Level() >= levellogger.LOG_DEBUG {
+		if c.chLog.Level() >= levellogger.LOG_DEBUG {
 			if clientAddr == "" {
-				nsqLog.Debugf("channel %v delay msg %v finished by force ", c.GetName(),
+				c.chLog.Debugf("channel delay msg %v finished by force ",
 					msg)
 			}
 		}
@@ -1135,7 +1137,7 @@ func (c *Channel) isTooMuchDeferredInMem(deCnt int64) bool {
 	// timeout not requeue to defer
 	cnt := c.GetChannelWaitingConfirmCnt()
 	if cnt >= c.option.MaxConfirmWin && float64(deCnt) > float64(cnt)*0.5 {
-		nsqLog.Debugf("%v-%v too much delayed in memory: %v vs %v", c.GetTopicName(), c.GetName(), deCnt, cnt)
+		c.chLog.Debugf("too much delayed in memory: %v vs %v", deCnt, cnt)
 		return true
 	}
 	return false
@@ -1164,9 +1166,9 @@ func (c *Channel) ShouldRequeueToEnd(clientID int64, clientAddr string, id Messa
 		return nil, false
 	}
 
-	if nsqLog.Level() >= levellogger.LOG_DEBUG || c.IsTraced() {
-		nsqLog.LogDebugf("channel %v check requeue to end, timeout:%v, msg timestamp:%v, depth ts:%v, msg attempt:%v, waiting :%v",
-			c.GetName(), timeout, msg.Timestamp,
+	if c.chLog.Level() >= levellogger.LOG_DEBUG || c.IsTraced() {
+		c.chLog.LogDebugf("check requeue to end, timeout:%v, msg timestamp:%v, depth ts:%v, msg attempt:%v, waiting :%v",
+			timeout, msg.Timestamp,
 			c.DepthTimestamp(), msg.Attempts, atomic.LoadInt32(&c.waitingConfirm))
 	}
 
@@ -1196,15 +1198,15 @@ func (c *Channel) ShouldRequeueToEnd(clientID int64, clientAddr string, id Messa
 			blocking := tn.UnixNano()-dqDepthTs > threshold.Nanoseconds()
 			waitingDelayCnt := atomic.LoadInt64(&c.deferredFromDelay)
 			if dqDepthTs > 0 && blocking && int64(dqCnt) > waitingDelayCnt {
-				nsqLog.Logf("%v channel %v delayed queue message %v req to end, timestamp:%v, attempt:%v, delayed depth timestamp: %v, delay waiting : %v, %v",
-					c.GetTopicName(), c.GetName(), id, msg.Timestamp,
+				c.chLog.Logf("delayed queue message %v req to end, timestamp:%v, attempt:%v, delayed depth timestamp: %v, delay waiting : %v, %v",
+					id, msg.Timestamp,
 					msg.Attempts, dqDepthTs, waitingDelayCnt, dqCnt)
 				atomic.StoreInt64(&c.lastDelayedReqToEndTs, tn.UnixNano())
 				return msg.GetCopy(), true
 			}
-			if msg.TraceID != 0 || c.IsTraced() || nsqLog.Level() >= levellogger.LOG_DEBUG {
-				nsqLog.Logf("channel %v check delayed queue message %v req to end, timestamp:%v, depth ts:%v, attempt:%v, delay waiting :%v, delayed depth timestamp: %v",
-					c.GetName(), id, msg.Timestamp,
+			if msg.TraceID != 0 || c.IsTraced() || c.chLog.Level() >= levellogger.LOG_DEBUG {
+				c.chLog.Logf("check delayed queue message %v req to end, timestamp:%v, depth ts:%v, attempt:%v, delay waiting :%v, delayed depth timestamp: %v",
+					id, msg.Timestamp,
 					c.DepthTimestamp(), msg.Attempts, waitingDelayCnt, dqDepthTs)
 			}
 		}
@@ -1234,7 +1236,7 @@ func (c *Channel) ShouldRequeueToEnd(clientID int64, clientAddr string, id Messa
 		!c.isTooMuchDeferredInMem(deCnt) {
 		// too much deferred means most messages are requeued, to avoid too much in disk delay queue,
 		// we just ignore requeue.
-		nsqLog.Logf("msg %v req to end, attemptted %v and created at %v, current processing %v",
+		c.chLog.Logf("msg %v req to end, attemptted %v and created at %v, current processing %v",
 			id, msg.Attempts, msg.Timestamp, c.DepthTimestamp())
 		return msg.GetCopy(), true
 	}
@@ -1246,7 +1248,7 @@ func (c *Channel) ShouldRequeueToEnd(clientID int64, clientAddr string, id Messa
 		// timeout not requeue to defer
 		cnt := c.GetChannelWaitingConfirmCnt()
 		if cnt >= c.option.MaxConfirmWin && float64(deCnt) <= float64(cnt)*0.5 {
-			nsqLog.Logf("requeue msg to end %v, since too much delayed in memory: %v vs %v", id, deCnt, cnt)
+			c.chLog.Logf("requeue msg to end %v, since too much delayed in memory: %v vs %v", id, deCnt, cnt)
 			return msg.GetCopy(), true
 		}
 	}
@@ -1313,7 +1315,7 @@ func (c *Channel) RequeueMessage(clientID int64, clientAddr string, id MessageID
 	defer c.inFlightMutex.Unlock()
 	msg, ok := c.inFlightMessages[id]
 	if !ok {
-		nsqLog.LogDebugf("failed requeue for delay: %v, msg not exist", id)
+		c.chLog.LogDebugf("failed requeue for delay: %v, msg not exist", id)
 		return ErrMsgNotInFlight
 	}
 	if timeout == 0 {
@@ -1325,7 +1327,7 @@ func (c *Channel) RequeueMessage(clientID int64, clientAddr string, id MessageID
 		// remove from inflight first
 		msg, err := c.popInFlightMessage(clientID, id, false)
 		if err != nil {
-			nsqLog.LogDebugf("channel (%v): message %v requeue error: %v from client %v", c.GetName(), id, err,
+			c.chLog.LogDebugf("channel message %v requeue error: %v from client %v", id, err,
 				clientID)
 			return err
 		}
@@ -1345,7 +1347,7 @@ func (c *Channel) RequeueMessage(clientID int64, clientAddr string, id MessageID
 	}
 
 	if msg.GetClientID() != clientID {
-		nsqLog.LogDebugf("failed requeue for client not own message: %v: %v vs %v", id, msg.GetClientID(), clientID)
+		c.chLog.LogDebugf("failed requeue for client not own message: %v: %v vs %v", id, msg.GetClientID(), clientID)
 		return fmt.Errorf("client does not own message %v: %v vs %v", id,
 			msg.GetClientID(), clientID)
 	}
@@ -1354,22 +1356,22 @@ func (c *Channel) RequeueMessage(clientID int64, clientAddr string, id MessageID
 	if (timeout > c.option.ReqToEndThreshold) ||
 		(newTimeout.Sub(msg.deliveryTS) >=
 			c.option.MaxReqTimeout) {
-		nsqLog.Logf("ch %v too long timeout %v, %v, %v, should req message: %v to delayed queue", c.GetName(),
+		c.chLog.Logf("too long timeout %v, %v, %v, should req message: %v to delayed queue",
 			newTimeout, msg.deliveryTS, timeout, id)
 	}
 	reqWaiting := len(c.requeuedMsgChan)
 	deCnt := atomic.LoadInt64(&c.deferredCount)
 	if c.isTooMuchDeferredInMem(deCnt) {
 		if newTimeout.UnixNano() >= msg.pri {
-			nsqLog.Logf("failed to requeue msg %v, since too much delayed in memory: %v", id, deCnt)
+			c.chLog.Logf("failed to requeue msg %v, since too much delayed in memory: %v", id, deCnt)
 			return ErrMsgDeferredTooMuch
 		}
 	}
 	if int64(atomic.LoadInt32(&c.waitingConfirm)) > c.option.MaxConfirmWin {
 		// too much req, we only allow early req than timeout to speed up retry
 		if newTimeout.UnixNano() >= msg.pri {
-			nsqLog.Logf("%v-%v failed to requeue msg %v, %v since too much waiting confirmed: %v, req waiting: %v",
-				c.GetTopicName(), c.GetName(), id, msg.Attempts, atomic.LoadInt32(&c.waitingConfirm), reqWaiting)
+			c.chLog.Logf("failed to requeue msg %v, %v since too much waiting confirmed: %v, req waiting: %v",
+				id, msg.Attempts, atomic.LoadInt32(&c.waitingConfirm), reqWaiting)
 			return ErrMsgDeferredTooMuch
 		}
 	}
@@ -1392,7 +1394,7 @@ func (c *Channel) RequeueMessage(clientID int64, clientAddr string, id MessageID
 	}
 	c.inFlightPQ.Push(msg)
 
-	nsqLog.LogDebugf("channel %v client %v requeue with delayed %v message: %v", c.GetName(), clientID, timeout, id)
+	c.chLog.LogDebugf("client %v requeue with delayed %v message: %v", clientID, timeout, id)
 	return nil
 }
 
@@ -1415,7 +1417,7 @@ func (c *Channel) RequeueClientMessages(clientID int64, clientAddr string) {
 		c.RequeueMessage(clientID, clientAddr, id, 0, false)
 	}
 	if len(idList) > 0 {
-		nsqLog.Logf("client: %v requeued %v messages ",
+		c.chLog.Logf("client: %v requeued %v messages ",
 			clientID, len(idList))
 	}
 }
@@ -1500,13 +1502,13 @@ func (c *Channel) StartInFlightTimeout(msg *Message, client Consumer, clientAddr
 		} else if old != nil && old.DelayedType == ChannelDelayed {
 			shouldSend = false
 		} else {
-			nsqLog.LogWarningf("push message in flight failed: %v, %v", err,
+			c.chLog.LogWarningf("push message in flight failed: %v, %v", err,
 				msg.GetFullMsgID())
 		}
 		return shouldSend, err
 	}
 
-	if msg.TraceID != 0 || c.IsTraced() || nsqLog.Level() >= levellogger.LOG_DETAIL {
+	if msg.TraceID != 0 || c.IsTraced() || c.chLog.Level() >= levellogger.LOG_DETAIL {
 		nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "START", msg.TraceID, msg, clientAddr, now.UnixNano()-msg.Timestamp)
 	}
 
@@ -1523,8 +1525,8 @@ func (c *Channel) GetInflightNum() int {
 func (c *Channel) UpdateConfirmedInterval(intervals []MsgQueueInterval) {
 	c.confirmMutex.Lock()
 	defer c.confirmMutex.Unlock()
-	if nsqLog.Level() >= levellogger.LOG_DETAIL {
-		nsqLog.Logf("update confirmed interval, before: %v", c.confirmedMsgs.ToString())
+	if c.chLog.Level() >= levellogger.LOG_DETAIL {
+		c.chLog.Logf("update confirmed interval, before: %v", c.confirmedMsgs.ToString())
 	}
 	if c.confirmedMsgs.Len() != 0 {
 		c.confirmedMsgs = NewIntervalSkipList()
@@ -1532,8 +1534,8 @@ func (c *Channel) UpdateConfirmedInterval(intervals []MsgQueueInterval) {
 	for _, qi := range intervals {
 		c.confirmedMsgs.AddOrMerge(&queueInterval{start: qi.Start, end: qi.End, endCnt: qi.EndCnt})
 	}
-	if nsqLog.Level() >= levellogger.LOG_DETAIL {
-		nsqLog.Logf("update confirmed interval, after: %v", c.confirmedMsgs.ToString())
+	if c.chLog.Level() >= levellogger.LOG_DETAIL {
+		c.chLog.Logf("update confirmed interval, after: %v", c.confirmedMsgs.ToString())
 	}
 }
 
@@ -1584,7 +1586,7 @@ func (c *Channel) doRequeue(m *Message, clientAddr string) error {
 	}
 	select {
 	case <-c.exitChan:
-		nsqLog.Logf("requeue message failed for existing: %v ", m.ID)
+		c.chLog.Logf("requeue message failed for existing: %v ", m.ID)
 		return ErrExiting
 	case c.requeuedMsgChan <- m:
 		c.waitingRequeueChanMsgs[m.ID] = m
@@ -1628,7 +1630,7 @@ func (c *Channel) popInFlightMessage(clientID int64, id MessageID, force bool) (
 			msg.GetClientID(), clientID)
 	}
 	if !force && msg.IsDeferred() {
-		nsqLog.Logf("channel (%v): should never pop a deferred message here unless the timeout : %v", c.GetName(), msg.ID)
+		c.chLog.Logf("channel should never pop a deferred message here unless the timeout : %v", msg.ID)
 		return nil, ErrMsgDeferred
 	}
 	c.inFlightMessages[id] = nil
@@ -1650,7 +1652,7 @@ func (c *Channel) DisableConsume(disable bool) {
 		if !atomic.CompareAndSwapInt32(&c.consumeDisabled, 0, 1) {
 			return
 		}
-		nsqLog.Logf("channel %v disabled for consume", c.name)
+		c.chLog.Logf("channel %v disabled for consume", c.name)
 		for cid, client := range c.clients {
 			client.Exit()
 			delete(c.clients, cid)
@@ -1670,12 +1672,12 @@ func (c *Channel) DisableConsume(disable bool) {
 			default:
 			}
 		} else {
-			nsqLog.Logf("channel %v enabled for consume", c.name)
+			c.chLog.Logf("channel %v enabled for consume", c.name)
 			// we need reset backend read position to confirm position
 			// since we dropped all inflight and requeue data while disable consume.
-			if nsqLog.Level() >= levellogger.LOG_DEBUG {
+			if c.chLog.Level() >= levellogger.LOG_DEBUG {
 				c.confirmMutex.Lock()
-				nsqLog.Logf("channel %v confirmed interval while enable: %v", c.GetName(), c.confirmedMsgs.ToString())
+				c.chLog.Logf("confirmed interval while enable: %v", c.confirmedMsgs.ToString())
 				c.confirmMutex.Unlock()
 			}
 
@@ -1687,10 +1689,10 @@ func (c *Channel) DisableConsume(disable bool) {
 						done = true
 						break
 					}
-					nsqLog.Logf("ignored a read message %v at offset %v while enable consume", m.ID, m.Offset)
+					c.chLog.Logf("ignored a read message %v at offset %v while enable consume", m.ID, m.Offset)
 					c.cleanWaitingRequeueChan(m)
 				case m := <-c.requeuedMsgChan:
-					nsqLog.Logf("ignored a requeued message %v at offset %v while enable consume", m.ID, m.Offset)
+					c.chLog.Logf("ignored a requeued message %v at offset %v while enable consume", m.ID, m.Offset)
 					c.cleanWaitingRequeueChan(m)
 				default:
 					done = true
@@ -1709,7 +1711,7 @@ func (c *Channel) DisableConsume(disable bool) {
 // if drain outside loop, readerChanged channel should be triggered
 // TODO: check the counter for deferredFromDelay, should make sure not concurrent with client ack
 func (c *Channel) drainChannelWaiting(clearConfirmed bool, lastDataNeedRead *bool, origReadChan chan ReadResult) error {
-	nsqLog.Logf("draining channel %v waiting %v", c.GetName(), clearConfirmed)
+	c.chLog.Logf("draining channel waiting %v", clearConfirmed)
 	c.inFlightMutex.Lock()
 	defer c.inFlightMutex.Unlock()
 	c.initPQ()
@@ -1721,7 +1723,7 @@ func (c *Channel) drainChannelWaiting(clearConfirmed bool, lastDataNeedRead *boo
 		curConfirm := c.GetConfirmed()
 		c.confirmedMsgs.DeleteLower(int64(curConfirm.Offset()))
 		atomic.StoreInt32(&c.waitingConfirm, int32(c.confirmedMsgs.Len()))
-		nsqLog.Logf("topic %v channel %v current confirmed interval %v ", c.GetTopicName(), c.GetName(), c.confirmedMsgs.ToString())
+		c.chLog.Logf("current confirmed interval %v ", c.confirmedMsgs.ToString())
 	}
 	c.confirmMutex.Unlock()
 	atomic.StoreInt64(&c.waitingProcessMsgTs, 0)
@@ -1739,10 +1741,10 @@ func (c *Channel) drainChannelWaiting(clearConfirmed bool, lastDataNeedRead *boo
 				clientMsgChan = nil
 				continue
 			}
-			nsqLog.Logf("ignored a read message %v (%v) at Offset %v while drain channel", m.ID, m.DelayedType, m.Offset)
+			c.chLog.Logf("ignored a read message %v (%v) at Offset %v while drain channel", m.ID, m.DelayedType, m.Offset)
 			c.cleanWaitingRequeueChanNoLock(m)
 		case m := <-c.requeuedMsgChan:
-			nsqLog.Logf("ignored a message %v (%v) at Offset %v while drain channel", m.ID, m.DelayedType, m.Offset)
+			c.chLog.Logf("ignored a message %v (%v) at Offset %v while drain channel", m.ID, m.DelayedType, m.Offset)
 			c.cleanWaitingRequeueChanNoLock(m)
 		default:
 			done = true
@@ -1758,7 +1760,7 @@ func (c *Channel) drainChannelWaiting(clearConfirmed bool, lastDataNeedRead *boo
 		delete(c.waitingRequeueMsgs, k)
 	}
 
-	nsqLog.Logf("drained channel %v waiting req %v, %v, delay: %v, %v", c.GetName(), reqCnt,
+	c.chLog.Logf("drained channel waiting req %v, %v, delay: %v, %v", reqCnt,
 		len(c.waitingRequeueChanMsgs),
 		atomic.LoadInt64(&c.deferredFromDelay), delayed)
 	// should in inFlightMutex to avoid concurrent with confirming from client
@@ -1789,8 +1791,8 @@ func (c *Channel) TryWakeupRead() {
 	case c.tryReadBackend <- true:
 	default:
 	}
-	if nsqLog.Level() >= levellogger.LOG_DETAIL {
-		nsqLog.LogDebugf("channel consume try wakeup : %v", c.name)
+	if c.chLog.Level() >= levellogger.LOG_DETAIL {
+		c.chLog.LogDebugf("channel consume try wakeup : %v", c.name)
 	}
 }
 
@@ -1799,10 +1801,10 @@ func (c *Channel) resetReaderToConfirmed() error {
 	atomic.StoreInt32(&c.needResetReader, 0)
 	confirmed, err := c.backend.ResetReadToConfirmed()
 	if err != nil {
-		nsqLog.LogWarningf("channel(%v): reset read to confirmed error: %v", c.GetName(), err)
+		c.chLog.LogWarningf("channel reset read to confirmed error: %v", err)
 		return err
 	}
-	nsqLog.Logf("reset channel %v reader to confirm: %v", c.name, confirmed)
+	c.chLog.Logf("reset channel reader to confirm: %v", confirmed)
 	return nil
 }
 
@@ -1819,7 +1821,7 @@ func (c *Channel) resetChannelReader(resetOffset resetChannelData, lastDataNeedR
 		d := c.backend.(*diskQueueReader)
 		_, err = d.ResetReadToOffset(resetOffset.Offset, resetOffset.Cnt)
 		if err != nil {
-			nsqLog.Warningf("failed to reset reader to %v, %v", resetOffset, err)
+			c.chLog.Warningf("failed to reset reader to %v, %v", resetOffset, err)
 		} else {
 			c.drainChannelWaiting(true, lastDataNeedRead, origReadChan)
 			*lastMsg = Message{}
@@ -1870,7 +1872,7 @@ LOOP:
 		resetReaderFlag := atomic.LoadInt32(&c.needResetReader)
 		deCnt := atomic.LoadInt64(&c.deferredCount)
 		if resetReaderFlag > 0 {
-			nsqLog.Infof("reset the reader : %v", c.GetConfirmed())
+			c.chLog.Infof("reset the reader : %v", c.GetConfirmed())
 			err = c.resetReaderToConfirmed()
 			// if reset failed, we should not drain the waiting data
 			if err == nil {
@@ -1882,8 +1884,7 @@ LOOP:
 					inflightCnt += len(c.waitingRequeueChanMsgs)
 					c.inFlightMutex.Unlock()
 					if inflightCnt <= 0 {
-						nsqLog.Warningf("reset need clear confirmed since no inflight: %v, %v",
-							c.GetTopicName(), c.GetName())
+						c.chLog.Warningf("reset need clear confirmed since no inflight")
 						needClearConfirm = true
 					}
 				}
@@ -1901,10 +1902,8 @@ LOOP:
 			needReadBackend = false
 		} else if atomic.LoadInt32(&c.waitingConfirm) > maxWin ||
 			c.isTooMuchDeferredInMem(deCnt) {
-			if nsqLog.Level() >= levellogger.LOG_DEBUG {
-				nsqLog.LogDebugf("channel %v-%v reader is holding: %v, %v,  mem defer: %v",
-					c.GetTopicName(),
-					c.GetName(),
+			if c.chLog.Level() >= levellogger.LOG_DEBUG {
+				c.chLog.LogDebugf("channel reader is holding: %v, %v,  mem defer: %v",
 					atomic.LoadInt32(&c.waitingConfirm),
 					c.GetConfirmed(), deCnt)
 			}
@@ -1919,8 +1918,8 @@ LOOP:
 			inflightCnt += len(c.waitingRequeueChanMsgs)
 			c.inFlightMutex.Unlock()
 			if inflightCnt <= 0 {
-				nsqLog.Warningf("many confirmed but no inflight: %v, %v, %v",
-					c.GetTopicName(), c.GetName(), atomic.LoadInt32(&c.waitingConfirm))
+				c.chLog.Warningf("many confirmed but no inflight: %v",
+					atomic.LoadInt32(&c.waitingConfirm))
 			}
 		} else {
 			readChan = origReadChan
@@ -1930,9 +1929,9 @@ LOOP:
 		if c.IsConsumeDisabled() {
 			readChan = nil
 			needReadBackend = false
-			nsqLog.Logf("channel consume is disabled : %v", c.name)
+			c.chLog.Logf("channel consume is disabled : %v", c.name)
 			if lastMsg.ID > 0 {
-				nsqLog.Logf("consume disabled at last read message: %v:%v", lastMsg.ID, lastMsg.Offset)
+				c.chLog.Logf("consume disabled at last read message: %v:%v", lastMsg.ID, lastMsg.Offset)
 				lastMsg = Message{}
 			}
 		}
@@ -1964,8 +1963,8 @@ LOOP:
 		// read from requeue chan first to avoid disk data blocking requeue chan
 		select {
 		case msg = <-c.requeuedMsgChan:
-			if msg.TraceID != 0 || c.IsTraced() || nsqLog.Level() >= levellogger.LOG_DETAIL {
-				nsqLog.LogDebugf("read message %v from requeue", msg.ID)
+			if msg.TraceID != 0 || c.IsTraced() || c.chLog.Level() >= levellogger.LOG_DETAIL {
+				c.chLog.LogDebugf("read message %v from requeue", msg.ID)
 				nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "READ_REQ", msg.TraceID, msg, "0", time.Now().UnixNano()-msg.Timestamp)
 			}
 		default:
@@ -1979,24 +1978,24 @@ LOOP:
 					// try later, avoid too much
 					c.nsqdNotify.PushTopicJob(c.GetTopicName(), func() {
 						c.nsqdNotify.NotifyScanChannel(c, true)
-						nsqLog.LogDebugf("notify refill req done %v-%v from requeue", c.GetTopicName(), c.GetName())
+						c.chLog.LogDebugf("notify refill req done from requeue")
 					})
 				} else {
-					nsqLog.LogDebugf("notify refill req done %v-%v from requeue", c.GetTopicName(), c.GetName())
+					c.chLog.LogDebugf("notify refill req done from requeue")
 				}
 			}
 			select {
 			case <-c.exitChan:
 				goto exit
 			case msg = <-c.requeuedMsgChan:
-				if msg.TraceID != 0 || c.IsTraced() || nsqLog.Level() >= levellogger.LOG_DETAIL {
-					nsqLog.LogDebugf("read message %v from requeue", msg.ID)
+				if msg.TraceID != 0 || c.IsTraced() || c.chLog.Level() >= levellogger.LOG_DETAIL {
+					c.chLog.LogDebugf("read message %v from requeue", msg.ID)
 					nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "READ_REQ", msg.TraceID, msg, "0", time.Now().UnixNano()-msg.Timestamp)
 				}
 			case data = <-readChan:
 				lastDataNeedRead = false
 				if data.Err != nil {
-					nsqLog.Errorf("channel (%v-%v): failed to read message - %s", c.GetTopicName(), c.GetName(), data.Err)
+					c.chLog.Errorf("channel failed to read message - %s", data.Err)
 					if data.Err == ErrReadQueueCountMissing {
 						time.Sleep(time.Second)
 					} else {
@@ -2007,7 +2006,7 @@ LOOP:
 							_, skipErr := c.backend.(*diskQueueReader).SkipToNext()
 							if skipErr != nil {
 							}
-							nsqLog.Errorf("channel %v-%v skip to next because of backend error: %v", c.GetTopicName(), c.GetName(), backendErr)
+							c.chLog.Errorf("channel skip to next because of backend error: %v", backendErr)
 							isSkipped = true
 							backendErr = 0
 						} else {
@@ -2022,26 +2021,26 @@ LOOP:
 					continue LOOP
 				}
 				if backendErr > 0 {
-					nsqLog.Infof("channel %v backend error auto recovery: %v", c.GetName(), backendErr)
+					c.chLog.Infof("channel backend error auto recovery: %v", backendErr)
 				}
 				backendErr = 0
 				msg, err = decodeMessage(data.Data, c.IsExt())
 				if err != nil {
-					nsqLog.Errorf("channel (%v-%v): failed to decode message - %s - %v", c.GetTopicName(), c.GetName(), err, data)
+					c.chLog.Errorf("channel failed to decode message - %s - %v", err, data)
 					continue LOOP
 				}
 				msg.Offset = data.Offset
 				msg.RawMoveSize = data.MovedSize
 				msg.queueCntIndex = data.CurCnt
-				if msg.TraceID != 0 || c.IsTraced() || nsqLog.Level() >= levellogger.LOG_DETAIL {
+				if msg.TraceID != 0 || c.IsTraced() || c.chLog.Level() >= levellogger.LOG_DETAIL {
 					nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "READ_QUEUE", msg.TraceID, msg, "0", time.Now().UnixNano()-msg.Timestamp)
 				}
 
 				if lastMsg.ID > 0 && msg.ID < lastMsg.ID {
 					// note: this may happen if the reader pefetch some data not committed by the disk writer
 					// we need read it again later.
-					nsqLog.Warningf("read a message with less message ID: %v vs %v, raw data: %v", msg.ID, lastMsg.ID, data)
-					nsqLog.Warningf("last raw data: %v", lastDataResult)
+					c.chLog.Warningf("read a message with less message ID: %v vs %v, raw data: %v", msg.ID, lastMsg.ID, data)
+					c.chLog.Warningf("last raw data: %v", lastDataResult)
 					time.Sleep(time.Millisecond * 5)
 					if diskQ, ok := c.backend.(*diskQueueReader); ok {
 						diskQ.ResetLastReadOne(data.Offset, data.CurCnt-1, int32(data.MovedSize))
@@ -2055,12 +2054,12 @@ LOOP:
 				lastDataResult = data
 				if isSkipped {
 					// TODO: store the skipped info to retry error if possible.
-					nsqLog.LogWarningf("channel (%v-%v): skipped message from %v:%v to the : %v:%v", c.GetTopicName(),
-						c.GetName(), lastMsg.ID, lastMsg.Offset, msg.ID, msg.Offset)
+					c.chLog.LogWarningf("channel skipped message from %v:%v to the : %v:%v",
+						lastMsg.ID, lastMsg.Offset, msg.ID, msg.Offset)
 				}
 				if resumedFirst {
-					if nsqLog.Level() > levellogger.LOG_DEBUG || c.IsTraced() {
-						nsqLog.LogDebugf("channel %v resumed first message %v at Offset: %v", c.GetName(), msg.ID, msg.Offset)
+					if c.chLog.Level() > levellogger.LOG_DEBUG || c.IsTraced() {
+						c.chLog.LogDebugf("channel resumed first message %v at Offset: %v", msg.ID, msg.Offset)
 					}
 					resumedFirst = false
 				}
@@ -2072,7 +2071,7 @@ LOOP:
 				resumedFirst = true
 				continue LOOP
 			case resetOffset := <-c.readerChanged:
-				nsqLog.Infof("got reader reset notify:%v ", resetOffset)
+				c.chLog.Infof("got reader reset notify:%v ", resetOffset)
 				c.resetChannelReader(resetOffset, &lastDataNeedRead, origReadChan, &lastMsg, &needReadBackend, &readBackendWait)
 				continue LOOP
 			case <-waitEndUpdated:
@@ -2091,7 +2090,7 @@ LOOP:
 		if c.IsOrdered() {
 			curConfirm := c.GetConfirmed()
 			if msg.Offset != curConfirm.Offset() {
-				nsqLog.Infof("read a message not in ordered: %v, %v", msg.Offset, curConfirm)
+				c.chLog.Infof("read a message not in ordered: %v, %v", msg.Offset, curConfirm)
 				atomic.StoreInt32(&c.needResetReader, 2)
 				continue
 			}
@@ -2133,8 +2132,8 @@ LOOP:
 			//deliver according to tag value in message
 			msgTag, err = parseTagIfAny(msg)
 			if err != nil {
-				nsqLog.Errorf("topic %v channel %v error parse tag from message %v, offset %v, ext data: %s, err: %v",
-					c.GetTopicName(), c.GetName(), msg.ID, msg.Offset, msg.ExtBytes, err.Error())
+				c.chLog.Errorf("error parse tag from message %v, offset %v, ext data: %s, err: %v",
+					msg.ID, msg.Offset, msg.ExtBytes, err.Error())
 			}
 			extParsed = true
 		}
@@ -2180,14 +2179,14 @@ LOOP:
 		select {
 		case newTag := <-c.tagChanInitChan:
 			if !extParsed || newTag == msgTag {
-				nsqLog.Infof("client with tag %v initialized, try deliver in tag loop", newTag)
+				c.chLog.Infof("client with tag %v initialized, try deliver in tag loop", newTag)
 				goto tagMsgLoop
 			} else {
 				goto msgDefaultLoop
 			}
 		case c.clientMsgChan <- msg:
 		case resetOffset := <-c.readerChanged:
-			nsqLog.Infof("got reader reset notify while dispatch message:%v ", resetOffset)
+			c.chLog.Infof("got reader reset notify while dispatch message:%v ", resetOffset)
 			c.cleanWaitingRequeueChan(msg)
 			c.resetChannelReader(resetOffset, &lastDataNeedRead, origReadChan, &lastMsg, &needReadBackend, &readBackendWait)
 		case <-c.exitChan:
@@ -2199,7 +2198,7 @@ LOOP:
 	}
 
 exit:
-	nsqLog.Logf("CHANNEL(%s): closing ... messagePump", c.name)
+	c.chLog.Logf("CHANNEL closing ... messagePump")
 	close(c.clientMsgChan)
 	close(c.exitSyncChan)
 }
@@ -2243,7 +2242,7 @@ func (c *Channel) GetChannelDebugStats() string {
 		c.GetTopicName(), c.GetName(), inFlightCount, len(c.waitingRequeueMsgs),
 		len(c.requeuedMsgChan), len(c.waitingRequeueChanMsgs))
 
-	if nsqLog.Level() >= levellogger.LOG_DEBUG || c.IsTraced() {
+	if c.chLog.Level() >= levellogger.LOG_DEBUG || c.IsTraced() {
 		for _, msg := range c.inFlightMessages {
 			debugStr += fmt.Sprintf("%v(offset: %v, cnt: %v), %v", msg.ID, msg.Offset,
 				msg.queueCntIndex, msg.DelayedType)
@@ -2296,8 +2295,8 @@ func (c *Channel) processInFlightQueue(tnow int64) (bool, bool) {
 			// TODO: also check if delayed queue is blocked too much, and try increase delay and put this
 			// delayed message to delay-queue again.
 			if atomic.LoadInt32(&c.waitingConfirm) > 1 || flightCnt > 1 {
-				nsqLog.LogDebugf("channel %v no timeout, inflight %v, waiting confirm: %v, confirmed: %v",
-					c.GetName(), flightCnt, atomic.LoadInt32(&c.waitingConfirm),
+				c.chLog.LogDebugf("channel no timeout, inflight %v, waiting confirm: %v, confirmed: %v",
+					flightCnt, atomic.LoadInt32(&c.waitingConfirm),
 					c.GetConfirmed())
 				canReqEnd := tnow-atomic.LoadInt64(&c.lastDelayedReqToEndTs) > delayedReqToEndMinInterval.Nanoseconds()
 				if !c.IsEphemeral() && !c.IsOrdered() && atomic.LoadInt32(&c.waitingConfirm) >= int32(c.option.MaxConfirmWin) && canReqEnd {
@@ -2324,13 +2323,13 @@ func (c *Channel) processInFlightQueue(tnow int64) (bool, bool) {
 						break
 					}
 					if blockingMsg != nil {
-						nsqLog.Logf("msg %v is blocking confirm, requeue to end, inflight %v, waiting confirm: %v, confirmed: %v",
+						c.chLog.Logf("msg %v is blocking confirm, requeue to end, inflight %v, waiting confirm: %v, confirmed: %v",
 							PrintMessage(blockingMsg),
 							flightCnt, atomic.LoadInt32(&c.waitingConfirm), confirmed)
 						toEnd := true
 						deCnt := atomic.LoadInt64(&c.deferredCount)
 						if c.isTooMuchDeferredInMem(deCnt) {
-							nsqLog.Logf("channel %v too much delayed in memory: %v", c.GetName(), deCnt)
+							c.chLog.Logf("too much delayed in memory: %v", deCnt)
 							toEnd = false
 						}
 						if toEnd {
@@ -2375,14 +2374,14 @@ func (c *Channel) processInFlightQueue(tnow int64) (bool, bool) {
 		c.doRequeue(msg, strconv.Itoa(int(msg.GetClientID())))
 		c.inFlightMutex.Unlock()
 
-		if msgCopy.TraceID != 0 || c.IsTraced() || nsqLog.Level() >= levellogger.LOG_INFO {
+		if msgCopy.TraceID != 0 || c.IsTraced() || c.chLog.Level() >= levellogger.LOG_INFO {
 			clientAddr := ""
 			if client != nil {
 				clientAddr = client.String()
 			}
 			cost := tnow - msgCopy.deliveryTS.UnixNano()
 			if msgCopy.IsDeferred() {
-				nsqLog.LogDebugf("msg %v defer timeout, expect at %v ",
+				c.chLog.LogDebugf("msg %v defer timeout, expect at %v ",
 					msgCopy.ID, msgCopy.pri)
 				if c.isTracedOrDebugTraceLog(&msgCopy) || msgCopy.Attempts > 1 {
 					nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "DELAY_TIMEOUT", msgCopy.TraceID, &msgCopy, clientAddr, cost)
@@ -2401,7 +2400,7 @@ exit:
 	reqLen := len(c.requeuedMsgChan) + len(c.waitingRequeueMsgs)
 	if !c.IsConsumeDisabled() {
 		if len(c.waitingRequeueMsgs) > 1 {
-			nsqLog.LogDebugf("channel %v requeue waiting messages: %v", c.GetName(), len(c.waitingRequeueMsgs))
+			c.chLog.LogDebugf("channel requeue waiting messages: %v", len(c.waitingRequeueMsgs))
 		}
 
 		for k, m := range c.waitingRequeueMsgs {
@@ -2428,7 +2427,7 @@ exit:
 	checkFast := false
 	waitingDelayCnt := atomic.LoadInt64(&c.deferredFromDelay)
 	if waitingDelayCnt < 0 {
-		nsqLog.Logf("%v-%v delayed waiting count error %v ", c.GetTopicName(), c.GetName(), waitingDelayCnt)
+		c.chLog.Logf("delayed waiting count error %v ", waitingDelayCnt)
 	}
 	// Since all messages in delayed queue stored in sorted by delayed timestamp,
 	// all old unconfirmed messages in delayed queue will be peeked at each time.
@@ -2442,21 +2441,21 @@ exit:
 		needPeekDelay && clientNum > 0 {
 		newAdded, cnt, err := c.peekAndReqDelayedMessages(tnow, delayedQueue)
 		if err == nil {
-			if newAdded > 0 && nsqLog.Level() >= levellogger.LOG_DEBUG {
-				nsqLog.LogDebugf("channel %v delayed waiting peeked %v added %v new : %v",
-					c.GetName(), cnt, newAdded, waitingDelayCnt)
+			if newAdded > 0 && c.chLog.Level() >= levellogger.LOG_DEBUG {
+				c.chLog.LogDebugf("channel delayed waiting peeked %v added %v new : %v",
+					cnt, newAdded, waitingDelayCnt)
 			}
 		}
 	} else if clientNum > 0 {
 		if waitingDelayCnt > 0 {
-			if nsqLog.Level() >= levellogger.LOG_DEBUG {
-				nsqLog.LogDebugf("channel %v delayed waiting : %v", c.GetName(), waitingDelayCnt)
+			if c.chLog.Level() >= levellogger.LOG_DEBUG {
+				c.chLog.LogDebugf("channel delayed waiting : %v", waitingDelayCnt)
 			}
 			c.inFlightMutex.Lock()
 			allWaiting := len(c.inFlightMessages) + len(c.waitingRequeueChanMsgs) + len(c.waitingRequeueMsgs)
 			c.inFlightMutex.Unlock()
 			if waitingDelayCnt > int64(allWaiting) {
-				nsqLog.Logf("channel %v delayed waiting : %v, more than all waiting delivery: %v", c.GetName(), waitingDelayCnt, allWaiting)
+				c.chLog.Logf("channel delayed waiting : %v, more than all waiting delivery: %v", waitingDelayCnt, allWaiting)
 			}
 		}
 	}
@@ -2482,7 +2481,7 @@ exit:
 		(atomic.LoadInt32(&c.waitingDeliveryState) == 0) {
 		diff := time.Now().Unix() - atomic.LoadInt64(&c.processResetReaderTime)
 		if diff > resetReaderTimeoutSec && atomic.LoadInt64(&c.processResetReaderTime) > 0 {
-			nsqLog.LogWarningf("try reset reader since no inflight and requeued for too long (%v): %v, %v, %v",
+			c.chLog.LogWarningf("try reset reader since no inflight and requeued for too long (%v): %v, %v, %v",
 				diff,
 				atomic.LoadInt32(&c.waitingConfirm), c.GetConfirmed(), c.GetChannelDebugStats())
 
@@ -2525,9 +2524,9 @@ func (c *Channel) peekAndReqDelayedMessages(tnow int64, delayedQueue *DelayQueue
 			// the delayed confirmed message may be requeue to end again
 			// so we check if the delayed ts is the same.
 			if m.DelayedTs != oldMsg.DelayedTs {
-				nsqLog.LogDebugf("delayed message already confirmed with different ts %v, %v ", PrintMessageNoBody(&m), oldMsg.DelayedTs)
+				c.chLog.LogDebugf("delayed message already confirmed with different ts %v, %v ", PrintMessageNoBody(&m), oldMsg.DelayedTs)
 			} else {
-				nsqLog.Logf("delayed message already confirmed %v ", m)
+				c.chLog.Logf("delayed message already confirmed %v ", m)
 			}
 		} else {
 			oldMsg2, ok2 := c.inFlightMessages[m.DelayedOrigID]
@@ -2542,7 +2541,7 @@ func (c *Channel) peekAndReqDelayedMessages(tnow int64, delayedQueue *DelayQueue
 			if ok2 {
 				// the delayed orig message id in delayed message is the actual id in the topic queue
 				if oldMsg2.ID != m.DelayedOrigID || oldMsg2.DelayedTs != m.DelayedTs {
-					nsqLog.Debugf("old msg %v in flight mismatch peek from delayed queue, new %v ",
+					c.chLog.Debugf("old msg %v in flight mismatch peek from delayed queue, new %v ",
 						oldMsg2, m)
 					if oldMsg2.ID == m.DelayedOrigID &&
 						oldMsg2.DelayedChannel == "" &&
@@ -2552,8 +2551,7 @@ func (c *Channel) peekAndReqDelayedMessages(tnow int64, delayedQueue *DelayQueue
 						// new leader read from disk queue (which will be treated as non delayed message)
 						if bytes.Equal(oldMsg2.Body, m.Body) {
 							// just fin it
-							nsqLog.LogDebugf("topic %s channel %s old msg %v in flight confirmed since in delayed queue",
-								c.GetTopicName(), c.GetName(),
+							c.chLog.LogDebugf("old msg %v in flight confirmed since in delayed queue",
 								PrintMessage(oldMsg2))
 							c.ConfirmBackendQueue(oldMsg2)
 						}
@@ -2561,19 +2559,19 @@ func (c *Channel) peekAndReqDelayedMessages(tnow int64, delayedQueue *DelayQueue
 				}
 			} else if ok3 || ok4 {
 				// already waiting requeue
-				nsqLog.LogDebugf("delayed waiting in requeued %v ", m)
+				c.chLog.LogDebugf("delayed waiting in requeued %v ", m)
 			} else {
 				tmpID := m.ID
 				m.ID = m.DelayedOrigID
 				m.DelayedOrigID = tmpID
 
 				if tnow > m.DelayedTs+int64(c.option.QueueScanInterval*2) {
-					nsqLog.LogDebugf("channel %v delayed is too late now %v for message: %v",
-						c.GetName(), tnow, m)
+					c.chLog.LogDebugf("delayed is too late now %v for message: %v",
+						tnow, m)
 				}
 				if tnow < m.DelayedTs {
-					nsqLog.LogDebugf("channel %v delayed is too early now %v for message: %v",
-						c.GetName(), tnow, m)
+					c.chLog.LogDebugf("delayed is too early now %v for message: %v",
+						tnow, m)
 				}
 
 				nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "DELAY_QUEUE_TIMEOUT", m.TraceID, &m, "", tnow-m.Timestamp)
@@ -2655,7 +2653,7 @@ func (c *Channel) GetMemDelayedMsgs() []MessageID {
 }
 
 func (c *Channel) isTracedOrDebugTraceLog(msg *Message) bool {
-	if msg.TraceID != 0 || c.IsTraced() || nsqLog.Level() >= levellogger.LOG_DEBUG {
+	if msg.TraceID != 0 || c.IsTraced() || c.chLog.Level() >= levellogger.LOG_DEBUG {
 		return true
 	}
 	return false
