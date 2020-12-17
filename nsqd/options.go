@@ -30,6 +30,7 @@ type Options struct {
 	RPCPort                    string        `flag:"rpc-port"`
 	ReverseProxyPort           string        `flag:"reverse-proxy-port"`
 	HTTPAddress                string        `flag:"http-address"`
+	MetricAddress              string        `flag:"metric-address"`
 	HTTPSAddress               string        `flag:"https-address"`
 	BroadcastAddress           string        `flag:"broadcast-address"`
 	BroadcastInterface         string        `flag:"broadcast-interface"`

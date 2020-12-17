@@ -1,10 +1,11 @@
 package nsqlookupd
 
 import (
-	"github.com/youzan/nsq/internal/levellogger"
 	"log"
 	"os"
 	"time"
+
+	"github.com/youzan/nsq/internal/levellogger"
 )
 
 type Options struct {
@@ -12,6 +13,7 @@ type Options struct {
 
 	TCPAddress         string `flag:"tcp-address"`
 	HTTPAddress        string `flag:"http-address"`
+	MetricAddress      string `flag:"metric-address"`
 	RPCPort            string `flag:"rpc-port"`
 	BroadcastAddress   string `flag:"broadcast-address"`
 	BroadcastInterface string `flag:"broadcast-interface"`
