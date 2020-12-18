@@ -111,7 +111,7 @@ func bootstrapNSQCluster(t *testing.T) (string, []*nsqd.NSQD, []*nsqdserver.Nsqd
 	nsqadminOpts.HTTPAddress = "127.0.0.1:0"
 	nsqadminOpts.NSQLookupdHTTPAddresses = []string{nsqlookupd1.RealHTTPAddr().String()}
 	nsqadminOpts.Logger = lgr
-	nsqadmin1 := New(nsqadminOpts)
+	nsqadmin1, _ := New(nsqadminOpts)
 	go nsqadmin1.Main()
 
 	time.Sleep(100 * time.Millisecond)

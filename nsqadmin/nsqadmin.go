@@ -5,20 +5,21 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"sync"
 	"time"
 
+	"strings"
+
+	"github.com/youzan/nsq/internal/clusterinfo"
 	"github.com/youzan/nsq/internal/http_api"
 	"github.com/youzan/nsq/internal/util"
 	"github.com/youzan/nsq/internal/version"
-	"strings"
-	"github.com/youzan/nsq/internal/clusterinfo"
 )
 
 type NSQAdmin struct {
@@ -29,11 +30,11 @@ type NSQAdmin struct {
 	notifications       chan *AdminAction
 	graphiteURL         *url.URL
 	httpClientTLSConfig *tls.Config
-	accessTokens map[string]bool
-	ac 		    AccessControl
+	accessTokens        map[string]bool
+	ac                  AccessControl
 }
 
-func New(opts *Options) *NSQAdmin {
+func New(opts *Options) (*NSQAdmin, error) {
 	adminLog.Logger = opts.Logger
 	n := &NSQAdmin{
 		opts:          opts,
@@ -44,31 +45,28 @@ func New(opts *Options) *NSQAdmin {
 		authUrl, err := url.Parse(opts.AuthUrl)
 		v, err := url.ParseQuery(authUrl.RawQuery)
 		if err != nil {
-			n.logf("FATAL: failed to resolve authentication url queries (%s) - %s", authUrl.RawQuery, err)
-			os.Exit(1)
+			return nil, fmt.Errorf("FATAL: failed to resolve authentication url queries (%s) - %s", authUrl.RawQuery, err)
 		}
 		v.Add("name", opts.AppName)
 		authUrl.RawQuery = v.Encode()
 		opts.AuthUrl = authUrl.String()
 
 		if opts.AuthSecret == "" {
-			n.logf("FATAL: authentication secret could not be empty")
-			os.Exit(1)
+			err := errors.New("FATAL: authentication secret could not be empty")
+			return nil, err
 		}
 
 		if opts.LogoutUrl == "" {
-			n.logf("FATAL: failed to resolve logout address (%s)", opts.LogoutUrl)
-			os.Exit(1)
+			err := fmt.Errorf("FATAL: failed to resolve logout address (%s)", opts.LogoutUrl)
+			return nil, err
 		} else {
 			logoutUrl, err := url.Parse(opts.LogoutUrl)
 			if err != nil {
-				n.logf("FATAL: failed to resolve logout address (%s) - %s", opts.LogoutUrl, err)
-				os.Exit(1)
+				return nil, fmt.Errorf("FATAL: failed to resolve logout address (%s) - %s", opts.LogoutUrl, err)
 			}
 			v, err := url.ParseQuery(logoutUrl.RawQuery)
 			if err != nil {
-				n.logf("FATAL: failed to resolve logout address queries (%s) - %s", logoutUrl.RawQuery, err)
-				os.Exit(1)
+				return nil, fmt.Errorf("FATAL: failed to resolve logout address queries (%s) - %s", logoutUrl.RawQuery, err)
 			}
 			v.Add("redirect", opts.RedirectUrl)
 			logoutUrl.RawQuery = v.Encode()
@@ -84,38 +82,33 @@ func New(opts *Options) *NSQAdmin {
 	}
 
 	if len(opts.NSQDHTTPAddresses) == 0 && len(opts.NSQLookupdHTTPAddresses) == 0 && len(opts.DCNSQLookupdHTTPAddresses) == 0 {
-		n.logf("--nsqd-http-address or --lookupd-http-address or --dc-lookupd-http-address required.")
-		os.Exit(1)
+		return nil, fmt.Errorf("--nsqd-http-address or --lookupd-http-address or --dc-lookupd-http-address required.")
 	}
 
 	if len(opts.NSQDHTTPAddresses) != 0 && len(opts.NSQLookupdHTTPAddresses) != 0 {
-		n.logf("use --nsqd-http-address or --lookupd-http-address not both")
-		os.Exit(1)
+		return nil, fmt.Errorf("use --nsqd-http-address or --lookupd-http-address not both")
 	}
 
 	if len(opts.NSQLookupdHTTPAddresses) != 0 && len(opts.DCNSQLookupdHTTPAddresses) != 0 {
-		n.logf("use --lookupd-http-address or --dc-lookupd-http-address not both")
-		os.Exit(1)
+		return nil, fmt.Errorf("use --lookupd-http-address or --dc-lookupd-http-address not both")
 	}
 
 	// verify that the supplied address is valid
-	verifyAddress := func(arg string, address string) *net.TCPAddr {
+	verifyAddress := func(arg string, address string) (*net.TCPAddr, error) {
 		addr, err := net.ResolveTCPAddr("tcp", address)
 		if err != nil {
 			n.logf("FATAL: failed to resolve %s address (%s) - %s", arg, address, err)
-			os.Exit(1)
+			return nil, err
 		}
-		return addr
+		return addr, nil
 	}
 
 	if opts.HTTPClientTLSCert != "" && opts.HTTPClientTLSKey == "" {
-		n.logf("FATAL: --http-client-tls-key must be specified with --http-client-tls-cert")
-		os.Exit(1)
+		return nil, fmt.Errorf("FATAL: --http-client-tls-key must be specified with --http-client-tls-cert")
 	}
 
 	if opts.HTTPClientTLSKey != "" && opts.HTTPClientTLSCert == "" {
-		n.logf("FATAL: --http-client-tls-cert must be specified with --http-client-tls-key")
-		os.Exit(1)
+		return nil, fmt.Errorf("FATAL: --http-client-tls-cert must be specified with --http-client-tls-key")
 	}
 
 	n.httpClientTLSConfig = &tls.Config{
@@ -124,9 +117,8 @@ func New(opts *Options) *NSQAdmin {
 	if opts.HTTPClientTLSCert != "" && opts.HTTPClientTLSKey != "" {
 		cert, err := tls.LoadX509KeyPair(opts.HTTPClientTLSCert, opts.HTTPClientTLSKey)
 		if err != nil {
-			n.logf("FATAL: failed to LoadX509KeyPair %s, %s - %s",
+			return nil, fmt.Errorf("FATAL: failed to LoadX509KeyPair %s, %s - %s",
 				opts.HTTPClientTLSCert, opts.HTTPClientTLSKey, err)
-			os.Exit(1)
 		}
 		n.httpClientTLSConfig.Certificates = []tls.Certificate{cert}
 	}
@@ -134,28 +126,35 @@ func New(opts *Options) *NSQAdmin {
 		tlsCertPool := x509.NewCertPool()
 		caCertFile, err := ioutil.ReadFile(opts.HTTPClientTLSRootCAFile)
 		if err != nil {
-			n.logf("FATAL: failed to read TLS root CA file %s - %s",
+			return nil, fmt.Errorf("FATAL: failed to read TLS root CA file %s - %s",
 				opts.HTTPClientTLSRootCAFile, err)
-			os.Exit(1)
 		}
 		if !tlsCertPool.AppendCertsFromPEM(caCertFile) {
-			n.logf("FATAL: failed to AppendCertsFromPEM %s", opts.HTTPClientTLSRootCAFile)
-			os.Exit(1)
+			return nil, fmt.Errorf("FATAL: failed to AppendCertsFromPEM %s", opts.HTTPClientTLSRootCAFile)
 		}
 		n.httpClientTLSConfig.ClientCAs = tlsCertPool
 	}
 
 	// require that both the hostname and port be specified
 	for _, address := range opts.NSQLookupdHTTPAddresses {
-		verifyAddress("--lookupd-http-address", address)
+		_, err := verifyAddress("--lookupd-http-address", address)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	for _, address := range opts.NSQDHTTPAddresses {
-		verifyAddress("--nsqd-http-address", address)
+		_, err := verifyAddress("--nsqd-http-address", address)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	for _, dc2address := range opts.DCNSQLookupdHTTPAddresses {
-		verifyAddress("--dc-lookupd-http-address", strings.SplitN(dc2address, ":", 2)[1])
+		_, err := verifyAddress("--dc-lookupd-http-address", strings.SplitN(dc2address, ":", 2)[1])
+		if err != nil {
+			return nil, err
+		}
 	}
 	//build dc 2 lookupd map
 	if len(opts.DCNSQLookupdHTTPAddresses) > 0 {
@@ -168,14 +167,14 @@ func New(opts *Options) *NSQAdmin {
 		url, err := url.Parse(opts.GraphiteURL)
 		if err != nil {
 			n.logf("FATAL: failed to parse --graphite-url='%s' - %s", opts.GraphiteURL, err)
-			os.Exit(1)
+			return nil, err
 		}
 		n.graphiteURL = url
 	}
 
 	n.logf(version.String("nsqadmin"))
 
-	return n
+	return n, nil
 }
 
 func (n *NSQAdmin) buildLookupdAddress(dcLookupdAddresses []string, hasDC bool) {
@@ -190,7 +189,7 @@ func (n *NSQAdmin) buildLookupdAddress(dcLookupdAddresses []string, hasDC bool) 
 			dc = ""
 			lookupd = lookupdWDC
 		}
-		n.logf("add dc: %v lookup address: %v", dc,lookupd)
+		n.logf("add dc: %v lookup address: %v", dc, lookupd)
 		lookupdAddresses = append(lookupdAddresses, clusterinfo.LookupdAddressDC{dc, lookupd})
 	}
 	n.opts.NSQLookupdHTTPAddressesDC = lookupdAddresses
@@ -232,11 +231,10 @@ func (n *NSQAdmin) IsAuthEnabled() bool {
 	return n.opts.AuthUrl != ""
 }
 
-func (n *NSQAdmin) Main() {
+func (n *NSQAdmin) Main() error {
 	httpListener, err := net.Listen("tcp", n.opts.HTTPAddress)
 	if err != nil {
-		n.logf("FATAL: listen (%s) failed - %s", n.opts.HTTPAddress, err)
-		os.Exit(1)
+		return fmt.Errorf("FATAL: listen (%s) failed - %s", n.opts.HTTPAddress, err)
 	}
 	n.Lock()
 	n.httpListener = httpListener
@@ -245,8 +243,7 @@ func (n *NSQAdmin) Main() {
 	httpServer := NewHTTPServer(cxt)
 	n.ac, err = NewYamlAccessControl(cxt, n.opts.AccessControlFile)
 	if err != nil {
-		n.logf("FATAL: fail to inisialize access control - %v", err)
-		os.Exit(1)
+		return fmt.Errorf("FATAL: fail to inisialize access control - %v", err)
 	}
 	if n.ac != nil {
 		n.ac.Start()
@@ -255,6 +252,7 @@ func (n *NSQAdmin) Main() {
 		http_api.Serve(n.httpListener, http_api.CompressHandler(httpServer), "HTTP", n.opts.Logger)
 	})
 	n.waitGroup.Wrap(func() { n.handleAdminActions() })
+	return nil
 }
 
 func (n *NSQAdmin) DC2LookupAddresses() map[string][]string {
@@ -268,7 +266,7 @@ func (n *NSQAdmin) DC2LookupAddresses() map[string][]string {
 		}
 		dc2LookupdAddrs[lookupd.DC] = append(dc2LookupdAddrs[lookupd.DC], lookupd.Addr)
 	}
-	return dc2LookupdAddrs;
+	return dc2LookupdAddrs
 }
 
 func (n *NSQAdmin) Exit() {

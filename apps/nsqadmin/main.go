@@ -53,15 +53,15 @@ var (
 	channelCreateRetry           = flagSet.Int("channel-create-retry", 3, "max retry for creating channel in topic creation")
 	channelCreateBackoffInterval = flagSet.Int("channel-create-backoff-interval", 1000, "backoff interval when default channel fail to create in topic creation")
 
-	AuthUrl = flagSet.String("auth-url", "", "authentication service url")
+	AuthUrl    = flagSet.String("auth-url", "", "authentication service url")
 	AuthSecret = flagSet.String("auth-secret", "", "authentication secret")
-	LogoutUrl = flagSet.String("logout-url", "", "logout url")
+	LogoutUrl  = flagSet.String("logout-url", "", "logout url")
 
-	AppName = flagSet.String("app-name", "", "current application name in authentication service")
+	AppName     = flagSet.String("app-name", "", "current application name in authentication service")
 	RedirectUrl = flagSet.String("redirect-url", "", "refirect url")
 
-	nsqlookupdHTTPAddresses = app.StringArray{}
-	nsqdHTTPAddresses       = app.StringArray{}
+	nsqlookupdHTTPAddresses   = app.StringArray{}
+	nsqdHTTPAddresses         = app.StringArray{}
 	dcNsqlookupdHTTPAddresses = app.StringArray{}
 
 	accessTokens = app.StringArray{}
@@ -104,7 +104,7 @@ func main() {
 	if *config != "" {
 		_, err := toml.DecodeFile(*config, &cfg)
 		if err != nil {
-			log.Fatalf("ERROR: failed to load config file %s - %s", *config, err)
+			log.Panicf("ERROR: failed to load config file %s - %s", *config, err)
 		}
 	}
 	opts := nsqadmin.NewOptions()
@@ -114,8 +114,16 @@ func main() {
 	}
 	glog.StartWorker(time.Second * 2)
 
-	nsqadmin := nsqadmin.New(opts)
-	nsqadmin.Main()
+	nsqadmin, err := nsqadmin.New(opts)
+	if err != nil {
+		log.Panicf("nsqadmin new failed: %s", err)
+		return
+	}
+	err = nsqadmin.Main()
+	if err != nil {
+		log.Panicf("nsqadmin start failed: %s", err)
+		return
+	}
 	<-exitChan
 	nsqadmin.Exit()
 }
