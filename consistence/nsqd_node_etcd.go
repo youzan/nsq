@@ -260,7 +260,8 @@ func (nem *NsqdEtcdMgr) WatchLookupdLeader(leader chan *NsqLookupdNodeInfo, stop
 						continue
 					}
 					coordLog.Warningf("rewatch key %v with newest index: %v, new data: %v", key, rsp.Index, rsp.Node.String())
-					watcher = nem.client.Watch(key, rsp.Index+1, true)
+					// watch for v2 client should not +1 on index, since it is the after index (which will +1 in the method of watch)
+					watcher = nem.client.Watch(key, rsp.Index, true)
 				} else {
 					time.Sleep(5 * time.Second)
 					continue

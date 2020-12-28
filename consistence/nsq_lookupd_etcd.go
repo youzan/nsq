@@ -319,7 +319,8 @@ func (self *NsqLookupdEtcdMgr) WatchNsqdNodes(nsqds chan []NsqdNodeInfo, stop ch
 						time.Sleep(time.Second)
 						continue
 					}
-					watcher = self.client.Watch(key, rsp.Index+1, true)
+					// watch for v2 client should not +1 on index, since it is the after index (which will +1 in the method of watch)
+					watcher = self.client.Watch(key, rsp.Index, true)
 					// should get the nodes to notify watcher since last watch is expired
 				} else {
 					time.Sleep(5 * time.Second)
@@ -430,7 +431,8 @@ func (self *NsqLookupdEtcdMgr) watchTopics() {
 					coordLog.Infof("rewatched topic max changed from %v to: %v",
 						atomic.LoadUint64(&self.watchedClusterIndex), rsp.Index)
 					atomic.StoreUint64(&self.watchedClusterIndex, rsp.Index)
-					watcher = self.client.Watch(self.topicRoot, rsp.Index+1, true)
+					// watch for v2 client should not +1 on index, since it is the after index (which will +1 in the method of watch)
+					watcher = self.client.Watch(self.topicRoot, rsp.Index, true)
 					// watch expired should be treated as changed of node
 				} else {
 					time.Sleep(5 * time.Second)
