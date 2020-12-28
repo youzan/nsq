@@ -2,10 +2,12 @@ package nsqlookupd
 
 import (
 	"net"
+	"net/http"
 	"strconv"
 	"sync"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/youzan/nsq/consistence"
 
 	"github.com/youzan/nsq/internal/http_api"
@@ -148,6 +150,15 @@ func (l *NSQLookupd) Main() error {
 	l.waitGroup.Wrap(func() {
 		http_api.Serve(httpListener, httpServer, "HTTP", l.opts.Logger)
 	})
+	metricAddr := l.opts.MetricAddress
+	if metricAddr == "" {
+		metricAddr = ":8800"
+	}
+	go func() {
+		mux := http.NewServeMux()
+		mux.Handle("/metrics", promhttp.Handler())
+		http.ListenAndServe(metricAddr, mux)
+	}()
 	return nil
 }
 

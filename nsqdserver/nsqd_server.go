@@ -6,9 +6,11 @@ import (
 	"errors"
 	"io/ioutil"
 	"net"
+	"net/http"
 	"strconv"
 	"sync/atomic"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/youzan/nsq/consistence"
 	"github.com/youzan/nsq/nsqd"
 
@@ -265,5 +267,14 @@ func (s *NsqdServer) Main() error {
 
 	s.waitGroup.Wrap(s.historySaveLoop)
 	s.waitGroup.Wrap(s.statsdLoop)
+	metricAddr := opts.MetricAddress
+	if metricAddr == "" {
+		metricAddr = ":8800"
+	}
+	go func() {
+		mux := http.NewServeMux()
+		mux.Handle("/metrics", promhttp.Handler())
+		http.ListenAndServe(metricAddr, mux)
+	}()
 	return nil
 }

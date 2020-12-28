@@ -93,6 +93,7 @@ func nsqdFlagSet(opts *nsqd.Options) *flag.FlagSet {
 
 	flagSet.String("https-address", opts.HTTPSAddress, "<addr>:<port> to listen on for HTTPS clients")
 	flagSet.String("http-address", opts.HTTPAddress, "<addr>:<port> to listen on for HTTP clients")
+	flagSet.String("metric-address", opts.MetricAddress, "<addr>:<port> to listen on for HTTP metric clients")
 	flagSet.String("tcp-address", opts.TCPAddress, "<addr>:<port> to listen on for TCP clients")
 	flagSet.String("rpc-port", opts.RPCPort, "<port> to listen on for RPC communication")
 	flagSet.String("reverse-proxy-port", opts.ReverseProxyPort, "<port> for reverse proxy port")

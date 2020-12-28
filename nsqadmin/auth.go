@@ -1,15 +1,16 @@
 package nsqadmin
 
 import (
-	"net/url"
-	"net/http"
-	"encoding/json"
-	"fmt"
-	"github.com/gorilla/sessions"
-	"errors"
-	"io/ioutil"
-	"reflect"
 	"encoding/gob"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io/ioutil"
+	"net/http"
+	"net/url"
+	"reflect"
+
+	"github.com/gorilla/sessions"
 )
 
 var store = sessions.NewCookieStore([]byte("user-authentication"))
@@ -24,7 +25,7 @@ type CasResponse struct {
 	Data *CasResponseValue
 }
 
-type  CasResponseValue struct {
+type CasResponseValue struct {
 	Value *CasUserModel
 }
 
@@ -37,7 +38,7 @@ type CasUserModel struct {
 	Mobile   string
 	Email    string
 	Login    bool
-	ctx *Context
+	ctx      *Context
 }
 
 func (u *CasUserModel) String() string {
@@ -49,7 +50,7 @@ func (u *CasUserModel) copy(newU *CasUserModel) {
 	u.UserName = newU.UserName
 	u.Gender = newU.Gender
 	u.RealName = newU.RealName
-	u.Aliasna =  newU.Aliasna
+	u.Aliasna = newU.Aliasna
 	u.Mobile = newU.Mobile
 	u.Email = newU.Email
 }
@@ -84,18 +85,18 @@ func (u *CasUserModel) getEmail() string {
 
 func NewCasUserModel(ctx *Context, w http.ResponseWriter, req *http.Request) (*CasUserModel, error) {
 	casUser := &CasUserModel{
-		Login:  false,
-		ctx: ctx,
+		Login: false,
+		ctx:   ctx,
 	}
 	session, err := store.Get(req, "session-user")
 	if err != nil {
-		ctx.nsqadmin.logf("ERROR: error in fetching session, err", err)
+		ctx.nsqadmin.logf("ERROR: error in fetching session, err: %s", err)
 		return nil, err
 	}
 	session.Options = &sessions.Options{
 		Path: "/",
 		//keep it in 12 hours
-		MaxAge:   43200,
+		MaxAge: 43200,
 	}
 	session.Values["userModel"] = casUser
 	session.Save(req, w)
@@ -143,7 +144,7 @@ func (u *CasUserModel) DoAuth(w http.ResponseWriter, req *http.Request) error {
 		u.ctx.nsqadmin.logf("ERROR: fail to parse cas URL queries %v", req.URL.String())
 		return err
 	}
-	code:= v.Get("code")
+	code := v.Get("code")
 	if code == "" {
 		return errors.New("illeggal code form cas")
 	}
@@ -166,7 +167,7 @@ func (u *CasUserModel) DoAuth(w http.ResponseWriter, req *http.Request) error {
 	casSecret := u.ctx.nsqadmin.opts.AuthSecret
 	client := http.DefaultClient
 	userInfoReq, _ := http.NewRequest("GET", userInfoUrl.String(), nil)
-	userInfoReq.Header.Set("Authorization", "oauth " + casSecret)
+	userInfoReq.Header.Set("Authorization", "oauth "+casSecret)
 	resp, err := client.Do(userInfoReq)
 	if err != nil {
 		u.ctx.nsqadmin.logf("WARN: fail to fetch user info from cas remote, url %v, err: %v", userInfoUrl.String(), err)
@@ -198,7 +199,7 @@ func GetUserModel(ctx *Context, req *http.Request) (IUserAuth, error) {
 	val := session.Values["userModel"]
 	if val != nil {
 		if userModel, ok := val.(IUserAuth); !ok {
-			return nil, errors.New(fmt.Sprint("cas value type in session is not right, actual type %v", reflect.TypeOf(val)))
+			return nil, fmt.Errorf("cas value type in session is not right, actual type %v", reflect.TypeOf(val))
 		} else {
 			if userModel != nil {
 				userModel.SetContext(ctx)

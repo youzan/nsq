@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/coreos/etcd/client"
@@ -37,7 +38,6 @@ type Master interface {
 	GetEventsChan() <-chan *MasterEvent
 	GetKey() string
 	GetMaster() string
-	TryAcquire() (ret error)
 }
 
 type EtcdLock struct {
@@ -55,6 +55,7 @@ type EtcdLock struct {
 	refreshStoppedChan chan bool
 	ifHolding          bool
 	modifiedIndex      uint64
+	testRefreshPaused  int32
 }
 
 func NewMaster(etcdClient *EtcdClient, name, value string, ttl uint64) Master {
@@ -123,49 +124,6 @@ func (self *EtcdLock) GetMaster() string {
 	return self.master
 }
 
-func (self *EtcdLock) TryAcquire() (ret error) {
-	defer func() {
-		if r := recover(); r != nil {
-			callers := ""
-			for i := 0; true; i++ {
-				_, file, line, ok := runtime.Caller(i)
-				if !ok {
-					break
-				}
-				callers = callers + fmt.Sprintf("%v:%v\n", file, line)
-			}
-			errMsg := fmt.Sprintf("[EtcdLock][TryAcquire] Recovered from panic: %#v (%v)\n%v", r, r, callers)
-			coordLog.Errorf("%v", errMsg)
-			ret = errors.New(errMsg)
-		}
-	}()
-
-	rsp, err := self.client.Get(self.name, false, false)
-	if err != nil {
-		if client.IsKeyNotFound(err) {
-			coordLog.Infof("[EtcdLock][TryAcquire] try to acquire lock[%s]", self.name)
-			rsp, err = self.client.Create(self.name, self.id, self.ttl)
-			if err != nil {
-				coordLog.Errorf("[EtcdLock][TryAcquire] etcd create lock[%s] error: %s", self.name, err.Error())
-				return err
-			}
-		} else {
-			coordLog.Errorf("[EtcdLock][TryAcquire] etcd get lock[%s] error: %s", self.name, err.Error())
-			return err
-		}
-	}
-
-	if rsp.Node.Value == self.id {
-		coordLog.Infof("[EtcdLock][TryAcquire] acquire lock: %s", self.name)
-		self.ifHolding = true
-		go self.refresh()
-	} else {
-		return fmt.Errorf("Master[%s] has locked, value[%s]", self.name, rsp.Node.Value)
-	}
-
-	return nil
-}
-
 func (self *EtcdLock) acquire() (ret error) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -200,7 +158,7 @@ func (self *EtcdLock) acquire() (ret error) {
 			break
 		}
 
-		if err != nil || rsp.Node.Value == "" {
+		if err != nil || rsp == nil || rsp.Node == nil || rsp.Node.Value == "" {
 			rsp, err = self.client.Get(self.name, false, false)
 			if err != nil {
 				if client.IsKeyNotFound(err) {
@@ -225,15 +183,11 @@ func (self *EtcdLock) acquire() (ret error) {
 		self.modifiedIndex = rsp.Node.ModifiedIndex
 		self.Unlock()
 
-		var preIdx uint64
-		// TODO: maybe change with etcd change
-		if rsp.Index < rsp.Node.ModifiedIndex {
-			preIdx = rsp.Node.ModifiedIndex + 1
-		} else {
-			preIdx = rsp.Index + 1
-		}
-		watcher := self.client.Watch(self.name, preIdx, false)
+		coordLog.Debugf("[EtcdLock] begin watch lock[%s] %v", self.name, rsp.Index)
+		// watch for v2 client should not +1 on index, since it is the after index (which will +1 in the method of watch)
+		watcher := self.client.Watch(self.name, rsp.Index, false)
 		rsp, err = watcher.Next(ctx)
+		coordLog.Debugf("[EtcdLock] watch event lock[%s] %v", self.name, rsp)
 		if err != nil {
 			if err == context.Canceled {
 				coordLog.Infof("[EtcdLock][acquire] watch lock[%s] stop by user.", self.name)
@@ -293,12 +247,23 @@ func (self *EtcdLock) refresh() {
 			coordLog.Infof("[EtcdLock][refresh] Stopping refresh for lock %s", self.name)
 			return
 		case <-ticker.C:
+			if atomic.LoadInt32(&self.testRefreshPaused) == 1 {
+				continue
+			}
 			self.Lock()
 			modify := self.modifiedIndex
 			self.Unlock()
 			rsp, err := self.client.CompareAndSwap(self.name, self.id, self.ttl, self.id, modify)
 			if err != nil {
 				coordLog.Errorf("[EtcdLock][refresh] Failed to set ttl for lock[%s] error:%s", self.name, err.Error())
+				rsp, err = self.client.Get(self.name, false, false)
+				if err != nil {
+					if client.IsKeyNotFound(err) {
+						coordLog.Warningf("[EtcdLock] lock[%s] missing", self.name)
+					}
+				} else if rsp != nil && rsp.Node != nil {
+					coordLog.Warningf("[EtcdLock] lock[%s] current:%s, %v", self.name, rsp.Node.Value, rsp.Index)
+				}
 			} else {
 				self.Lock()
 				self.modifiedIndex = rsp.Node.ModifiedIndex
