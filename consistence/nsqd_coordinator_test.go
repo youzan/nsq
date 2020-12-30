@@ -117,6 +117,21 @@ func (self *fakeLookupRemoteProxy) RequestJoinTopicISR(topic string, partition i
 	if self.t != nil {
 		self.t.Log("requesting join isr")
 	}
+	// notify disable topic write
+	for nid, nsqdCoord := range self.fakeNsqdCoords {
+		tp, err := nsqdCoord.getTopicCoord(topic, partition)
+		if err != nil {
+			continue
+		}
+		localTopic, localErr := nsqdCoord.localNsqd.GetExistingTopic(topic, partition)
+		if localErr != nil {
+			continue
+		}
+		if self.t != nil {
+			self.t.Logf("join isr testing flushing switch state for master: %v, %v", nid, topic)
+		}
+		nsqdCoord.switchStateForMaster(tp, localTopic, false)
+	}
 	return nil
 }
 
@@ -249,8 +264,10 @@ func newNsqdNode(t *testing.T, id string) (*nsqdNs.NSQD, int, *NsqdNodeInfo, str
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
 	opts.MaxBytesPerFile = 1024 * 1024
+	opts.SyncEvery = 5000
+	opts.SyncTimeout = time.Second * 60
 	if testing.Verbose() {
-		opts.LogLevel = levellogger.LOG_INFO
+		opts.LogLevel = levellogger.LOG_DETAIL
 		opts.Logger = levellogger.NewSimpleLog()
 		nsqdNs.SetLogger(opts.Logger)
 		glog.SetFlags(0, "", "", true, true, 1)
@@ -1313,6 +1330,165 @@ func testNsqdCoordCatchupMultiCommitSegment(t *testing.T, meta TopicMetaInfo) {
 
 	test.Nil(t, err)
 	test.Equal(t, len(logs3), msgCnt)
+	test.Equal(t, logs1, logs3)
+}
+
+func TestNsqdCoordCatchupWhileWriting(t *testing.T) {
+	// test in 3 replicas,  1 replica down, and the other 2 replicas still write new data
+	// and make the pullCommitLogsAndData return EOF (since the disk queue not flushed while commit flushed)
+	topic := "coordTestTopicCatchupWhileWrite"
+	partition := 1
+	if testing.Verbose() {
+		SetCoordLogger(newTestLogger(t), levellogger.LOG_INFO)
+		glog.SetFlags(0, "", "", true, true, 1)
+		glog.StartWorker(time.Second)
+	} else {
+		SetCoordLogger(newTestLogger(t), levellogger.LOG_DEBUG)
+	}
+
+	nsqd1, randPort1, nodeInfo1, data1 := newNsqdNode(t, "id1")
+	nsqd2, randPort2, nodeInfo2, data2 := newNsqdNode(t, "id2")
+	nsqd3, randPort3, nodeInfo3, data3 := newNsqdNode(t, "id3")
+
+	fakeLeadership := NewFakeNSQDLeadership().(*fakeNsqdLeadership)
+	fakeReplicaInfo := &TopicPartitionReplicaInfo{
+		Leader:        nodeInfo1.GetID(),
+		ISR:           make([]string, 0),
+		CatchupList:   make([]string, 0),
+		Epoch:         1,
+		EpochForWrite: 1,
+	}
+	meta := TopicMetaInfo{
+		Replica:      3,
+		PartitionNum: 1,
+		SyncEvery:    5000,
+	}
+	fakeInfo := &TopicPartitionMetaInfo{
+		Name:                      topic,
+		Partition:                 partition,
+		TopicMetaInfo:             meta,
+		TopicPartitionReplicaInfo: *fakeReplicaInfo,
+	}
+
+	fakeInfo.ISR = append(fakeInfo.ISR, nodeInfo1.GetID())
+	fakeInfo.ISR = append(fakeInfo.ISR, nodeInfo2.GetID())
+	fakeInfo.CatchupList = append(fakeInfo.CatchupList, nodeInfo3.GetID())
+
+	tmp := make(map[int]*TopicPartitionMetaInfo)
+	fakeLeadership.UpdateTopics(topic, tmp)
+	fakeLeadership.AcquireTopicLeader(topic, partition, nodeInfo1, fakeInfo.Epoch)
+	tmp[partition] = fakeInfo
+
+	fakeLookupProxy, _ := NewFakeLookupRemoteProxy("127.0.0.1", 0)
+	fakeSession, _ := fakeLeadership.GetTopicLeaderSession(topic, partition)
+	fakeLookupProxy.(*fakeLookupRemoteProxy).leaderSessions[topic] = make(map[int]*TopicLeaderSession)
+	fakeLookupProxy.(*fakeLookupRemoteProxy).leaderSessions[topic][partition] = fakeSession
+
+	nsqdCoord1 := startNsqdCoordWithFakeData(t, strconv.Itoa(int(randPort1)), data1, "id1", nsqd1, fakeLeadership, fakeLookupProxy.(*fakeLookupRemoteProxy))
+	defer os.RemoveAll(data1)
+	defer nsqd1.Exit()
+	defer nsqdCoord1.Stop()
+	time.Sleep(time.Second)
+
+	nsqdCoord2 := startNsqdCoordWithFakeData(t, strconv.Itoa(int(randPort2)), data2, "id2", nsqd2, fakeLeadership, fakeLookupProxy.(*fakeLookupRemoteProxy))
+	defer os.RemoveAll(data2)
+	defer nsqd2.Exit()
+	defer nsqdCoord2.Stop()
+	time.Sleep(time.Second)
+
+	// create topic on nsqdcoord
+	var topicInitInfo RpcAdminTopicInfo
+	topicInitInfo.TopicPartitionMetaInfo = *fakeInfo
+	ensureTopicOnNsqdCoord(nsqdCoord1, topicInitInfo)
+	ensureTopicOnNsqdCoord(nsqdCoord2, topicInitInfo)
+	// notify leadership to nsqdcoord
+	ensureTopicLeaderSession(nsqdCoord1, topic, partition, fakeSession)
+	ensureTopicLeaderSession(nsqdCoord2, topic, partition, fakeSession)
+	ensureTopicDisableWrite(nsqdCoord1, topic, partition, false)
+	ensureTopicDisableWrite(nsqdCoord2, topic, partition, false)
+
+	// message header is 26 bytes
+	msgCnt := int32(0)
+	msgRawSize := int64(nsqdNs.MessageHeaderBytes() + 3 + 4)
+	topicData1 := nsqd1.GetTopic(topic, partition, false)
+	tc1, _ := nsqdCoord1.getTopicCoord(topic, partition)
+	stopC := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 20000; i++ {
+			_, _, _, _, err := nsqdCoord1.PutMessageBodyToCluster(topicData1, []byte("123"), 0)
+			test.Nil(t, err)
+			atomic.AddInt32(&msgCnt, 1)
+			time.Sleep(time.Millisecond * 100)
+			// we flush commit but do not flush queue data to make EOF while pulling data
+			tc1.logMgr.FlushCommitLogs()
+			select {
+			case <-stopC:
+				return
+			default:
+			}
+		}
+	}()
+
+	time.Sleep(time.Second)
+	// start as catchup
+	// full catchup and increment catchup
+	nsqdCoord3 := startNsqdCoordWithFakeData(t, strconv.Itoa(int(randPort3)), data3, "id3", nsqd3, fakeLeadership, fakeLookupProxy.(*fakeLookupRemoteProxy))
+	defer os.RemoveAll(data3)
+	defer nsqd3.Exit()
+	defer nsqdCoord3.Stop()
+	ensureTopicOnNsqdCoord(nsqdCoord3, topicInitInfo)
+	ensureTopicLeaderSession(nsqdCoord3, topic, partition, fakeSession)
+	// wait full catchup
+	time.Sleep(time.Second * 3)
+	close(stopC)
+	wg.Wait()
+
+	topicData3 := nsqd3.GetTopic(topic, partition, false)
+	tc3, coordErr := nsqdCoord3.getTopicCoord(topic, partition)
+	test.Nil(t, coordErr)
+
+	// increment catchup
+	topicInitInfo.Epoch++
+	ensureTopicOnNsqdCoord(nsqdCoord3, topicInitInfo)
+	ensureTopicLeaderSession(nsqdCoord3, topic, partition, fakeSession)
+	time.Sleep(time.Second * 5)
+
+	topicData3.ForceFlush()
+	t.Logf("synced: %v, total: %v", topicData3.TotalMessageCnt(), msgCnt)
+	// should not catchup done since some queue data not flushed on leader
+	test.Equal(t, true, topicData3.TotalMessageCnt() < uint64(msgCnt))
+	test.Equal(t, true, topicData3.TotalDataSize() < msgRawSize*int64(msgCnt))
+
+	// should flush all commit log on leader
+	logs1, err := tc1.logMgr.GetCommitLogsV2(0, 0, int(msgCnt))
+	test.Nil(t, err)
+	test.Equal(t, len(logs1), int(msgCnt))
+	// add to fake lookup to notify flush data while join isr notify
+	fakeLookupProxy.(*fakeLookupRemoteProxy).fakeNsqdCoords[nsqdCoord1.GetMyID()] = nsqdCoord1
+	// the follower should notify join isr while reached EOF error,
+	// and the faked lookup will flush the left disk queue data to make no EOF error, and need retry for catchup
+	topicData3.ForceFlush()
+	ensureTopicOnNsqdCoord(nsqdCoord3, topicInitInfo)
+	ensureTopicLeaderSession(nsqdCoord3, topic, partition, fakeSession)
+	time.Sleep(time.Second * 3)
+
+	test.Equal(t, topicData1.TotalMessageCnt(), uint64(msgCnt))
+	test.Equal(t, topicData1.TotalDataSize(), msgRawSize*int64(msgCnt))
+
+	logs3, err := tc3.logMgr.GetCommitLogsV2(0, 0, int(msgCnt))
+	test.Nil(t, err)
+	test.Equal(t, len(logs3), int(msgCnt))
+	topicData3.ForceFlush()
+	t.Logf("synced: %v, total: %v", topicData3.TotalMessageCnt(), msgCnt)
+	test.Equal(t, topicData3.TotalMessageCnt(), uint64(msgCnt))
+	test.Equal(t, topicData3.TotalDataSize(), msgRawSize*int64(msgCnt))
+	test.Equal(t, topicData3.TotalMessageCnt(), uint64(msgCnt))
+	logs3, err = tc3.logMgr.GetCommitLogsV2(0, 0, int(msgCnt))
+	test.Nil(t, err)
+	test.Equal(t, len(logs3), int(msgCnt))
 	test.Equal(t, logs1, logs3)
 }
 

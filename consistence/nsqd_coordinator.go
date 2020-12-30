@@ -2015,10 +2015,15 @@ func (ncoord *NsqdCoordinator) catchupFromLeader(topicInfo TopicPartitionMetaInf
 	coordErr = ncoord.pullCatchupDataFromLeader(tc, topicInfo, localTopic, tc.GetData().logMgr, false, logIndex, offset)
 	if coordErr != nil {
 		coordLog.Infof("pull topic %v catchup data failed:%v", topicInfo.GetTopicDesp(), coordErr)
-		if joinISRSession == "" && strings.Contains(coordErr.ErrMsg, nsqd.ErrMoveOffsetOverflowed.Error()) {
+		//canIgnoreErr := strings.Contains(coordErr.ErrMsg, nsqd.ErrMoveOffsetOverflowed.Error())
+		canIgnoreErr := strings.Contains(coordErr.ErrMsg, nsqd.ErrMoveOffsetOverflowed.Error()) ||
+			strings.Contains(coordErr.ErrMsg, ErrLocalCommitDataMismatchQueueDataEOF.ErrMsg)
+		if joinISRSession == "" && canIgnoreErr {
 			// while join session is empty, it may happen the leader is writing while catchup
 			// so we may get the unflushed commit log, which will return overflow error.
-			// we can ignore this and continue catchup the left data after we disabled write on leader
+			// we can ignore this and continue catchup the left data after we disabled write on leader.
+			// Also, while the leader is writing, it may happen the commit log is flushed but the disk queue not flushed, it may return EOF while pull data
+			// we can ignore this and retry while disable write
 			coordErr = nil
 		} else {
 			return coordErr
@@ -2881,9 +2886,13 @@ func (ncoord *NsqdCoordinator) readTopicRawData(topic string, partition int, off
 		buf, err = snap.ReadRaw(size)
 		if err != nil {
 			coordLog.Infof("read topic data at offset %v, size:%v(actual: %v), error: %v", offset, size, len(buf), err)
-			if err == io.EOF && len(dataList) > 0 {
-				// we can ignore EOF if we already read some data
-				err = nil
+			if err == io.EOF {
+				if len(dataList) > 0 {
+					// we can ignore EOF if we already read some data
+					err = nil
+				} else {
+					return dataList, ErrLocalCommitDataMismatchQueueDataEOF
+				}
 			}
 			break
 		}
