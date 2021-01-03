@@ -190,14 +190,20 @@ func (self *EtcdLock) acquire() (ret error) {
 			wi = rsp.Index
 			coordLog.Infof("[EtcdLock] watch lock[%s] at cluster index: %v, modify index: %v", self.name, rsp.Index, rsp.Node.ModifiedIndex)
 		}
+		// to avoid dead connection issues, we add timeout for watch connection to wake up watch if too long no
+		// any event
+		ctxTo, cancelTo := context.WithTimeout(ctx, time.Second*time.Duration(ETCD_TTL*2))
 		coordLog.Debugf("[EtcdLock] begin watch lock[%s] %v", self.name, rsp.Index)
 		// watch for v2 client should not +1 on index, since it is the after index (which will +1 in the method of watch)
 		watcher := self.client.Watch(self.name, wi, false)
-		rsp, err = watcher.Next(ctx)
+		rsp, err = watcher.Next(ctxTo)
 		coordLog.Debugf("[EtcdLock] watch event lock[%s] %v", self.name, rsp)
+		cancelTo()
 		if err != nil {
 			if err == context.Canceled {
 				coordLog.Infof("[EtcdLock][acquire] watch lock[%s] stop by user.", self.name)
+			} else if err == context.DeadlineExceeded {
+				coordLog.Infof("[EtcdLock][acquire] watch lock[%s] timeout.", self.name)
 			} else {
 				coordLog.Warningf("[EtcdLock][acquire] failed to watch lock[%s] error: %s", self.name, err.Error())
 			}

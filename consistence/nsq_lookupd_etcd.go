@@ -70,7 +70,7 @@ type NsqLookupdEtcdMgr struct {
 	nodeValue           string
 
 	refreshStopCh        chan bool
-	watchTopicsStopCh    chan bool
+	watchTopicsStopCh    chan struct{}
 	watchNsqdNodesStopCh chan bool
 
 	topicReplicasMap    map[string]map[int]TopicPartitionReplicaInfo
@@ -87,7 +87,7 @@ func NewNsqLookupdEtcdMgr(host, username, pwd string) (*NsqLookupdEtcdMgr, error
 		client:               client,
 		ifTopicChanged:       1,
 		ifTopicScanning:      0,
-		watchTopicsStopCh:    make(chan bool, 1),
+		watchTopicsStopCh:    make(chan struct{}, 1),
 		watchNsqdNodesStopCh: make(chan bool, 1),
 		topicMetaMap:         make(map[string]TopicMetaInfo),
 		refreshStopCh:        make(chan bool, 1),
@@ -167,7 +167,7 @@ func (self *NsqLookupdEtcdMgr) Unregister(value *NsqLookupdNodeInfo) error {
 
 func (self *NsqLookupdEtcdMgr) Stop() {
 	//	self.Unregister()
-
+	coordLog.Infof("lookup etcd leadership is stopping.")
 	if self.watchNsqdNodesStopCh != nil {
 		close(self.watchNsqdNodesStopCh)
 	}
@@ -281,65 +281,40 @@ func (self *NsqLookupdEtcdMgr) GetNsqdNodes() ([]NsqdNodeInfo, error) {
 }
 
 func (self *NsqLookupdEtcdMgr) WatchNsqdNodes(nsqds chan []NsqdNodeInfo, stop chan struct{}) {
-	nsqdNodes, nIndex, err := self.getNsqdNodes(false)
+	defer close(nsqds)
+	nsqdNodes, _, err := self.getNsqdNodes(false)
 	if err == nil {
 		select {
 		case nsqds <- nsqdNodes:
 		case <-stop:
-			close(nsqds)
 			return
 		}
 	}
 
 	key := self.createNsqdRootPath()
-	watcher := self.client.Watch(key, nIndex, true)
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
 		select {
 		case <-stop:
+			coordLog.Infof("watch key[%s] will be stopped by 1.", key)
 			cancel()
 		case <-self.watchNsqdNodesStopCh:
+			coordLog.Infof("watch key[%s] will be stopped by 2.", key)
 			cancel()
 		}
 	}()
-	for {
-		rsp, err := watcher.Next(ctx)
-		if err != nil {
-			if err == context.Canceled {
-				coordLog.Infof("watch key[%s] canceled.", key)
-				close(nsqds)
-				return
-			} else {
-				coordLog.Errorf("watcher key[%s] error: %s", key, err.Error())
-				//rewatch
-				if IsEtcdWatchExpired(err) {
-					rsp, err = self.client.Get(key, false, true)
-					if err != nil {
-						coordLog.Errorf("rewatch and get key[%s] error: %s", key, err.Error())
-						time.Sleep(time.Second)
-						continue
-					}
-					// watch for v2 client should not +1 on index, since it is the after index (which will +1 in the method of watch)
-					watcher = self.client.Watch(key, rsp.Index, true)
-					// should get the nodes to notify watcher since last watch is expired
-				} else {
-					time.Sleep(5 * time.Second)
-					continue
-				}
-			}
-		}
+	watchWaitAndDo(ctx, self.client, key, true, func(rsp *client.Response) {
 		nsqdNodes, _, err := self.getNsqdNodes(true)
 		if err != nil {
 			coordLog.Errorf("key[%s] getNsqdNodes error: %s", key, err.Error())
-			continue
+			return
 		}
 		select {
 		case nsqds <- nsqdNodes:
 		case <-stop:
-			close(nsqds)
 			return
 		}
-	}
+	}, nil)
 }
 
 func (self *NsqLookupdEtcdMgr) getNsqdNodes(upToDate bool) ([]NsqdNodeInfo, uint64, error) {
@@ -389,68 +364,81 @@ func (self *NsqLookupdEtcdMgr) ScanTopics() ([]TopicPartitionMetaInfo, error) {
 	return topicMetaInfos, nil
 }
 
-// watch topics if changed
-func (self *NsqLookupdEtcdMgr) watchTopics() {
+func watchWaitAndDo(ctx context.Context, client *EtcdClient,
+	key string, recursive bool, callback func(rsp *client.Response),
+	watchExpiredCb func()) {
 	initIndex := uint64(0)
-	rsp, err := self.client.Get(self.topicRoot, false, true)
+	rsp, err := client.Get(key, false, recursive)
 	if err != nil {
-		coordLog.Errorf("get topic root key[%s] error: %s", self.topicRoot, err.Error())
+		coordLog.Errorf("get watched key[%s] error: %s", key, err.Error())
 	} else {
 		if rsp.Index > 0 {
 			initIndex = rsp.Index - 1
 		}
-		atomic.StoreUint64(&self.watchedClusterIndex, rsp.Index)
+		callback(rsp)
 	}
-	watcher := self.client.Watch(self.topicRoot, initIndex, true)
-	ctx, cancel := context.WithCancel(context.Background())
-	go func() {
-		select {
-		case <-self.watchTopicsStopCh:
-			cancel()
-		}
-	}()
-	atomic.StoreInt32(&self.ifTopicChanged, 1)
+	watcher := client.Watch(key, initIndex, recursive)
 	for {
-		rsp, err := watcher.Next(ctx)
+		// to avoid dead connection issues, we add timeout for watch connection to wake up watch if too long no
+		// any event
+		ctxTo, cancelTo := context.WithTimeout(ctx, time.Second*time.Duration(ETCD_TTL*2))
+		rsp, err := watcher.Next(ctxTo)
+		cancelTo()
 		if err != nil {
 			if err == context.Canceled {
-				coordLog.Infof("watch key[%s] canceled.", self.topicRoot)
+				coordLog.Infof("watch key[%s] cancelled.", key)
 				return
+			} else if err == context.DeadlineExceeded {
+				coordLog.Debugf("watcher key[%s] timeout: %s", key, err.Error())
+				continue
 			} else {
-				coordLog.Errorf("watcher key[%s] error: %s", self.topicRoot, err.Error())
+				coordLog.Errorf("watcher key[%s] error: %s", key, err.Error())
 				//rewatch
 				if IsEtcdWatchExpired(err) {
-					rsp, err := self.client.Get(self.topicRoot, false, true)
+					if watchExpiredCb != nil {
+						watchExpiredCb()
+					}
+					rsp, err = client.Get(key, false, false)
 					if err != nil {
-						coordLog.Errorf("rewatch and get key[%s] error: %s", self.topicRoot, err.Error())
+						coordLog.Errorf("rewatch and get key[%s] error: %s", key, err.Error())
 						time.Sleep(time.Second)
 						continue
 					}
-					//since the max modified may become less if some node deleted, we can not determin the current max, so we need
-					//  use the cluster index to check if changed to new.
-					coordLog.Infof("rewatched topic max changed from %v to: %v",
-						atomic.LoadUint64(&self.watchedClusterIndex), rsp.Index)
-					atomic.StoreUint64(&self.watchedClusterIndex, rsp.Index)
 					// watch for v2 client should not +1 on index, since it is the after index (which will +1 in the method of watch)
-					watcher = self.client.Watch(self.topicRoot, rsp.Index, true)
+					watcher = client.Watch(key, rsp.Index, recursive)
 					// watch expired should be treated as changed of node
 				} else {
 					time.Sleep(5 * time.Second)
 					continue
 				}
 			}
-		} else {
-			//since the max modified may become less if some node deleted, and the watch event only notify the changed
-			// node, we can not get the max modify index by only check the event(it may delete any modify index node)
-			coordLog.Infof("topic max modify changed %v from %v to: %v",
-				rsp, atomic.LoadUint64(&self.watchedClusterIndex), rsp.Index)
-			// cluster index is used to tell the different if the max modify index is equal because of the delete of node
-			// Max 1->2->3, this time we have 3(first time) as max modify and then new added become 4 then delete 4, max will be 3(second time)
-			// without the cluster index, we can not tell the different from the second time and the first time, so we need this.
-			atomic.StoreUint64(&self.watchedClusterIndex, rsp.Index)
 		}
-		atomic.StoreInt32(&self.ifTopicChanged, 1)
+		callback(rsp)
 	}
+}
+
+// watch topics if changed
+func (self *NsqLookupdEtcdMgr) watchTopics() {
+	atomic.StoreInt32(&self.ifTopicChanged, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		select {
+		case <-self.watchTopicsStopCh:
+			coordLog.Infof("watch key[%s] will be stopped.", self.topicRoot)
+			cancel()
+		}
+	}()
+	watchWaitAndDo(ctx, self.client, self.topicRoot, true, func(rsp *client.Response) {
+		//since the max modified may become less if some node deleted, we can not determin the current max, so we need
+		//  use the cluster index to check if changed to new.
+		coordLog.Infof("topic max changed from %v to: %v",
+			atomic.LoadUint64(&self.watchedClusterIndex), rsp.Index)
+		// cluster index is used to tell the different if the max modify index is equal because of the delete of node
+		// Max 1->2->3, this time we have 3(first time) as max modify and then new added become 4 then delete 4, max will be 3(second time)
+		// without the cluster index, we can not tell the different from the second time and the first time, so we need this.
+		atomic.StoreUint64(&self.watchedClusterIndex, rsp.Index)
+		atomic.StoreInt32(&self.ifTopicChanged, 1)
+	}, nil)
 }
 
 func (self *NsqLookupdEtcdMgr) isCacheNewest() bool {
