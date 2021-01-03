@@ -12,7 +12,8 @@ import (
 )
 
 const (
-	ETCD_TTL = 20
+	ETCD_TTL         = 20
+	watchEtcdTimeout = time.Second * time.Duration(ETCD_TTL*10)
 )
 
 type MasterChanInfo struct {
@@ -276,9 +277,7 @@ func (nem *NsqdEtcdMgr) WatchLookupdLeader(leader chan *NsqLookupdNodeInfo, stop
 		case <-stop:
 			return
 		}
-	}, func() {
-		isMissing = true
-	})
+	}, nil)
 	return nil
 }
 

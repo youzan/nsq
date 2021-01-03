@@ -192,7 +192,7 @@ func (self *EtcdLock) acquire() (ret error) {
 		}
 		// to avoid dead connection issues, we add timeout for watch connection to wake up watch if too long no
 		// any event
-		ctxTo, cancelTo := context.WithTimeout(ctx, time.Second*time.Duration(ETCD_TTL*2))
+		ctxTo, cancelTo := context.WithTimeout(ctx, watchEtcdTimeout)
 		coordLog.Debugf("[EtcdLock] begin watch lock[%s] %v", self.name, rsp.Index)
 		// watch for v2 client should not +1 on index, since it is the after index (which will +1 in the method of watch)
 		watcher := self.client.Watch(self.name, wi, false)

@@ -381,7 +381,7 @@ func watchWaitAndDo(ctx context.Context, client *EtcdClient,
 	for {
 		// to avoid dead connection issues, we add timeout for watch connection to wake up watch if too long no
 		// any event
-		ctxTo, cancelTo := context.WithTimeout(ctx, time.Second*time.Duration(ETCD_TTL*2))
+		ctxTo, cancelTo := context.WithTimeout(ctx, watchEtcdTimeout)
 		rsp, err := watcher.Next(ctxTo)
 		cancelTo()
 		if err != nil {
@@ -392,9 +392,9 @@ func watchWaitAndDo(ctx context.Context, client *EtcdClient,
 				coordLog.Debugf("watcher key[%s] timeout: %s", key, err.Error())
 				continue
 			} else {
-				coordLog.Errorf("watcher key[%s] error: %s", key, err.Error())
 				//rewatch
 				if IsEtcdWatchExpired(err) {
+					coordLog.Debugf("watcher key[%s] error: %s", key, err.Error())
 					if watchExpiredCb != nil {
 						watchExpiredCb()
 					}
@@ -408,6 +408,7 @@ func watchWaitAndDo(ctx context.Context, client *EtcdClient,
 					watcher = client.Watch(key, rsp.Index, recursive)
 					// watch expired should be treated as changed of node
 				} else {
+					coordLog.Errorf("watcher key[%s] error: %s", key, err.Error())
 					time.Sleep(5 * time.Second)
 					continue
 				}
