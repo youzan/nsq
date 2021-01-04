@@ -381,9 +381,7 @@ func watchWaitAndDo(ctx context.Context, client *EtcdClient,
 	for {
 		// to avoid dead connection issues, we add timeout for watch connection to wake up watch if too long no
 		// any event
-		ctxTo, cancelTo := context.WithTimeout(ctx, watchEtcdTimeout)
-		rsp, err := watcher.Next(ctxTo)
-		cancelTo()
+		rsp, err := watcher.Next(ctx)
 		if err != nil {
 			if err == context.Canceled {
 				coordLog.Infof("watch key[%s] cancelled.", key)

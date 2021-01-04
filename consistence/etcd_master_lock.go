@@ -192,13 +192,11 @@ func (self *EtcdLock) acquire() (ret error) {
 		}
 		// to avoid dead connection issues, we add timeout for watch connection to wake up watch if too long no
 		// any event
-		ctxTo, cancelTo := context.WithTimeout(ctx, watchEtcdTimeout)
 		coordLog.Debugf("[EtcdLock] begin watch lock[%s] %v", self.name, rsp.Index)
 		// watch for v2 client should not +1 on index, since it is the after index (which will +1 in the method of watch)
 		watcher := self.client.Watch(self.name, wi, false)
-		rsp, err = watcher.Next(ctxTo)
+		rsp, err = watcher.Next(ctx)
 		coordLog.Debugf("[EtcdLock] watch event lock[%s] %v", self.name, rsp)
-		cancelTo()
 		if err != nil {
 			if err == context.Canceled {
 				coordLog.Infof("[EtcdLock][acquire] watch lock[%s] stop by user.", self.name)
