@@ -255,22 +255,23 @@ func (nem *NsqdEtcdMgr) WatchLookupdLeader(leader chan *NsqLookupdNodeInfo, stop
 				isMissing = false
 			}
 		} else {
-			// action for cas, cad
+			// action for get, cas, cad
 			if isMissing {
-				coordLog.Infof("key[%s] action[%s]", key, rsp.Action)
-				if rsp.Node != nil {
-					coordLog.Warningf("key %v new data: %v", key, rsp.Node.String())
-					err := json.Unmarshal([]byte(rsp.Node.Value), &lookupdInfo)
-					if err != nil {
-						return
-					}
-					if lookupdInfo.NodeIP != "" {
-						isMissing = false
-					}
-				}
-			} else {
-				return
+				coordLog.Infof("key[%s] new data %v", key, rsp)
 			}
+			// we need notify for any changed, since it may happen the value is compared with others(and we may lost some event while watch expired)
+			if rsp.Node != nil {
+				err := json.Unmarshal([]byte(rsp.Node.Value), &lookupdInfo)
+				if err != nil {
+					return
+				}
+				if lookupdInfo.NodeIP != "" {
+					isMissing = false
+				}
+			}
+		}
+		if lookupdInfo.NodeIP == "" {
+			isMissing = true
 		}
 		select {
 		case leader <- &lookupdInfo:
