@@ -2175,7 +2175,7 @@ func TestInvalidTagSub(t *testing.T) {
 	client1Params["extend_support"] = true
 	identify(t, conn, client1Params, frameTypeResponse)
 
-	client1Params["desired_tag"] = "this should be invalid"
+	client1Params["desired_tag"] = "this should be invalid looooooooooooooooooooooooooooo0ooooooooooooooooooooooooooooo0000000oooooong tag"
 	client1Params["extend_support"] = true
 	identify(t, conn, client1Params, frameTypeError)
 }

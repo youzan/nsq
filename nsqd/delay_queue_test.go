@@ -3,6 +3,7 @@ package nsqd
 import (
 	"bytes"
 	"encoding/binary"
+	"sync"
 	"sync/atomic"
 
 	//"github.com/youzan/nsq/internal/levellogger"
@@ -397,8 +398,17 @@ func TestDelayQueueEmptyAllWhileCompacted(t *testing.T) {
 		time.Sleep(time.Millisecond * 100)
 	}
 
+	var wg sync.WaitGroup
+	wg.Add(1)
+	stopC := make(chan struct{})
 	go func() {
+		defer wg.Done()
 		for {
+			select {
+			case <-stopC:
+				return
+			default:
+			}
 			if atomic.LoadInt32(&dq.exitFlag) == 1 {
 				return
 			}
@@ -406,6 +416,11 @@ func TestDelayQueueEmptyAllWhileCompacted(t *testing.T) {
 			time.Sleep(time.Millisecond)
 			if atomic.LoadInt32(&dq.exitFlag) == 1 {
 				return
+			}
+			select {
+			case <-stopC:
+				return
+			default:
 			}
 		}
 	}()
@@ -436,6 +451,8 @@ func TestDelayQueueEmptyAllWhileCompacted(t *testing.T) {
 	test.Nil(t, err)
 	newCnt, _ = dq.GetCurrentDelayedCnt(ChannelDelayed, "test")
 	test.Equal(t, 0, int(newCnt))
+	close(stopC)
+	wg.Wait()
 }
 
 func TestDelayQueueUpdateConsumedState(t *testing.T) {
