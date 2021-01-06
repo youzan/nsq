@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	maxPubClientStats = 10000
+	maxPubClientStats = 5000
 )
 
 type TopicStats struct {

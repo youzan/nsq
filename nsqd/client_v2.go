@@ -137,7 +137,8 @@ type ClientV2 struct {
 	isExtendSupport int32
 	TagMsgChannel   chan *Message
 	extFilter       ExtFilterData
-	PubStats        *ClientPubStats
+	statsMu         sync.RWMutex
+	pubStats        map[string]*ClientPubStats
 	LimitedRdy      int32
 }
 
@@ -182,6 +183,7 @@ func NewClientV2(id int64, conn net.Conn, opts *Options, tls *tls.Config) *Clien
 		heartbeatInterval: int64(opts.ClientTimeout / 2),
 		tlsConfig:         tls,
 		LimitedRdy:        defaultLimitedRdy,
+		pubStats:          make(map[string]*ClientPubStats),
 	}
 	if c.outputBufferTimeout > int64(opts.MaxOutputBufferTimeout) {
 		c.outputBufferTimeout = int64(opts.MaxOutputBufferTimeout)
@@ -189,6 +191,23 @@ func NewClientV2(id int64, conn net.Conn, opts *Options, tls *tls.Config) *Clien
 	c.LenSlice = c.lenBuf[:]
 	c.remoteAddr = identifier
 	return c
+}
+
+func (c *ClientV2) GetTcpPubStats(topic *Topic) *ClientPubStats {
+	c.statsMu.RLock()
+	ps, ok := c.pubStats[topic.GetTopicName()]
+	c.statsMu.RUnlock()
+	if ok {
+		return ps
+	}
+	ps = topic.GetDetailStats().InitPubClientStats(c.String(), c.UserAgent, "tcp")
+	if ps == nil {
+		return nil
+	}
+	c.statsMu.Lock()
+	c.pubStats[topic.GetTopicName()] = ps
+	c.statsMu.Unlock()
+	return ps
 }
 
 func (c *ClientV2) String() string {

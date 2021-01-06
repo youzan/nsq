@@ -2992,6 +2992,62 @@ func TestTcpPub(t *testing.T) {
 	conn.Close()
 }
 
+func TestTcpPubMultiTopicStats(t *testing.T) {
+	opts := nsqdNs.NewOptions()
+	opts.Logger = newTestLogger(t)
+	opts.LogLevel = 1
+	opts.MaxMsgSize = 100
+	opts.MaxBodySize = 1000
+	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
+	defer os.RemoveAll(opts.DataPath)
+	defer nsqdServer.Exit()
+
+	conn, err := mustConnectNSQD(tcpAddr)
+	test.Equal(t, err, nil)
+
+	topicName := "test_tcp_pub" + strconv.Itoa(int(time.Now().Unix()))
+	nsqd.GetTopicIgnPart(topicName).GetChannel("ch")
+	topicName2 := "test_tcp_pub2" + strconv.Itoa(int(time.Now().Unix()))
+	nsqd.GetTopicIgnPart(topicName2).GetChannel("ch")
+
+	identify(t, conn, nil, frameTypeResponse)
+
+	// PUB that's valid
+	cmd := nsq.Publish(topicName, make([]byte, 5))
+	cmd.WriteTo(conn)
+	resp, _ := nsq.ReadResponse(conn)
+	frameType, data, _ := nsq.UnpackResponse(resp)
+	t.Logf("frameType: %d, data: %s", frameType, data)
+	test.Equal(t, frameType, frameTypeResponse)
+	test.Equal(t, len(data), 2)
+	test.Equal(t, data[:], []byte("OK"))
+
+	cmd = nsq.Publish(topicName2, make([]byte, 5))
+	cmd.WriteTo(conn)
+	resp, _ = nsq.ReadResponse(conn)
+	frameType, data, _ = nsq.UnpackResponse(resp)
+	t.Logf("frameType: %d, data: %s", frameType, data)
+	test.Equal(t, frameType, frameTypeResponse)
+	test.Equal(t, len(data), 2)
+	test.Equal(t, data[:], []byte("OK"))
+
+	t1Stat := nsqd.GetTopicIgnPart(topicName).GetDetailStats().GetPubClientStats()
+	test.Equal(t, 1, len(t1Stat))
+	test.Equal(t, int64(1), t1Stat[0].PubCount)
+	t2Stat := nsqd.GetTopicIgnPart(topicName).GetDetailStats().GetPubClientStats()
+	test.Equal(t, 1, len(t2Stat))
+	test.Equal(t, int64(1), t2Stat[0].PubCount)
+	test.Equal(t, t2Stat[0].RemoteAddress, t1Stat[0].RemoteAddress)
+	test.Equal(t, conn.LocalAddr().String(), t1Stat[0].RemoteAddress)
+	conn.Close()
+	time.Sleep(time.Second)
+
+	t1Stat = nsqd.GetTopicIgnPart(topicName).GetDetailStats().GetPubClientStats()
+	test.Equal(t, 0, len(t1Stat))
+	t2Stat = nsqd.GetTopicIgnPart(topicName).GetDetailStats().GetPubClientStats()
+	test.Equal(t, 0, len(t2Stat))
+}
+
 func TestTcpPubPopQueueTimeout(t *testing.T) {
 	atomic.StoreInt32(&testPopQueueTimeout, 1)
 	defer func() {
