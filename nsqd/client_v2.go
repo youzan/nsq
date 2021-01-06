@@ -748,11 +748,9 @@ func (c *ClientV2) SetDesiredTag(tagStr string) error {
 	if tagStr == "" {
 		return nil
 	}
-	err := ext.ValidateTag(tagStr)
-	if err != nil {
-		return err
+	if len(tagStr) > ext.MAX_TAG_LEN {
+		return fmt.Errorf("invalid tag len %v, exceed limit %v", len(tagStr), ext.MAX_TAG_LEN)
 	}
-
 	c.metaLock.Lock()
 	defer c.metaLock.Unlock()
 	if tagStr != "" && c.desiredTag != tagStr {
