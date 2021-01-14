@@ -6,6 +6,7 @@ import (
 	"os"
 	"strconv"
 	"time"
+
 	//ffjson "github.com/pquerna/ffjson/ffjson"
 	"bytes"
 	"encoding/json"
@@ -35,8 +36,9 @@ func getPID() int {
 }
 
 func getHostName() string {
-	if hostName, err := os.Hostname(); err != nil {
-		fmt.Println("flume_param.go:getHostName failed.")
+	hostName, err := os.Hostname()
+	if err != nil {
+		fmt.Printf("flume_param.go:getHostName failed: %s\n", err.Error())
 		return ""
 	} else {
 		return hostName
@@ -44,12 +46,12 @@ func getHostName() string {
 }
 
 func getLocalIP(host string) string {
-	if ip_addr, err := net.ResolveIPAddr("ip", host); err != nil {
-		fmt.Println("flume_param.go:getLocalIP failed.")
+	ip_addr, err := net.ResolveIPAddr("ip", host)
+	if err != nil {
+		fmt.Printf("flume_param.go:getLocalIP %s failed: %s\n", host, err.Error())
 		return ""
-	} else {
-		return ip_addr.String()
 	}
+	return ip_addr.String()
 }
 
 type LogInfo struct {

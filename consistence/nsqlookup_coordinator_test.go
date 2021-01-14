@@ -35,7 +35,9 @@ func ChangeIntervalForTest() {
 	waitRemovingNodeInterval = time.Second * 3
 	balanceInterval = time.Second * 6
 	doCheckInterval = time.Second * 6
+	flushTicker = time.Second * 60
 }
+
 func TestMain(m *testing.M) {
 	ChangeIntervalForTest()
 	ret := m.Run()

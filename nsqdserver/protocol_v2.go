@@ -1445,9 +1445,6 @@ func (p *protocolV2) preparePub(client *nsqd.ClientV2, params [][]byte, maxBody 
 	if err := p.CheckAuth(client, "PUB", topicName, ""); err != nil {
 		return bodyLen, nil, err
 	}
-	if client.PubStats == nil {
-		client.PubStats = topic.GetDetailStats().InitPubClientStats(client.String(), client.UserAgent, "tcp")
-	}
 	return bodyLen, topic, nil
 }
 
@@ -1694,8 +1691,9 @@ func (p *protocolV2) internalPubExtAndTrace(client *nsqd.ClientV2, params [][]by
 	}
 	//p.ctx.setHealth(err)
 	if err != nil {
-		if client.PubStats != nil {
-			client.PubStats.IncrCounter(1, true)
+		pstat := client.GetTcpPubStats(topic)
+		if pstat != nil {
+			pstat.IncrCounter(1, true)
 		}
 		if !asyncAction {
 			// async will add failed counter in loop
@@ -1713,8 +1711,9 @@ func (p *protocolV2) internalPubExtAndTrace(client *nsqd.ClientV2, params [][]by
 		}
 		return nil, protocol.NewClientErr(err, "E_PUB_FAILED", err.Error())
 	}
-	if client.PubStats != nil {
-		client.PubStats.IncrCounter(1, false)
+	pstat := client.GetTcpPubStats(topic)
+	if pstat != nil {
+		pstat.IncrCounter(1, false)
 	}
 	cost := time.Now().UnixNano() - startPub
 	topic.GetDetailStats().UpdateTopicMsgStats(int64(len(realBody)), cost/1000)
@@ -1761,8 +1760,9 @@ func (p *protocolV2) internalMPUBEXTAndTrace(client *nsqd.ClientV2, params [][]b
 	if !p.ctx.checkForMasterWrite(topicName, partition) {
 		topic.IncrPubFailed()
 		incrServerPubFailed()
-		if client.PubStats != nil {
-			client.PubStats.IncrCounter(int64(len(messages)), true)
+		pstat := client.GetTcpPubStats(topic)
+		if pstat != nil {
+			pstat.IncrCounter(int64(len(messages)), true)
 		}
 		//forward to master of topic
 		nsqd.NsqLogger().LogDebugf("should put to master: %v, from %v",
@@ -1780,8 +1780,9 @@ func (p *protocolV2) internalMPUBEXTAndTrace(client *nsqd.ClientV2, params [][]b
 	} else {
 		id, offset, rawSize, err = p.ctx.PutMessages(topic, messages)
 	}
-	if client.PubStats != nil {
-		client.PubStats.IncrCounter(int64(len(messages)), err != nil)
+	pstat := client.GetTcpPubStats(topic)
+	if pstat != nil {
+		pstat.IncrCounter(int64(len(messages)), err != nil)
 	}
 	if err != nil {
 		if !asyncAction {

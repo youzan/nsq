@@ -183,16 +183,27 @@ func (self *EtcdLock) acquire() (ret error) {
 		self.modifiedIndex = rsp.Node.ModifiedIndex
 		self.Unlock()
 
+		// normally it should use modifiedIndex, while for error index is outdated and cleared,
+		// we should use cluster index instead (anyway we should use the larger one)
+		wi := rsp.Node.ModifiedIndex
+		if rsp.Index > wi {
+			wi = rsp.Index
+			coordLog.Infof("[EtcdLock] watch lock[%s] at cluster index: %v, modify index: %v", self.name, rsp.Index, rsp.Node.ModifiedIndex)
+		}
+		// to avoid dead connection issues, we add timeout for watch connection to wake up watch if too long no
+		// any event
 		coordLog.Debugf("[EtcdLock] begin watch lock[%s] %v", self.name, rsp.Index)
 		// watch for v2 client should not +1 on index, since it is the after index (which will +1 in the method of watch)
-		watcher := self.client.Watch(self.name, rsp.Index, false)
+		watcher := self.client.Watch(self.name, wi, false)
 		rsp, err = watcher.Next(ctx)
 		coordLog.Debugf("[EtcdLock] watch event lock[%s] %v", self.name, rsp)
 		if err != nil {
 			if err == context.Canceled {
 				coordLog.Infof("[EtcdLock][acquire] watch lock[%s] stop by user.", self.name)
+			} else if err == context.DeadlineExceeded {
+				coordLog.Infof("[EtcdLock][acquire] watch lock[%s] timeout.", self.name)
 			} else {
-				coordLog.Errorf("[EtcdLock][acquire] failed to watch lock[%s] error: %s", self.name, err.Error())
+				coordLog.Warningf("[EtcdLock][acquire] failed to watch lock[%s] error: %s", self.name, err.Error())
 			}
 		}
 	}

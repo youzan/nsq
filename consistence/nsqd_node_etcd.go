@@ -12,7 +12,8 @@ import (
 )
 
 const (
-	ETCD_TTL = 20
+	ETCD_TTL         = 20
+	watchEtcdTimeout = time.Second * time.Duration(ETCD_TTL*10)
 )
 
 type MasterChanInfo struct {
@@ -209,10 +210,10 @@ func (nem *NsqdEtcdMgr) GetAllLookupdNodes() ([]NsqLookupdNodeInfo, error) {
 }
 
 func (nem *NsqdEtcdMgr) WatchLookupdLeader(leader chan *NsqLookupdNodeInfo, stop chan struct{}) error {
+	defer close(leader)
 	key := nem.createLookupdLeaderPath()
 
 	rsp, err := nem.client.Get(key, false, false)
-	var initIndex uint64
 	if err == nil {
 		coordLog.Infof("key: %s value: %s, index: %v", rsp.Node.Key, rsp.Node.Value, rsp.Index)
 		var lookupdInfo NsqLookupdNodeInfo
@@ -221,18 +222,13 @@ func (nem *NsqdEtcdMgr) WatchLookupdLeader(leader chan *NsqLookupdNodeInfo, stop
 			select {
 			case leader <- &lookupdInfo:
 			case <-stop:
-				close(leader)
 				return nil
 			}
-		}
-		if rsp.Index > 0 {
-			initIndex = rsp.Index - 1
 		}
 	} else {
 		coordLog.Errorf("get error: %s", err.Error())
 	}
 
-	watcher := nem.client.Watch(key, initIndex, true)
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
 		select {
@@ -241,35 +237,9 @@ func (nem *NsqdEtcdMgr) WatchLookupdLeader(leader chan *NsqLookupdNodeInfo, stop
 		}
 	}()
 	isMissing := true
-	for {
-		rsp, err = watcher.Next(ctx)
-		if err != nil {
-			if err == context.Canceled {
-				coordLog.Infof("watch key[%s] canceled.", key)
-				close(leader)
-				return nil
-			} else {
-				coordLog.Errorf("watcher key[%s] error: %s", key, err.Error())
-				//rewatch
-				if IsEtcdWatchExpired(err) {
-					isMissing = true
-					rsp, err = nem.client.Get(key, false, true)
-					if err != nil {
-						time.Sleep(time.Second)
-						coordLog.Errorf("rewatch and get key[%s] error: %s", key, err.Error())
-						continue
-					}
-					coordLog.Warningf("rewatch key %v with newest index: %v, new data: %v", key, rsp.Index, rsp.Node.String())
-					// watch for v2 client should not +1 on index, since it is the after index (which will +1 in the method of watch)
-					watcher = nem.client.Watch(key, rsp.Index, true)
-				} else {
-					time.Sleep(5 * time.Second)
-					continue
-				}
-			}
-		}
+	watchWaitAndDo(ctx, nem.client, key, true, func(rsp *client.Response) {
 		if rsp == nil {
-			continue
+			return
 		}
 		// note: if watch expire we use get to get the newest key value, Action will be "get"
 		var lookupdInfo NsqLookupdNodeInfo
@@ -279,35 +249,37 @@ func (nem *NsqdEtcdMgr) WatchLookupdLeader(leader chan *NsqLookupdNodeInfo, stop
 		} else if rsp.Action == "create" || rsp.Action == "update" || rsp.Action == "set" {
 			err := json.Unmarshal([]byte(rsp.Node.Value), &lookupdInfo)
 			if err != nil {
-				continue
+				return
 			}
 			if lookupdInfo.NodeIP != "" {
 				isMissing = false
 			}
 		} else {
+			// action for get, cas, cad
 			if isMissing {
-				coordLog.Infof("key[%s] action[%s]", key, rsp.Action)
-				if rsp.Node != nil {
-					coordLog.Warningf("key %v new data: %v", key, rsp.Node.String())
-					err := json.Unmarshal([]byte(rsp.Node.Value), &lookupdInfo)
-					if err != nil {
-						continue
-					}
-					if lookupdInfo.NodeIP != "" {
-						isMissing = false
-					}
-				}
-			} else {
-				continue
+				coordLog.Infof("key[%s] new data %v", key, rsp)
 			}
+			// we need notify for any changed, since it may happen the value is compared with others(and we may lost some event while watch expired)
+			if rsp.Node != nil {
+				err := json.Unmarshal([]byte(rsp.Node.Value), &lookupdInfo)
+				if err != nil {
+					return
+				}
+				if lookupdInfo.NodeIP != "" {
+					isMissing = false
+				}
+			}
+		}
+		if lookupdInfo.NodeIP == "" {
+			isMissing = true
 		}
 		select {
 		case leader <- &lookupdInfo:
 		case <-stop:
-			close(leader)
-			return nil
+			return
 		}
-	}
+	}, nil)
+	return nil
 }
 
 func (nem *NsqdEtcdMgr) GetTopicMetaInfo(topic string) (TopicMetaInfo, EpochType, error) {

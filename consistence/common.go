@@ -73,6 +73,9 @@ func (self *CoordErr) ToErrorType() error {
 }
 
 func (self *CoordErr) String() string {
+	if self == nil {
+		return ""
+	}
 	var tmpbuf bytes.Buffer
 	tmpbuf.WriteString("ErrType:")
 	tmpbuf.WriteString(strconv.Itoa(int(self.ErrType)))
@@ -196,6 +199,7 @@ var (
 	ErrLocalChannelSkipFailed              = NewCoordErr("local channel skip/unskip failed", CoordLocalErr)
 	ErrLocalChannelStateUpdateFailed       = NewCoordErr("local channel state update failed", CoordLocalErr)
 	ErrLocalDelayedQueueMissing            = NewCoordErr("local delayed queue is missing", CoordLocalErr)
+	ErrLocalCommitDataMismatchQueueDataEOF = NewCoordErr("EOF: local commit log data end mismatch queue data end", CoordLocalErr)
 )
 
 func GenNsqdNodeID(n *NsqdNodeInfo, extra string) string {
