@@ -627,6 +627,14 @@ func (c *Channel) skipChannelToEnd() (BackendQueueEnd, error) {
 }
 
 func (c *Channel) Flush(fsync bool) error {
+	if c.IsSkipped() && !c.IsConsumeDisabled() && c.Depth() > 0 {
+		// skipped channel will not read the disk queue, so we need skip to end periodically if we have new data
+		e := c.GetChannelEnd()
+		select {
+		case c.readerChanged <- resetChannelData{e.Offset(), e.TotalMsgCnt(), true}:
+		default:
+		}
+	}
 	if c.ephemeral {
 		return nil
 	}
@@ -1936,6 +1944,11 @@ LOOP:
 			}
 		}
 
+		if c.IsSkipped() {
+			readChan = nil
+			needReadBackend = false
+		}
+
 		if needReadBackend {
 			if !lastDataNeedRead {
 				dataRead, hasData := d.TryReadOne()
@@ -2271,14 +2284,7 @@ func (c *Channel) GetChannelDebugStats() string {
 	return debugStr
 }
 
-func (c *Channel) processInFlightQueue(tnow int64) (bool, bool) {
-	c.exitMutex.RLock()
-	defer c.exitMutex.RUnlock()
-
-	if c.Exiting() {
-		return false, false
-	}
-
+func (c *Channel) doPeekInFlightQueue(tnow int64) (bool, bool) {
 	dirty := false
 	flightCnt := 0
 	requeuedCnt := 0
@@ -2396,7 +2402,6 @@ exit:
 	// try requeue the messages that waiting.
 	stopScan := false
 	c.inFlightMutex.Lock()
-	oldWaitingDeliveryState := atomic.LoadInt32(&c.waitingDeliveryState)
 	reqLen := len(c.requeuedMsgChan) + len(c.waitingRequeueMsgs)
 	if !c.IsConsumeDisabled() {
 		if len(c.waitingRequeueMsgs) > 1 {
@@ -2420,10 +2425,23 @@ exit:
 		}
 	}
 	c.inFlightMutex.Unlock()
+	isInflightEmpty := (flightCnt == 0) && (reqLen == 0) && (requeuedCnt <= 0)
+	return dirty, isInflightEmpty
+}
+
+func (c *Channel) processInFlightQueue(tnow int64) (bool, bool) {
+	c.exitMutex.RLock()
+	defer c.exitMutex.RUnlock()
+
+	if c.Exiting() {
+		return false, false
+	}
+
+	dirty, isInflightEmpty := c.doPeekInFlightQueue(tnow)
+	oldWaitingDeliveryState := atomic.LoadInt32(&c.waitingDeliveryState)
 	c.RLock()
 	clientNum := len(c.clients)
 	c.RUnlock()
-	delayedQueue := c.GetDelayedQueue()
 	checkFast := false
 	waitingDelayCnt := atomic.LoadInt64(&c.deferredFromDelay)
 	if waitingDelayCnt < 0 {
@@ -2437,29 +2455,27 @@ exit:
 	// So we need requeue them to the end of the delayed queue again (while req command received) if blocking too long time.
 	needPeekDelay := waitingDelayCnt <= 0
 
-	if !c.IsConsumeDisabled() && !c.IsOrdered() && delayedQueue != nil &&
+	if !c.IsConsumeDisabled() && !c.IsOrdered() &&
 		needPeekDelay && clientNum > 0 {
-		newAdded, cnt, err := c.peekAndReqDelayedMessages(tnow, delayedQueue)
+		newAdded, cnt, err := c.peekAndReqDelayedMessages(tnow)
 		if err == nil {
 			if newAdded > 0 && c.chLog.Level() >= levellogger.LOG_DEBUG {
 				c.chLog.LogDebugf("channel delayed waiting peeked %v added %v new : %v",
 					cnt, newAdded, waitingDelayCnt)
 			}
 		}
-	} else if clientNum > 0 {
-		if waitingDelayCnt > 0 {
-			if c.chLog.Level() >= levellogger.LOG_DEBUG {
-				c.chLog.LogDebugf("channel delayed waiting : %v", waitingDelayCnt)
-			}
-			c.inFlightMutex.Lock()
-			allWaiting := len(c.inFlightMessages) + len(c.waitingRequeueChanMsgs) + len(c.waitingRequeueMsgs)
-			c.inFlightMutex.Unlock()
-			if waitingDelayCnt > int64(allWaiting) {
-				c.chLog.Logf("channel delayed waiting : %v, more than all waiting delivery: %v", waitingDelayCnt, allWaiting)
-			}
+	}
+	if waitingDelayCnt > 0 && clientNum > 0 {
+		if c.chLog.Level() >= levellogger.LOG_DEBUG {
+			c.chLog.LogDebugf("channel delayed waiting : %v", waitingDelayCnt)
+		}
+		c.inFlightMutex.Lock()
+		allWaiting := len(c.inFlightMessages) + len(c.waitingRequeueChanMsgs) + len(c.waitingRequeueMsgs)
+		c.inFlightMutex.Unlock()
+		if waitingDelayCnt > int64(allWaiting) {
+			c.chLog.Logf("channel delayed waiting : %v, more than all waiting delivery: %v", waitingDelayCnt, allWaiting)
 		}
 	}
-	isInflightEmpty := (flightCnt == 0) && (reqLen == 0) && (requeuedCnt <= 0)
 	noReadDataFromDisk := atomic.LoadInt32(&c.waitingConfirm) >= int32(c.option.MaxConfirmWin)
 	if isInflightEmpty && !noReadDataFromDisk && !c.IsPaused() {
 		// for tagged client, it may happen if no any un-tagged client.
@@ -2498,8 +2514,12 @@ exit:
 	return dirty, checkFast
 }
 
-func (c *Channel) peekAndReqDelayedMessages(tnow int64, delayedQueue *DelayQueue) (int, int, error) {
+func (c *Channel) peekAndReqDelayedMessages(tnow int64) (int, int, error) {
 	if c.IsEphemeral() {
+		return 0, 0, nil
+	}
+	delayedQueue := c.GetDelayedQueue()
+	if delayedQueue == nil {
 		return 0, 0, nil
 	}
 	newAdded := 0

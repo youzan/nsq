@@ -719,6 +719,7 @@ func TestSkipping(t *testing.T) {
 		t.Fail()
 	case <-time.Tick(500 * time.Millisecond):
 	}
+	test.Equal(t, int64(0), channel.Depth())
 
 	// unskip the channel... the client should now be pushed a message
 	channel.UnSkip()
