@@ -430,8 +430,12 @@ func (self *NsqLookupdEtcdMgr) watchTopics() {
 	watchWaitAndDo(ctx, self.client, self.topicRoot, true, func(rsp *client.Response) {
 		//since the max modified may become less if some node deleted, we can not determin the current max, so we need
 		//  use the cluster index to check if changed to new.
-		coordLog.Infof("topic max changed from %v to: %v",
-			atomic.LoadUint64(&self.watchedClusterIndex), rsp.Index)
+		mi := uint64(0)
+		if rsp.Node != nil {
+			mi = rsp.Node.ModifiedIndex
+		}
+		coordLog.Infof("topic max changed from %v to: %v, modified index: %v",
+			atomic.LoadUint64(&self.watchedClusterIndex), rsp.Index, mi)
 		// cluster index is used to tell the different if the max modify index is equal because of the delete of node
 		// Max 1->2->3, this time we have 3(first time) as max modify and then new added become 4 then delete 4, max will be 3(second time)
 		// without the cluster index, we can not tell the different from the second time and the first time, so we need this.
