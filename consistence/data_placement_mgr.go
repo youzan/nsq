@@ -1640,23 +1640,16 @@ func (dpm *DataPlacement) chooseNewLeaderFromISR(topicInfo *TopicPartitionMetaIn
 		if err == nil && dpm.isTopNTopic(topicInfo, sortedTopN) {
 			newLeader = dpm.chooseNewLeaderFromISRForTopN(topicInfo, sortedTopN, topicList, currentNodes, newestReplicas)
 		} else {
-			// choose another leader in ISR list, and add new node to ISR
-			// list.
-			// select the least load factor node
-			minLF := float64(math.MaxInt64)
+			loadFactors := make(map[string]float64, len(newestReplicas))
 			for _, replica := range newestReplicas {
 				stat, err := dpm.lookupCoord.getNsqdTopicStat(currentNodes[replica])
 				if err != nil {
-					coordLog.Infof("ignore node %v while choose new leader : %v", replica, topicInfo.GetTopicDesp())
+					coordLog.Infof("ignore node %v while choose new leader : %v, %v", replica, topicInfo.GetTopicDesp(), err)
 					continue
 				}
-				lf := stat.GetNodeLeaderLoadFactor()
-
-				coordLog.Infof("node %v load factor is : %v", replica, lf)
-				if newLeader == "" || lf < minLF {
-					newLeader = replica
-				}
+				loadFactors[replica] = stat.GetNodeLeaderLoadFactor()
 			}
+			newLeader = dpm.chooseNewLeaderByLeastLoadFactor(loadFactors)
 		}
 	}
 	if newLeader == "" {
@@ -1665,6 +1658,30 @@ func (dpm *DataPlacement) chooseNewLeaderFromISR(topicInfo *TopicPartitionMetaIn
 	}
 	coordLog.Infof("topic %v new leader %v found with commit id: %v from candidate %v", topicInfo.GetTopicDesp(), newLeader, newestLogID, newestReplicas)
 	return newLeader, newestLogID, nil
+}
+
+// chooseNewLeaderByLeastLoadFactor choose another leader in ISR list, and add new node to ISR
+// list.
+// select the least load factor node
+func (dpm *DataPlacement) chooseNewLeaderByLeastLoadFactor(loadFactors map[string]float64) string {
+	if len(loadFactors) == 0 {
+		return ""
+	}
+
+	var (
+		newLeader = ""
+		minLF     = float64(math.MaxInt64)
+	)
+
+	for replica, lf := range loadFactors {
+		coordLog.Infof("node %v load factor is : %v", replica, lf)
+		if newLeader == "" || lf < minLF {
+			newLeader = replica
+			minLF = lf
+		}
+	}
+
+	return newLeader
 }
 
 func (dpm *DataPlacement) chooseNewLeaderFromISRForTopN(topicInfo *TopicPartitionMetaInfo,
