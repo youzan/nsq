@@ -364,6 +364,35 @@ func (self *NsqLookupdEtcdMgr) ScanTopics() ([]TopicPartitionMetaInfo, error) {
 	return topicMetaInfos, nil
 }
 
+func getMaxIndexFromNode(n *client.Node) uint64 {
+	if n == nil {
+		return 0
+	}
+	maxI := n.ModifiedIndex
+	if n.Dir {
+		for _, child := range n.Nodes {
+			index := getMaxIndexFromNode(child)
+			if index > maxI {
+				maxI = index
+			}
+		}
+	}
+	return maxI
+}
+
+func getMaxIndexFromWatchRsp(resp *client.Response) uint64 {
+	if resp == nil {
+		return 0
+	}
+	index := resp.Index
+	if resp.Node != nil {
+		if nmi := getMaxIndexFromNode(resp.Node); nmi > index {
+			index = nmi
+		}
+	}
+	return index
+}
+
 func watchWaitAndDo(ctx context.Context, client *EtcdClient,
 	key string, recursive bool, callback func(rsp *client.Response),
 	watchExpiredCb func()) {
@@ -430,16 +459,17 @@ func (self *NsqLookupdEtcdMgr) watchTopics() {
 	watchWaitAndDo(ctx, self.client, self.topicRoot, true, func(rsp *client.Response) {
 		//since the max modified may become less if some node deleted, we can not determin the current max, so we need
 		//  use the cluster index to check if changed to new.
-		mi := uint64(0)
-		if rsp.Node != nil {
-			mi = rsp.Node.ModifiedIndex
-		}
-		coordLog.Infof("topic max changed from %v to: %v, modified index: %v",
-			atomic.LoadUint64(&self.watchedClusterIndex), rsp.Index, mi)
+		// note the rsp.index in watch is the cluster-index when the watch begin, so the cluster-index may less than modifiedIndex
+		// since it will be increased after watch begin.
+		mi := getMaxIndexFromWatchRsp(rsp)
+		coordLog.Infof("topic max changed from %v to: %v, cluster-index: %v",
+			atomic.LoadUint64(&self.watchedClusterIndex), mi, rsp.Index)
 		// cluster index is used to tell the different if the max modify index is equal because of the delete of node
 		// Max 1->2->3, this time we have 3(first time) as max modify and then new added become 4 then delete 4, max will be 3(second time)
 		// without the cluster index, we can not tell the different from the second time and the first time, so we need this.
-		atomic.StoreUint64(&self.watchedClusterIndex, rsp.Index)
+		if mi > 0 {
+			atomic.StoreUint64(&self.watchedClusterIndex, mi)
+		}
 		atomic.StoreInt32(&self.ifTopicChanged, 1)
 	}, nil)
 }

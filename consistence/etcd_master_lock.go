@@ -189,8 +189,6 @@ func (self *EtcdLock) acquire() (ret error) {
 		if rsp.Index > wi {
 			wi = rsp.Index
 			coordLog.Infof("[EtcdLock] watch lock[%s] at cluster index: %v, modify index: %v", self.name, rsp.Index, rsp.Node.ModifiedIndex)
-		} else if rsp.Index < wi {
-			coordLog.Infof("[EtcdLock] watch lock[%s] at cluster index: %v less than modify index: %v", self.name, rsp.Index, rsp.Node.ModifiedIndex)
 		}
 		// to avoid dead connection issues, we add timeout for watch connection to wake up watch if too long no
 		// any event
