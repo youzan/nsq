@@ -2251,9 +2251,9 @@ func parseTagIfAny(msg *Message) (string, error) {
 func (c *Channel) GetChannelDebugStats() string {
 	c.inFlightMutex.Lock()
 	inFlightCount := len(c.inFlightMessages)
-	debugStr := fmt.Sprintf("topic %v channel %v \ninflight %v, req %v, %v, %v, ",
+	debugStr := fmt.Sprintf("topic %v channel %v \ninflight %v, req %v, %v, %v, defered: %v ",
 		c.GetTopicName(), c.GetName(), inFlightCount, len(c.waitingRequeueMsgs),
-		len(c.requeuedMsgChan), len(c.waitingRequeueChanMsgs))
+		len(c.requeuedMsgChan), len(c.waitingRequeueChanMsgs), atomic.LoadInt64(&c.deferredCount))
 
 	if c.chLog.Level() >= levellogger.LOG_DEBUG || c.IsTraced() {
 		for _, msg := range c.inFlightMessages {
