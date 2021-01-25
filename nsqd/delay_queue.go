@@ -623,10 +623,12 @@ func preloadDBAndOptimizeOpen(dbPath string) error {
 	ro := getDefaultBoltDbOptions(false)
 	// use this to scan freelist and sync to disk
 	ro.NoFreelistSync = false
-	_, err := bolt.Open(dbPath, 0644, ro)
+	tmpDB, err := bolt.Open(dbPath, 0644, ro)
 	if err != nil {
 		return err
 	}
+	tmpDB.Sync()
+	tmpDB.Close()
 	return nil
 }
 
@@ -666,10 +668,6 @@ func (q *DelayQueue) RestoreKVStoreFrom(body io.Reader) error {
 		return err
 	}
 
-	err = preloadDBAndOptimizeOpen(tmpPath)
-	if err != nil {
-		return err
-	}
 	q.compactMutex.Lock()
 	defer q.compactMutex.Unlock()
 	kvPath := path.Join(q.dataPath, getDelayQueueDBName(q.tname, q.partition))
