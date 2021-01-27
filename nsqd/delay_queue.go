@@ -1633,6 +1633,46 @@ func (q *DelayQueue) compactStore(force bool) error {
 	return nil
 }
 
+func (q *DelayQueue) Dump() error {
+	src := q.getStore()
+	var size int64
+	if err := walkBolt(src, func(keys [][]byte, k, v []byte, seq uint64) error {
+		// On each key/value, check if we have exceeded tx size.
+		sz := int64(len(k) + len(v))
+		size += sz
+
+		// Create bucket on the root transaction if this is the first level.
+		nk := len(keys)
+		if nk == 0 {
+			nsqLog.Infof("bucket: %v(%s), seq: %v", k, seq)
+			return nil
+		}
+
+		// Create buckets on subsequent levels, if necessary.
+		nsqLog.Infof("bucket: %v(%s), seq: %v", keys[0], seq)
+		if nk > 1 {
+			for _, k := range keys[1:] {
+				nsqLog.Infof("bucket: %v(%s), seq: %v", k, seq)
+			}
+		}
+
+		// If there is no value then this is a bucket call.
+		if v == nil {
+			nsqLog.Infof("bucket: %v(%s), seq: %v", k, seq)
+			return nil
+		}
+
+		// Otherwise treat it as a key/value pair.
+		nsqLog.Infof("key: %v(%s), value: %v(%s)", k, k, v, v)
+		return nil
+	}); err != nil {
+		return err
+	}
+
+	nsqLog.Infof("total: %v", size)
+	return nil
+}
+
 func compactBolt(dst, src *bolt.DB, maxCompactTime time.Duration) error {
 	startT := time.Now()
 	defer dst.Close()
