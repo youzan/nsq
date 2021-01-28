@@ -555,6 +555,8 @@ func (c *context) internalRequeueToEnd(ch *nsqd.Channel,
 		return putErr
 	}
 
+	// it is possible that before we ack, the delayed message is poped from delayed queue, however it will be checked
+	// if there is the same id message still in inflight or in requeue.
 	err = c.FinishMessage(ch, oldMsg.GetClientID(), "", oldMsg.ID)
 	return err
 }

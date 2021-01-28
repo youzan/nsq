@@ -253,7 +253,7 @@ func main() {
 				nsqd.NsqLogger().Infof("channel %v msg id %v is not in the delayed queue", *viewCh, *viewStartID)
 				return
 			}
-			msg, err := delayQ.FindChannelMessageDelayed(nsqd.MessageID(*viewStartID), *viewCh)
+			msg, err := delayQ.FindChannelMessageDelayed(nsqd.MessageID(*viewStartID), *viewCh, true)
 			if err != nil {
 				nsqd.NsqLogger().Infof("channel %v msg id %v find error: %v", *viewCh, *viewStartID, err.Error())
 				return

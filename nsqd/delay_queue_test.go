@@ -36,16 +36,22 @@ func TestDelayQueuePutChannelDelayed(t *testing.T) {
 	cnt := 10
 	var end BackendOffset
 	for i := 0; i < cnt; i++ {
-		msg := NewMessage(0, []byte("body"))
+		msg := NewMessage(0, []byte("old body"))
 		msg.DelayedType = ChannelDelayed
 		msg.DelayedTs = time.Now().Add(time.Second).UnixNano()
 		msg.DelayedChannel = "test"
 		msg.DelayedOrigID = MessageID(i + 1)
-		_, _, _, dend, err := dq.PutDelayMessage(msg)
+		_, _, _, _, err := dq.PutDelayMessage(msg)
+		test.Nil(t, err)
+		test.Equal(t, true, dq.IsChannelMessageDelayed(msg.DelayedOrigID, "test"))
+		// check insert the same key with new data should not affect index
+		msg.Body = []byte("body")
+		_, _, _, dend, err := dq.put(msg, nil, true, 0)
 		test.Nil(t, err)
 		test.Equal(t, true, dq.IsChannelMessageDelayed(msg.DelayedOrigID, "test"))
 		end = dend.Offset()
 	}
+
 	synced, err := dq.GetSyncedOffset()
 	test.Nil(t, err)
 	test.Equal(t, end, synced)
@@ -55,10 +61,88 @@ func TestDelayQueuePutChannelDelayed(t *testing.T) {
 	test.Nil(t, err)
 	for i := 0; i < cnt; i++ {
 		msgID := MessageID(i + 1)
-		m, err := dq.FindChannelMessageDelayed(msgID, "test")
+		m, err := dq.FindChannelMessageDelayed(msgID, "test", false)
 		test.Nil(t, err)
 		test.NotNil(t, m)
 		test.Equal(t, m.DelayedOrigID, msgID)
+		test.Equal(t, []byte("body"), m.Body)
+	}
+	dq.Delete()
+	_, err = os.Stat(dq.dataPath)
+	test.Nil(t, err)
+	_, err = os.Stat(path.Join(dq.dataPath, getDelayQueueDBName(dq.tname, dq.partition)))
+	test.NotNil(t, err)
+}
+
+func TestDelayQueuePutChannelDelayedDuplicate(t *testing.T) {
+	// the slave may insert same delayed messages if retry by network
+	tmpDir, err := ioutil.TempDir("", fmt.Sprintf("nsq-test-delay-%d", time.Now().UnixNano()))
+	if err != nil {
+		panic(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	opts := NewOptions()
+	opts.Logger = newTestLogger(t)
+	opts.SyncEvery = 1
+
+	dq, err := NewDelayQueue("test", 0, tmpDir, opts, nil, false)
+	test.Nil(t, err)
+	defer dq.Close()
+	cnt := 2
+	for i := 0; i < cnt; i++ {
+		msg := NewMessage(0, []byte("body"))
+		msg.DelayedType = ChannelDelayed
+		msg.DelayedTs = time.Now().Add(time.Second).UnixNano()
+		msg.DelayedChannel = "test"
+		msg.DelayedOrigID = MessageID(i + 1)
+		_, _, _, _, err := dq.PutDelayMessage(msg)
+		test.Nil(t, err)
+		test.Equal(t, true, dq.IsChannelMessageDelayed(msg.DelayedOrigID, "test"))
+		msg.ID = 0
+		_, _, _, _, err = dq.PutDelayMessage(msg)
+		test.Nil(t, err)
+		test.Equal(t, true, dq.IsChannelMessageDelayed(msg.DelayedOrigID, "test"))
+	}
+
+	newCnt, _ := dq.GetCurrentDelayedCnt(ChannelDelayed, "test")
+	test.Equal(t, cnt*2, int(newCnt))
+	_, err = os.Stat(dq.dataPath)
+	test.Nil(t, err)
+	for i := 0; i < cnt; i++ {
+		msgID := MessageID(i + 1)
+		m, err := dq.FindChannelMessageDelayed(msgID, "test", false)
+		test.Nil(t, err)
+		test.NotNil(t, m)
+		test.Equal(t, m.DelayedOrigID, msgID)
+		test.Equal(t, []byte("body"), m.Body)
+		delayedID := m.ID
+		// delete one, since confirm need the origin id in queue, we need exchange the id in message
+		m.ID = m.DelayedOrigID
+		m.DelayedOrigID = delayedID
+		err = dq.ConfirmedMessage(m)
+		test.Nil(t, err)
+
+		m, err = dq.FindChannelMessageDelayed(msgID, "test", false)
+		test.Nil(t, err)
+		test.Nil(t, m)
+
+		m, err = dq.FindChannelMessageDelayed(msgID, "test", true)
+		test.Nil(t, err)
+		test.NotNil(t, m)
+		test.Equal(t, m.DelayedOrigID, msgID)
+		test.Equal(t, []byte("body"), m.Body)
+		test.NotEqual(t, delayedID, m.ID)
+		// delete again, since confirm need the origin id in queue, we need exchange the id in message
+		delayedID = m.ID
+		m.ID = m.DelayedOrigID
+		m.DelayedOrigID = delayedID
+		err = dq.ConfirmedMessage(m)
+		test.Nil(t, err)
+
+		m, err = dq.FindChannelMessageDelayed(msgID, "test", true)
+		test.Nil(t, err)
+		test.Nil(t, m)
 	}
 	dq.Delete()
 	_, err = os.Stat(dq.dataPath)
@@ -271,7 +355,7 @@ func TestDelayQueueWithExtPutChannelDelayed(t *testing.T) {
 	}
 	for i := 0; i < cnt; i++ {
 		msgID := MessageID(i + 1)
-		m, err := dq.FindChannelMessageDelayed(msgID, "test")
+		m, err := dq.FindChannelMessageDelayed(msgID, "test", false)
 		test.Nil(t, err)
 		test.NotNil(t, m)
 		test.Equal(t, m.DelayedOrigID, msgID)

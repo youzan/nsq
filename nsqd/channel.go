@@ -1833,6 +1833,7 @@ func (c *Channel) resetChannelReader(resetOffset resetChannelData, lastDataNeedR
 		} else {
 			c.drainChannelWaiting(true, lastDataNeedRead, origReadChan)
 			*lastMsg = Message{}
+			c.chLog.Infof("reset reader to %v", resetOffset)
 		}
 		*needReadBackend = true
 		*readBackendWait = false
@@ -1880,7 +1881,7 @@ LOOP:
 		resetReaderFlag := atomic.LoadInt32(&c.needResetReader)
 		deCnt := atomic.LoadInt64(&c.deferredCount)
 		if resetReaderFlag > 0 {
-			c.chLog.Infof("reset the reader : %v", c.GetConfirmed())
+			c.chLog.Infof("reset the reader to confirmed: %v", c.GetConfirmed())
 			err = c.resetReaderToConfirmed()
 			// if reset failed, we should not drain the waiting data
 			if err == nil {
@@ -2571,6 +2572,7 @@ func (c *Channel) peekAndReqDelayedMessages(tnow int64) (int, int, error) {
 						// new leader read from disk queue (which will be treated as non delayed message)
 						if bytes.Equal(oldMsg2.Body, m.Body) {
 							// just fin it
+							// we do not handle inflight remove here, it will be handled while timeout and will check confirmed before send to client
 							c.chLog.LogDebugf("old msg %v in flight confirmed since in delayed queue",
 								PrintMessage(oldMsg2))
 							c.ConfirmBackendQueue(oldMsg2)

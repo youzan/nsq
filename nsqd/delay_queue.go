@@ -804,6 +804,7 @@ func (q *DelayQueue) put(m *Message, rawData []byte, trace bool, checkSize int64
 					return err
 				}
 			}
+			// note here we only support one index for the same message(if dup inserted, only one has the index)
 			b = tx.Bucket(bucketDelayedMsgIndex)
 			newIndexKey := getDelayedMsgDBIndexKey(int(m.DelayedType), m.DelayedChannel, m.DelayedOrigID)
 			d := getDelayedMsgDBIndexValue(m.DelayedTs, m.DelayedOrigID)
@@ -1267,7 +1268,9 @@ func (q *DelayQueue) ConfirmedMessage(msg *Message) error {
 	return err
 }
 
-func (q *DelayQueue) FindChannelMessageDelayed(msgID MessageID, ch string) (*Message, error) {
+// note: since the msg index can only index one message, so if there are more than one duplicate delayed messages,
+// after deleting one, we will have no index for others. We should scan with channel prefix to find them.
+func (q *DelayQueue) FindChannelMessageDelayed(msgID MessageID, ch string, tryScan bool) (*Message, error) {
 	var msg *Message
 	msgKey := getDelayedMsgDBIndexKey(ChannelDelayed, ch, msgID)
 	err := q.getStore().View(func(tx *bolt.Tx) error {
@@ -1275,6 +1278,7 @@ func (q *DelayQueue) FindChannelMessageDelayed(msgID MessageID, ch string) (*Mes
 		v := ib.Get(msgKey)
 		var ts int64
 		var err error
+		hasIndex := true
 		if v != nil {
 			ts, _, err = decodeDelayedMsgDBIndexValue(v)
 			if err != nil {
@@ -1282,9 +1286,15 @@ func (q *DelayQueue) FindChannelMessageDelayed(msgID MessageID, ch string) (*Mes
 			}
 		} else {
 			// no index means no data for this msgid
-			return nil
+			if !tryScan {
+				return nil
+			}
+			hasIndex = false
 		}
 		prefix := getDelayedMsgDBPrefixKeyWithTs(ChannelDelayed, ch, ts)
+		if !hasIndex {
+			prefix = getDelayedMsgDBPrefixKey(ChannelDelayed, ch)
+		}
 		b := tx.Bucket(bucketDelayedMsg)
 		c := b.Cursor()
 		for k, v := c.Seek(prefix); k != nil && bytes.HasPrefix(k, prefix); k, v = c.Next() {
@@ -1644,21 +1654,21 @@ func (q *DelayQueue) Dump() error {
 		// Create bucket on the root transaction if this is the first level.
 		nk := len(keys)
 		if nk == 0 {
-			nsqLog.Infof("bucket: %v(%s), seq: %v", k, seq)
+			nsqLog.Infof("bucket: %v(%s), seq: %v", k, k, seq)
 			return nil
 		}
 
 		// Create buckets on subsequent levels, if necessary.
-		nsqLog.Infof("bucket: %v(%s), seq: %v", keys[0], seq)
+		nsqLog.Infof("bucket: %v(%s), seq: %v", keys[0], keys[0], seq)
 		if nk > 1 {
 			for _, k := range keys[1:] {
-				nsqLog.Infof("bucket: %v(%s), seq: %v", k, seq)
+				nsqLog.Infof("bucket: %v(%s), seq: %v", k, k, seq)
 			}
 		}
 
 		// If there is no value then this is a bucket call.
 		if v == nil {
-			nsqLog.Infof("bucket: %v(%s), seq: %v", k, seq)
+			nsqLog.Infof("bucket: %v(%s), seq: %v", k, k, seq)
 			return nil
 		}
 

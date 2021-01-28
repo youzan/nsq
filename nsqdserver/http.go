@@ -1137,7 +1137,7 @@ func (s *httpServer) doMessageGet(w http.ResponseWriter, req *http.Request, ps h
 		if ch == "" {
 			return nil, http_api.Err{400, "delayed queue search channel must be given"}
 		}
-		msg, err := dq.FindChannelMessageDelayed(nsqd.MessageID(searchPos), ch)
+		msg, err := dq.FindChannelMessageDelayed(nsqd.MessageID(searchPos), ch, true)
 		if err != nil {
 			return nil, http_api.Err{400, err.Error()}
 		}
