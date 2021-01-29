@@ -1840,6 +1840,33 @@ func (c *Channel) resetChannelReader(resetOffset resetChannelData, lastDataNeedR
 	}
 }
 
+func (c *Channel) CheckIfNeedResetRead() bool {
+	if c.IsSkipped() || c.IsConsumeDisabled() {
+		return false
+	}
+	if c.IsPaused() || c.IsOrdered() {
+		return false
+	}
+	if c.GetClientsCount() <= 0 {
+		return false
+	}
+	c.inFlightMutex.Lock()
+	inflightCnt := len(c.inFlightMessages)
+	inflightCnt += len(c.waitingRequeueMsgs)
+	inflightCnt += len(c.waitingRequeueChanMsgs)
+	inflightCnt += len(c.requeuedMsgChan)
+	inflightCnt += int(atomic.LoadInt64(&c.deferredCount))
+	c.inFlightMutex.Unlock()
+	if inflightCnt <= 0 && c.Depth() > 10 &&
+		c.GetChannelWaitingConfirmCnt() >= c.option.MaxConfirmWin {
+		c.chLog.Warningf("channel has depth %v but no inflight, confirmed %v, waiting %v, %v",
+			c.Depth(), c.GetConfirmed(), c.GetChannelWaitingConfirmCnt(), c.confirmedMsgs.ToString(),
+		)
+		return true
+	}
+	return false
+}
+
 // messagePump reads messages from either memory or backend and sends
 // messages to clients over a go chan
 func (c *Channel) messagePump() {
@@ -1944,7 +1971,6 @@ LOOP:
 				lastMsg = Message{}
 			}
 		}
-
 		if c.IsSkipped() {
 			readChan = nil
 			needReadBackend = false
@@ -2438,8 +2464,7 @@ func (c *Channel) processInFlightQueue(tnow int64) (bool, bool) {
 		return false, false
 	}
 
-	dirty, isInflightEmpty := c.doPeekInFlightQueue(tnow)
-	oldWaitingDeliveryState := atomic.LoadInt32(&c.waitingDeliveryState)
+	dirty, _ := c.doPeekInFlightQueue(tnow)
 	c.RLock()
 	clientNum := len(c.clients)
 	c.RUnlock()
@@ -2477,25 +2502,13 @@ func (c *Channel) processInFlightQueue(tnow int64) (bool, bool) {
 			c.chLog.Logf("channel delayed waiting : %v, more than all waiting delivery: %v", waitingDelayCnt, allWaiting)
 		}
 	}
-	noReadDataFromDisk := atomic.LoadInt32(&c.waitingConfirm) >= int32(c.option.MaxConfirmWin)
-	if isInflightEmpty && !noReadDataFromDisk && !c.IsPaused() {
-		// for tagged client, it may happen if no any un-tagged client.
-		// we may read to end, but the last message is normal message.
-		// in this way, we should block and wait un-tagged client.
-		c.tagMsgChansMutex.RLock()
-		tagChLen := len(c.tagMsgChans)
-		c.tagMsgChansMutex.RUnlock()
-		e := c.GetChannelEnd()
-		if c.GetConfirmed().Offset() < e.Offset() && tagChLen == 0 {
-			d, ok := c.backend.(*diskQueueReader)
-			if ok && d.GetQueueCurrentRead() == e {
-				noReadDataFromDisk = true
-			}
-		}
-	}
-	if isInflightEmpty && (!dirty) && clientNum > 0 &&
-		(oldWaitingDeliveryState == 0) && noReadDataFromDisk &&
-		(atomic.LoadInt32(&c.waitingDeliveryState) == 0) {
+	// for tagged client, it may happen if no any un-tagged client.
+	// we may read to end, but the last message is normal message.
+	// in this way, we should block and wait un-tagged client.
+	c.tagMsgChansMutex.RLock()
+	tagChLen := len(c.tagMsgChans)
+	c.tagMsgChansMutex.RUnlock()
+	if (!dirty) && tagChLen == 0 && (atomic.LoadInt32(&c.waitingDeliveryState) == 0) && c.CheckIfNeedResetRead() {
 		diff := time.Now().Unix() - atomic.LoadInt64(&c.processResetReaderTime)
 		if diff > resetReaderTimeoutSec && atomic.LoadInt64(&c.processResetReaderTime) > 0 {
 			c.chLog.LogWarningf("try reset reader since no inflight and requeued for too long (%v): %v, %v, %v",
@@ -2504,7 +2517,7 @@ func (c *Channel) processInFlightQueue(tnow int64) (bool, bool) {
 
 			atomic.StoreInt64(&c.processResetReaderTime, time.Now().Unix())
 			select {
-			case c.readerChanged <- resetChannelData{BackendOffset(-1), 0, true}:
+			case c.readerChanged <- resetChannelData{BackendOffset(-1), 0, false}:
 			default:
 			}
 		}
