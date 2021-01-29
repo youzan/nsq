@@ -65,6 +65,15 @@ func (n *NsqdServer) statsdLoop() {
 				nsqd.NsqLogger().LogDebugf("STATSD: pushing stats to %s, using prefix: %v", nc, opts.StatsdPrefix)
 			}
 
+			// since the topic may migrate to other nodes, we should always reset to keep only needed labels
+			nsqd.TopicQueueMsgEnd.Reset()
+			nsqd.TopicPubClientCnt.Reset()
+			nsqd.ChannelDepth.Reset()
+			nsqd.ChannelDepthSize.Reset()
+			nsqd.ChannelDepthTs.Reset()
+			nsqd.ChannelClientCnt.Reset()
+			nsqd.ChannelDelayedQueueCnt.Reset()
+			nsqd.ChannelDelayedQueueTs.Reset()
 			for _, topic := range stats {
 				nsqd.TopicQueueMsgEnd.With(prometheus.Labels{
 					"topic":     topic.TopicName,
