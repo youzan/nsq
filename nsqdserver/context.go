@@ -21,9 +21,10 @@ const (
 )
 
 var (
-	serverPubFailedCnt    int64
-	testPopQueueTimeout   int32
-	testPutMessageTimeout int32
+	serverPubFailedCnt          int64
+	testPopQueueTimeout         int32
+	testPutMessageTimeout       int32
+	testFailedReqToDelayTimeout int32
 )
 
 func incrServerPubFailed() {
@@ -553,6 +554,12 @@ func (c *context) internalRequeueToEnd(ch *nsqd.Channel,
 		nsqd.NsqLogger().Logf("req message %v to end failed, channel %v, put error: %v ",
 			oldMsg, ch.GetName(), putErr)
 		return putErr
+	}
+	if atomic.LoadInt32(&testFailedReqToDelayTimeout) == 1 {
+		time.Sleep(time.Second * 20)
+		nsqd.NsqLogger().Logf("req message %v to end failed, channel %v, put error by test",
+			oldMsg, ch.GetName())
+		return errors.New("put delayed timeout error by test")
 	}
 
 	// it is possible that before we ack, the delayed message is poped from delayed queue, however it will be checked

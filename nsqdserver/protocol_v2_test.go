@@ -283,7 +283,7 @@ func recvNextMsgAndCheckExtTimeout(t *testing.T, conn io.ReadWriter,
 		}
 		test.Equal(t, frameTypeMessage, frameType)
 		msgOut, err := nsq.DecodeMessageWithExt(data, ext)
-		t.Logf(string(data))
+		t.Log(string(data))
 		test.Nil(t, err)
 		if expLen > 0 {
 			test.Equal(t, expLen, len(msgOut.Body))
@@ -5122,6 +5122,258 @@ func TestSubOrderedMulti(t *testing.T) {
 	test.NotEqual(t, frameTypeError, frameType)
 
 	conn.Close()
+}
+
+func TestSubTimeoutMany(t *testing.T) {
+	// test only one message timeout too much and blocking other continue consume
+	// should go delayed queue for a while and the channel depth should be 0
+	opts := nsqdNs.NewOptions()
+	opts.Logger = newTestLogger(t)
+	opts.LogLevel = 1
+	if testing.Verbose() {
+		opts.LogLevel = 4
+		nsqdNs.SetLogger(opts.Logger)
+	}
+	opts.SyncEvery = 1
+	opts.QueueScanInterval = time.Millisecond * 10
+	opts.MsgTimeout = time.Second * 2
+	opts.MaxConfirmWin = 5
+	opts.ReqToEndThreshold = nsqdNs.MaxWaitingDelayed*time.Millisecond*10 + time.Millisecond*80
+	opts.MaxReqTimeout = time.Second*30 + opts.ReqToEndThreshold*3
+	opts.MaxOutputBufferTimeout = 10 * time.Millisecond
+	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
+
+	defer os.RemoveAll(opts.DataPath)
+	defer nsqdServer.Exit()
+
+	topicName := "test_timeout_toomuch" + strconv.Itoa(int(time.Now().Unix()))
+	topic := nsqd.GetTopicIgnPart(topicName)
+	ch := topic.GetChannel("ch")
+
+	putCnt := nsqdNs.MaxWaitingDelayed + 100
+	myRand := rand.New(rand.NewSource(time.Now().Unix()))
+	for i := 0; i < putCnt; i++ {
+		// generate not-continued timeouted to make confirm interval more than 1
+		if i%10 == 0 {
+			dms := opts.ReqToEndThreshold/2 + time.Duration(myRand.Intn(int(opts.ReqToEndThreshold*2)))
+			delayTs := int(time.Now().Add(dms).UnixNano())
+			delayBody := []byte(strconv.Itoa(delayTs))
+			msg := nsqdNs.NewMessage(0, delayBody)
+			topic.PutMessage(msg)
+		} else {
+			msg := nsqdNs.NewMessage(0, []byte("nodelay"))
+			topic.PutMessage(msg)
+		}
+	}
+	topic.ForceFlush()
+
+	var wg sync.WaitGroup
+	done := make(chan struct{})
+
+	gcnt := 5
+	for i := 0; i < gcnt; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+		RECONNECT:
+			select {
+			case <-done:
+				return
+			default:
+			}
+			conn, err := mustConnectNSQD(tcpAddr)
+			test.Equal(t, err, nil)
+			defer conn.Close()
+			conn.(*net.TCPConn).SetNoDelay(true)
+			identify(t, conn, map[string]interface{}{
+				"output_buffer_timeout": 10,
+			}, frameTypeResponse)
+			subRsp, err := subWaitResp(t, conn, topicName, "ch")
+			if err != nil || string(subRsp) != "OK" {
+				conn.Close()
+				time.Sleep(time.Millisecond * 3)
+				goto RECONNECT
+			}
+			test.Nil(t, err)
+			test.Equal(t, "OK", string(subRsp))
+			_, err = nsq.Ready(10).WriteTo(conn)
+			test.Equal(t, err, nil)
+
+			for {
+				select {
+				case <-done:
+					return
+				default:
+				}
+				msgOut := recvNextMsgAndCheck(t, conn, 0, 0, false)
+				if msgOut == nil {
+					conn.Close()
+					time.Sleep(time.Millisecond * 3)
+					goto RECONNECT
+				}
+				if len(msgOut.Body) >= 10 {
+					test.Nil(t, err)
+					now := int(time.Now().UnixNano())
+					t.Logf("\033[31m got delayed message : %v (id %v), now: %v\033[39m\n\n", string(msgOut.Body), msgOut.ID, now)
+					// wait timeout
+					continue
+				} else {
+					test.Equal(t, "nodelay", string(msgOut.Body))
+				}
+				nsq.Finish(nsq.MessageID(msgOut.GetFullMsgID())).WriteTo(conn)
+			}
+		}()
+	}
+	start := time.Now()
+	for {
+		if ch.Depth() == 0 || ch.Depth() < ch.GetChannelEnd().TotalMsgCnt() {
+			break
+		}
+		t.Logf("current channel: %s", ch.GetChannelDebugStats())
+		time.Sleep(time.Second)
+		if time.Since(start) > time.Minute*3 {
+			t.Error("timeout waiting")
+			break
+		}
+	}
+	close(done)
+	wg.Wait()
+	stats := nsqdNs.NewChannelStats(ch, nil, 0)
+	t.Logf("channel stats: %v", stats)
+	test.Equal(t, 0, stats.DeferredCount)
+	test.Assert(t, stats.TimeoutCount >= nsqdNs.MaxMemReqTimes, "should have enough timeout")
+	test.Assert(t, stats.RequeueCount > 2, "should have requeued")
+	test.Assert(t, stats.DelayedQueueCount > 1, "should have delayed")
+}
+
+func TestSubReqToEndFailedPartial(t *testing.T) {
+	// req to end success but the return is failed (while leader changed or write is disabled) and should req in memory,
+	// later the memory delayed failed and it should be req to end again
+	opts := nsqdNs.NewOptions()
+	opts.Logger = newTestLogger(t)
+	opts.LogLevel = 1
+	if testing.Verbose() {
+		opts.LogLevel = 4
+		nsqdNs.SetLogger(opts.Logger)
+	}
+	opts.SyncEvery = 1
+	opts.QueueScanInterval = time.Millisecond * 10
+	opts.MsgTimeout = time.Second * 2
+	opts.MaxConfirmWin = 50
+	opts.ReqToEndThreshold = nsqdNs.MaxWaitingDelayed*time.Millisecond*100 + time.Millisecond*800
+	opts.MaxReqTimeout = time.Second*30 + opts.ReqToEndThreshold*3
+	opts.MaxOutputBufferTimeout = 10 * time.Millisecond
+	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
+
+	defer os.RemoveAll(opts.DataPath)
+	defer nsqdServer.Exit()
+
+	topicName := "test_reqend_failed" + strconv.Itoa(int(time.Now().Unix()))
+	topic := nsqd.GetTopicIgnPart(topicName)
+	ch := topic.GetChannel("ch")
+
+	putCnt := nsqdNs.MaxWaitingDelayed + 100
+	myRand := rand.New(rand.NewSource(time.Now().Unix()))
+	for i := 0; i < putCnt; i++ {
+		if i == 0 {
+			dms := opts.ReqToEndThreshold/2 + time.Duration(myRand.Intn(int(opts.ReqToEndThreshold*2)))
+			delayTs := int(time.Now().Add(dms).UnixNano())
+			delayBody := []byte(strconv.Itoa(delayTs))
+			msg := nsqdNs.NewMessage(0, delayBody)
+			topic.PutMessage(msg)
+		} else {
+			msg := nsqdNs.NewMessage(0, []byte("nodelay"))
+			topic.PutMessage(msg)
+		}
+	}
+	topic.ForceFlush()
+
+	var wg sync.WaitGroup
+	done := make(chan struct{})
+
+	gcnt := 5
+	// make req to end failed by test
+	atomic.StoreInt32(&testFailedReqToDelayTimeout, 1)
+	defer atomic.StoreInt32(&testFailedReqToDelayTimeout, 0)
+
+	for i := 0; i < gcnt; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+		RECONNECT:
+			select {
+			case <-done:
+				return
+			default:
+			}
+			conn, err := mustConnectNSQD(tcpAddr)
+			test.Equal(t, err, nil)
+			defer conn.Close()
+			conn.(*net.TCPConn).SetNoDelay(true)
+			identify(t, conn, map[string]interface{}{
+				"output_buffer_timeout": 10,
+			}, frameTypeResponse)
+			subRsp, err := subWaitResp(t, conn, topicName, "ch")
+			if err != nil || string(subRsp) != "OK" {
+				conn.Close()
+				time.Sleep(time.Millisecond * 3)
+				goto RECONNECT
+			}
+			test.Nil(t, err)
+			test.Equal(t, "OK", string(subRsp))
+			_, err = nsq.Ready(10).WriteTo(conn)
+			test.Equal(t, err, nil)
+
+			for {
+				select {
+				case <-done:
+					return
+				default:
+				}
+				msgOut := recvNextMsgAndCheck(t, conn, 0, 0, false)
+				if msgOut == nil {
+					conn.Close()
+					time.Sleep(time.Millisecond * 3)
+					goto RECONNECT
+				}
+				if len(msgOut.Body) >= 10 {
+					delayTs, err := strconv.Atoi(string(msgOut.Body))
+					test.Nil(t, err)
+					now := int(time.Now().UnixNano())
+					t.Logf("\033[31m got delayed message : %v (id %v), now: %v\033[39m\n\n", string(msgOut.Body), msgOut.ID, now)
+					reqDelay := time.Duration(delayTs - now)
+					if delayTs <= now {
+						reqDelay = time.Second
+					}
+					nsq.Requeue(nsq.MessageID(msgOut.GetFullMsgID()), reqDelay).WriteTo(conn)
+					continue
+				} else {
+					test.Equal(t, "nodelay", string(msgOut.Body))
+				}
+				nsq.Finish(nsq.MessageID(msgOut.GetFullMsgID())).WriteTo(conn)
+			}
+		}()
+	}
+	start := time.Now()
+	for {
+		if ch.Depth() == 0 {
+			break
+		}
+		t.Logf("current channel: %s", ch.GetChannelDebugStats())
+		time.Sleep(time.Second)
+		if time.Since(start) > time.Minute*3 {
+			t.Error("timeout waiting")
+			break
+		}
+	}
+	close(done)
+	wg.Wait()
+	stats := nsqdNs.NewChannelStats(ch, nil, 0)
+	t.Logf("channel stats: %v", stats)
+	test.Equal(t, 0, stats.DeferredCount)
+	test.Assert(t, stats.TimeoutCount > 2, "should have timeout")
+	test.Assert(t, stats.RequeueCount > 2, "should have requeued")
+	test.Equal(t, uint64(1), stats.DelayedQueueCount)
 }
 
 func TestSubOrdered(t *testing.T) {
