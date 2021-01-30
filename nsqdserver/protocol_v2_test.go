@@ -4720,8 +4720,8 @@ func TestDelayMessageToQueueEndAgainAndAgain(t *testing.T) {
 	opts.MsgTimeout = time.Second * 10
 	opts.MaxReqTimeout = time.Second * 100
 	opts.MaxConfirmWin = 50
-	opts.ReqToEndThreshold = time.Millisecond * 100
-	maxIntervalDelayed := opts.ReqToEndThreshold * nsqdNs.MaxWaitingDelayed / 2
+	opts.ReqToEndThreshold = time.Millisecond * 150
+	maxIntervalDelayed := opts.ReqToEndThreshold * nsqdNs.MaxWaitingDelayed * 2
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 
 	defer os.RemoveAll(opts.DataPath)
@@ -4780,8 +4780,8 @@ func TestDelayMessageToQueueEndAgainAndAgain(t *testing.T) {
 		}
 		delayDone = time.Since(delayStart2)
 		if uint64(nsq.GetNewMessageID(msgOut.ID[:])) <= uint64(nsqdNs.MaxWaitingDelayed) {
-			t.Logf("delay msg short: %v, %v", msgOut.ID, delayDone)
-			test.Assert(t, delayDone < delayToEnd+maxIntervalDelayed, "should not delay too long time")
+			t.Logf("delay msg : %v, %v", msgOut.ID, delayDone)
+			test.Assert(t, delayDone < delayToEnd+maxIntervalDelayed, "should not delay too long time", delayDone)
 			_, err = nsq.Requeue(nsq.MessageID(msgOut.GetFullMsgID()), opts.ReqToEndThreshold-time.Millisecond).WriteTo(conn)
 			test.Nil(t, err)
 			//test.Assert(t, msgOut.Attempts < 6, "delayed again messages should attemp less")
