@@ -1860,9 +1860,43 @@ func (c *Channel) CheckIfNeedResetRead() bool {
 	if inflightCnt <= 0 && c.Depth() > 10 &&
 		c.GetChannelWaitingConfirmCnt() >= c.option.MaxConfirmWin {
 		c.chLog.Warningf("channel has depth %v but no inflight, confirmed %v, waiting %v, %v",
-			c.Depth(), c.GetConfirmed(), c.GetChannelWaitingConfirmCnt(), c.confirmedMsgs.ToString(),
-		)
+			c.Depth(), c.GetConfirmed(), c.GetChannelWaitingConfirmCnt(), c.GetChannelDebugStats())
 		return true
+	} else if inflightCnt <= 10 && c.GetChannelWaitingConfirmCnt() >= c.option.MaxConfirmWin/2 {
+		// check if the oldest waiting confirmed not in waiting inflight or requeue
+		// and just log warning here
+		found := false
+		c.inFlightMutex.Lock()
+		cur := c.GetConfirmed()
+		for _, m := range c.inFlightMessages {
+			if m.Offset == cur.Offset() {
+				found = true
+				break
+			}
+		}
+		for _, m := range c.waitingRequeueMsgs {
+			if found {
+				break
+			}
+			if m.Offset == cur.Offset() {
+				found = true
+				break
+			}
+		}
+		for _, m := range c.waitingRequeueChanMsgs {
+			if found {
+				break
+			}
+			if m.Offset == cur.Offset() {
+				found = true
+				break
+			}
+		}
+		c.inFlightMutex.Unlock()
+		if !found {
+			c.chLog.Warningf("channel has waiting confirmed offset not in inflight or requeued, confirmed %v, waiting %v, %v",
+				c.GetConfirmed(), c.GetChannelWaitingConfirmCnt(), c.GetChannelDebugStats())
+		}
 	}
 	return false
 }
@@ -2505,10 +2539,9 @@ func (c *Channel) processInFlightQueue(tnow int64) (bool, bool) {
 	// for tagged client, it may happen if no any un-tagged client.
 	// we may read to end, but the last message is normal message.
 	// in this way, we should block and wait un-tagged client.
-	c.tagMsgChansMutex.RLock()
-	tagChLen := len(c.tagMsgChans)
-	c.tagMsgChansMutex.RUnlock()
-	if (!dirty) && tagChLen == 0 && (atomic.LoadInt32(&c.waitingDeliveryState) == 0) && c.CheckIfNeedResetRead() {
+	// However, wait un-tagged client should have inflight or requeue waiting, and
+	// should waiting delivery state
+	if (!dirty) && (atomic.LoadInt32(&c.waitingDeliveryState) == 0) && c.CheckIfNeedResetRead() {
 		diff := time.Now().Unix() - atomic.LoadInt64(&c.processResetReaderTime)
 		if diff > resetReaderTimeoutSec && atomic.LoadInt64(&c.processResetReaderTime) > 0 {
 			c.chLog.LogWarningf("try reset reader since no inflight and requeued for too long (%v): %v, %v, %v",
