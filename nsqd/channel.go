@@ -29,7 +29,7 @@ const (
 	ZanTestSkip                = 0
 	ZanTestUnskip              = 1
 	memSizeForSmall            = 2
-	delayedReqToEndMinInterval = time.Millisecond * 64
+	delayedReqToEndMinInterval = time.Millisecond * 128
 	DefaultMaxChDelayedQNum    = 10000 * 16
 	limitSmallMsgBytes         = 1024
 )
@@ -1181,7 +1181,8 @@ func (c *Channel) ShouldRequeueToEnd(clientID int64, clientAddr string, id Messa
 	}
 
 	// too much delayed queue will impact the read/write on boltdb, so we refuse to write if too large
-	if int64(c.GetDelayedQueueCnt()) > c.option.MaxChannelDelayedQNum*10 {
+	dqCnt := int64(c.GetDelayedQueueCnt())
+	if dqCnt > c.option.MaxChannelDelayedQNum*10 {
 		return nil, false
 	}
 	tn := time.Now()
@@ -1193,7 +1194,7 @@ func (c *Channel) ShouldRequeueToEnd(clientID int64, clientAddr string, id Messa
 		// and this may cause some delay more time than expected.
 		dqDepthTs, dqCnt := c.GetDelayedQueueConsumedState()
 		blockingTooLong := tn.UnixNano()-dqDepthTs > 10*threshold.Nanoseconds()
-		if blockingTooLong || (msg.Attempts < MaxMemReqTimes*10) || (tn.UnixNano()-atomic.LoadInt64(&c.lastDelayedReqToEndTs) > delayedReqToEndMinInterval.Nanoseconds()) {
+		if (blockingTooLong || (msg.Attempts < MaxMemReqTimes*10)) && (tn.UnixNano()-atomic.LoadInt64(&c.lastDelayedReqToEndTs) > delayedReqToEndMinInterval.Nanoseconds()) {
 			// if the message is peeked from disk delayed queue,
 			// we can try to put it back to end if there are some other
 			// delayed queue messages waiting.
@@ -1205,8 +1206,8 @@ func (c *Channel) ShouldRequeueToEnd(clientID int64, clientAddr string, id Messa
 			// if all delayed messages are in memory, we no need to put them back to disk.
 			blocking := tn.UnixNano()-dqDepthTs > threshold.Nanoseconds()
 			waitingDelayCnt := atomic.LoadInt64(&c.deferredFromDelay)
-			if dqDepthTs > 0 && blocking && int64(dqCnt) > waitingDelayCnt {
-				c.chLog.Logf("delayed queue message %v req to end, timestamp:%v, attempt:%v, delayed depth timestamp: %v, delay waiting : %v, %v",
+			if dqDepthTs > 0 && blocking && int64(dqCnt) > waitingDelayCnt && int64(dqCnt) > MaxWaitingDelayed {
+				c.chLog.LogDebugf("delayed queue message %v req to end, timestamp:%v, attempt:%v, delayed depth timestamp: %v, delay waiting : %v, %v",
 					id, msg.Timestamp,
 					msg.Attempts, dqDepthTs, waitingDelayCnt, dqCnt)
 				atomic.StoreInt64(&c.lastDelayedReqToEndTs, tn.UnixNano())
@@ -1218,6 +1219,8 @@ func (c *Channel) ShouldRequeueToEnd(clientID int64, clientAddr string, id Messa
 					c.DepthTimestamp(), msg.Attempts, waitingDelayCnt, dqDepthTs)
 			}
 		}
+		// the ChannelDelayed message already in delayed queue, so we can ignore other checks
+		return nil, false
 	}
 
 	depDiffTs := tn.UnixNano() - c.DepthTimestamp()
@@ -1231,7 +1234,6 @@ func (c *Channel) ShouldRequeueToEnd(clientID int64, clientAddr string, id Messa
 	newTimeout := tn.Add(timeout)
 	if newTimeout.Sub(msg.deliveryTS) >=
 		c.option.MaxReqTimeout || timeout > threshold {
-		dqCnt := c.GetDelayedQueueCnt()
 		if c.option.MaxChannelDelayedQNum == 0 || int64(dqCnt) < c.option.MaxChannelDelayedQNum {
 			return msg.GetCopy(), true
 		}
