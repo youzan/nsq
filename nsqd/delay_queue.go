@@ -1327,6 +1327,9 @@ func (q *DelayQueue) FindChannelMessageDelayed(msgID MessageID, ch string, trySc
 	return msg, err
 }
 
+// IsChannelMessageDelayed check if this message may already exist. Note if dup delayed message with same id exist,
+// after one of them deleted, the check exist may return false. We can sure whether it is exist, however we can not
+// total sure whether it is not exist.
 func (q *DelayQueue) IsChannelMessageDelayed(msgID MessageID, ch string) bool {
 	found := false
 	msgKey := getDelayedMsgDBIndexKey(ChannelDelayed, ch, msgID)

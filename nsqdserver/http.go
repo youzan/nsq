@@ -83,6 +83,7 @@ func newHTTPServer(ctx *context, tlsEnabled bool, tlsRequired bool) *httpServer 
 	router.Handle("POST", "/channel/create", http_api.Decorate(s.doCreateChannel, log, http_api.V1))
 	router.Handle("POST", "/channel/delete", http_api.Decorate(s.doDeleteChannel, log, http_api.V1))
 	router.Handle("POST", "/channel/empty", http_api.Decorate(s.doEmptyChannel, log, http_api.V1))
+	router.Handle("POST", "/channel/fixconfirmed", http_api.Decorate(s.doFixChannelConfirmed, log, http_api.V1))
 	router.Handle("POST", "/channel/finishmemdelayed", http_api.Decorate(s.doFinishMemDelayed, log, http_api.V1))
 	router.Handle("POST", "/channel/emptydelayed", http_api.Decorate(s.doEmptyChannelDelayed, log, http_api.V1))
 	router.Handle("POST", "/channel/setoffset", http_api.Decorate(s.doSetChannelOffset, log, http_api.V1))
@@ -703,6 +704,29 @@ func (s *httpServer) doEmptyChannelDelayed(w http.ResponseWriter, req *http.Requ
 			nsqd.NsqLogger().Logf("failed to empty the channel %v delayed data: %v, by client:%v",
 				channelName, err, req.RemoteAddr)
 		}
+	} else {
+		nsqd.NsqLogger().LogDebugf("should request to master: %v, from %v",
+			topic.GetFullName(), req.RemoteAddr)
+		return nil, http_api.Err{400, FailedOnNotLeader}
+	}
+	return nil, nil
+}
+
+func (s *httpServer) doFixChannelConfirmed(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {
+	_, topic, channelName, err := s.getExistingTopicChannelFromQuery(req)
+	if err != nil {
+		return nil, err
+	}
+
+	channel, err := topic.GetExistingChannel(channelName)
+	if err != nil {
+		return nil, http_api.Err{404, "CHANNEL_NOT_FOUND"}
+	}
+
+	if s.ctx.checkConsumeForMasterWrite(topic.GetTopicName(), topic.GetTopicPart()) {
+		channel.TryFixConfirmedByResetRead()
+		nsqd.NsqLogger().Logf("topic %v fix the channel %v confirmed by client:%v",
+			topic.GetTopicName(), channelName, req.RemoteAddr)
 	} else {
 		nsqd.NsqLogger().LogDebugf("should request to master: %v, from %v",
 			topic.GetFullName(), req.RemoteAddr)

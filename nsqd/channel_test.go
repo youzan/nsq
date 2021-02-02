@@ -770,6 +770,410 @@ func TestChannelEmptyWhileReqDelayedMessageWaitingInReq(t *testing.T) {
 	equal(t, atomic.LoadInt64(&channel.deferredCount), int64(0))
 }
 
+func TestChannelResetConfirmedWhileDelayedQueuePop(t *testing.T) {
+	// When the channel reset to confirmed (leader changed), the
+	// message will reload from disk queue. Before the reload message go into inflight,
+	// if the delayed queue pop a message and try requeued to requeued chan (since the
+	// reload message has not go into inflight by now, it will success), then the reload message
+	// go into inflight, after that the delayed message later will conflict while try go into inflight.
+	// In this case, the delayed count should be handled
+	opts := NewOptions()
+	opts.SyncEvery = 1
+	opts.Logger = newTestLogger(t)
+	opts.QueueScanInterval = time.Second
+	// use small max ready count to make sure the req chan to be full and more delayed messages is waiting in requeued map
+	opts.MaxRdyCount = 2
+	opts.MsgTimeout = time.Second * 60
+	if testing.Verbose() {
+		opts.LogLevel = 2
+		SetLogger(opts.Logger)
+	}
+	_, _, nsqd := mustStartNSQD(opts)
+	defer os.RemoveAll(opts.DataPath)
+	defer nsqd.Exit()
+
+	topicName := "test_channel_reset_while_delayed_pop" + strconv.Itoa(int(time.Now().Unix()))
+	topic := nsqd.GetTopicIgnPart(topicName)
+	channel := topic.GetChannel("channel")
+	dq, err := topic.GetOrCreateDelayedQueueNoLock(nil)
+	equal(t, err, nil)
+	// write at least 2*MaxWaitingDelayed to test the second peek from delayed queue
+	var resetOffset BackendQueueEnd
+	for i := 0; i < 2*MaxWaitingDelayed+1; i++ {
+		msg := NewMessage(0, []byte("test"))
+		id, _, _, qe, err := topic.PutMessage(msg)
+		equal(t, err, nil)
+		if i == MaxWaitingDelayed/2 {
+			// make sure the reset offset message can be poped from delayed queue in the first batch
+			resetOffset = qe
+		}
+		newMsg := msg.GetCopy()
+		newMsg.ID = 0
+		newMsg.DelayedType = ChannelDelayed
+
+		newTimeout := time.Now().Add(time.Second)
+		newMsg.DelayedTs = newTimeout.UnixNano()
+
+		newMsg.DelayedOrigID = id
+		newMsg.DelayedChannel = channel.GetName()
+
+		_, _, _, _, err = dq.PutDelayMessage(newMsg)
+		equal(t, err, nil)
+	}
+
+	t.Logf("current %v, %v", atomic.LoadInt64(&channel.deferredFromDelay), channel.GetChannelDebugStats())
+	channel.AddClient(1, NewFakeConsumer(1))
+	channel.AddClient(2, NewFakeConsumer(2))
+	channel.SetConsumeOffset(resetOffset.Offset(), resetOffset.TotalMsgCnt(), true)
+	// make sure the reload message from disk queue first pumped
+	time.Sleep(time.Second)
+
+	// before we consume from reset confirmed, we wait the delayed queue pop
+	s := time.Now()
+	for {
+		if time.Since(s) > time.Minute {
+			t.Error("timeout waiting")
+			return
+		}
+		// wait peek delayed messages
+		time.Sleep(time.Second)
+		// the clientMsgChan should block waiting
+		channel.inFlightMutex.Lock()
+		waitChCnt := len(channel.waitingRequeueChanMsgs)
+		realWaitChCnt := len(channel.requeuedMsgChan)
+		waitReqMoreCnt := len(channel.waitingRequeueMsgs)
+		inflightCnt := len(channel.inFlightMessages)
+		channel.inFlightMutex.Unlock()
+		t.Logf("current %v, %v", atomic.LoadInt64(&channel.deferredFromDelay), channel.GetChannelDebugStats())
+		// make sure the reset message is poped from delayed queue
+		if waitChCnt <= 0 || waitReqMoreCnt <= 0 || waitChCnt+waitReqMoreCnt < int(resetOffset.TotalMsgCnt()) {
+			continue
+		}
+		ast.True(t, waitChCnt > 0, "should have wait req count")
+		ast.True(t, waitReqMoreCnt > 0, "should have wait more req count")
+		ast.Equal(t, waitChCnt, realWaitChCnt)
+		ast.Equal(t, 0, inflightCnt)
+		ast.Equal(t, int64(waitChCnt+waitReqMoreCnt), atomic.LoadInt64(&channel.deferredFromDelay))
+		break
+	}
+
+	var resetFirstMsgID MessageID
+	select {
+	case outputMsg, _ := <-channel.clientMsgChan:
+		t.Logf("consume %v", outputMsg)
+		// make sure we are not requeue the delayed messages
+		ast.NotEqual(t, ChannelDelayed, outputMsg.DelayedType)
+		channel.StartInFlightTimeout(outputMsg, NewFakeConsumer(1), "", opts.MsgTimeout)
+		resetFirstMsgID = outputMsg.ID
+	}
+	t.Logf("reset msg id %v", resetFirstMsgID)
+	// wait conflict from delayed message (which has the same id) try go into inflight
+	done := false
+	s = time.Now()
+	for !done {
+		ticker := time.NewTimer(time.Second)
+		select {
+		case outputMsg, _ := <-channel.clientMsgChan:
+			t.Logf("consume %v", outputMsg)
+			if outputMsg.DelayedType == ChannelDelayed {
+				_, err = channel.StartInFlightTimeout(outputMsg, NewFakeConsumer(2), "", opts.MsgTimeout)
+				if outputMsg.ID == resetFirstMsgID {
+					t.Logf("got the same id from delayed queue")
+					ast.NotNil(t, err)
+					done = true
+					break
+				} else {
+					ast.Nil(t, err)
+					channel.FinishMessageForce(0, "", outputMsg.ID, true)
+				}
+			} else {
+				if outputMsg.ID == resetFirstMsgID {
+					t.Errorf("should not got the waiting handle message for timeout")
+				}
+				channel.StartInFlightTimeout(outputMsg, NewFakeConsumer(0), "", opts.MsgTimeout)
+				channel.FinishMessageForce(0, "", outputMsg.ID, true)
+			}
+		case <-ticker.C:
+			if time.Since(s) > time.Minute {
+				t.Errorf("timeout waiting")
+				done = true
+				break
+			}
+		}
+	}
+
+	channel.FinishMessageForce(1, "", resetFirstMsgID, true)
+	s = time.Now()
+	done = false
+	// continue consume
+	for !done {
+		ticker := time.NewTimer(time.Second)
+		select {
+		case outputMsg, ok := <-channel.clientMsgChan:
+			if !ok {
+				done = true
+				break
+			}
+			t.Logf("consume %v", outputMsg)
+			channel.StartInFlightTimeout(outputMsg, NewFakeConsumer(0), "", opts.MsgTimeout)
+			channel.FinishMessageForce(0, "", outputMsg.ID, true)
+		case <-ticker.C:
+			_, dqCnt := channel.GetDelayedQueueConsumedState()
+			if dqCnt == 0 {
+				done = true
+				break
+			}
+			if time.Since(s) > time.Minute {
+				t.Errorf("timeout waiting consume delayed messages: %v", dqCnt)
+				done = true
+				break
+			}
+			continue
+		}
+	}
+
+	t.Logf("stopped %v, %v", atomic.LoadInt64(&channel.deferredFromDelay), channel.GetChannelDebugStats())
+	_, dqCnt := channel.GetDelayedQueueConsumedState()
+	ast.Equal(t, uint64(0), dqCnt)
+	// make sure all delayed counter is not more or less
+	equal(t, atomic.LoadInt64(&channel.deferredFromDelay), int64(0))
+	equal(t, atomic.LoadInt64(&channel.deferredCount), int64(0))
+	equal(t, channel.Depth(), int64(0))
+	channel.inFlightMutex.Lock()
+	waitChCnt := len(channel.waitingRequeueChanMsgs)
+	realWaitChCnt := len(channel.requeuedMsgChan)
+	waitReqMoreCnt := len(channel.waitingRequeueMsgs)
+	inflightCnt := len(channel.inFlightMessages)
+	channel.inFlightMutex.Unlock()
+	equal(t, waitChCnt+realWaitChCnt+waitReqMoreCnt+inflightCnt, int(0))
+}
+
+func TestChannelResetConfirmedWhileDelayedQueueMsgInflight(t *testing.T) {
+	// While there is a delayed message in inflight waiting ack,
+	// the channel reset to confirmed (leader changed after draining) and the
+	// message reload from disk queue will conflict while try go into inflight.
+	// In this case, the normal message may never go into inflight which leave the confirmed offset
+	// blocking. So we need handle this by checking conflict
+	opts := NewOptions()
+	opts.SyncEvery = 1
+	opts.Logger = newTestLogger(t)
+	opts.QueueScanInterval = time.Second
+	// use small max ready count to make sure the req chan to be full and more delayed messages is waiting in requeued map
+	opts.MaxRdyCount = 2
+	opts.MsgTimeout = time.Second * 60
+	if testing.Verbose() {
+		opts.LogLevel = 2
+		SetLogger(opts.Logger)
+	}
+	_, _, nsqd := mustStartNSQD(opts)
+	defer os.RemoveAll(opts.DataPath)
+	defer nsqd.Exit()
+
+	topicName := "test_channel_reset_while_delayed_pop" + strconv.Itoa(int(time.Now().Unix()))
+	topic := nsqd.GetTopicIgnPart(topicName)
+	channel := topic.GetChannel("channel")
+	dq, err := topic.GetOrCreateDelayedQueueNoLock(nil)
+	equal(t, err, nil)
+	// write at least 2*MaxWaitingDelayed to test the second peek from delayed queue
+	var resetOffset BackendQueueEnd
+	for i := 0; i < 2*MaxWaitingDelayed+1; i++ {
+		msg := NewMessage(0, []byte("test"))
+		id, msgOffset, _, qe, err := topic.PutMessage(msg)
+		equal(t, err, nil)
+		if i == MaxWaitingDelayed/2 {
+			// make sure the reset offset message can be poped from delayed queue in the first batch
+			resetOffset = qe
+		}
+		msg.Offset = msgOffset
+		newMsg := msg.GetCopy()
+		newMsg.ID = 0
+		newMsg.DelayedType = ChannelDelayed
+
+		newTimeout := time.Now().Add(time.Second)
+		newMsg.DelayedTs = newTimeout.UnixNano()
+
+		newMsg.DelayedOrigID = id
+		newMsg.DelayedChannel = channel.GetName()
+
+		_, _, _, _, err = dq.PutDelayMessage(newMsg)
+		equal(t, err, nil)
+	}
+
+	t.Logf("current %v, %v", atomic.LoadInt64(&channel.deferredFromDelay), channel.GetChannelDebugStats())
+	channel.AddClient(1, NewFakeConsumer(1))
+	channel.AddClient(2, NewFakeConsumer(2))
+	channel.SetConsumeOffset(resetOffset.Offset(), resetOffset.TotalMsgCnt(), true)
+	time.Sleep(time.Second)
+	// before we consume from reset confirmed, we wait the delayed queue pop, make sure the delayed message first go into inflight
+	s := time.Now()
+	for {
+		if time.Since(s) > time.Minute {
+			t.Error("timeout waiting")
+			return
+		}
+		// wait peek delayed messages
+		time.Sleep(time.Second)
+		// the clientMsgChan should block waiting
+		channel.inFlightMutex.Lock()
+		waitChCnt := len(channel.waitingRequeueChanMsgs)
+		realWaitChCnt := len(channel.requeuedMsgChan)
+		waitReqMoreCnt := len(channel.waitingRequeueMsgs)
+		inflightCnt := len(channel.inFlightMessages)
+		channel.inFlightMutex.Unlock()
+		t.Logf("current %v, %v", atomic.LoadInt64(&channel.deferredFromDelay), channel.GetChannelDebugStats())
+		// make sure the reset message is poped from delayed queue
+		if waitChCnt <= 0 || waitReqMoreCnt <= 0 || waitChCnt+waitReqMoreCnt < int(resetOffset.TotalMsgCnt()) {
+			continue
+		}
+		ast.True(t, waitChCnt > 0, "should have wait req count")
+		ast.True(t, waitReqMoreCnt > 0, "should have wait more req count")
+		ast.Equal(t, waitChCnt, realWaitChCnt)
+		ast.Equal(t, 0, inflightCnt)
+		ast.Equal(t, int64(waitChCnt+waitReqMoreCnt), atomic.LoadInt64(&channel.deferredFromDelay))
+		break
+	}
+	var resetFirstMsgID MessageID
+	done := false
+	s = time.Now()
+	for !done {
+		ticker := time.NewTimer(time.Second)
+		select {
+		case outputMsg, _ := <-channel.clientMsgChan:
+			t.Logf("consume %v", outputMsg)
+			// the first non-delayed queue message should be the reset message
+			if resetFirstMsgID <= 0 && outputMsg.DelayedType != ChannelDelayed {
+				_, err = channel.StartInFlightTimeout(outputMsg, NewFakeConsumer(1), "", time.Second)
+				ast.Nil(t, err)
+				resetFirstMsgID = outputMsg.ID
+				// just ignore to make it timeout later
+				continue
+			}
+			if outputMsg.Offset == resetOffset.Offset() {
+				if outputMsg.DelayedType == ChannelDelayed {
+					// make sure the normal message is removed in inflight
+					channel.RequeueMessage(1, "", outputMsg.ID, 0, false)
+					_, err = channel.StartInFlightTimeout(outputMsg, NewFakeConsumer(1), "", opts.MsgTimeout)
+					ast.Nil(t, err)
+					resetFirstMsgID = outputMsg.ID
+					t.Logf("found the reset message %v", outputMsg)
+					done = true
+					break
+				} else {
+					// we use small timeout to allow trigger requeue(delayed message will ignore pop if this is inflight)
+					_, err = channel.StartInFlightTimeout(outputMsg, NewFakeConsumer(1), "", time.Second)
+					ast.Nil(t, err)
+					channel.inFlightMutex.Lock()
+					realWaitChCnt := len(channel.requeuedMsgChan)
+					waitReqMoreCnt := len(channel.waitingRequeueMsgs)
+					channel.inFlightMutex.Unlock()
+					if realWaitChCnt < 2 && waitReqMoreCnt <= 0 {
+						// requeue to make it remove out of inflight, so later the delayed message with same id can go into inflight
+						channel.RequeueMessage(1, "", outputMsg.ID, 0, false)
+					}
+					continue
+				}
+			} else {
+				_, err = channel.StartInFlightTimeout(outputMsg, NewFakeConsumer(1), "", opts.MsgTimeout)
+				ast.Nil(t, err)
+			}
+			channel.FinishMessageForce(0, "", outputMsg.ID, true)
+		case <-ticker.C:
+			if time.Since(s) > time.Minute {
+				t.Errorf("timeout waiting")
+				done = true
+				break
+			}
+		}
+	}
+	_, dqCnt := channel.GetDelayedQueueConsumedState()
+	t.Logf("reset msg id %v, expect offset: %v, current left: %v, %v", resetFirstMsgID, resetOffset, dqCnt, channel.Depth())
+	// wait conflict from normal queue (which has the same id) try go into inflight
+	done = false
+	s = time.Now()
+	for !done {
+		ticker := time.NewTimer(time.Second)
+		select {
+		case outputMsg, _ := <-channel.clientMsgChan:
+			t.Logf("consume %v", outputMsg)
+			if outputMsg.DelayedType != ChannelDelayed {
+				_, err = channel.StartInFlightTimeout(outputMsg, NewFakeConsumer(2), "", opts.MsgTimeout)
+				if outputMsg.ID == resetFirstMsgID {
+					t.Logf("got the same id from reset queue")
+					ast.NotNil(t, err)
+					done = true
+					break
+				} else {
+					ast.Nil(t, err)
+					channel.FinishMessageForce(0, "", outputMsg.ID, true)
+				}
+			} else {
+				if outputMsg.ID == resetFirstMsgID {
+					t.Errorf("should not got the waiting handle message for timeout")
+				}
+				channel.StartInFlightTimeout(outputMsg, NewFakeConsumer(0), "", opts.MsgTimeout)
+				channel.FinishMessageForce(0, "", outputMsg.ID, true)
+			}
+		case <-ticker.C:
+			_, dqCnt := channel.GetDelayedQueueConsumedState()
+			if dqCnt == 0 && channel.Depth() == 0 {
+				t.Errorf("all message consumed before got conflict message")
+				done = true
+				break
+			}
+			if time.Since(s) > time.Minute {
+				t.Errorf("timeout waiting")
+				done = true
+				break
+			}
+		}
+	}
+
+	channel.FinishMessageForce(1, "", resetFirstMsgID, true)
+	s = time.Now()
+	done = false
+	// continue consume
+	for !done {
+		ticker := time.NewTimer(time.Second)
+		select {
+		case outputMsg, ok := <-channel.clientMsgChan:
+			if !ok {
+				done = true
+				break
+			}
+			t.Logf("consume %v", outputMsg)
+			channel.StartInFlightTimeout(outputMsg, NewFakeConsumer(0), "", opts.MsgTimeout)
+			channel.FinishMessageForce(0, "", outputMsg.ID, true)
+		case <-ticker.C:
+			_, dqCnt := channel.GetDelayedQueueConsumedState()
+			if dqCnt == 0 && channel.Depth() == 0 {
+				done = true
+				break
+			}
+			if time.Since(s) > time.Minute {
+				t.Errorf("timeout waiting consume delayed messages: %v", dqCnt)
+				done = true
+				break
+			}
+			continue
+		}
+	}
+
+	t.Logf("stopped %v, %v", atomic.LoadInt64(&channel.deferredFromDelay), channel.GetChannelDebugStats())
+	_, dqCnt = channel.GetDelayedQueueConsumedState()
+	ast.Equal(t, uint64(0), dqCnt)
+	// make sure all delayed counter is not more or less
+	equal(t, atomic.LoadInt64(&channel.deferredFromDelay), int64(0))
+	equal(t, atomic.LoadInt64(&channel.deferredCount), int64(0))
+	equal(t, channel.Depth(), int64(0))
+	channel.inFlightMutex.Lock()
+	waitChCnt := len(channel.waitingRequeueChanMsgs)
+	realWaitChCnt := len(channel.requeuedMsgChan)
+	waitReqMoreCnt := len(channel.waitingRequeueMsgs)
+	inflightCnt := len(channel.inFlightMessages)
+	channel.inFlightMutex.Unlock()
+	equal(t, waitChCnt+realWaitChCnt+waitReqMoreCnt+inflightCnt, int(0))
+}
+
 func TestChannelHealth(t *testing.T) {
 	opts := NewOptions()
 	opts.Logger = newTestLogger(t)

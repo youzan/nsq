@@ -1512,8 +1512,8 @@ func (c *Channel) StartInFlightTimeout(msg *Message, client Consumer, clientAddr
 		} else if old != nil && old.DelayedType == ChannelDelayed {
 			shouldSend = false
 		} else {
-			c.chLog.LogWarningf("push message in flight failed: %v, %v", err,
-				msg.GetFullMsgID())
+			c.chLog.LogWarningf("push message in flight failed: %v, %v, old: %v", err,
+				PrintMessageNoBody(msg), PrintMessageNoBody(old))
 		}
 		return shouldSend, err
 	}
@@ -1616,9 +1616,21 @@ func (c *Channel) pushInFlightMessage(msg *Message) (*Message, error) {
 		c.cleanWaitingRequeueChanNoLock(msg)
 		return nil, ErrConsumeDisabled
 	}
-	m, ok := c.inFlightMessages[msg.ID]
+	oldm, ok := c.inFlightMessages[msg.ID]
 	if ok {
-		return m, ErrMsgAlreadyInFlight
+		// It may conflict if both normal diskqueue and the delayed queue has the same message (because of the rpc timeout)
+		// We need check and clean the state to make sure we can have the right stats
+		c.cleanWaitingRequeueChanNoLock(msg)
+		if msg.DelayedType == 0 {
+			if oldm.DelayedType == ChannelDelayed {
+				c.ConfirmBackendQueue(msg)
+				nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "IGNORE_DELAY_CONFIRMED", msg.TraceID, msg, "", 0)
+			}
+			c.chLog.Infof("non-delayed msg %v conflict while add inflight, old msg type: %v", msg, oldm.DelayedType)
+		} else if msg.DelayedType == ChannelDelayed {
+			c.chLog.Infof("delayed msg %v conflict while add inflight", msg)
+		}
+		return oldm, ErrMsgAlreadyInFlight
 	}
 	c.inFlightMessages[msg.ID] = msg
 	c.inFlightPQ.Push(msg)
@@ -1840,6 +1852,22 @@ func (c *Channel) resetChannelReader(resetOffset resetChannelData, lastDataNeedR
 		*needReadBackend = true
 		*readBackendWait = false
 	}
+}
+
+func (c *Channel) TryFixConfirmedByResetRead() error {
+	if c.IsSkipped() || c.IsConsumeDisabled() {
+		return nil
+	}
+	if c.IsPaused() || c.IsOrdered() {
+		return nil
+	}
+	c.chLog.Warningf("channel try fix confirmed by reset %v, waiting %v, %v",
+		c.GetConfirmed(), c.GetChannelWaitingConfirmCnt(), c.GetChannelDebugStats())
+	select {
+	case c.readerChanged <- resetChannelData{BackendOffset(-1), 0, false}:
+	default:
+	}
+	return nil
 }
 
 func (c *Channel) CheckIfNeedResetRead() bool {
@@ -2598,6 +2626,8 @@ func (c *Channel) peekAndReqDelayedMessages(tnow int64) (int, int, error) {
 				c.chLog.Logf("delayed message already confirmed %v ", m)
 			}
 		} else {
+			// while reset reader, the message may reload from disk which not in inflight or requeue
+			// and it will add to the inflight from startinflight
 			oldMsg2, ok2 := c.inFlightMessages[m.DelayedOrigID]
 			_, ok3 := c.waitingRequeueChanMsgs[m.DelayedOrigID]
 			_, ok4 := c.waitingRequeueMsgs[m.DelayedOrigID]
