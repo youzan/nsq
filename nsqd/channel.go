@@ -1892,41 +1892,6 @@ func (c *Channel) CheckIfNeedResetRead() bool {
 		c.chLog.Warningf("channel has depth %v but no inflight, confirmed %v, waiting %v, %v",
 			c.Depth(), c.GetConfirmed(), c.GetChannelWaitingConfirmCnt(), c.GetChannelDebugStats())
 		return true
-	} else if inflightCnt <= 10 && c.GetChannelWaitingConfirmCnt() >= c.option.MaxConfirmWin/2 {
-		// check if the oldest waiting confirmed not in waiting inflight or requeue
-		// and just log warning here
-		found := false
-		c.inFlightMutex.Lock()
-		cur := c.GetConfirmed()
-		for _, m := range c.inFlightMessages {
-			if m.Offset == cur.Offset() {
-				found = true
-				break
-			}
-		}
-		for _, m := range c.waitingRequeueMsgs {
-			if found {
-				break
-			}
-			if m.Offset == cur.Offset() {
-				found = true
-				break
-			}
-		}
-		for _, m := range c.waitingRequeueChanMsgs {
-			if found {
-				break
-			}
-			if m.Offset == cur.Offset() {
-				found = true
-				break
-			}
-		}
-		c.inFlightMutex.Unlock()
-		if !found {
-			c.chLog.Warningf("channel has waiting confirmed offset not in inflight or requeued, confirmed %v, waiting %v, %v",
-				c.GetConfirmed(), c.GetChannelWaitingConfirmCnt(), c.GetChannelDebugStats())
-		}
 	}
 	return false
 }
