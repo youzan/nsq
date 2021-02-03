@@ -623,10 +623,12 @@ func preloadDBAndOptimizeOpen(dbPath string) error {
 	ro := getDefaultBoltDbOptions(false)
 	// use this to scan freelist and sync to disk
 	ro.NoFreelistSync = false
-	_, err := bolt.Open(dbPath, 0644, ro)
+	tmpDB, err := bolt.Open(dbPath, 0644, ro)
 	if err != nil {
 		return err
 	}
+	tmpDB.Sync()
+	tmpDB.Close()
 	return nil
 }
 
@@ -666,10 +668,6 @@ func (q *DelayQueue) RestoreKVStoreFrom(body io.Reader) error {
 		return err
 	}
 
-	err = preloadDBAndOptimizeOpen(tmpPath)
-	if err != nil {
-		return err
-	}
 	q.compactMutex.Lock()
 	defer q.compactMutex.Unlock()
 	kvPath := path.Join(q.dataPath, getDelayQueueDBName(q.tname, q.partition))
@@ -806,6 +804,7 @@ func (q *DelayQueue) put(m *Message, rawData []byte, trace bool, checkSize int64
 					return err
 				}
 			}
+			// note here we only support one index for the same message(if dup inserted, only one has the index)
 			b = tx.Bucket(bucketDelayedMsgIndex)
 			newIndexKey := getDelayedMsgDBIndexKey(int(m.DelayedType), m.DelayedChannel, m.DelayedOrigID)
 			d := getDelayedMsgDBIndexValue(m.DelayedTs, m.DelayedOrigID)
@@ -1269,7 +1268,9 @@ func (q *DelayQueue) ConfirmedMessage(msg *Message) error {
 	return err
 }
 
-func (q *DelayQueue) FindChannelMessageDelayed(msgID MessageID, ch string) (*Message, error) {
+// note: since the msg index can only index one message, so if there are more than one duplicate delayed messages,
+// after deleting one, we will have no index for others. We should scan with channel prefix to find them.
+func (q *DelayQueue) FindChannelMessageDelayed(msgID MessageID, ch string, tryScan bool) (*Message, error) {
 	var msg *Message
 	msgKey := getDelayedMsgDBIndexKey(ChannelDelayed, ch, msgID)
 	err := q.getStore().View(func(tx *bolt.Tx) error {
@@ -1277,6 +1278,7 @@ func (q *DelayQueue) FindChannelMessageDelayed(msgID MessageID, ch string) (*Mes
 		v := ib.Get(msgKey)
 		var ts int64
 		var err error
+		hasIndex := true
 		if v != nil {
 			ts, _, err = decodeDelayedMsgDBIndexValue(v)
 			if err != nil {
@@ -1284,9 +1286,15 @@ func (q *DelayQueue) FindChannelMessageDelayed(msgID MessageID, ch string) (*Mes
 			}
 		} else {
 			// no index means no data for this msgid
-			return nil
+			if !tryScan {
+				return nil
+			}
+			hasIndex = false
 		}
 		prefix := getDelayedMsgDBPrefixKeyWithTs(ChannelDelayed, ch, ts)
+		if !hasIndex {
+			prefix = getDelayedMsgDBPrefixKey(ChannelDelayed, ch)
+		}
 		b := tx.Bucket(bucketDelayedMsg)
 		c := b.Cursor()
 		for k, v := c.Seek(prefix); k != nil && bytes.HasPrefix(k, prefix); k, v = c.Next() {
@@ -1319,6 +1327,9 @@ func (q *DelayQueue) FindChannelMessageDelayed(msgID MessageID, ch string) (*Mes
 	return msg, err
 }
 
+// IsChannelMessageDelayed check if this message may already exist. Note if dup delayed message with same id exist,
+// after one of them deleted, the check exist may return false. We can sure whether it is exist, however we can not
+// total sure whether it is not exist.
 func (q *DelayQueue) IsChannelMessageDelayed(msgID MessageID, ch string) bool {
 	found := false
 	msgKey := getDelayedMsgDBIndexKey(ChannelDelayed, ch, msgID)
@@ -1632,6 +1643,46 @@ func (q *DelayQueue) compactStore(force bool) error {
 	if openErr != nil {
 		return openErr
 	}
+	return nil
+}
+
+func (q *DelayQueue) Dump() error {
+	src := q.getStore()
+	var size int64
+	if err := walkBolt(src, func(keys [][]byte, k, v []byte, seq uint64) error {
+		// On each key/value, check if we have exceeded tx size.
+		sz := int64(len(k) + len(v))
+		size += sz
+
+		// Create bucket on the root transaction if this is the first level.
+		nk := len(keys)
+		if nk == 0 {
+			nsqLog.Infof("bucket: %v(%s), seq: %v", k, k, seq)
+			return nil
+		}
+
+		// Create buckets on subsequent levels, if necessary.
+		nsqLog.Infof("bucket: %v(%s), seq: %v", keys[0], keys[0], seq)
+		if nk > 1 {
+			for _, k := range keys[1:] {
+				nsqLog.Infof("bucket: %v(%s), seq: %v", k, k, seq)
+			}
+		}
+
+		// If there is no value then this is a bucket call.
+		if v == nil {
+			nsqLog.Infof("bucket: %v(%s), seq: %v", k, k, seq)
+			return nil
+		}
+
+		// Otherwise treat it as a key/value pair.
+		nsqLog.Infof("key: %v(%s), value: %v(%s)", k, k, v, v)
+		return nil
+	}); err != nil {
+		return err
+	}
+
+	nsqLog.Infof("total: %v", size)
 	return nil
 }
 

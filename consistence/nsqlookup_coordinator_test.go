@@ -2443,6 +2443,7 @@ func TestNsqLookupMovePartitionAndSlaveTimeoutWhileReadWrite(t *testing.T) {
 			var stoppedTime *time.Time
 			lastCnt := 0
 			lastDepth := 0
+			lastChecked := time.Now()
 			for {
 				if stoppedTime == nil {
 					time.Sleep(time.Microsecond * 10)
@@ -2504,7 +2505,8 @@ func TestNsqLookupMovePartitionAndSlaveTimeoutWhileReadWrite(t *testing.T) {
 									return
 								}
 							}
-							if stoppedTime != nil && time.Since(*stoppedTime) > time.Minute*5 {
+							if stoppedTime != nil && time.Since(*stoppedTime) > time.Minute*5 && time.Since(lastChecked) > time.Second*5 {
+								lastChecked = time.Now()
 								t.Logf("consumed %v cnt, depth: %v at end: %v", cnt, ch.Depth(), time.Now())
 								if lastCnt == 0 || lastDepth == 0 {
 									lastCnt = cnt
@@ -2515,7 +2517,7 @@ func TestNsqLookupMovePartitionAndSlaveTimeoutWhileReadWrite(t *testing.T) {
 										return
 									}
 								}
-								if time.Since(*stoppedTime) > time.Minute*5+time.Second*10 {
+								if time.Since(*stoppedTime) > time.Minute*5+time.Second*30 {
 									test.Assert(t, false, "consumed not done")
 									return
 								}

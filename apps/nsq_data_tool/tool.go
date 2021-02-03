@@ -250,12 +250,12 @@ func main() {
 			// if exist, we need read index to get the delayedts
 			// and then scan from that delayed ts to get the actually delayed message
 			if !delayQ.IsChannelMessageDelayed(nsqd.MessageID(*viewStartID), *viewCh) {
-				nsqd.NsqLogger().Infof("channel %v msg id %v is not in the delayed queue", *viewStartID, *viewCh)
+				nsqd.NsqLogger().Infof("channel %v msg id %v is not in the delayed queue", *viewCh, *viewStartID)
 				return
 			}
-			msg, err := delayQ.FindChannelMessageDelayed(nsqd.MessageID(*viewStartID), *viewCh)
+			msg, err := delayQ.FindChannelMessageDelayed(nsqd.MessageID(*viewStartID), *viewCh, true)
 			if err != nil {
-				nsqd.NsqLogger().Infof("channel %v msg id %v find error: %v", *viewStartID, *viewCh, err.Error())
+				nsqd.NsqLogger().Infof("channel %v msg id %v find error: %v", *viewCh, *viewStartID, err.Error())
 				return
 			}
 			if msg == nil {
@@ -289,6 +289,7 @@ func main() {
 		for _, m := range rets[:cnt] {
 			nsqd.NsqLogger().Infof("peeked msg : %v", m)
 		}
+		delayQ.Dump()
 		return
 	} else if *view == "channelstats" {
 		k := metaReaderKey(topicDataPath, backendName+":"+*channelName)

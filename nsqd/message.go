@@ -38,15 +38,25 @@ func GetTraceIDFromFullMsgID(id FullMessageID) uint64 {
 }
 
 func PrintMessage(m *Message) string {
-	return fmt.Sprintf("%v %v %s %v %v %v %v %v %v %v %v %v",
+	if m == nil {
+		return ""
+	}
+	return fmt.Sprintf("%v %v %s %v %v %v %v %v %v %v %v %v, %v %v %v",
 		m.ID, m.TraceID, string(m.Body), m.Timestamp, m.Attempts, m.deliveryTS,
-		m.pri, m.index, m.deferredCnt, m.Offset, m.RawMoveSize, m.queueCntIndex)
+		m.pri, m.index, m.deferredCnt, m.Offset, m.RawMoveSize, m.queueCntIndex,
+		m.DelayedType, m.DelayedTs, m.DelayedChannel,
+	)
 }
 
 func PrintMessageNoBody(m *Message) string {
-	return fmt.Sprintf("%v %v %v %v %v %v %v %v %v %v %v",
+	if m == nil {
+		return ""
+	}
+	return fmt.Sprintf("%v %v %v %v %v %v %v %v %v %v %v, %v %v %v",
 		m.ID, m.TraceID, m.Timestamp, m.Attempts, m.deliveryTS,
-		m.pri, m.index, m.deferredCnt, m.Offset, m.RawMoveSize, m.queueCntIndex)
+		m.pri, m.index, m.deferredCnt, m.Offset, m.RawMoveSize, m.queueCntIndex,
+		m.DelayedType, m.DelayedTs, m.DelayedChannel,
+	)
 }
 
 type Message struct {

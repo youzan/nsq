@@ -476,7 +476,7 @@ func (dbs *dbMetaStorage) RetrieveReader(key string) (diskQueueEndInfo, diskQueu
 		return nil
 	})
 	if err != nil {
-		nsqLog.Warningf("failed to read meta key %v from db: %v , %v ", key, dbs.dataPath, err)
+		nsqLog.Infof("failed to read meta key %v from db: %v , %v ", key, dbs.dataPath, err)
 	}
 	if fallback || err != nil {
 		nsqLog.Logf("fallback to read meta key %v from file meta", key)

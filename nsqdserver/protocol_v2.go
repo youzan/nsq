@@ -640,9 +640,12 @@ func (p *protocolV2) messagePump(client *nsqd.ClientV2, startedChan chan bool,
 			// maybe some bug blocking this client, reconnect can solve bug.
 			// ignore the tagged client since it can be idle while no tagged messages
 			if subChannel != nil && client.GetTagMsgChannel() == nil &&
-				time.Since(lastActiveTime) > (msgTimeout*10+client.GetHeartbeatInterval()) &&
 				!subChannel.IsOrdered() && subChannel.Depth() > 10 &&
-				subChannel.GetInflightNum() <= 0 && !subChannel.IsPaused() {
+				client.IsReadyForMessages() &&
+				time.Since(lastActiveTime) > (msgTimeout*10+client.GetHeartbeatInterval()) &&
+				subChannel.GetInflightNum() <= 0 && !subChannel.IsPaused() && !subChannel.IsSkipped() {
+				// if all are memory delayed, it means no any need to be send to client until
+				// delayed timeouted
 				nsqd.NsqLogger().Warningf("client %s not active since %v, current : %v, %v, %v", client, lastActiveTime,
 					subChannel.Depth(), subChannel.DepthTimestamp(), subChannel.GetChannelDebugStats())
 				goto exit

@@ -334,12 +334,12 @@ CheckFileOpen:
 	}
 	result.Err = binary.Read(d.readFile, binary.BigEndian, &msgSize)
 	if result.Err != nil {
-		nsqLog.LogWarningf("DISKQUEUE(%s): readOne() read failed %v  at %v, end: %v",
-			d.readFrom, result.Err, d.readPos, d.endPos)
 		if result.Err == io.EOF && d.readPos.EndOffset.FileNum < d.endPos.EndOffset.FileNum {
 			d.handleReachEnd()
 			goto CheckFileOpen
 		}
+		nsqLog.LogWarningf("DISKQUEUE(%s): readOne() read failed %v  at %v, end: %v",
+			d.readFrom, result.Err, d.readPos, d.endPos)
 
 		d.readFile.Close()
 		d.readFile = nil

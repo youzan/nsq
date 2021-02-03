@@ -29,7 +29,7 @@ const (
 	ZanTestSkip                = 0
 	ZanTestUnskip              = 1
 	memSizeForSmall            = 2
-	delayedReqToEndMinInterval = time.Millisecond * 64
+	delayedReqToEndMinInterval = time.Millisecond * 128
 	DefaultMaxChDelayedQNum    = 10000 * 16
 	limitSmallMsgBytes         = 1024
 )
@@ -1181,7 +1181,8 @@ func (c *Channel) ShouldRequeueToEnd(clientID int64, clientAddr string, id Messa
 	}
 
 	// too much delayed queue will impact the read/write on boltdb, so we refuse to write if too large
-	if int64(c.GetDelayedQueueCnt()) > c.option.MaxChannelDelayedQNum*10 {
+	dqCnt := int64(c.GetDelayedQueueCnt())
+	if dqCnt > c.option.MaxChannelDelayedQNum*10 {
 		return nil, false
 	}
 	tn := time.Now()
@@ -1193,7 +1194,7 @@ func (c *Channel) ShouldRequeueToEnd(clientID int64, clientAddr string, id Messa
 		// and this may cause some delay more time than expected.
 		dqDepthTs, dqCnt := c.GetDelayedQueueConsumedState()
 		blockingTooLong := tn.UnixNano()-dqDepthTs > 10*threshold.Nanoseconds()
-		if blockingTooLong || (msg.Attempts < MaxMemReqTimes*10) || (tn.UnixNano()-atomic.LoadInt64(&c.lastDelayedReqToEndTs) > delayedReqToEndMinInterval.Nanoseconds()) {
+		if (blockingTooLong || (msg.Attempts < MaxMemReqTimes*10)) && (tn.UnixNano()-atomic.LoadInt64(&c.lastDelayedReqToEndTs) > delayedReqToEndMinInterval.Nanoseconds()) {
 			// if the message is peeked from disk delayed queue,
 			// we can try to put it back to end if there are some other
 			// delayed queue messages waiting.
@@ -1205,8 +1206,8 @@ func (c *Channel) ShouldRequeueToEnd(clientID int64, clientAddr string, id Messa
 			// if all delayed messages are in memory, we no need to put them back to disk.
 			blocking := tn.UnixNano()-dqDepthTs > threshold.Nanoseconds()
 			waitingDelayCnt := atomic.LoadInt64(&c.deferredFromDelay)
-			if dqDepthTs > 0 && blocking && int64(dqCnt) > waitingDelayCnt {
-				c.chLog.Logf("delayed queue message %v req to end, timestamp:%v, attempt:%v, delayed depth timestamp: %v, delay waiting : %v, %v",
+			if dqDepthTs > 0 && blocking && int64(dqCnt) > waitingDelayCnt && int64(dqCnt) > MaxWaitingDelayed {
+				c.chLog.LogDebugf("delayed queue message %v req to end, timestamp:%v, attempt:%v, delayed depth timestamp: %v, delay waiting : %v, %v",
 					id, msg.Timestamp,
 					msg.Attempts, dqDepthTs, waitingDelayCnt, dqCnt)
 				atomic.StoreInt64(&c.lastDelayedReqToEndTs, tn.UnixNano())
@@ -1218,6 +1219,8 @@ func (c *Channel) ShouldRequeueToEnd(clientID int64, clientAddr string, id Messa
 					c.DepthTimestamp(), msg.Attempts, waitingDelayCnt, dqDepthTs)
 			}
 		}
+		// the ChannelDelayed message already in delayed queue, so we can ignore other checks
+		return nil, false
 	}
 
 	depDiffTs := tn.UnixNano() - c.DepthTimestamp()
@@ -1231,7 +1234,6 @@ func (c *Channel) ShouldRequeueToEnd(clientID int64, clientAddr string, id Messa
 	newTimeout := tn.Add(timeout)
 	if newTimeout.Sub(msg.deliveryTS) >=
 		c.option.MaxReqTimeout || timeout > threshold {
-		dqCnt := c.GetDelayedQueueCnt()
 		if c.option.MaxChannelDelayedQNum == 0 || int64(dqCnt) < c.option.MaxChannelDelayedQNum {
 			return msg.GetCopy(), true
 		}
@@ -1510,8 +1512,8 @@ func (c *Channel) StartInFlightTimeout(msg *Message, client Consumer, clientAddr
 		} else if old != nil && old.DelayedType == ChannelDelayed {
 			shouldSend = false
 		} else {
-			c.chLog.LogWarningf("push message in flight failed: %v, %v", err,
-				msg.GetFullMsgID())
+			c.chLog.LogWarningf("push message in flight failed: %v, %v, old: %v", err,
+				PrintMessageNoBody(msg), PrintMessageNoBody(old))
 		}
 		return shouldSend, err
 	}
@@ -1614,9 +1616,21 @@ func (c *Channel) pushInFlightMessage(msg *Message) (*Message, error) {
 		c.cleanWaitingRequeueChanNoLock(msg)
 		return nil, ErrConsumeDisabled
 	}
-	m, ok := c.inFlightMessages[msg.ID]
+	oldm, ok := c.inFlightMessages[msg.ID]
 	if ok {
-		return m, ErrMsgAlreadyInFlight
+		// It may conflict if both normal diskqueue and the delayed queue has the same message (because of the rpc timeout)
+		// We need check and clean the state to make sure we can have the right stats
+		c.cleanWaitingRequeueChanNoLock(msg)
+		if msg.DelayedType == 0 {
+			if oldm.DelayedType == ChannelDelayed {
+				c.ConfirmBackendQueue(msg)
+				nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "IGNORE_DELAY_CONFIRMED", msg.TraceID, msg, "", 0)
+			}
+			c.chLog.Infof("non-delayed msg %v conflict while add inflight, old msg type: %v", msg, oldm.DelayedType)
+		} else if msg.DelayedType == ChannelDelayed {
+			c.chLog.Infof("delayed msg %v conflict while add inflight", msg)
+		}
+		return oldm, ErrMsgAlreadyInFlight
 	}
 	c.inFlightMessages[msg.ID] = msg
 	c.inFlightPQ.Push(msg)
@@ -1833,10 +1847,53 @@ func (c *Channel) resetChannelReader(resetOffset resetChannelData, lastDataNeedR
 		} else {
 			c.drainChannelWaiting(true, lastDataNeedRead, origReadChan)
 			*lastMsg = Message{}
+			c.chLog.Infof("reset reader to %v", resetOffset)
 		}
 		*needReadBackend = true
 		*readBackendWait = false
 	}
+}
+
+func (c *Channel) TryFixConfirmedByResetRead() error {
+	if c.IsSkipped() || c.IsConsumeDisabled() {
+		return nil
+	}
+	if c.IsPaused() || c.IsOrdered() {
+		return nil
+	}
+	c.chLog.Warningf("channel try fix confirmed by reset %v, waiting %v, %v",
+		c.GetConfirmed(), c.GetChannelWaitingConfirmCnt(), c.GetChannelDebugStats())
+	select {
+	case c.readerChanged <- resetChannelData{BackendOffset(-1), 0, false}:
+	default:
+	}
+	return nil
+}
+
+func (c *Channel) CheckIfNeedResetRead() bool {
+	if c.IsSkipped() || c.IsConsumeDisabled() {
+		return false
+	}
+	if c.IsPaused() || c.IsOrdered() {
+		return false
+	}
+	if c.GetClientsCount() <= 0 {
+		return false
+	}
+	c.inFlightMutex.Lock()
+	inflightCnt := len(c.inFlightMessages)
+	inflightCnt += len(c.waitingRequeueMsgs)
+	inflightCnt += len(c.waitingRequeueChanMsgs)
+	inflightCnt += len(c.requeuedMsgChan)
+	inflightCnt += int(atomic.LoadInt64(&c.deferredCount))
+	c.inFlightMutex.Unlock()
+	if inflightCnt <= 0 && c.Depth() > 10 &&
+		c.GetChannelWaitingConfirmCnt() >= c.option.MaxConfirmWin {
+		c.chLog.Warningf("channel has depth %v but no inflight, confirmed %v, waiting %v, %v",
+			c.Depth(), c.GetConfirmed(), c.GetChannelWaitingConfirmCnt(), c.GetChannelDebugStats())
+		return true
+	}
+	return false
 }
 
 // messagePump reads messages from either memory or backend and sends
@@ -1880,7 +1937,7 @@ LOOP:
 		resetReaderFlag := atomic.LoadInt32(&c.needResetReader)
 		deCnt := atomic.LoadInt64(&c.deferredCount)
 		if resetReaderFlag > 0 {
-			c.chLog.Infof("reset the reader : %v", c.GetConfirmed())
+			c.chLog.Infof("reset the reader to confirmed: %v", c.GetConfirmed())
 			err = c.resetReaderToConfirmed()
 			// if reset failed, we should not drain the waiting data
 			if err == nil {
@@ -1943,7 +2000,6 @@ LOOP:
 				lastMsg = Message{}
 			}
 		}
-
 		if c.IsSkipped() {
 			readChan = nil
 			needReadBackend = false
@@ -2251,9 +2307,9 @@ func parseTagIfAny(msg *Message) (string, error) {
 func (c *Channel) GetChannelDebugStats() string {
 	c.inFlightMutex.Lock()
 	inFlightCount := len(c.inFlightMessages)
-	debugStr := fmt.Sprintf("topic %v channel %v \ninflight %v, req %v, %v, %v, ",
+	debugStr := fmt.Sprintf("topic %v channel %v \ninflight %v, req %v, %v, %v, defered: %v ",
 		c.GetTopicName(), c.GetName(), inFlightCount, len(c.waitingRequeueMsgs),
-		len(c.requeuedMsgChan), len(c.waitingRequeueChanMsgs))
+		len(c.requeuedMsgChan), len(c.waitingRequeueChanMsgs), atomic.LoadInt64(&c.deferredCount))
 
 	if c.chLog.Level() >= levellogger.LOG_DEBUG || c.IsTraced() {
 		for _, msg := range c.inFlightMessages {
@@ -2437,8 +2493,7 @@ func (c *Channel) processInFlightQueue(tnow int64) (bool, bool) {
 		return false, false
 	}
 
-	dirty, isInflightEmpty := c.doPeekInFlightQueue(tnow)
-	oldWaitingDeliveryState := atomic.LoadInt32(&c.waitingDeliveryState)
+	dirty, _ := c.doPeekInFlightQueue(tnow)
 	c.RLock()
 	clientNum := len(c.clients)
 	c.RUnlock()
@@ -2476,25 +2531,12 @@ func (c *Channel) processInFlightQueue(tnow int64) (bool, bool) {
 			c.chLog.Logf("channel delayed waiting : %v, more than all waiting delivery: %v", waitingDelayCnt, allWaiting)
 		}
 	}
-	noReadDataFromDisk := atomic.LoadInt32(&c.waitingConfirm) >= int32(c.option.MaxConfirmWin)
-	if isInflightEmpty && !noReadDataFromDisk && !c.IsPaused() {
-		// for tagged client, it may happen if no any un-tagged client.
-		// we may read to end, but the last message is normal message.
-		// in this way, we should block and wait un-tagged client.
-		c.tagMsgChansMutex.RLock()
-		tagChLen := len(c.tagMsgChans)
-		c.tagMsgChansMutex.RUnlock()
-		e := c.GetChannelEnd()
-		if c.GetConfirmed().Offset() < e.Offset() && tagChLen == 0 {
-			d, ok := c.backend.(*diskQueueReader)
-			if ok && d.GetQueueCurrentRead() == e {
-				noReadDataFromDisk = true
-			}
-		}
-	}
-	if isInflightEmpty && (!dirty) && clientNum > 0 &&
-		(oldWaitingDeliveryState == 0) && noReadDataFromDisk &&
-		(atomic.LoadInt32(&c.waitingDeliveryState) == 0) {
+	// for tagged client, it may happen if no any un-tagged client.
+	// we may read to end, but the last message is normal message.
+	// in this way, we should block and wait un-tagged client.
+	// However, wait un-tagged client should have inflight or requeue waiting, and
+	// should waiting delivery state
+	if (!dirty) && (atomic.LoadInt32(&c.waitingDeliveryState) == 0) && c.CheckIfNeedResetRead() {
 		diff := time.Now().Unix() - atomic.LoadInt64(&c.processResetReaderTime)
 		if diff > resetReaderTimeoutSec && atomic.LoadInt64(&c.processResetReaderTime) > 0 {
 			c.chLog.LogWarningf("try reset reader since no inflight and requeued for too long (%v): %v, %v, %v",
@@ -2503,7 +2545,7 @@ func (c *Channel) processInFlightQueue(tnow int64) (bool, bool) {
 
 			atomic.StoreInt64(&c.processResetReaderTime, time.Now().Unix())
 			select {
-			case c.readerChanged <- resetChannelData{BackendOffset(-1), 0, true}:
+			case c.readerChanged <- resetChannelData{BackendOffset(-1), 0, false}:
 			default:
 			}
 		}
@@ -2549,6 +2591,8 @@ func (c *Channel) peekAndReqDelayedMessages(tnow int64) (int, int, error) {
 				c.chLog.Logf("delayed message already confirmed %v ", m)
 			}
 		} else {
+			// while reset reader, the message may reload from disk which not in inflight or requeue
+			// and it will add to the inflight from startinflight
 			oldMsg2, ok2 := c.inFlightMessages[m.DelayedOrigID]
 			_, ok3 := c.waitingRequeueChanMsgs[m.DelayedOrigID]
 			_, ok4 := c.waitingRequeueMsgs[m.DelayedOrigID]
@@ -2571,6 +2615,7 @@ func (c *Channel) peekAndReqDelayedMessages(tnow int64) (int, int, error) {
 						// new leader read from disk queue (which will be treated as non delayed message)
 						if bytes.Equal(oldMsg2.Body, m.Body) {
 							// just fin it
+							// we do not handle inflight remove here, it will be handled while timeout and will check confirmed before send to client
 							c.chLog.LogDebugf("old msg %v in flight confirmed since in delayed queue",
 								PrintMessage(oldMsg2))
 							c.ConfirmBackendQueue(oldMsg2)
