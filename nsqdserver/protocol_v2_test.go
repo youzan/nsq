@@ -5370,7 +5370,7 @@ func TestSubReqToEndFailedPartial(t *testing.T) {
 	wg.Wait()
 	stats := nsqdNs.NewChannelStats(ch, nil, 0)
 	t.Logf("channel stats: %v", stats)
-	test.Equal(t, 0, stats.DeferredCount)
+	test.Assert(t, stats.DeferredCount <= 1, "should at most 1 deferred")
 	test.Assert(t, stats.TimeoutCount >= 2, "should have timeout")
 	test.Assert(t, stats.RequeueCount > 2, "should have requeued")
 	test.Equal(t, uint64(1), stats.DelayedQueueCount)

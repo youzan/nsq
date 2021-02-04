@@ -1177,7 +1177,7 @@ func (s *httpServer) doMessageGet(w http.ResponseWriter, req *http.Request, ps h
 			Attempts  uint16         `json:"attempts"`
 
 			Offset nsqd.BackendOffset `json:"offset"`
-		}{msg.ID, uint64(msg.DelayedOrigID), msg.TraceID, string(msg.Body), msg.Timestamp, msg.Attempts, msg.Offset}, nil
+		}{msg.ID, uint64(msg.DelayedOrigID), msg.TraceID, string(msg.Body), msg.Timestamp, msg.Attempts(), msg.Offset}, nil
 	}
 	var realOffset int64
 	var curCnt int64
@@ -1217,7 +1217,7 @@ func (s *httpServer) doMessageGet(w http.ResponseWriter, req *http.Request, ps h
 
 		Offset        nsqd.BackendOffset `json:"offset"`
 		QueueCntIndex int64              `json:"queue_cnt_index"`
-	}{msg.ID, msg.TraceID, string(msg.Body), msg.Timestamp, msg.Attempts, ret.Offset, ret.CurCnt}, nil
+	}{msg.ID, msg.TraceID, string(msg.Body), msg.Timestamp, msg.Attempts(), ret.Offset, ret.CurCnt}, nil
 }
 
 func (s *httpServer) doMessageStats(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {

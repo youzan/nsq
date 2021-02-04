@@ -326,8 +326,8 @@ func TestChannelReqNowTooMuch(t *testing.T) {
 			t.Logf("consume %v at %s , %v, %v", outputMsg.ID, now, waitingReq, reqChanLen)
 			channel.StartInFlightTimeout(outputMsg, NewFakeConsumer(1), "", opts.MsgTimeout)
 			err := channel.RequeueMessage(1, "", outputMsg.ID, 0, true)
-			ast.True(t, outputMsg.Attempts <= MaxAttempts)
-			if outputMsg.Attempts >= MaxAttempts/2 {
+			ast.True(t, outputMsg.Attempts() <= MaxAttempts)
+			if outputMsg.Attempts() >= MaxAttempts/2 {
 				ast.NotNil(t, err)
 			}
 		}

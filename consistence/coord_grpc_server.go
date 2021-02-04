@@ -124,7 +124,7 @@ func (s *nsqdCoordGRpcServer) PutMessage(ctx context.Context, req *pb.RpcPutMess
 	var msg nsqd.Message
 	msg.ID = nsqd.MessageID(req.TopicMessage.ID)
 	msg.TraceID = req.TopicMessage.Trace_ID
-	msg.Attempts = uint16(req.TopicMessage.Attemps)
+	msg.SetAttempts(uint16(req.TopicMessage.Attemps))
 	msg.Timestamp = req.TopicMessage.Timestamp
 
 	msg.Body = req.TopicMessage.Body
@@ -163,7 +163,7 @@ func (s *nsqdCoordGRpcServer) PutMessages(ctx context.Context, req *pb.RpcPutMes
 		var msg nsqd.Message
 		msg.ID = nsqd.MessageID(pbm.ID)
 		msg.TraceID = pbm.Trace_ID
-		msg.Attempts = uint16(pbm.Attemps)
+		msg.SetAttempts(uint16(pbm.Attemps))
 		msg.Timestamp = pbm.Timestamp
 		msg.Body = pbm.Body
 		msgs = append(msgs, &msg)
