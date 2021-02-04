@@ -1733,7 +1733,10 @@ func (c *Channel) DisableConsume(disable bool) {
 // if drain outside loop, readerChanged channel should be triggered
 // TODO: check the counter for deferredFromDelay, should make sure not concurrent with client ack
 func (c *Channel) drainChannelWaiting(clearConfirmed bool, lastDataNeedRead *bool, origReadChan chan ReadResult) error {
-	c.chLog.Logf("draining channel waiting %v", clearConfirmed)
+	// skipped channel will reset to end period, so just ignore log
+	if !c.IsSkipped() {
+		c.chLog.Logf("draining channel waiting %v", clearConfirmed)
+	}
 	c.inFlightMutex.Lock()
 	defer c.inFlightMutex.Unlock()
 	c.initPQ()
@@ -1782,9 +1785,12 @@ func (c *Channel) drainChannelWaiting(clearConfirmed bool, lastDataNeedRead *boo
 		delete(c.waitingRequeueMsgs, k)
 	}
 
-	c.chLog.Logf("drained channel waiting req %v, %v, delay: %v, %v", reqCnt,
-		len(c.waitingRequeueChanMsgs),
-		atomic.LoadInt64(&c.deferredFromDelay), delayed)
+	// skipped channel will reset to end period, so just ignore log
+	if !c.IsSkipped() {
+		c.chLog.Logf("drained channel waiting req %v, %v, delay: %v, %v", reqCnt,
+			len(c.waitingRequeueChanMsgs),
+			atomic.LoadInt64(&c.deferredFromDelay), delayed)
+	}
 	// should in inFlightMutex to avoid concurrent with confirming from client
 	// we can not set it to 0, because there may be a message read out from req chan but still not
 	// begin start inflight.
@@ -1847,7 +1853,10 @@ func (c *Channel) resetChannelReader(resetOffset resetChannelData, lastDataNeedR
 		} else {
 			c.drainChannelWaiting(true, lastDataNeedRead, origReadChan)
 			*lastMsg = Message{}
-			c.chLog.Infof("reset reader to %v", resetOffset)
+			// skipped channel will reset to end period, so just ignore log
+			if !c.IsSkipped() {
+				c.chLog.Infof("reset reader to %v", resetOffset)
+			}
 		}
 		*needReadBackend = true
 		*readBackendWait = false
@@ -2140,7 +2149,10 @@ LOOP:
 				resumedFirst = true
 				continue LOOP
 			case resetOffset := <-c.readerChanged:
-				c.chLog.Infof("got reader reset notify:%v ", resetOffset)
+				// skipped channel will reset to end period, so just ignore log
+				if !c.IsSkipped() {
+					c.chLog.Infof("got reader reset notify:%v ", resetOffset)
+				}
 				c.resetChannelReader(resetOffset, &lastDataNeedRead, origReadChan, &lastMsg, &needReadBackend, &readBackendWait)
 				continue LOOP
 			case <-waitEndUpdated:
