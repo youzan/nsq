@@ -171,10 +171,10 @@ func (m *Message) internalWriteTo(w io.Writer, writeExt bool, writeCompatible bo
 	var total int64
 
 	binary.BigEndian.PutUint64(buf[:8], uint64(m.Timestamp))
-	if m.Attempts > MaxAttempts {
-		m.Attempts = MaxAttempts
-	}
 	combined := m.Attempts
+	if m.Attempts > MaxAttempts {
+		combined = MaxAttempts
+	}
 	if writeExt && writeCompatible {
 		combined += uint16(extMsgHighBits)
 	}
@@ -242,10 +242,10 @@ func (m *Message) internalWriteTo(w io.Writer, writeExt bool, writeCompatible bo
 }
 
 func (m *Message) WriteDelayedTo(w io.Writer, writeExt bool) (int64, error) {
-	if m.Attempts > MaxAttempts {
-		m.Attempts = MaxAttempts
-	}
 	combined := m.Attempts
+	if m.Attempts > MaxAttempts {
+		combined = MaxAttempts
+	}
 	if writeExt {
 		combined += uint16(extMsgHighBits)
 	}

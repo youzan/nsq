@@ -1498,13 +1498,7 @@ func (c *Channel) RemoveClient(clientID int64, clientTag string) {
 
 func (c *Channel) StartInFlightTimeout(msg *Message, client Consumer, clientAddr string, timeout time.Duration) (bool, error) {
 	now := time.Now()
-	msg.belongedConsumer = client
-	msg.deliveryTS = now
-	msg.pri = now.Add(timeout).UnixNano()
-	if msg.Attempts < MaxAttempts {
-		msg.Attempts++
-	}
-	old, err := c.pushInFlightMessage(msg)
+	old, err := c.pushInFlightMessage(msg, client, now, now.Add(timeout).UnixNano())
 	shouldSend := true
 	if err != nil {
 		if old != nil && old.IsDeferred() {
@@ -1607,9 +1601,15 @@ func (c *Channel) doRequeue(m *Message, clientAddr string) error {
 }
 
 // pushInFlightMessage atomically adds a message to the in-flight dictionary
-func (c *Channel) pushInFlightMessage(msg *Message) (*Message, error) {
+func (c *Channel) pushInFlightMessage(msg *Message, client Consumer, now time.Time, pri int64) (*Message, error) {
 	c.inFlightMutex.Lock()
 	defer c.inFlightMutex.Unlock()
+	msg.belongedConsumer = client
+	msg.deliveryTS = now
+	msg.pri = pri
+	if msg.Attempts < MaxAttempts {
+		msg.Attempts++
+	}
 	if c.IsConsumeDisabled() {
 		// we should clean req message if it is not go into inflight, if not
 		// we leave a orphen message not in requeue chan and not in inflight
