@@ -1367,7 +1367,7 @@ func (c *Channel) RequeueMessage(clientID int64, clientAddr string, id MessageID
 	if (timeout > c.option.ReqToEndThreshold) ||
 		(newTimeout.Sub(msg.deliveryTS) >=
 			c.option.MaxReqTimeout) {
-		c.chLog.Logf("too long timeout %v, %v, %v, should req message: %v to delayed queue",
+		c.chLog.LogDebugf("too long timeout %v, %v, %v, should req message: %v to delayed queue",
 			newTimeout, msg.deliveryTS, timeout, id)
 	}
 	reqWaiting := len(c.requeuedMsgChan)

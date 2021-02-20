@@ -63,6 +63,40 @@ func TestGetChannel(t *testing.T) {
 	test.Equal(t, channel2, topic.channelMap["ch2"])
 }
 
+func TestLoadChannelMeta(t *testing.T) {
+	opts := NewOptions()
+	opts.Logger = newTestLogger(t)
+	_, _, nsqd := mustStartNSQD(opts)
+	defer os.RemoveAll(opts.DataPath)
+	defer nsqd.Exit()
+
+	topic := nsqd.GetTopic("test", 0, false)
+
+	channel1 := topic.GetChannel("ch1")
+	test.NotNil(t, channel1)
+	test.Equal(t, "ch1", channel1.name)
+	channel1.Skip()
+
+	test.Equal(t, channel1, topic.channelMap["ch1"])
+	topic.SaveChannelMeta()
+	nsqd.CloseExistingTopic("test", 0)
+	topic.Close()
+
+	topic = nsqd.GetTopic("test", 0, false)
+	channel1 = topic.GetChannel("ch1")
+
+	test.Equal(t, true, channel1.IsSkipped())
+	// read meta file and check if load meta changed
+	fn := topic.getChannelMetaFileName()
+	channels, err := topic.metaStorage.LoadChannelMeta(fn)
+	test.Nil(t, err)
+	for _, chmeta := range channels {
+		if chmeta.Name == channel1.GetName() {
+			test.Equal(t, chmeta.Skipped, channel1.IsSkipped())
+		}
+	}
+}
+
 type errorBackendQueue struct{}
 
 func (d *errorBackendQueue) Put([]byte) (BackendOffset, int32, int64, error) {

@@ -20,6 +20,7 @@ import (
 	jsoniter "github.com/json-iterator/go"
 	"github.com/youzan/nsq/internal/http_api"
 	"github.com/youzan/nsq/internal/levellogger"
+	"github.com/youzan/nsq/internal/test"
 )
 
 func init() {
@@ -509,8 +510,10 @@ func TestLoadTopicChannel(t *testing.T) {
 	atomic.StoreInt32(&nsqd.isLoading, 1)
 	topicName := "load_topic_meta" + strconv.Itoa(int(time.Now().Unix()))
 	topic := nsqd.GetTopicIgnPart(topicName)
-	topic.GetChannel("ch")
-	topic.GetChannel("ch_closed")
+	ch := topic.GetChannel("ch")
+	ch.Skip()
+	ch_closed := topic.GetChannel("ch_closed")
+	ch_closed.Pause()
 	ch, err := topic.GetExistingChannel("ch_closed")
 	if err != nil || ch == nil {
 		t.FailNow()
@@ -532,6 +535,16 @@ func TestLoadTopicChannel(t *testing.T) {
 	_, _, nsqd = mustStartNSQD(opts)
 	defer nsqd.Exit()
 	nsqd.LoadMetadata(1)
+
+	// read meta file and check if load meta changed
+	fn := topic.getChannelMetaFileName()
+	channels, err := topic.metaStorage.LoadChannelMeta(fn)
+	test.Nil(t, err)
+	for _, chmeta := range channels {
+		if chmeta.Name == ch.GetName() {
+			test.Equal(t, true, chmeta.Skipped)
+		}
+	}
 
 	topic, err = nsqd.GetExistingTopic(topicName, 0)
 	if err != nil {

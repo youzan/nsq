@@ -514,7 +514,10 @@ func (t *Topic) LoadChannelMeta() error {
 			t.tpLog.LogWarningf("skipping creation of invalid channel %s", channelName)
 			continue
 		}
-		channel := t.GetChannel(channelName)
+		// should not use GetChannel() which will init save meta while init channel
+		t.channelLock.Lock()
+		channel, _ := t.getOrCreateChannel(channelName)
+		t.channelLock.Unlock()
 
 		if ch.Paused {
 			channel.Pause()
