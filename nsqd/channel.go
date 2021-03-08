@@ -1175,7 +1175,7 @@ func (c *Channel) ShouldRequeueToEnd(clientID int64, clientAddr string, id Messa
 	}
 
 	if c.chLog.Level() >= levellogger.LOG_DEBUG || c.IsTraced() {
-		c.chLog.LogDebugf("check requeue to end, timeout:%v, msg timestamp:%v, depth ts:%v, msg attempt:%v, waiting :%v",
+		c.chLog.Logf("check requeue to end, timeout:%v, msg timestamp:%v, depth ts:%v, msg attempt:%v, waiting :%v",
 			timeout, msg.Timestamp,
 			c.DepthTimestamp(), msg.Attempts(), atomic.LoadInt32(&c.waitingConfirm))
 	}
@@ -1194,6 +1194,7 @@ func (c *Channel) ShouldRequeueToEnd(clientID int64, clientAddr string, id Messa
 		// and this may cause some delay more time than expected.
 		dqDepthTs, dqCnt := c.GetDelayedQueueConsumedState()
 		blockingTooLong := tn.UnixNano()-dqDepthTs > 10*threshold.Nanoseconds()
+		waitingDelayCnt := atomic.LoadInt64(&c.deferredFromDelay)
 		if (blockingTooLong || (msg.Attempts() < MaxMemReqTimes*10)) && (tn.UnixNano()-atomic.LoadInt64(&c.lastDelayedReqToEndTs) > delayedReqToEndMinInterval.Nanoseconds()) {
 			// if the message is peeked from disk delayed queue,
 			// we can try to put it back to end if there are some other
@@ -1205,19 +1206,20 @@ func (c *Channel) ShouldRequeueToEnd(clientID int64, clientAddr string, id Messa
 			// dqCnt is all the delayed diskqueue counter, so
 			// if all delayed messages are in memory, we no need to put them back to disk.
 			blocking := tn.UnixNano()-dqDepthTs > threshold.Nanoseconds()
-			waitingDelayCnt := atomic.LoadInt64(&c.deferredFromDelay)
 			if dqDepthTs > 0 && blocking && int64(dqCnt) > waitingDelayCnt && int64(dqCnt) > MaxWaitingDelayed {
-				c.chLog.LogDebugf("delayed queue message %v req to end, timestamp:%v, attempt:%v, delayed depth timestamp: %v, delay waiting : %v, %v",
-					id, msg.Timestamp,
-					msg.Attempts(), dqDepthTs, waitingDelayCnt, dqCnt)
+				if c.isTracedOrDebugTraceLog(msg) {
+					c.chLog.Logf("delayed queue message %v req to end, timestamp:%v, attempt:%v, delayed depth timestamp: %v, delay waiting : %v, %v",
+						id, msg.Timestamp,
+						msg.Attempts(), dqDepthTs, waitingDelayCnt, dqCnt)
+				}
 				atomic.StoreInt64(&c.lastDelayedReqToEndTs, tn.UnixNano())
 				return msg.GetCopy(), true
 			}
-			if msg.TraceID != 0 || c.IsTraced() || c.chLog.Level() >= levellogger.LOG_DEBUG {
-				c.chLog.Logf("check delayed queue message %v req to end, timestamp:%v, depth ts:%v, attempt:%v, delay waiting :%v, delayed depth timestamp: %v",
-					id, msg.Timestamp,
-					c.DepthTimestamp(), msg.Attempts(), waitingDelayCnt, dqDepthTs)
-			}
+		}
+		if c.isTracedOrDebugTraceLog(msg) {
+			c.chLog.Logf("check delayed queue message %v req to end, timestamp:%v, depth ts:%v, attempt:%v, delay waiting :%v, delayed depth timestamp: %v, cnt: %v",
+				id, msg.Timestamp,
+				c.DepthTimestamp(), msg.Attempts(), waitingDelayCnt, dqDepthTs, dqCnt)
 		}
 		// the ChannelDelayed message already in delayed queue, so we can ignore other checks
 		return nil, false
@@ -2320,13 +2322,13 @@ func parseTagIfAny(msg *Message) (string, error) {
 func (c *Channel) GetChannelDebugStats() string {
 	c.inFlightMutex.Lock()
 	inFlightCount := len(c.inFlightMessages)
-	debugStr := fmt.Sprintf("topic %v channel %v \ninflight %v, req %v, %v, %v, defered: %v ",
+	debugStr := fmt.Sprintf("topic %v channel %v \ninflight %v, req %v, %v, %v, deferred: %v , %v, ",
 		c.GetTopicName(), c.GetName(), inFlightCount, len(c.waitingRequeueMsgs),
-		len(c.requeuedMsgChan), len(c.waitingRequeueChanMsgs), atomic.LoadInt64(&c.deferredCount))
+		len(c.requeuedMsgChan), len(c.waitingRequeueChanMsgs), atomic.LoadInt64(&c.deferredCount), atomic.LoadInt64(&c.deferredFromDelay))
 
 	if c.chLog.Level() >= levellogger.LOG_DEBUG || c.IsTraced() {
 		for _, msg := range c.inFlightMessages {
-			debugStr += fmt.Sprintf("%v(offset: %v, cnt: %v), %v", msg.ID, msg.Offset,
+			debugStr += fmt.Sprintf("%v(offset: %v, cnt: %v), %v,", msg.ID, msg.Offset,
 				msg.queueCntIndex, msg.DelayedType)
 		}
 	}
