@@ -364,7 +364,10 @@ func (n *NSQD) LoadMetadata(disabled int32) {
 				nsqLog.LogWarningf("skipping creation of invalid channel %s", channelName)
 				continue
 			}
-			channel := topic.GetChannel(channelName)
+			// should not use GetChannel() which will init save meta while init channel
+			topic.channelLock.Lock()
+			channel, _ := topic.getOrCreateChannel(channelName)
+			topic.channelLock.Unlock()
 
 			paused, _ := channelJs.Get("paused").Bool()
 			if paused {

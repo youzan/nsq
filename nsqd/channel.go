@@ -1175,9 +1175,9 @@ func (c *Channel) ShouldRequeueToEnd(clientID int64, clientAddr string, id Messa
 	}
 
 	if c.chLog.Level() >= levellogger.LOG_DEBUG || c.IsTraced() {
-		c.chLog.LogDebugf("check requeue to end, timeout:%v, msg timestamp:%v, depth ts:%v, msg attempt:%v, waiting :%v",
+		c.chLog.Logf("check requeue to end, timeout:%v, msg timestamp:%v, depth ts:%v, msg attempt:%v, waiting :%v",
 			timeout, msg.Timestamp,
-			c.DepthTimestamp(), msg.Attempts, atomic.LoadInt32(&c.waitingConfirm))
+			c.DepthTimestamp(), msg.Attempts(), atomic.LoadInt32(&c.waitingConfirm))
 	}
 
 	// too much delayed queue will impact the read/write on boltdb, so we refuse to write if too large
@@ -1194,7 +1194,8 @@ func (c *Channel) ShouldRequeueToEnd(clientID int64, clientAddr string, id Messa
 		// and this may cause some delay more time than expected.
 		dqDepthTs, dqCnt := c.GetDelayedQueueConsumedState()
 		blockingTooLong := tn.UnixNano()-dqDepthTs > 10*threshold.Nanoseconds()
-		if (blockingTooLong || (msg.Attempts < MaxMemReqTimes*10)) && (tn.UnixNano()-atomic.LoadInt64(&c.lastDelayedReqToEndTs) > delayedReqToEndMinInterval.Nanoseconds()) {
+		waitingDelayCnt := atomic.LoadInt64(&c.deferredFromDelay)
+		if (blockingTooLong || (msg.Attempts() < MaxMemReqTimes*10)) && (tn.UnixNano()-atomic.LoadInt64(&c.lastDelayedReqToEndTs) > delayedReqToEndMinInterval.Nanoseconds()) {
 			// if the message is peeked from disk delayed queue,
 			// we can try to put it back to end if there are some other
 			// delayed queue messages waiting.
@@ -1205,26 +1206,28 @@ func (c *Channel) ShouldRequeueToEnd(clientID int64, clientAddr string, id Messa
 			// dqCnt is all the delayed diskqueue counter, so
 			// if all delayed messages are in memory, we no need to put them back to disk.
 			blocking := tn.UnixNano()-dqDepthTs > threshold.Nanoseconds()
-			waitingDelayCnt := atomic.LoadInt64(&c.deferredFromDelay)
 			if dqDepthTs > 0 && blocking && int64(dqCnt) > waitingDelayCnt && int64(dqCnt) > MaxWaitingDelayed {
-				c.chLog.LogDebugf("delayed queue message %v req to end, timestamp:%v, attempt:%v, delayed depth timestamp: %v, delay waiting : %v, %v",
-					id, msg.Timestamp,
-					msg.Attempts, dqDepthTs, waitingDelayCnt, dqCnt)
+				if c.isTracedOrDebugTraceLog(msg) {
+					c.chLog.Logf("delayed queue message %v req to end, timestamp:%v, attempt:%v, delayed depth timestamp: %v, delay waiting : %v, %v",
+						id, msg.Timestamp,
+						msg.Attempts(), dqDepthTs, waitingDelayCnt, dqCnt)
+				}
 				atomic.StoreInt64(&c.lastDelayedReqToEndTs, tn.UnixNano())
 				return msg.GetCopy(), true
 			}
-			if msg.TraceID != 0 || c.IsTraced() || c.chLog.Level() >= levellogger.LOG_DEBUG {
-				c.chLog.Logf("check delayed queue message %v req to end, timestamp:%v, depth ts:%v, attempt:%v, delay waiting :%v, delayed depth timestamp: %v",
-					id, msg.Timestamp,
-					c.DepthTimestamp(), msg.Attempts, waitingDelayCnt, dqDepthTs)
-			}
+		}
+		if c.isTracedOrDebugTraceLog(msg) {
+			c.chLog.Logf("check delayed queue message %v req to end, timestamp:%v, depth ts:%v, attempt:%v, delay waiting :%v, delayed depth timestamp: %v, cnt: %v",
+				id, msg.Timestamp,
+				c.DepthTimestamp(), msg.Attempts(), waitingDelayCnt, dqDepthTs, dqCnt)
 		}
 		// the ChannelDelayed message already in delayed queue, so we can ignore other checks
 		return nil, false
 	}
 
+	msgAtp := msg.Attempts()
 	depDiffTs := tn.UnixNano() - c.DepthTimestamp()
-	if msg.Attempts >= MaxAttempts-1 {
+	if msgAtp >= MaxAttempts-1 {
 		if (c.Depth() > c.option.MaxConfirmWin) ||
 			depDiffTs > time.Hour.Nanoseconds() {
 			return msg.GetCopy(), true
@@ -1240,14 +1243,14 @@ func (c *Channel) ShouldRequeueToEnd(clientID int64, clientAddr string, id Messa
 	}
 
 	deCnt := atomic.LoadInt64(&c.deferredCount)
-	if (msg.Attempts > MaxMemReqTimes*10) &&
+	if (msgAtp > MaxMemReqTimes*10) &&
 		(c.Depth() > MaxDepthReqToEnd) &&
 		(c.DepthTimestamp() > msg.Timestamp+time.Hour.Nanoseconds()) &&
 		!c.isTooMuchDeferredInMem(deCnt) {
 		// too much deferred means most messages are requeued, to avoid too much in disk delay queue,
 		// we just ignore requeue.
 		c.chLog.Logf("msg %v req to end, attemptted %v and created at %v, current processing %v",
-			id, msg.Attempts, msg.Timestamp, c.DepthTimestamp())
+			id, msgAtp, msg.Timestamp, c.DepthTimestamp())
 		return msg.GetCopy(), true
 	}
 
@@ -1269,7 +1272,7 @@ func (c *Channel) ShouldRequeueToEnd(clientID int64, clientAddr string, id Messa
 			return msg.GetCopy(), true
 		}
 
-		if msg.Attempts < 3 {
+		if msgAtp < 3 {
 			return nil, false
 		}
 
@@ -1278,7 +1281,7 @@ func (c *Channel) ShouldRequeueToEnd(clientID int64, clientAddr string, id Messa
 			return nil, false
 		}
 
-		if msg.Attempts > MaxMemReqTimes && depDiffTs > threshold.Nanoseconds() {
+		if msgAtp > MaxMemReqTimes && depDiffTs > threshold.Nanoseconds() {
 			return msg.GetCopy(), true
 		}
 		if depDiffTs > 2*threshold.Nanoseconds() {
@@ -1289,7 +1292,7 @@ func (c *Channel) ShouldRequeueToEnd(clientID int64, clientAddr string, id Messa
 		if msg.Timestamp > c.DepthTimestamp()+threshold.Nanoseconds()/10 {
 			return nil, false
 		}
-		if msg.Attempts < MaxMemReqTimes {
+		if msgAtp < MaxMemReqTimes {
 			return nil, false
 		}
 
@@ -1303,7 +1306,7 @@ func (c *Channel) ShouldRequeueToEnd(clientID int64, clientAddr string, id Messa
 			}
 			return nil, false
 		}
-		if msg.Attempts > MaxMemReqTimes*10 && msg.Timestamp <= c.DepthTimestamp() && depDiffTs > 2*threshold.Nanoseconds() && c.Depth() > 100 {
+		if msgAtp > MaxMemReqTimes*10 && msg.Timestamp <= c.DepthTimestamp() && depDiffTs > 2*threshold.Nanoseconds() && c.Depth() > 100 {
 			return msg.GetCopy(), true
 		}
 		if c.Depth() < MaxDepthReqToEnd/10 {
@@ -1330,7 +1333,7 @@ func (c *Channel) RequeueMessage(clientID int64, clientAddr string, id MessageID
 	}
 	if timeout == 0 {
 		// we should avoid too frequence 0 req if by client
-		if msg.Attempts >= MaxAttempts/2 && byClient {
+		if msg.Attempts() >= MaxAttempts/2 && byClient {
 			return ErrMsgTooMuchReq
 		}
 
@@ -1342,8 +1345,8 @@ func (c *Channel) RequeueMessage(clientID int64, clientAddr string, id MessageID
 			return err
 		}
 		// requeue by intend should treat as not fail attempt
-		if msg.Attempts > 0 && !byClient {
-			msg.Attempts--
+		if msg.Attempts() > 0 && !byClient {
+			msg.IncrAttempts(-1)
 		}
 		if msg.belongedConsumer != nil {
 			msg.belongedConsumer.RequeuedMessage()
@@ -1366,7 +1369,7 @@ func (c *Channel) RequeueMessage(clientID int64, clientAddr string, id MessageID
 	if (timeout > c.option.ReqToEndThreshold) ||
 		(newTimeout.Sub(msg.deliveryTS) >=
 			c.option.MaxReqTimeout) {
-		c.chLog.Logf("too long timeout %v, %v, %v, should req message: %v to delayed queue",
+		c.chLog.LogDebugf("too long timeout %v, %v, %v, should req message: %v to delayed queue",
 			newTimeout, msg.deliveryTS, timeout, id)
 	}
 	reqWaiting := len(c.requeuedMsgChan)
@@ -1381,7 +1384,7 @@ func (c *Channel) RequeueMessage(clientID int64, clientAddr string, id MessageID
 		// too much req, we only allow early req than timeout to speed up retry
 		if newTimeout.UnixNano() >= msg.pri {
 			c.chLog.Logf("failed to requeue msg %v, %v since too much waiting confirmed: %v, req waiting: %v",
-				id, msg.Attempts, atomic.LoadInt32(&c.waitingConfirm), reqWaiting)
+				id, msg.Attempts(), atomic.LoadInt32(&c.waitingConfirm), reqWaiting)
 			return ErrMsgDeferredTooMuch
 		}
 	}
@@ -1498,13 +1501,7 @@ func (c *Channel) RemoveClient(clientID int64, clientTag string) {
 
 func (c *Channel) StartInFlightTimeout(msg *Message, client Consumer, clientAddr string, timeout time.Duration) (bool, error) {
 	now := time.Now()
-	msg.belongedConsumer = client
-	msg.deliveryTS = now
-	msg.pri = now.Add(timeout).UnixNano()
-	if msg.Attempts < MaxAttempts {
-		msg.Attempts++
-	}
-	old, err := c.pushInFlightMessage(msg)
+	old, err := c.pushInFlightMessage(msg, client, now, now.Add(timeout).UnixNano())
 	shouldSend := true
 	if err != nil {
 		if old != nil && old.IsDeferred() {
@@ -1607,9 +1604,15 @@ func (c *Channel) doRequeue(m *Message, clientAddr string) error {
 }
 
 // pushInFlightMessage atomically adds a message to the in-flight dictionary
-func (c *Channel) pushInFlightMessage(msg *Message) (*Message, error) {
+func (c *Channel) pushInFlightMessage(msg *Message, client Consumer, now time.Time, pri int64) (*Message, error) {
 	c.inFlightMutex.Lock()
 	defer c.inFlightMutex.Unlock()
+	msg.belongedConsumer = client
+	msg.deliveryTS = now
+	msg.pri = pri
+	if msg.Attempts() < MaxAttempts {
+		msg.IncrAttempts(1)
+	}
 	if c.IsConsumeDisabled() {
 		// we should clean req message if it is not go into inflight, if not
 		// we leave a orphen message not in requeue chan and not in inflight
@@ -1733,7 +1736,10 @@ func (c *Channel) DisableConsume(disable bool) {
 // if drain outside loop, readerChanged channel should be triggered
 // TODO: check the counter for deferredFromDelay, should make sure not concurrent with client ack
 func (c *Channel) drainChannelWaiting(clearConfirmed bool, lastDataNeedRead *bool, origReadChan chan ReadResult) error {
-	c.chLog.Logf("draining channel waiting %v", clearConfirmed)
+	// skipped channel will reset to end period, so just ignore log
+	if !c.IsSkipped() {
+		c.chLog.Logf("draining channel waiting %v", clearConfirmed)
+	}
 	c.inFlightMutex.Lock()
 	defer c.inFlightMutex.Unlock()
 	c.initPQ()
@@ -1782,9 +1788,12 @@ func (c *Channel) drainChannelWaiting(clearConfirmed bool, lastDataNeedRead *boo
 		delete(c.waitingRequeueMsgs, k)
 	}
 
-	c.chLog.Logf("drained channel waiting req %v, %v, delay: %v, %v", reqCnt,
-		len(c.waitingRequeueChanMsgs),
-		atomic.LoadInt64(&c.deferredFromDelay), delayed)
+	// skipped channel will reset to end period, so just ignore log
+	if !c.IsSkipped() {
+		c.chLog.Logf("drained channel waiting req %v, %v, delay: %v, %v", reqCnt,
+			len(c.waitingRequeueChanMsgs),
+			atomic.LoadInt64(&c.deferredFromDelay), delayed)
+	}
 	// should in inFlightMutex to avoid concurrent with confirming from client
 	// we can not set it to 0, because there may be a message read out from req chan but still not
 	// begin start inflight.
@@ -1847,7 +1856,10 @@ func (c *Channel) resetChannelReader(resetOffset resetChannelData, lastDataNeedR
 		} else {
 			c.drainChannelWaiting(true, lastDataNeedRead, origReadChan)
 			*lastMsg = Message{}
-			c.chLog.Infof("reset reader to %v", resetOffset)
+			// skipped channel will reset to end period, so just ignore log
+			if !c.IsSkipped() {
+				c.chLog.Infof("reset reader to %v", resetOffset)
+			}
 		}
 		*needReadBackend = true
 		*readBackendWait = false
@@ -2140,7 +2152,10 @@ LOOP:
 				resumedFirst = true
 				continue LOOP
 			case resetOffset := <-c.readerChanged:
-				c.chLog.Infof("got reader reset notify:%v ", resetOffset)
+				// skipped channel will reset to end period, so just ignore log
+				if !c.IsSkipped() {
+					c.chLog.Infof("got reader reset notify:%v ", resetOffset)
+				}
 				c.resetChannelReader(resetOffset, &lastDataNeedRead, origReadChan, &lastMsg, &needReadBackend, &readBackendWait)
 				continue LOOP
 			case <-waitEndUpdated:
@@ -2307,13 +2322,13 @@ func parseTagIfAny(msg *Message) (string, error) {
 func (c *Channel) GetChannelDebugStats() string {
 	c.inFlightMutex.Lock()
 	inFlightCount := len(c.inFlightMessages)
-	debugStr := fmt.Sprintf("topic %v channel %v \ninflight %v, req %v, %v, %v, defered: %v ",
+	debugStr := fmt.Sprintf("topic %v channel %v \ninflight %v, req %v, %v, %v, deferred: %v , %v, ",
 		c.GetTopicName(), c.GetName(), inFlightCount, len(c.waitingRequeueMsgs),
-		len(c.requeuedMsgChan), len(c.waitingRequeueChanMsgs), atomic.LoadInt64(&c.deferredCount))
+		len(c.requeuedMsgChan), len(c.waitingRequeueChanMsgs), atomic.LoadInt64(&c.deferredCount), atomic.LoadInt64(&c.deferredFromDelay))
 
 	if c.chLog.Level() >= levellogger.LOG_DEBUG || c.IsTraced() {
 		for _, msg := range c.inFlightMessages {
-			debugStr += fmt.Sprintf("%v(offset: %v, cnt: %v), %v", msg.ID, msg.Offset,
+			debugStr += fmt.Sprintf("%v(offset: %v, cnt: %v), %v,", msg.ID, msg.Offset,
 				msg.queueCntIndex, msg.DelayedType)
 		}
 	}
@@ -2372,7 +2387,7 @@ func (c *Channel) doPeekInFlightQueue(tnow int64) (bool, bool) {
 						if c.option.ReqToEndThreshold >= time.Millisecond {
 							threshold = c.option.ReqToEndThreshold
 						}
-						if m.Attempts >= MaxMemReqTimes {
+						if m.Attempts() >= MaxMemReqTimes {
 							// if the blocking message still need waiting too long,
 							// we requeue to end or just timeout it immediately
 							if m.pri > time.Now().Add(threshold/2).UnixNano() {
@@ -2445,7 +2460,7 @@ func (c *Channel) doPeekInFlightQueue(tnow int64) (bool, bool) {
 			if msgCopy.IsDeferred() {
 				c.chLog.LogDebugf("msg %v defer timeout, expect at %v ",
 					msgCopy.ID, msgCopy.pri)
-				if c.isTracedOrDebugTraceLog(&msgCopy) || msgCopy.Attempts > 1 {
+				if c.isTracedOrDebugTraceLog(&msgCopy) || msgCopy.Attempts() > 1 {
 					nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "DELAY_TIMEOUT", msgCopy.TraceID, &msgCopy, clientAddr, cost)
 				}
 			} else {

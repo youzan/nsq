@@ -479,7 +479,7 @@ func (nrpc *NsqdRpcClient) PutMessage(leaderSession *TopicLeaderSession, info *T
 		msg.ID = uint64(message.ID)
 		msg.Body = message.Body
 		msg.Trace_ID = message.TraceID
-		msg.Attemps = uint32(message.Attempts)
+		msg.Attemps = uint32(message.Attempts())
 		msg.Timestamp = message.Timestamp
 		req.TopicMessage = &msg
 
@@ -531,7 +531,7 @@ func (nrpc *NsqdRpcClient) PutMessages(leaderSession *TopicLeaderSession, info *
 			msg.ID = uint64(message.ID)
 			msg.Body = message.Body
 			msg.Trace_ID = message.TraceID
-			msg.Attemps = uint32(message.Attempts)
+			msg.Attemps = uint32(message.Attempts())
 			msg.Timestamp = message.Timestamp
 			req.TopicMessage = append(req.TopicMessage, &msg)
 		}

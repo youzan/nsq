@@ -42,7 +42,7 @@ func PrintMessage(m *Message) string {
 		return ""
 	}
 	return fmt.Sprintf("%v %v %s %v %v %v %v %v %v %v %v %v, %v %v %v",
-		m.ID, m.TraceID, string(m.Body), m.Timestamp, m.Attempts, m.deliveryTS,
+		m.ID, m.TraceID, string(m.Body), m.Timestamp, m.Attempts(), m.deliveryTS,
 		m.pri, m.index, m.deferredCnt, m.Offset, m.RawMoveSize, m.queueCntIndex,
 		m.DelayedType, m.DelayedTs, m.DelayedChannel,
 	)
@@ -53,7 +53,7 @@ func PrintMessageNoBody(m *Message) string {
 		return ""
 	}
 	return fmt.Sprintf("%v %v %v %v %v %v %v %v %v %v %v, %v %v %v",
-		m.ID, m.TraceID, m.Timestamp, m.Attempts, m.deliveryTS,
+		m.ID, m.TraceID, m.Timestamp, m.Attempts(), m.deliveryTS,
 		m.pri, m.index, m.deferredCnt, m.Offset, m.RawMoveSize, m.queueCntIndex,
 		m.DelayedType, m.DelayedTs, m.DelayedChannel,
 	)
@@ -64,7 +64,7 @@ type Message struct {
 	TraceID   uint64
 	Body      []byte
 	Timestamp int64
-	Attempts  uint16
+	attempts  uint32
 	ExtBytes  []byte
 	ExtVer    ext.ExtVer
 
@@ -166,15 +166,33 @@ func (m *Message) WriteTo(w io.Writer, writeExt bool) (int64, error) {
 	return m.internalWriteTo(w, writeExt, true, false)
 }
 
+func (m *Message) Attempts() uint16 {
+	at := atomic.LoadUint32(&m.attempts)
+	if at > MaxAttempts {
+		return MaxAttempts
+	}
+	return uint16(at)
+}
+
+func (m *Message) IncrAttempts(delta int) {
+	if m.Attempts() < MaxAttempts || delta < 0 {
+		atomic.AddUint32(&m.attempts, uint32(delta))
+	}
+}
+
+func (m *Message) SetAttempts(at uint16) {
+	if at > MaxAttempts {
+		at = MaxAttempts
+	}
+	atomic.StoreUint32(&m.attempts, uint32(at))
+}
+
 func (m *Message) internalWriteTo(w io.Writer, writeExt bool, writeCompatible bool, writeDetail bool) (int64, error) {
 	var buf [16]byte
 	var total int64
 
 	binary.BigEndian.PutUint64(buf[:8], uint64(m.Timestamp))
-	if m.Attempts > MaxAttempts {
-		m.Attempts = MaxAttempts
-	}
-	combined := m.Attempts
+	combined := m.Attempts()
 	if writeExt && writeCompatible {
 		combined += uint16(extMsgHighBits)
 	}
@@ -242,10 +260,7 @@ func (m *Message) internalWriteTo(w io.Writer, writeExt bool, writeCompatible bo
 }
 
 func (m *Message) WriteDelayedTo(w io.Writer, writeExt bool) (int64, error) {
-	if m.Attempts > MaxAttempts {
-		m.Attempts = MaxAttempts
-	}
-	combined := m.Attempts
+	combined := m.Attempts()
 	if writeExt {
 		combined += uint16(extMsgHighBits)
 	}
@@ -387,9 +402,9 @@ func decodeMessage(b []byte, isExt bool) (*Message, error) {
 	var highBits uint16
 	if combined > MaxAttempts {
 		highBits = combined & uint16(0xF000)
-		msg.Attempts = combined & uint16(0x0FFF)
+		msg.SetAttempts(combined & uint16(0x0FFF))
 	} else {
-		msg.Attempts = combined
+		msg.SetAttempts(combined)
 	}
 
 	bodyStart := 26
@@ -477,9 +492,9 @@ func DecodeDelayedMessage(b []byte, isExt bool) (*Message, error) {
 	var highBits uint16
 	if combined > MaxAttempts {
 		highBits = combined & uint16(0xF000)
-		msg.Attempts = combined & uint16(0x0FFF)
+		msg.SetAttempts(combined & uint16(0x0FFF))
 	} else {
-		msg.Attempts = combined
+		msg.SetAttempts(combined)
 	}
 
 	if highBits == extMsgHighBits && !isExt {
