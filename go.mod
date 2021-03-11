@@ -4,6 +4,7 @@ go 1.13
 
 require (
 	github.com/BurntSushi/toml v0.3.1
+	github.com/StackExchange/wmi v0.0.0-20210224194228-fe8f1750fd46 // indirect
 	github.com/Workiva/go-datastructures v1.0.50
 	github.com/absolute8511/bolt v1.5.0
 	github.com/absolute8511/glog v0.3.1
@@ -16,11 +17,13 @@ require (
 	github.com/bmizerany/assert v0.0.0-20160611221934-b7ed37b82869 // indirect
 	github.com/bmizerany/perks v0.0.0-20141205001514-d9a9656a3a4b
 	github.com/cenkalti/backoff v2.1.0+incompatible
+	github.com/cockroachdb/pebble v0.0.0-20200616214509-8de6baeca713
 	github.com/coreos/etcd v2.3.8+incompatible
+	github.com/go-ole/go-ole v1.2.5 // indirect
 	github.com/gobwas/glob v0.2.3
-	github.com/gogo/protobuf v1.2.1
+	github.com/gogo/protobuf v1.3.1
 	github.com/golang/protobuf v1.4.2
-	github.com/golang/snappy v0.0.1
+	github.com/golang/snappy v0.0.2-0.20190904063534-ff6b7dc882cf
 	github.com/gorilla/sessions v1.1.3
 	github.com/hashicorp/golang-lru v0.5.3
 	github.com/json-iterator/go v1.1.10
@@ -30,6 +33,7 @@ require (
 	github.com/mreiferson/go-options v0.0.0-20161229190002-77551d20752b
 	github.com/myesui/uuid v1.0.0 // indirect
 	github.com/prometheus/client_golang v1.7.1
+	github.com/shirou/gopsutil v3.21.2+incompatible
 	github.com/spaolacci/murmur3 v1.1.0
 	github.com/stretchr/testify v1.4.0
 	github.com/tidwall/gjson v1.1.3
@@ -38,7 +42,7 @@ require (
 	github.com/valyala/fastjson v1.6.1
 	github.com/viki-org/dnscache v0.0.0-20130720023526-c70c1f23c5d8
 	github.com/youzan/go-nsq v1.7.2-HA
-	golang.org/x/net v0.0.0-20190613194153-d28f0bde5980
+	golang.org/x/net v0.0.0-20190620200207-3b0461eec859
 	golang.org/x/sync v0.0.0-20190911185100-cd5d95a43a6e
 	golang.org/x/time v0.0.0-20200630173020-3af7569d3a1e
 	google.golang.org/grpc v1.26.0
