@@ -1,10 +1,12 @@
 package nsqadmin
 
 import (
-	"time"
+	"io/ioutil"
 	"os"
 	"sync"
-	"github.com/astaxie/beego/config/yaml"
+	"time"
+
+	"gopkg.in/yaml.v2"
 )
 
 type AccessControl interface {
@@ -14,35 +16,49 @@ type AccessControl interface {
 }
 
 type YamlAccessControl struct {
-	filePath string
-	accessMap map[string]interface{}
-	lock sync.RWMutex
+	filePath     string
+	accessMap    map[string]interface{}
+	lock         sync.RWMutex
 	updateTicker *time.Ticker
-	tStopChan chan int
-	wg sync.WaitGroup
-	lastUpdated time.Time
-	ctx *Context
+	tStopChan    chan int
+	wg           sync.WaitGroup
+	lastUpdated  time.Time
+	ctx          *Context
+}
+
+func readYml(path string) (map[string]interface{}, error) {
+	buf, err := ioutil.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	m := make(map[string]interface{})
+	err = yaml.Unmarshal(buf, &m)
+	if err != nil {
+		return nil, err
+	}
+	return m, nil
 }
 
 func NewYamlAccessControl(ctx *Context, filePath string) (AccessControl, error) {
 	if filePath == "" {
 		return nil, nil
 	}
-	acMp,err := yaml.ReadYmlReader(filePath)
+	acMp, err := readYml(filePath)
 	if err != nil {
 		return nil, err
 	}
-	info, err :=os.Stat(filePath)
+	info, err := os.Stat(filePath)
 	if err != nil {
 		return nil, err
 	}
 	mt := info.ModTime()
 
 	return &YamlAccessControl{
-		filePath:filePath,
-		accessMap:acMp,
-		lastUpdated:mt,
-		ctx:ctx,
+		filePath:    filePath,
+		accessMap:   acMp,
+		lastUpdated: mt,
+		ctx:         ctx,
 	}, nil
 }
 
@@ -112,7 +128,7 @@ func (ac *YamlAccessControl) tryUpdateControlFile() {
 	//compare with last modified time
 	if mt.After(ac.lastUpdated) {
 		ac.ctx.nsqadmin.logf("INFO: access control file modified, try updating")
-		newAcMap, err := yaml.ReadYmlReader(ac.filePath);
+		newAcMap, err := readYml(ac.filePath)
 		if err != nil {
 			ac.ctx.nsqadmin.logf("ERROR: fail to read access control file from %v", ac.filePath)
 			return

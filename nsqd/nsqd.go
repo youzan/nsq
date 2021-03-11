@@ -742,7 +742,11 @@ func (n *NSQD) flushAll(all bool, flushCnt int) {
 }
 
 func (n *NSQD) ReqToEnd(ch *Channel, msg *Message, t time.Duration) error {
-	go n.reqToEndCB(ch, msg, t)
+	if n.reqToEndCB != nil {
+		n.PushTopicJob(ch.GetTopicName(), func() {
+			n.reqToEndCB(ch, msg, t)
+		})
+	}
 	return nil
 }
 

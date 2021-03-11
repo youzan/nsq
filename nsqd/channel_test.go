@@ -14,7 +14,8 @@ import (
 )
 
 type fakeConsumer struct {
-	cid int64
+	cid         int64
+	inFlightCnt int64
 }
 
 func NewFakeConsumer(id int64) *fakeConsumer {
@@ -27,11 +28,21 @@ func (c *fakeConsumer) Pause() {
 }
 func (c *fakeConsumer) SetLimitedRdy(cnt int) {
 }
+func (c *fakeConsumer) GetInflightCnt() int64 {
+	return atomic.LoadInt64(&c.inFlightCnt)
+}
+
+func (c *fakeConsumer) SendingMessage() {
+	atomic.AddInt64(&c.inFlightCnt, 1)
+}
 func (c *fakeConsumer) TimedOutMessage() {
+	atomic.AddInt64(&c.inFlightCnt, -1)
 }
 func (c *fakeConsumer) RequeuedMessage() {
+	atomic.AddInt64(&c.inFlightCnt, -1)
 }
 func (c *fakeConsumer) FinishedMessage() {
+	atomic.AddInt64(&c.inFlightCnt, -1)
 }
 func (c *fakeConsumer) Stats() ClientStats {
 	return ClientStats{}
@@ -427,6 +438,91 @@ func TestChannelReqTooMuchInDeferShouldNotContinueReadBackend(t *testing.T) {
 		}
 	}
 	ast.Equal(t, int64(0), channel.Depth())
+}
+
+func TestChannelTimeoutTooMuchIShouldNotBlockingToolong(t *testing.T) {
+	oldWait := timeoutBlockingWait
+	defer func() {
+		timeoutBlockingWait = oldWait
+	}()
+	timeoutBlockingWait = time.Second * 2
+	count := 300
+	opts := NewOptions()
+	opts.SyncEvery = 1
+	opts.MaxRdyCount = 100
+	opts.MaxConfirmWin = 10
+	opts.Logger = newTestLogger(t)
+	opts.MsgTimeout = time.Second / 100
+	opts.QueueScanRefreshInterval = time.Second / 10
+	opts.QueueScanInterval = time.Millisecond * 10
+	// make it more chance to req the timeout to end
+	opts.ReqToEndThreshold = time.Second
+	_, _, nsqd := mustStartNSQD(opts)
+	nsqd.SetReqToEndCB(func(ch *Channel, m *Message, to time.Duration) error {
+		_, _, _, _, err := ch.FinishMessage(m.GetClientID(), "", m.ID)
+		if err != nil {
+			t.Logf("fin timeout failed: %v", m.ID)
+		}
+		return nil
+	})
+	defer os.RemoveAll(opts.DataPath)
+	defer nsqd.Exit()
+
+	topicName := "test_timeouted_toomuch" + strconv.Itoa(int(time.Now().Unix()))
+	topic := nsqd.GetTopicIgnPart(topicName)
+	channel := topic.GetChannel("channel")
+
+	for i := 0; i < count; i++ {
+		msg := NewMessage(0, []byte("test"))
+		_, _, _, _, err := topic.PutMessage(msg)
+		equal(t, err, nil)
+	}
+
+	fc := NewFakeConsumer(1)
+	channel.AddClient(1, fc)
+	start := time.Now()
+	reqCnt := 0
+	timeout := 0
+	checkTimeout := 0
+	finCnt := 0
+	for time.Since(start) < time.Second*20 {
+		recvChan := channel.clientMsgChan
+		if fc.GetInflightCnt() > 2 {
+			recvChan = nil
+		}
+		if channel.Depth() == 0 {
+			break
+		}
+		select {
+		case <-time.After(time.Millisecond * 100):
+			timeout++
+		case outputMsg, ok := <-recvChan:
+			if !ok {
+				t.Error("eror recv")
+				return
+			}
+			reqCnt++
+			now := time.Now()
+			t.Logf("consume %v at %s , %v, inflight: %v", outputMsg.ID, now, outputMsg.timedoutCnt, fc.GetInflightCnt())
+			channel.StartInFlightTimeout(outputMsg, fc, "", opts.MsgTimeout)
+			fc.SendingMessage()
+			channel.CheckIfTimeoutToomuch(outputMsg, opts.MsgTimeout)
+			// requeue with different timeout to make sure the memory deferred cnt is high
+			// since after timeout deferred cnt will be reset
+			if outputMsg.ID <= 5 {
+				checkTimeout++
+			} else {
+				channel.FinishMessage(1, "", outputMsg.ID)
+				finCnt++
+
+			}
+		}
+	}
+
+	t.Logf("total req cnt: %v, timeout: %v, fin %v", reqCnt, timeout, finCnt)
+	ast.True(t, finCnt > 1)
+	ast.Equal(t, int64(0), channel.Depth())
+	ast.True(t, checkTimeout > 1)
 }
 
 func TestChannelEmptyWhileConfirmDelayMsg(t *testing.T) {

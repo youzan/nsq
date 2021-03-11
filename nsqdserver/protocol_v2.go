@@ -719,6 +719,7 @@ func (p *protocolV2) messagePump(client *nsqd.ClientV2, startedChan chan bool,
 			if err != nil {
 				goto exit
 			}
+			subChannel.CheckIfTimeoutToomuch(msg, msgTimeout)
 			flushed = false
 		}
 	}
