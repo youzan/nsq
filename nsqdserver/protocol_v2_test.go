@@ -5246,6 +5246,123 @@ func TestSubTimeoutMany(t *testing.T) {
 	test.Assert(t, stats.DelayedQueueCount > 1, "should have delayed")
 }
 
+func TestSubFewMsgTimeoutAlwaysShouldNotBlocking(t *testing.T) {
+	nsqdNs.ChangeIntervalForTest()
+	// test few messages timeout too much times (which will less than ready) and blocking other continue consume
+	// should go delayed queue for a while and the channel depth should be 0
+	opts := nsqdNs.NewOptions()
+	opts.Logger = newTestLogger(t)
+	opts.LogLevel = 1
+	if testing.Verbose() {
+		opts.LogLevel = 4
+		nsqdNs.SetLogger(opts.Logger)
+	}
+	opts.SyncEvery = 1
+	opts.QueueScanInterval = time.Millisecond * 10
+	opts.MsgTimeout = time.Second / 10
+	opts.MaxConfirmWin = 50
+	opts.ReqToEndThreshold = nsqdNs.MaxWaitingDelayed*time.Millisecond + time.Millisecond*80
+	opts.MaxReqTimeout = time.Second*10 + opts.ReqToEndThreshold*3
+	opts.MaxOutputBufferTimeout = 10 * time.Millisecond
+	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
+
+	defer os.RemoveAll(opts.DataPath)
+	defer nsqdServer.Exit()
+
+	topicName := "test_few_timeout_toomuch" + strconv.Itoa(int(time.Now().Unix()))
+	topic := nsqd.GetTopicIgnPart(topicName)
+	ch := topic.GetChannel("ch")
+
+	putCnt := nsqdNs.MaxWaitingDelayed + 100
+	for i := 0; i < putCnt; i++ {
+		// generate not-continued timeouted to make confirm interval more than 1
+		if i <= 3 {
+			delayBody := []byte("timeout-message")
+			msg := nsqdNs.NewMessage(0, delayBody)
+			topic.PutMessage(msg)
+		} else {
+			msg := nsqdNs.NewMessage(0, []byte("nodelay"))
+			topic.PutMessage(msg)
+		}
+	}
+	topic.ForceFlush()
+
+	var wg sync.WaitGroup
+	done := make(chan struct{})
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+	RECONNECT:
+		select {
+		case <-done:
+			return
+		default:
+		}
+		conn, err := mustConnectNSQD(tcpAddr)
+		test.Equal(t, err, nil)
+		defer conn.Close()
+		identify(t, conn, map[string]interface{}{
+			"output_buffer_timeout": 10,
+		}, frameTypeResponse)
+		subRsp, err := subWaitResp(t, conn, topicName, "ch")
+		if err != nil || string(subRsp) != "OK" {
+			conn.Close()
+			time.Sleep(time.Millisecond * 3)
+			goto RECONNECT
+		}
+		test.Nil(t, err)
+		test.Equal(t, "OK", string(subRsp))
+		_, err = nsq.Ready(1).WriteTo(conn)
+		test.Equal(t, err, nil)
+
+		for {
+			select {
+			case <-done:
+				return
+			default:
+			}
+			msgOut := recvNextMsgAndCheck(t, conn, 0, 0, false)
+			if msgOut == nil {
+				conn.Close()
+				time.Sleep(time.Millisecond * 3)
+				goto RECONNECT
+			}
+			if len(msgOut.Body) >= 10 {
+				test.Nil(t, err)
+				now := int(time.Now().UnixNano())
+				t.Logf("\033[31m got timeout message : %v (id %v), now: %v\033[39m\n\n", string(msgOut.Body), msgOut.ID, now)
+				// wait timeout
+				continue
+			} else {
+				test.Equal(t, "nodelay", string(msgOut.Body))
+			}
+			nsq.Finish(nsq.MessageID(msgOut.GetFullMsgID())).WriteTo(conn)
+		}
+	}()
+	start := time.Now()
+	for {
+		if ch.Depth() == 0 {
+			break
+		}
+		t.Logf("current channel: %s", ch.GetChannelDebugStats())
+		time.Sleep(time.Second)
+		if time.Since(start) > time.Minute*3 {
+			t.Error("timeout waiting")
+			break
+		}
+	}
+	close(done)
+	wg.Wait()
+	stats := nsqdNs.NewChannelStats(ch, nil, 0)
+	t.Logf("channel stats: %v", stats)
+	test.Equal(t, 0, stats.DeferredCount)
+	test.Assert(t, stats.TimeoutCount >= nsqdNs.MaxMemReqTimes, "should have enough timeout")
+	test.Assert(t, stats.RequeueCount > 2, "should have requeued")
+	test.Assert(t, stats.DelayedQueueCount > 1, "should have delayed")
+	test.Assert(t, stats.DelayedQueueCount < 5, "should have less delayed")
+}
+
 func TestSubReqToEndFailedPartial(t *testing.T) {
 	// req to end success but the return is failed (while leader changed or write is disabled) and should req in memory,
 	// later the memory delayed failed and it should be req to end again
