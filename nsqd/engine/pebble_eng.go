@@ -80,7 +80,7 @@ func (m *Uint64AddMerger) MergeOlder(value []byte) error {
 	return m.MergeNewer(value)
 }
 
-func (m *Uint64AddMerger) Finish(includeBases bool) ([]byte, io.Closer, error) {
+func (m *Uint64AddMerger) Finish() ([]byte, io.Closer, error) {
 	return m.buf, nil, nil
 }
 

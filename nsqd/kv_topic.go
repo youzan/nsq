@@ -4,158 +4,197 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path"
-	"strconv"
 	"sync"
-	"sync/atomic"
-	"time"
 
-	"github.com/prometheus/client_golang/prometheus"
 	"github.com/youzan/nsq/internal/levellogger"
-	"github.com/youzan/nsq/internal/protocol"
-	"github.com/youzan/nsq/internal/quantile"
-	"github.com/youzan/nsq/internal/util"
+	"github.com/youzan/nsq/nsqd/codec"
+	"github.com/youzan/nsq/nsqd/engine"
 )
 
+const (
+	SepStart = ":"
+	SepStop  = ";"
+)
+
+const (
+	TopicPrefix = "topic"
+	// TopicPrefix + topicFullName + SepStart + SomeOtherPrefix
+	TopicMsgIDPrefix     = "msgid"
+	TopicTagPrefix       = "tag"
+	TopicTraceKeyPrefix  = "tracekey"
+	TopicMsgOffsetPrefix = "msgoffset"
+	TopicMsgCntPrefix    = "msgcnt"
+	TopicMsgTsPrefix     = "msgts"
+)
+
+var (
+	ErrMsgNotFoundInIndex = errors.New("message not found in index")
+	errInvalidEncodedData = errors.New("invalid encoded data")
+)
+
+func getKVKeyForTopicBegin(fullName string) []byte {
+	startKey := make([]byte, 0, len(TopicPrefix)+len(fullName)+2+4)
+	startKey, _ = codec.EncodeMemCmpKey(startKey[:0], TopicPrefix, SepStart, fullName, SepStart)
+	return startKey
+}
+func getKVKeyForTopicEnd(fullName string) []byte {
+	endKey := make([]byte, 0, len(TopicPrefix)+len(fullName)+2+4)
+	endKey, _ = codec.EncodeMemCmpKey(endKey[:0], TopicPrefix, SepStart, fullName, SepStop)
+	return endKey
+}
+
+func getKVKeyForMsgID(fullName string, msgid MessageID) []byte {
+	keyBuf := make([]byte, 0, len(TopicPrefix)+len(fullName)+len(TopicMsgIDPrefix)+8+3+7)
+	keyBuf, _ = codec.EncodeMemCmpKey(keyBuf[:0], TopicPrefix, SepStart, fullName, SepStart, TopicMsgIDPrefix, SepStart, uint64(msgid))
+	return keyBuf
+}
+
+func getKVKeyForMsgIDEnd(fullName string) []byte {
+	keyBuf := make([]byte, 0, len(TopicPrefix)+len(fullName)+len(TopicMsgIDPrefix)+3+6)
+	keyBuf, _ = codec.EncodeMemCmpKey(keyBuf[:0], TopicPrefix, SepStart, fullName, SepStart, TopicMsgIDPrefix, SepStop)
+	return keyBuf
+}
+
+func encodeMsgIDValue(msgid MessageID) []byte {
+	idBuf := make([]byte, 0, 8+1)
+	idBuf, _ = codec.EncodeMemCmpKey(idBuf, uint64(msgid))
+	return idBuf
+}
+
+func decodeMsgIDValue(buf []byte) (MessageID, error) {
+	vals, err := codec.Decode(buf, 1)
+	if err != nil {
+		return 0, err
+	}
+	if len(vals) < 1 {
+		return 0, errInvalidEncodedData
+	}
+	id := vals[0].(uint64)
+	return MessageID(id), nil
+}
+
+func getKVKeyForMsgTrace(fullName string, msgid MessageID, traceID uint64) []byte {
+	keyBuf := make([]byte, 0, len(TopicPrefix)+len(fullName)+len(TopicTraceKeyPrefix)+8+8+4+9)
+	keyBuf, _ = codec.EncodeMemCmpKey(keyBuf[:0], TopicPrefix, SepStart, fullName, SepStart, TopicTraceKeyPrefix, SepStart, traceID, SepStart, uint64(msgid))
+	return keyBuf
+}
+
+func getKVKeyForMsgTraceIDEnd(fullName string, traceID uint64) []byte {
+	keyBuf := make([]byte, 0, len(TopicPrefix)+len(fullName)+4+len(TopicTraceKeyPrefix)+8+4+8)
+	keyBuf, _ = codec.EncodeMemCmpKey(keyBuf[:0], TopicPrefix, SepStart, fullName, SepStart, TopicTraceKeyPrefix, SepStart, traceID, SepStop)
+	return keyBuf
+}
+
+func getKVKeyForMsgTraceEnd(fullName string) []byte {
+	keyBuf := make([]byte, 0, len(TopicPrefix)+len(fullName)+len(TopicTraceKeyPrefix)+3+6)
+	keyBuf, _ = codec.EncodeMemCmpKey(keyBuf[:0], TopicPrefix, SepStart, fullName, SepStart, TopicTraceKeyPrefix, SepStop)
+	return keyBuf
+}
+
+func decodeMsgTraceKey(buf []byte) (string, uint64, MessageID, error) {
+	var tname string
+	var tid uint64
+	var msgid MessageID
+	vals, err := codec.Decode(buf, 9)
+	if err != nil {
+		return tname, tid, msgid, err
+	}
+	if len(vals) != 9 {
+		return tname, tid, msgid, errInvalidEncodedData
+	}
+	tname = string(vals[2].([]byte))
+	tid = vals[6].(uint64)
+	msgid = MessageID(vals[8].(uint64))
+	return tname, tid, msgid, nil
+}
+
+func getKVKeyForMsgOffset(fullName string, msgStartOffset int64, msgEndOffset int64) []byte {
+	keyBuf := make([]byte, 0, len(TopicPrefix)+len(fullName)+4+len(TopicTraceKeyPrefix)+8+8+4+9)
+	keyBuf, _ = codec.EncodeMemCmpKey(keyBuf[:0], TopicPrefix, SepStart, fullName, SepStart, TopicMsgOffsetPrefix, SepStart, msgStartOffset, SepStart, msgEndOffset)
+	return keyBuf
+}
+
+func getKVKeyForMsgOffsetEnd(fullName string) []byte {
+	keyBuf := make([]byte, 0, len(TopicPrefix)+len(fullName)+len(TopicTraceKeyPrefix)+3+6)
+	keyBuf, _ = codec.EncodeMemCmpKey(keyBuf[:0], TopicPrefix, SepStart, fullName, SepStart, TopicMsgOffsetPrefix, SepStop)
+	return keyBuf
+}
+
+func encodeMsgOffsetValue(msgid MessageID, cnt int64, ts int64) []byte {
+	valueBuf := make([]byte, 0, 8*3+3)
+	valueBuf, _ = codec.EncodeMemCmpKey(valueBuf[:0], uint64(msgid), cnt, ts)
+	return valueBuf
+}
+
+func decodeMsgOffsetValue(buf []byte) (MessageID, int64, int64, error) {
+	var msgid MessageID
+	var cnt int64
+	var ts int64
+	vals, err := codec.Decode(buf, 3)
+	if err != nil {
+		return msgid, cnt, ts, err
+	}
+	if len(vals) != 3 {
+		return msgid, cnt, ts, errInvalidEncodedData
+	}
+	msgid = MessageID(vals[0].(uint64))
+	cnt = vals[1].(int64)
+	ts = vals[2].(int64)
+	return msgid, cnt, ts, nil
+}
+
+func getKVKeyForMsgCnt(fullName string, msgCnt int64) []byte {
+	keyBuf := make([]byte, 0, len(TopicPrefix)+len(fullName)+len(TopicTraceKeyPrefix)+8+3+7)
+	keyBuf, _ = codec.EncodeMemCmpKey(keyBuf[:0], TopicPrefix, SepStart, fullName, SepStart, TopicMsgCntPrefix, SepStart, msgCnt)
+	return keyBuf
+}
+func getKVKeyForMsgCntEnd(fullName string) []byte {
+	keyBuf := make([]byte, 0, len(TopicPrefix)+len(fullName)+len(TopicTraceKeyPrefix)+3+6)
+	keyBuf, _ = codec.EncodeMemCmpKey(keyBuf[:0], TopicPrefix, SepStart, fullName, SepStart, TopicMsgCntPrefix, SepStop)
+	return keyBuf
+}
+
+func getKVKeyForMsgTs(fullName string, msgid MessageID, ts int64) []byte {
+	keyBuf := make([]byte, 0, len(TopicPrefix)+len(fullName)+len(TopicTraceKeyPrefix)+8+8+4+9)
+	keyBuf, _ = codec.EncodeMemCmpKey(keyBuf[:0], TopicPrefix, SepStart, fullName, SepStart, TopicMsgTsPrefix, SepStart, ts, SepStart, uint64(msgid))
+	return keyBuf
+}
+
 type KVTopic struct {
-	sync.Mutex
+	kvEng     engine.KVEngine
+	tname     string
+	fullName  string
+	partition int
+	dataPath  string
 
-	tname       string
-	fullName    string
-	partition   int
-	channelMap  map[string]*Channel
-	channelLock sync.RWMutex
-	backend     *diskQueueWriter
-	dataPath    string
-	flushChan   chan int
-	exitFlag    int32
-
-	ephemeral bool
-	deleter   sync.Once
-
-	nsqdNotify      INsqdNotify
-	option          *Options
-	msgIDCursor     MsgIDGenerator
-	defaultIDSeq    uint64
-	needFlush       int32
-	EnableTrace     int32
-	lastSyncCnt     int64
-	putBuffer       bytes.Buffer
-	bp              sync.Pool
-	writeDisabled   int32
-	dynamicConf     *TopicDynamicConf
-	isOrdered       int32
-	magicCode       int64
-	committedOffset atomic.Value
-	detailStats     *DetailStatsInfo
-	needFixData     int32
-	pubWaitingChan  PubInfoChan
-	mpubWaitingChan MPubInfoChan
-	quitChan        chan struct{}
-	pubLoopFunc     func(v *KVTopic)
-	wg              sync.WaitGroup
-
-	delayedQueue                 atomic.Value
-	isExt                        int32
-	isChannelAutoCreatedDisabled int32
-	pubFailedCnt                 int64
-	metaStorage                  IMetaStorage
-	// the pub data waiting pub ok returned
-	pubWaitingBytes int64
-	tpLog           *levellogger.LevelLogger
+	option     *Options
+	putBuffer  bytes.Buffer
+	bp         sync.Pool
+	isExt      int32
+	tpLog      *levellogger.LevelLogger
+	lastOffset int64
+	lastCnt    int64
 }
 
-func (t *KVTopic) setExt() {
-	atomic.StoreInt32(&t.isExt, 1)
+func NewKVTopic(topicName string, part int, opt *Options) *KVTopic {
+	return NewKVTopicWithExt(topicName, part, false, opt)
 }
 
-func (t *KVTopic) IsExt() bool {
-	return atomic.LoadInt32(&t.isExt) == 1
-}
-
-func (t *KVTopic) DisableChannelAutoCreate() {
-	atomic.StoreInt32(&t.isChannelAutoCreatedDisabled, 1)
-}
-
-func (t *KVTopic) EnableChannelAutoCreate() {
-	atomic.StoreInt32(&t.isChannelAutoCreatedDisabled, 0)
-}
-
-func (t *KVTopic) IsChannelAutoCreateDisabled() bool {
-	return atomic.LoadInt32(&t.isChannelAutoCreatedDisabled) == 1
-}
-
-func (t *KVTopic) IncrPubWaitingBytes(sz int64) int64 {
-	return atomic.AddInt64(&t.pubWaitingBytes, sz)
-}
-
-func (t *KVTopic) IncrPubFailed() {
-	atomic.AddInt64(&t.pubFailedCnt, 1)
-	TopicPubFailedCnt.With(prometheus.Labels{
-		"topic":     t.GetTopicName(),
-		"partition": strconv.Itoa(t.GetTopicPart()),
-	}).Inc()
-}
-
-func (t *KVTopic) PubFailed() int64 {
-	return atomic.LoadInt64(&t.pubFailedCnt)
-}
-
-func NewKVTopic(topicName string, part int, opt *Options,
-	writeDisabled int32, metaStorage IMetaStorage,
-	notify INsqdNotify, loopFunc func(v *KVTopic)) *KVTopic {
-	return NewKVTopicWithExt(topicName, part, false, false, opt, writeDisabled, metaStorage, notify, loopFunc)
-}
-
-func NewKVTopicWithExt(topicName string, part int, ext bool, ordered bool, opt *Options,
-	writeDisabled int32, metaStorage IMetaStorage,
-	notify INsqdNotify, loopFunc func(v *KVTopic)) *KVTopic {
-	return NewKVTopicWithExtAndDisableChannelAutoCreate(topicName, part, ext, ordered, false, opt, writeDisabled, metaStorage, notify, loopFunc)
-}
-
-// KVTopic constructor
-func NewKVTopicWithExtAndDisableChannelAutoCreate(topicName string, part int, ext bool, ordered bool, disbaleChannelAutoCreate bool, opt *Options,
-	writeDisabled int32, metaStorage IMetaStorage,
-	notify INsqdNotify, loopFunc func(v *KVTopic)) *KVTopic {
+func NewKVTopicWithExt(topicName string, part int, ext bool, opt *Options) *KVTopic {
 	if part > MAX_TOPIC_PARTITION {
 		return nil
 	}
 	t := &KVTopic{
-		tname:           topicName,
-		partition:       part,
-		channelMap:      make(map[string]*Channel),
-		flushChan:       make(chan int, 10),
-		option:          opt,
-		dynamicConf:     &TopicDynamicConf{SyncEvery: opt.SyncEvery, AutoCommit: 1},
-		putBuffer:       bytes.Buffer{},
-		nsqdNotify:      notify,
-		writeDisabled:   writeDisabled,
-		pubWaitingChan:  make(PubInfoChan, PubQueue),
-		mpubWaitingChan: make(MPubInfoChan, PubQueue/2),
-		quitChan:        make(chan struct{}),
-		pubLoopFunc:     loopFunc,
-		metaStorage:     metaStorage,
+		tname:     topicName,
+		partition: part,
+		option:    opt,
+		putBuffer: bytes.Buffer{},
 	}
 	t.fullName = GetTopicFullName(t.tname, t.partition)
 	t.tpLog = nsqLog.WrappedWithPrefix("["+t.fullName+"]", 0)
 
-	if metaStorage == nil {
-		t.metaStorage = &fileMetaStorage{}
-	}
-	if ext {
-		t.setExt()
-	}
-	if ordered {
-		atomic.StoreInt32(&t.isOrdered, 1)
-	}
-	if t.dynamicConf.SyncEvery < 1 {
-		t.dynamicConf.SyncEvery = 1
-	}
-	if disbaleChannelAutoCreate {
-		t.DisableChannelAutoCreate()
-	}
 	t.bp.New = func() interface{} {
 		return &bytes.Buffer{}
 	}
@@ -168,421 +207,25 @@ func NewKVTopicWithExtAndDisableChannelAutoCreate(topicName string, part int, ex
 	}
 
 	backendName := getBackendName(t.tname, t.partition)
-	queue, err := newDiskQueueWriterWithMetaStorage(backendName,
-		t.dataPath,
-		opt.MaxBytesPerFile,
-		int32(minValidMsgLength),
-		int32(opt.MaxMsgSize)+minValidMsgLength,
-		opt.SyncEvery,
-		t.metaStorage,
-	)
-
+	cfg := engine.NewRockConfig()
+	cfg.MaxWriteBufferNumber = 4
+	cfg.DataDir = path.Join(t.dataPath, backendName)
+	eng, err := engine.NewKVEng(cfg)
 	if err != nil {
-		t.tpLog.LogErrorf("failed to init disk queue: %v ", err)
-		if err == ErrNeedFixQueueStart || err == ErrNeedFixQueueEnd {
-			t.SetDataFixState(true)
-		} else {
-			return nil
-		}
-	}
-	t.backend = queue.(*diskQueueWriter)
-
-	if err != ErrNeedFixQueueEnd {
-		t.UpdateCommittedOffset(t.backend.GetQueueWriteEnd())
-	}
-	err = t.loadMagicCode()
-	if err != nil {
-		t.tpLog.LogErrorf("failed to load magic code: %v", err)
+		t.tpLog.LogErrorf("failed to create engine: %v ", err)
 		return nil
 	}
-	t.detailStats = NewDetailStatsInfo(t.tname, strconv.Itoa(t.partition), t.TotalDataSize(), t.getHistoryStatsFileName())
-	t.nsqdNotify.NotifyStateChanged(t, true)
-	t.tpLog.LogDebugf("new topic created: %v", t.tname)
-
-	if t.pubLoopFunc != nil {
-		t.wg.Add(1)
-		go func() {
-			defer t.wg.Done()
-			t.pubLoopFunc(t)
-		}()
+	err = eng.OpenEng()
+	if err != nil {
+		t.tpLog.LogErrorf("failed to create engine: %v ", err)
+		return nil
 	}
-	t.LoadChannelMeta()
+	t.kvEng = eng
 	return t
 }
 
-func (t *KVTopic) GetDelayedQueue() *DelayQueue {
-	if t.IsOrdered() {
-		return nil
-	}
-
-	if t.delayedQueue.Load() == nil {
-		return nil
-	}
-	return t.delayedQueue.Load().(*DelayQueue)
-}
-
-func (t *KVTopic) GetOrCreateDelayedQueueForReadNoLock() (*DelayQueue, error) {
-	if t.delayedQueue.Load() == nil {
-		delayedQueue, err := NewDelayQueueForRead(t.tname, t.partition, t.dataPath, t.option, nil, t.IsExt())
-		if err == nil {
-			t.delayedQueue.Store(delayedQueue)
-		} else {
-			t.tpLog.LogWarningf("init delayed queue error %v", err)
-			return nil, err
-		}
-	}
-	return t.delayedQueue.Load().(*DelayQueue), nil
-}
-
-func (t *KVTopic) GetOrCreateDelayedQueueNoLock(idGen MsgIDGenerator) (*DelayQueue, error) {
-	if t.delayedQueue.Load() == nil {
-		delayedQueue, err := NewDelayQueue(t.tname, t.partition, t.dataPath, t.option, idGen, t.IsExt())
-		if err == nil {
-			t.delayedQueue.Store(delayedQueue)
-			t.channelLock.RLock()
-			for _, ch := range t.channelMap {
-				ch.SetDelayedQueue(delayedQueue)
-			}
-			t.channelLock.RUnlock()
-		} else {
-			t.tpLog.LogWarningf("init delayed queue error %v", err)
-			return nil, err
-		}
-	}
-	return t.delayedQueue.Load().(*DelayQueue), nil
-}
-
-func (t *KVTopic) GetWaitChan() PubInfoChan {
-	return t.pubWaitingChan
-}
-func (t *KVTopic) IsWaitChanFull() bool {
-	return len(t.pubWaitingChan) >= cap(t.pubWaitingChan)-1
-}
-func (t *KVTopic) IsMWaitChanFull() bool {
-	return len(t.mpubWaitingChan) >= cap(t.mpubWaitingChan)-1
-}
-func (t *KVTopic) GetMWaitChan() MPubInfoChan {
-	return t.mpubWaitingChan
-}
-func (t *KVTopic) QuitChan() <-chan struct{} {
-	return t.quitChan
-}
-
-func (t *KVTopic) IsDataNeedFix() bool {
-	return atomic.LoadInt32(&t.needFixData) == 1
-}
-
-func (t *KVTopic) SetDataFixState(needFix bool) {
-	if needFix {
-		atomic.StoreInt32(&t.needFixData, 1)
-	} else {
-		atomic.StoreInt32(&t.needFixData, 0)
-	}
-}
-
-func (t *KVTopic) getMagicCodeFileName() string {
-	return path.Join(t.dataPath, "magic"+strconv.Itoa(t.partition))
-}
-
-func (t *KVTopic) saveMagicCode() error {
-	var f *os.File
-	var err error
-
-	fileName := t.getMagicCodeFileName()
-	f, err = os.OpenFile(fileName, os.O_RDWR|os.O_CREATE, 0644)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	_, err = fmt.Fprintf(f, "%d\n",
-		atomic.LoadInt64(&t.magicCode))
-	if err != nil {
-		return err
-	}
-	f.Sync()
-	t.tpLog.Infof("saved as magic code: %v", atomic.LoadInt64(&t.magicCode))
-	return nil
-}
-
-func (t *KVTopic) removeMagicCode() {
-	fileName := t.getMagicCodeFileName()
-	err := os.Remove(fileName)
-	if err != nil {
-		t.tpLog.Infof("remove the magic file %v failed:%v", fileName, err)
-	}
-}
-
-func (t *KVTopic) loadMagicCode() error {
-	var f *os.File
-	var err error
-
-	fileName := t.getMagicCodeFileName()
-	f, err = os.OpenFile(fileName, os.O_RDONLY, 0644)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return err
-	}
-	defer f.Close()
-
-	var code int64
-	_, err = fmt.Fscanf(f, "%d\n",
-		&code)
-	if err != nil {
-		return err
-	}
-	atomic.StoreInt64(&t.magicCode, code)
-	t.tpLog.Infof("loading topic as magic code: %v", code)
-	return nil
-}
-
-func (t *KVTopic) removeHistoryStat() {
-	fileName := t.getHistoryStatsFileName()
-	err := os.Remove(fileName)
-	if err != nil {
-		t.tpLog.Infof("remove file %v failed:%v", fileName, err)
-	}
-}
-
-func (t *KVTopic) MarkAsRemoved() (string, error) {
-	t.Lock()
-	defer t.Unlock()
-	atomic.CompareAndSwapInt32(&t.exitFlag, 0, 1)
-	t.tpLog.Logf("TOPIC(%s): deleting", t.GetFullName())
-	// since we are explicitly deleting a topic (not just at system exit time)
-	// de-register this from the lookupd
-	t.nsqdNotify.NotifyStateChanged(t, true)
-
-	t.channelLock.Lock()
-	for _, channel := range t.channelMap {
-		t.channelMap[channel.name] = nil
-		delete(t.channelMap, channel.name)
-		channel.Delete()
-	}
-	t.channelLock.Unlock()
-	// we should move our partition only
-	renamePath := t.dataPath + "-removed-" + strconv.Itoa(int(time.Now().Unix()))
-	t.tpLog.Warningf("mark the topic as removed: %v", renamePath)
-	os.MkdirAll(renamePath, 0755)
-	err := t.backend.RemoveTo(renamePath)
-	if err != nil {
-		t.tpLog.Errorf("failed to mark the topic as removed %v failed: %v", renamePath, err)
-	}
-	util.AtomicRename(t.getMagicCodeFileName(), path.Join(renamePath, "magic"+strconv.Itoa(t.partition)))
-	t.removeHistoryStat()
-	t.RemoveChannelMeta()
-	t.removeMagicCode()
-	if t.GetDelayedQueue() != nil {
-		t.GetDelayedQueue().Delete()
-	}
-	return renamePath, err
-}
-
-// should be protected by the topic lock for all partitions
-func (t *KVTopic) SetMagicCode(code int64) error {
-	if t.magicCode == code {
-		return nil
-	} else if t.magicCode > 0 {
-		t.tpLog.Errorf("magic code set more than once :%v, %v", t.magicCode, code)
-		return errors.New("magic code can not be changed.")
-	}
-	t.magicCode = code
-	return t.saveMagicCode()
-}
-
-// should be protected by the topic lock for all partitions
-func (t *KVTopic) GetMagicCode() int64 {
-	return t.magicCode
-}
-
-func (t *KVTopic) SetTrace(enable bool) {
-	if enable {
-		atomic.StoreInt32(&t.EnableTrace, 1)
-	} else {
-		atomic.StoreInt32(&t.EnableTrace, 0)
-	}
-	if t.GetDelayedQueue() != nil {
-		t.GetDelayedQueue().SetTrace(enable)
-	}
-}
-
-func (t *KVTopic) getChannelMetaFileName() string {
-	return path.Join(t.dataPath, "channel_meta"+strconv.Itoa(t.partition))
-}
-
-func (t *KVTopic) LoadChannelMeta() error {
-	fn := t.getChannelMetaFileName()
-	channels, err := t.metaStorage.LoadChannelMeta(fn)
-	if err != nil {
-		if IsMetaNotFound(err) {
-			return nil
-		}
-		t.tpLog.LogWarningf("failed to load metadata - %s", err)
-		return err
-	}
-
-	for _, ch := range channels {
-		channelName := ch.Name
-		if !protocol.IsValidChannelName(channelName) {
-			t.tpLog.LogWarningf("skipping creation of invalid channel %s", channelName)
-			continue
-		}
-		// should not use GetChannel() which will init save meta while init channel
-		t.channelLock.Lock()
-		channel, _ := t.getOrCreateChannel(channelName)
-		t.channelLock.Unlock()
-
-		if ch.Paused {
-			channel.Pause()
-		}
-
-		if ch.Skipped {
-			channel.Skip()
-		}
-		//unskip zan test message according to meta file
-		if !ch.IsZanTestSkipepd() {
-			channel.UnskipZanTest()
-		}
-	}
-	return nil
-}
-
-func (t *KVTopic) UpdateChannelMeta(ch *Channel, paused int, skipped int, zanTestSkipped int) error {
-	switch paused {
-	case 1:
-		ch.Pause()
-	case 0:
-		ch.UnPause()
-	}
-
-	switch skipped {
-	case 1:
-		ch.Skip()
-	case 0:
-		ch.UnSkip()
-	}
-
-	switch int32(zanTestSkipped) {
-	case ZanTestSkip:
-		ch.SkipZanTest()
-	case ZanTestUnskip:
-		ch.UnskipZanTest()
-	}
-	return t.SaveChannelMeta()
-}
-
-func (t *KVTopic) GetChannelMeta() []ChannelMetaInfo {
-	t.channelLock.RLock()
-	channels := make([]ChannelMetaInfo, 0, len(t.channelMap))
-	for _, channel := range t.channelMap {
-		channel.RLock()
-		if !channel.ephemeral {
-			meta := ChannelMetaInfo{
-				Name:           channel.name,
-				Paused:         channel.IsPaused(),
-				Skipped:        channel.IsSkipped(),
-				ZanTestSkipped: channel.IsZanTestSkipped(),
-			}
-			channels = append(channels, meta)
-		}
-		channel.RUnlock()
-	}
-	t.channelLock.RUnlock()
-	return channels
-}
-
-func (t *KVTopic) SaveChannelMeta() error {
-	channels := make([]*ChannelMetaInfo, 0)
-	t.channelLock.RLock()
-	for _, channel := range t.channelMap {
-		channel.RLock()
-		if !channel.ephemeral {
-			meta := &ChannelMetaInfo{
-				Name:           channel.name,
-				Paused:         channel.IsPaused(),
-				Skipped:        channel.IsSkipped(),
-				ZanTestSkipped: channel.IsZanTestSkipped(),
-			}
-			channels = append(channels, meta)
-		}
-		channel.RUnlock()
-	}
-	t.channelLock.RUnlock()
-	fileName := t.getChannelMetaFileName()
-	err := t.metaStorage.SaveChannelMeta(fileName, t.option.UseFsync, channels)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func (t *KVTopic) RemoveChannelMeta() {
-	fileName := t.getChannelMetaFileName()
-	t.metaStorage.RemoveChannelMeta(fileName)
-}
-
-func (t *KVTopic) getHistoryStatsFileName() string {
-	return path.Join(t.dataPath, t.fullName+HISTORY_STAT_FILE_NAME)
-}
-
-func (t *KVTopic) GetDetailStats() *DetailStatsInfo {
-	return t.detailStats
-}
-
-func (t *KVTopic) SaveHistoryStats() error {
-	if t.Exiting() {
-		return ErrExiting
-	}
-	t.Lock()
-	defer t.Unlock()
-	return t.detailStats.SaveHistory(t.getHistoryStatsFileName())
-}
-
-func (t *KVTopic) LoadHistoryStats() error {
-	return t.detailStats.LoadHistory(t.getHistoryStatsFileName())
-}
-
-func (t *KVTopic) GetCommitted() BackendQueueEnd {
-	l := t.committedOffset.Load()
-	if l == nil {
-		return nil
-	}
-	return l.(BackendQueueEnd)
-}
-
-// note: multiple writer should be protected by lock
-func (t *KVTopic) UpdateCommittedOffset(offset BackendQueueEnd) {
-	if offset == nil {
-		return
-	}
-	cur := t.GetCommitted()
-	if cur != nil && offset.Offset() < cur.Offset() {
-		t.tpLog.LogDebugf("committed is rollbacked: %v, %v", cur, offset)
-	}
-	t.committedOffset.Store(offset)
-	syncEvery := atomic.LoadInt64(&t.dynamicConf.SyncEvery)
-	if syncEvery == 1 ||
-		offset.TotalMsgCnt()-atomic.LoadInt64(&t.lastSyncCnt) >= syncEvery {
-		if !t.IsWriteDisabled() {
-			t.flushBuffer(true)
-		}
-	} else {
-		t.notifyChEndChanged(false)
-	}
-}
-
-func (t *KVTopic) GetDiskQueueSnapshot() *DiskQueueSnapshot {
-	e := t.backend.GetQueueReadEnd()
-	commit := t.GetCommitted()
-	if commit != nil && e.Offset() > commit.Offset() {
-		e = commit
-	}
-	start := t.backend.GetQueueReadStart()
-	d := NewDiskQueueSnapshot(getBackendName(t.tname, t.partition), t.dataPath, e)
-	d.SetQueueStart(start)
-	return d
+func (t *KVTopic) IsExt() bool {
+	return true
 }
 
 func (t *KVTopic) BufferPoolGet(capacity int) *bytes.Buffer {
@@ -594,87 +237,6 @@ func (t *KVTopic) BufferPoolGet(capacity int) *bytes.Buffer {
 
 func (t *KVTopic) BufferPoolPut(b *bytes.Buffer) {
 	t.bp.Put(b)
-}
-
-func (t *KVTopic) GetChannelMapCopy() map[string]*Channel {
-	tmpMap := make(map[string]*Channel)
-	t.channelLock.RLock()
-	for k, v := range t.channelMap {
-		tmpMap[k] = v
-	}
-	t.channelLock.RUnlock()
-	return tmpMap
-}
-
-// Exiting returns a boolean indicating if this topic is closed/exiting
-func (t *KVTopic) Exiting() bool {
-	return atomic.LoadInt32(&t.exitFlag) == 1
-}
-
-func (t *KVTopic) GetDynamicInfo() TopicDynamicConf {
-	t.Lock()
-	info := *t.dynamicConf
-	t.Unlock()
-	return info
-}
-
-func (t *KVTopic) IsOrdered() bool {
-	return atomic.LoadInt32(&t.isOrdered) == 1
-}
-
-func (t *KVTopic) SetDynamicInfo(dynamicConf TopicDynamicConf, idGen MsgIDGenerator) {
-	t.Lock()
-	if idGen != nil {
-		t.msgIDCursor = idGen
-	}
-	atomic.StoreInt64(&t.dynamicConf.SyncEvery, dynamicConf.SyncEvery)
-	atomic.StoreInt32(&t.dynamicConf.AutoCommit, dynamicConf.AutoCommit)
-	atomic.StoreInt32(&t.dynamicConf.RetentionDay, dynamicConf.RetentionDay)
-	t.dynamicConf.OrderedMulti = dynamicConf.OrderedMulti
-	if dynamicConf.OrderedMulti {
-		atomic.StoreInt32(&t.isOrdered, 1)
-	} else {
-		atomic.StoreInt32(&t.isOrdered, 0)
-	}
-	t.dynamicConf.MultiPart = dynamicConf.MultiPart
-
-	dq := t.GetDelayedQueue()
-	if dq != nil {
-		atomic.StoreInt64(&dq.SyncEvery, dynamicConf.SyncEvery)
-		if dynamicConf.Ext {
-			dq.setExt()
-		}
-	}
-	t.dynamicConf.Ext = dynamicConf.Ext
-	if dynamicConf.Ext {
-		t.setExt()
-	}
-	t.dynamicConf.DisableChannelAutoCreate = dynamicConf.DisableChannelAutoCreate
-	channelAutoCreateDisabled := t.IsChannelAutoCreateDisabled()
-	if dynamicConf.DisableChannelAutoCreate && !channelAutoCreateDisabled {
-		t.DisableChannelAutoCreate()
-	} else if !dynamicConf.DisableChannelAutoCreate && channelAutoCreateDisabled {
-		t.EnableChannelAutoCreate()
-	}
-	t.tpLog.Logf("topic dynamic configure changed to %v", dynamicConf)
-	t.channelLock.RLock()
-	for _, ch := range t.channelMap {
-		ext := dynamicConf.Ext
-		ch.SetExt(ext)
-	}
-	t.channelLock.RUnlock()
-	t.Unlock()
-	t.nsqdNotify.NotifyStateChanged(t, true)
-}
-
-func (t *KVTopic) nextMsgID() MessageID {
-	id := uint64(0)
-	if t.msgIDCursor != nil {
-		id = t.msgIDCursor.NextID()
-	} else {
-		id = atomic.AddUint64(&t.defaultIDSeq, 1)
-	}
-	return MessageID(id)
 }
 
 func (t *KVTopic) GetFullName() string {
@@ -689,265 +251,104 @@ func (t *KVTopic) GetTopicPart() int {
 	return t.partition
 }
 
-// GetChannel performs a thread safe operation
-// to return a pointer to a Channel object (potentially new)
-// for the given KVTopic
-func (t *KVTopic) GetChannel(channelName string) *Channel {
-	t.channelLock.Lock()
-	channel, isNew := t.getOrCreateChannel(channelName)
-	t.channelLock.Unlock()
-
-	if isNew {
-		if !channel.IsEphemeral() {
-			t.SaveChannelMeta()
-		}
-		// update messagePump state
-		t.NotifyReloadChannels()
+func (t *KVTopic) ResetBackendEnd(vend BackendOffset, totalCnt int64) error {
+	// tag info or trace key info currently not cleaned
+	minKey := getKVKeyForMsgOffset(t.fullName, int64(vend), 0)
+	maxKey := getKVKeyForMsgOffsetEnd(t.fullName)
+	itopts := engine.IteratorOpts{}
+	itopts.Min = minKey
+	itopts.Max = maxKey
+	itopts.Type = engine.RangeOpen
+	it, err := t.kvEng.GetIterator(itopts)
+	if err != nil {
+		return err
 	}
-
-	return channel
-}
-
-func (t *KVTopic) NotifyReloadChannels() {
-}
-
-func (t *KVTopic) GetTopicChannelDebugStat(channelName string) string {
-	statStr := ""
-	t.channelLock.RLock()
-	for n, channel := range t.channelMap {
-		if channelName == "" || channelName == n {
-			statStr += channel.GetChannelDebugStats()
-		}
-	}
-	t.channelLock.RUnlock()
-	dq := t.GetDelayedQueue()
-	if dq != nil {
-		t.tpLog.Logf("delayed queue stats: %v", dq.Stats())
-	}
-	return statStr
-}
-
-// this expects the caller to handle locking
-func (t *KVTopic) getOrCreateChannel(channelName string) (*Channel, bool) {
-	channel, ok := t.channelMap[channelName]
-	if !ok {
-		deleteCallback := func(c *Channel) {
-			t.DeleteExistingChannel(c.name)
-		}
-		readEnd := t.backend.GetQueueReadEnd()
-		curCommit := t.GetCommitted()
-		if curCommit != nil && readEnd.Offset() > curCommit.Offset() {
-			if t.tpLog.Level() >= levellogger.LOG_DEBUG {
-				t.tpLog.Logf("channel %v, end to commit: %v, read end: %v", channelName, curCommit, readEnd)
-			}
-			readEnd = curCommit
-		}
-
-		var ext int32
-		if t.IsExt() {
-			ext = 1
-		} else {
-			ext = 0
-		}
-		start := t.backend.GetQueueReadStart()
-		channel = NewChannel(t.GetTopicName(), t.GetTopicPart(), t.IsOrdered(), channelName, readEnd,
-			t.option, deleteCallback, t.flushForChannelMoreData, atomic.LoadInt32(&t.writeDisabled),
-			t.nsqdNotify, ext, start, t.metaStorage, !t.IsDataNeedFix())
-
-		channel.UpdateQueueEnd(readEnd, false)
-		channel.SetDelayedQueue(t.GetDelayedQueue())
-		if t.IsWriteDisabled() {
-			channel.DisableConsume(true)
-		}
-		t.channelMap[channelName] = channel
-		t.tpLog.Logf("TOPIC new channel(%s), end: %v",
-			channel.name, channel.GetChannelEnd())
-		return channel, true
-	}
-	return channel, false
-}
-
-func (t *KVTopic) GetExistingChannel(channelName string) (*Channel, error) {
-	t.channelLock.RLock()
-	channel, ok := t.channelMap[channelName]
-	t.channelLock.RUnlock()
-	if !ok {
-		return nil, errors.New("channel does not exist")
-	}
-	return channel, nil
-}
-
-func (t *KVTopic) CloseExistingChannel(channelName string, deleteData bool) error {
-	return nil
-}
-
-// DeleteExistingChannel removes a channel from the topic only if it exists
-func (t *KVTopic) DeleteExistingChannel(channelName string) error {
-	err := t.CloseExistingChannel(channelName, true)
-	if err == nil {
-		t.SaveChannelMeta()
-	}
-	return err
-}
-
-func (t *KVTopic) RollbackNoLock(vend BackendOffset, diffCnt uint64) error {
-	old := t.backend.GetQueueWriteEnd()
-	t.tpLog.Logf("reset the backend from %v to : %v, %v", old, vend, diffCnt)
-	dend, err := t.backend.RollbackWriteV2(vend, diffCnt)
-	if err == nil {
-		t.UpdateCommittedOffset(&dend)
-		t.updateChannelsEnd(true, true)
-	}
-	return err
-}
-
-func (t *KVTopic) ResetBackendEndNoLock(vend BackendOffset, totalCnt int64) error {
-	old := t.backend.GetQueueWriteEnd()
-	if old.Offset() == vend && old.TotalMsgCnt() == totalCnt {
+	defer it.Close()
+	it.SeekToFirst()
+	if !it.Valid() {
 		return nil
 	}
-	t.tpLog.Logf("topic reset the backend from %v to : %v, %v", old, vend, totalCnt)
-	dend, err := t.backend.ResetWriteEndV2(vend, totalCnt)
+	v := it.RefValue()
+	msgid, msgCnt, _, err := decodeMsgOffsetValue(v)
 	if err != nil {
-		t.tpLog.LogErrorf("reset backend to %v error: %v", vend, err)
-	} else {
-		t.UpdateCommittedOffset(&dend)
-		t.updateChannelsEnd(true, true)
+		return err
 	}
+	wb := t.kvEng.NewWriteBatch()
+	defer wb.Destroy()
+	wb.DeleteRange(minKey, maxKey)
 
+	minKey = getKVKeyForMsgID(t.fullName, MessageID(msgid))
+	maxKey = getKVKeyForMsgIDEnd(t.fullName)
+	wb.DeleteRange(minKey, maxKey)
+
+	minKey = getKVKeyForMsgCnt(t.fullName, msgCnt)
+	maxKey = getKVKeyForMsgCntEnd(t.fullName)
+	wb.DeleteRange(minKey, maxKey)
+
+	//minKey = getKVKeyForMsgTs(t.fullName, MessageID(msgid), msgTs)
+	//maxKey = getKVKeyForMsgTsEnd(t.fullName)
+	//wb.DeleteRange(minKey, maxKey)
+	err = wb.Commit()
 	return err
 }
 
 // PutMessage writes a Message to the queue
-func (t *KVTopic) PutMessage(m *Message) (MessageID, BackendOffset, int32, BackendQueueEnd, error) {
-	if m.ID > 0 {
-		t.tpLog.Logf("should not pass id in message while pub: %v", m.ID)
-		return 0, 0, 0, nil, ErrInvalidMessageID
-	}
-	t.Lock()
-	defer t.Unlock()
-	if m.DelayedType >= MinDelayedType {
-		return 0, 0, 0, nil, ErrMessageInvalidDelayedState
-	}
-
-	id, offset, writeBytes, dend, err := t.PutMessageNoLock(m)
-	return id, offset, writeBytes, dend, err
-}
-
-func (t *KVTopic) PutMessageNoLock(m *Message) (MessageID, BackendOffset, int32, BackendQueueEnd, error) {
-	if atomic.LoadInt32(&t.exitFlag) == 1 {
-		return 0, 0, 0, nil, errors.New("exiting")
-	}
-	if m.ID > 0 {
-		t.tpLog.Logf("should not pass id in message while pub: %v", m.ID)
-		return 0, 0, 0, nil, ErrInvalidMessageID
-	}
-
-	id, offset, writeBytes, dend, err := t.put(m, true, 0)
-	return id, offset, writeBytes, &dend, err
-}
-
-func (t *KVTopic) flushForChannelMoreData(c *Channel) {
-	if c.IsSkipped() || c.IsPaused() {
-		return
-	}
-	hasData := t.backend.FlushBuffer()
-	if hasData {
-		e := t.getCommittedEnd()
-		updateChannelEnd(false, e, c)
-	}
-}
-
-func (t *KVTopic) ForceFlushForChannels(wait bool) {
-	// flush buffer only to allow the channel read recent write
-	// no need sync to disk, since sync is heavy IO.
-	if wait {
-		hasData := t.backend.FlushBuffer()
-		if hasData {
-			t.updateChannelsEnd(false, false)
-		}
-	} else {
-		t.notifyChEndChanged(false)
-	}
-}
-
-func (t *KVTopic) notifyChEndChanged(force bool) {
-	t.nsqdNotify.PushTopicJob(t.GetTopicName(), func() { t.flushForChannels(force) })
-}
-
-func (t *KVTopic) flushForChannels(forceUpdate bool) {
-	if t.IsWriteDisabled() {
-		return
-	}
-	needFlush := false
-	t.channelLock.RLock()
-	for _, ch := range t.channelMap {
-		if ch.IsWaitingMoreData() {
-			needFlush = true
-			break
-		}
-	}
-	t.channelLock.RUnlock()
-	hasData := false
-	if needFlush {
-		hasData = t.backend.FlushBuffer()
-	}
-	if hasData || forceUpdate {
-		// any channel which trigged the flush need force update the end for all channels, or it may miss
-		// the end update event since no more data to be flush until next message come.
-		t.updateChannelsEnd(false, true)
-	}
+func (t *KVTopic) PutMessage(m *Message) (int32, BackendQueueEnd, error) {
+	endOffset, writeBytes, dendCnt, err := t.put(m, 0)
+	dn := &diskQueueEndInfo{totalMsgCnt: dendCnt}
+	dn.virtualEnd = endOffset
+	return writeBytes, dn, err
 }
 
 func (t *KVTopic) PutRawDataOnReplica(rawData []byte, offset BackendOffset, checkSize int64, msgNum int32) (BackendQueueEnd, error) {
-	if atomic.LoadInt32(&t.exitFlag) == 1 {
-		return nil, ErrExiting
-	}
-	wend := t.backend.GetQueueWriteEnd()
-	if wend.Offset() != offset {
+	wend := t.lastOffset
+	if wend != int64(offset) {
 		t.tpLog.LogErrorf("topic write offset mismatch: %v, %v", offset, wend)
 		return nil, ErrWriteOffsetMismatch
 	}
-	_, writeBytes, dend, err := t.backend.PutRawV2(rawData, msgNum)
-	if err != nil {
-		t.tpLog.LogErrorf("topic write to disk error: %v, %v", offset, err.Error())
-		return &dend, err
+	if len(rawData) < 4 {
+		return nil, fmt.Errorf("invalid raw message data: %v", rawData)
 	}
-	if checkSize > 0 && int64(writeBytes) != checkSize {
-		t.ResetBackendEndNoLock(wend.Offset(), wend.TotalMsgCnt())
-		return &dend, fmt.Errorf("message write size mismatch %v vs %v", checkSize, writeBytes)
+	if msgNum == 1 {
+		m, err := DecodeMessage(rawData[4:], t.IsExt())
+		if err != nil {
+			return nil, err
+		}
+		writeBytes, dend, err := t.PutMessage(m)
+		if err != nil {
+			t.tpLog.LogErrorf("topic write to disk error: %v, %v", offset, err.Error())
+			return dend, err
+		}
+		if checkSize > 0 && int64(writeBytes) != checkSize {
+			return dend, fmt.Errorf("message write size mismatch %v vs %v", checkSize, writeBytes)
+		}
+		return dend, nil
+	} else {
+		// batched
+		return nil, fmt.Errorf("unsupport batched message on index")
 	}
-	atomic.StoreInt32(&t.needFlush, 1)
-	if atomic.LoadInt32(&t.dynamicConf.AutoCommit) == 1 {
-		t.UpdateCommittedOffset(&dend)
-	}
-
-	return &dend, nil
 }
 
 func (t *KVTopic) PutMessageOnReplica(m *Message, offset BackendOffset, checkSize int64) (BackendQueueEnd, error) {
-	if atomic.LoadInt32(&t.exitFlag) == 1 {
-		return nil, ErrExiting
-	}
-	wend := t.backend.GetQueueWriteEnd()
-	if wend.Offset() != offset {
+	wend := t.lastOffset
+	if wend != int64(offset) {
 		t.tpLog.LogErrorf("topic write offset mismatch: %v, %v", offset, wend)
 		return nil, ErrWriteOffsetMismatch
 	}
-	_, _, _, dend, err := t.put(m, false, checkSize)
+	endOffset, _, dendCnt, err := t.put(m, checkSize)
 	if err != nil {
 		return nil, err
 	}
-	return &dend, nil
+	dn := &diskQueueEndInfo{totalMsgCnt: dendCnt}
+	dn.virtualEnd = endOffset
+	return dn, nil
 }
 
 func (t *KVTopic) PutMessagesOnReplica(msgs []*Message, offset BackendOffset, checkSize int64) (BackendQueueEnd, error) {
-	if atomic.LoadInt32(&t.exitFlag) == 1 {
-		return nil, ErrExiting
-	}
-
-	wend := t.backend.GetQueueWriteEnd()
-	if wend.Offset() != offset {
+	wb := t.kvEng.DefaultWriteBatch()
+	defer wb.Clear()
+	wend := t.lastOffset
+	if wend != int64(offset) {
 		t.tpLog.LogErrorf(
 			"TOPIC write message offset mismatch %v, %v",
 			offset, wend)
@@ -955,143 +356,98 @@ func (t *KVTopic) PutMessagesOnReplica(msgs []*Message, offset BackendOffset, ch
 	}
 
 	var dend diskQueueEndInfo
-	var err error
-	wsize := int32(0)
 	wsizeTotal := int32(0)
+	dend.totalMsgCnt = t.lastCnt
+	dend.virtualEnd = BackendOffset(t.lastOffset)
 	for _, m := range msgs {
-		_, _, wsize, dend, err = t.put(m, false, 0)
+		wend, wsize, err := t.putBatched(wb, int64(dend.Offset()), dend.TotalMsgCnt(), m, 0)
 		if err != nil {
-			t.ResetBackendEndNoLock(wend.Offset(), wend.TotalMsgCnt())
 			return nil, err
 		}
+		dend.totalMsgCnt = dend.totalMsgCnt + 1
+		dend.virtualEnd = wend
 		wsizeTotal += wsize
 	}
 	if checkSize > 0 && int64(wsizeTotal) != checkSize {
-		t.ResetBackendEndNoLock(wend.Offset(), wend.TotalMsgCnt())
 		return nil, fmt.Errorf("batch message size mismatch: %v vs %v", checkSize, wsizeTotal)
 	}
-
-	return &dend, nil
+	err := wb.Commit()
+	return &dend, err
 }
 
-func (t *KVTopic) PutMessagesNoLock(msgs []*Message) (MessageID, BackendOffset, int32, int64, BackendQueueEnd, error) {
-	if atomic.LoadInt32(&t.exitFlag) == 1 {
-		return 0, 0, 0, 0, nil, ErrExiting
-	}
-
-	wend := t.backend.GetQueueWriteEnd()
-	firstMsgID := MessageID(0)
-	firstOffset := BackendOffset(-1)
-	firstCnt := int64(0)
+func (t *KVTopic) PutMessages(msgs []*Message) (BackendOffset, int32, BackendQueueEnd, error) {
+	wb := t.kvEng.DefaultWriteBatch()
+	defer wb.Clear()
+	firstOffset := BackendOffset(t.lastOffset)
 	var diskEnd diskQueueEndInfo
+	diskEnd.totalMsgCnt = t.lastCnt
+	diskEnd.virtualEnd = BackendOffset(t.lastOffset)
 	batchBytes := int32(0)
 	for _, m := range msgs {
-		if m.ID > 0 {
-			t.tpLog.Logf("should not pass id in message while pub: %v", m.ID)
-			t.ResetBackendEndNoLock(wend.Offset(), wend.TotalMsgCnt())
-			return 0, 0, 0, 0, nil, ErrInvalidMessageID
-		}
-		id, offset, bytes, end, err := t.put(m, true, 0)
+		offset, bytes, err := t.putBatched(wb, int64(diskEnd.Offset()), diskEnd.TotalMsgCnt(), m, 0)
 		if err != nil {
-			t.ResetBackendEndNoLock(wend.Offset(), wend.TotalMsgCnt())
-			return firstMsgID, firstOffset, batchBytes, firstCnt, &diskEnd, err
+			return firstOffset, batchBytes, &diskEnd, err
 		}
-		diskEnd = end
+		diskEnd.totalMsgCnt = diskEnd.totalMsgCnt + 1
+		diskEnd.virtualEnd = offset
 		batchBytes += bytes
-		if firstOffset == BackendOffset(-1) {
-			firstOffset = offset
-			firstMsgID = id
-			firstCnt = diskEnd.TotalMsgCnt()
-		}
 	}
-	return firstMsgID, firstOffset, batchBytes, firstCnt, &diskEnd, nil
-}
-
-// PutMessages writes multiple Messages to the queue
-func (t *KVTopic) PutMessages(msgs []*Message) (MessageID, BackendOffset, int32, int64, BackendQueueEnd, error) {
-	s := time.Now()
-	t.Lock()
-	defer t.Unlock()
-	firstMsgID, firstOffset, batchBytes, totalCnt, dend, err := t.PutMessagesNoLock(msgs)
-	cost := time.Since(s)
-	if cost >= slowCost {
-		t.tpLog.Infof("topic put batch local cost: %v", cost)
-	}
-	return firstMsgID, firstOffset, batchBytes, totalCnt, dend, err
-}
-
-func (t *KVTopic) put(m *Message, trace bool, checkSize int64) (MessageID, BackendOffset, int32, diskQueueEndInfo, error) {
-	if m.ID <= 0 {
-		m.ID = t.nextMsgID()
-	}
-	offset, writeBytes, dend, err := writeMessageToBackendWithCheck(t.IsExt(), &t.putBuffer, m, checkSize, t.backend)
-	atomic.StoreInt32(&t.needFlush, 1)
+	err := wb.Commit()
 	if err != nil {
-		t.tpLog.LogErrorf(
-			"TOPIC failed to write message to backend - %s",
-			err)
-		return m.ID, offset, writeBytes, dend, err
+		return firstOffset, batchBytes, &diskEnd, err
 	}
-
-	if atomic.LoadInt32(&t.dynamicConf.AutoCommit) == 1 {
-		t.UpdateCommittedOffset(&dend)
-	}
-
-	if trace {
-		if m.TraceID != 0 || atomic.LoadInt32(&t.EnableTrace) == 1 || t.tpLog.Level() >= levellogger.LOG_DETAIL {
-			nsqMsgTracer.TracePub(t.GetTopicName(), t.GetTopicPart(), "PUB", m.TraceID, m, offset, dend.TotalMsgCnt())
-		}
-	}
-	// TODO: handle delayed type for dpub and transaction message
-	// should remove from delayed queue after written on disk file
-	return m.ID, offset, writeBytes, dend, nil
+	t.lastOffset = int64(diskEnd.Offset())
+	t.lastCnt = diskEnd.TotalMsgCnt()
+	return firstOffset, batchBytes, &diskEnd, nil
 }
 
-func (t *KVTopic) getCommittedEnd() BackendQueueEnd {
-	e := t.backend.GetQueueReadEnd()
-	curCommit := t.GetCommitted()
-	// if not committed, we need wait to notify channel.
-	if curCommit != nil && e.Offset() > curCommit.Offset() {
-		if t.tpLog.Level() >= levellogger.LOG_DEBUG {
-			t.tpLog.Logf("topic end to commit: %v, read end: %v", curCommit, e)
-		}
-		e = curCommit
+func (t *KVTopic) putBatched(wb engine.WriteBatch, lastOffset int64, lastCnt int64, m *Message, checkSize int64) (BackendOffset, int32, error) {
+	var writeEnd BackendOffset
+	t.putBuffer.Reset()
+	wsize, err := m.WriteTo(&t.putBuffer, t.IsExt())
+	if err != nil {
+		return writeEnd, 0, err
 	}
-	return e
+	// there are 4bytes data length on disk.
+	if checkSize > 0 && wsize+4 != checkSize {
+		return writeEnd, 0, fmt.Errorf("message write size mismatch %v vs %v", checkSize, wsize+4)
+	}
+	writeEnd = BackendOffset(lastOffset) + BackendOffset(wsize+4)
+	keyBuf := getKVKeyForMsgID(t.fullName, m.ID)
+	wb.Put(keyBuf, t.putBuffer.Bytes())
+	idBuf := encodeMsgIDValue(m.ID)
+	if m.TraceID > 0 {
+		keyBuf = getKVKeyForMsgTrace(t.fullName, m.ID, m.TraceID)
+		wb.Put(keyBuf, idBuf)
+	}
+	keyBuf = getKVKeyForMsgOffset(t.fullName, lastOffset, int64(writeEnd))
+	valueBuf := encodeMsgOffsetValue(m.ID, lastCnt, m.Timestamp)
+	wb.Put(keyBuf, valueBuf)
+	keyBuf = getKVKeyForMsgCnt(t.fullName, lastCnt)
+	wb.Put(keyBuf, idBuf)
+	keyBuf = getKVKeyForMsgTs(t.fullName, m.ID, m.Timestamp)
+	wb.Put(keyBuf, idBuf)
+	return writeEnd, int32(wsize + 4), nil
 }
 
-func (t *KVTopic) updateChannelsEnd(forceReload bool, forceUpdate bool) {
-	s := time.Now()
-	e := t.getCommittedEnd()
-	t.channelLock.RLock()
-	if e != nil {
-		for _, channel := range t.channelMap {
-			if forceUpdate || channel.IsWaitingMoreData() {
-				updateChannelEnd(forceReload, e, channel)
-			}
-		}
-	}
-	t.channelLock.RUnlock()
-	cost := time.Since(s)
-	if cost > time.Second/2 {
-		t.tpLog.LogWarningf("topic update channels end cost: %v", cost)
-	}
-}
+func (t *KVTopic) put(m *Message, checkSize int64) (BackendOffset, int32, int64, error) {
+	wb := t.kvEng.DefaultWriteBatch()
+	defer wb.Clear()
 
-func (t *KVTopic) TotalMessageCnt() uint64 {
-	return uint64(t.backend.GetQueueWriteEnd().TotalMsgCnt())
-}
-
-func (t *KVTopic) GetQueueReadStart() int64 {
-	return int64(t.backend.GetQueueReadStart().Offset())
-}
-
-func (t *KVTopic) TotalDataSize() int64 {
-	e := t.backend.GetQueueWriteEnd()
-	if e == nil {
-		return 0
+	var writeCnt int64
+	writeEnd, wsize, err := t.putBatched(wb, t.lastOffset, t.lastCnt, m, checkSize)
+	if err != nil {
+		return writeEnd, wsize, writeCnt, err
 	}
-	return int64(e.Offset())
+	writeCnt = t.lastCnt + 1
+	// add tag if ext has tag info
+	err = wb.Commit()
+	if err != nil {
+		return writeEnd, 0, writeCnt, err
+	}
+	t.lastOffset = int64(writeEnd)
+	t.lastCnt = writeCnt
+	return writeEnd, int32(wsize), writeCnt, nil
 }
 
 // Delete empties the topic and all its channels and closes
@@ -1105,424 +461,173 @@ func (t *KVTopic) Close() error {
 }
 
 func (t *KVTopic) exit(deleted bool) error {
-	if !atomic.CompareAndSwapInt32(&t.exitFlag, 0, 1) {
-		return errors.New("exiting")
-	}
-
 	if deleted {
-		t.tpLog.Logf("TOPIC deleting")
-		// since we are explicitly deleting a topic (not just at system exit time)
-		// de-register this from the lookupd
-		t.nsqdNotify.NotifyStateChanged(t, true)
-	} else {
-		t.tpLog.Logf("TOPIC closing")
-	}
-	close(t.quitChan)
-	// this will wait pub loop,
-	// pub loop may be blocked by cluster write which may hold the write lock for coordinator,
-	// we need avoid wait close/delete topic in coordinator.
-	t.wg.Wait()
-
-	t.Lock()
-	defer t.Unlock()
-
-	if deleted {
-		t.channelLock.Lock()
-		for _, channel := range t.channelMap {
-			delete(t.channelMap, channel.name)
-			channel.Delete()
-		}
-		t.channelLock.Unlock()
-
-		if t.GetDelayedQueue() != nil {
-			t.GetDelayedQueue().Delete()
-		}
 		// empty the queue (deletes the backend files, too)
 		t.Empty()
-		t.removeHistoryStat()
-		t.RemoveChannelMeta()
-		t.removeMagicCode()
-		return t.backend.Delete()
 	}
 
-	// write anything leftover to disk
-	t.flushData()
-	t.updateChannelsEnd(false, true)
-	t.tpLog.Logf("[TRACE_DATA] exiting topic end: %v, cnt: %v", t.TotalDataSize(), t.TotalMessageCnt())
-	t.SaveChannelMeta()
-	t.channelLock.RLock()
-	// close all the channels
-	for _, channel := range t.channelMap {
-		t.tpLog.Logf("[TRACE_DATA] exiting channel : %v, %v, %v, %v", channel.GetName(), channel.GetConfirmed(), channel.Depth(), channel.backend.GetQueueReadEnd())
-		err := channel.Close()
-		if err != nil {
-			// we need to continue regardless of error to close all the channels
-			t.tpLog.Logf(" channel(%s) close - %s", channel.name, err)
-		}
-	}
-	t.channelLock.RUnlock()
-
-	if t.GetDelayedQueue() != nil {
-		t.GetDelayedQueue().Close()
-	}
-	return t.backend.Close()
-}
-
-func (t *KVTopic) IsWriteDisabled() bool {
-	return atomic.LoadInt32(&t.writeDisabled) == 1
-}
-
-// for leader, we can continue consume on disabled leader
-func (t *KVTopic) DisableForSlave(keepConsume bool) {
-	if atomic.CompareAndSwapInt32(&t.writeDisabled, 0, 1) {
-		t.tpLog.Logf("[TRACE_DATA] while disable topic end: %v, cnt: %v, queue start: %v",
-			t.TotalDataSize(), t.TotalMessageCnt(), t.backend.GetQueueReadStart())
-	}
-
-	t.channelLock.RLock()
-	for _, c := range t.channelMap {
-		c.DisableConsume(!keepConsume)
-		d, ok := c.backend.(*diskQueueReader)
-		var curRead BackendQueueEnd
-		if ok {
-			curRead = d.GetQueueCurrentRead()
-		}
-
-		t.tpLog.Logf("[TRACE_DATA] while disable channel : %v, %v, %v, %v, %v", c.GetName(),
-			c.GetConfirmed(), c.Depth(), c.backend.GetQueueReadEnd(), curRead)
-	}
-	t.channelLock.RUnlock()
-	// notify de-register from lookup
-	t.nsqdNotify.NotifyStateChanged(t, false)
-}
-
-func (t *KVTopic) EnableForMaster() {
-	if atomic.CompareAndSwapInt32(&t.writeDisabled, 1, 0) {
-		t.tpLog.Logf("[TRACE_DATA] while enable topic end: %v, cnt: %v", t.TotalDataSize(), t.TotalMessageCnt())
-	}
-	t.channelLock.RLock()
-	for _, c := range t.channelMap {
-		c.DisableConsume(false)
-		d, ok := c.backend.(*diskQueueReader)
-		var curRead BackendQueueEnd
-		if ok {
-			curRead = d.GetQueueCurrentRead()
-		}
-		t.tpLog.Logf("[TRACE_DATA] while enable channel : %v, %v, %v, %v, %v", c.GetName(),
-			c.GetConfirmed(), c.Depth(), c.backend.GetQueueReadEnd(), curRead)
-	}
-	t.channelLock.RUnlock()
-	// notify re-register to lookup
-	t.nsqdNotify.NotifyStateChanged(t, false)
+	t.kvEng.CloseAll()
+	return nil
 }
 
 func (t *KVTopic) Empty() error {
 	t.tpLog.Logf("TOPIC empty")
-	return t.backend.Empty()
-}
-
-func (t *KVTopic) ForceFlush() {
-	if t.tpLog.Level() >= levellogger.LOG_DETAIL {
-		e := t.backend.GetQueueReadEnd()
-		curCommit := t.GetCommitted()
-		t.tpLog.Logf("topic end to commit: %v, read end: %v", curCommit, e)
-	}
-
-	t.flushData()
-
-	s := time.Now()
-	e := t.getCommittedEnd()
-	useFsync := t.option.UseFsync
-	t.channelLock.RLock()
-	for _, channel := range t.channelMap {
-		updateChannelEnd(false, e, channel)
-		channel.Flush(useFsync)
-		cost := time.Since(s)
-		if cost > slowCost*10 {
-			t.tpLog.Logf("topic flush channel %v cost: %v", channel.GetName(), cost)
-		}
-	}
-	t.channelLock.RUnlock()
-	cost := time.Since(s)
-	if cost > slowCost*10 {
-		t.tpLog.Logf("topic flush channel cost: %v", cost)
-	}
-}
-
-func (t *KVTopic) flushBuffer(notifyCh bool) error {
-	hasData := t.backend.FlushBuffer()
-	if notifyCh && hasData {
-		t.notifyChEndChanged(true)
-	}
-	return nil
-}
-
-func (t *KVTopic) IsFsync() bool {
-	syncEvery := atomic.LoadInt64(&t.dynamicConf.SyncEvery)
-	useFsync := syncEvery == 1 || t.option.UseFsync
-	return useFsync
-}
-
-func (t *KVTopic) flushData() (error, bool) {
-	syncEvery := atomic.LoadInt64(&t.dynamicConf.SyncEvery)
-	useFsync := syncEvery == 1 || t.option.UseFsync
-
-	s := time.Now()
-	if t.GetDelayedQueue() != nil {
-		t.GetDelayedQueue().ForceFlush()
-	}
-
-	ok := atomic.CompareAndSwapInt32(&t.needFlush, 1, 0)
-	if !ok {
-		return nil, false
-	}
-	cost1 := time.Since(s)
-	atomic.StoreInt64(&t.lastSyncCnt, t.backend.GetQueueWriteEnd().TotalMsgCnt())
-	err := t.backend.Flush(useFsync)
-	if err != nil {
-		t.tpLog.LogErrorf("failed flush: %v", err)
-		return err, false
-	}
-	cost2 := time.Since(s)
-	if cost2 >= slowCost {
-		t.tpLog.LogWarningf("topic flush cost: %v, %v", cost1, cost2)
-	}
-	return err, true
-}
-
-func (t *KVTopic) PrintCurrentStats() {
-	t.tpLog.Logf("topic status: start: %v, write end %v", t.backend.GetQueueReadStart(), t.backend.GetQueueWriteEnd())
-	t.channelLock.RLock()
-	for _, ch := range t.channelMap {
-		t.tpLog.Logf("channel(%s) depth: %v, confirmed: %v, debug: %v", ch.GetName(), ch.Depth(),
-			ch.GetConfirmed(), ch.GetChannelDebugStats())
-	}
-	t.channelLock.RUnlock()
-}
-
-func (t *KVTopic) AggregateChannelE2eProcessingLatency() *quantile.Quantile {
-	var latencyStream *quantile.Quantile
-	t.channelLock.RLock()
-	realChannels := make([]*Channel, 0, len(t.channelMap))
-	for _, c := range t.channelMap {
-		realChannels = append(realChannels, c)
-	}
-	t.channelLock.RUnlock()
-	for _, c := range realChannels {
-		if c.e2eProcessingLatencyStream == nil {
-			continue
-		}
-		if latencyStream == nil {
-			latencyStream = quantile.New(
-				t.option.E2EProcessingLatencyWindowTime,
-				t.option.E2EProcessingLatencyPercentiles)
-		}
-		latencyStream.Merge(c.e2eProcessingLatencyStream)
-	}
-	return latencyStream
+	startKey := getKVKeyForTopicBegin(t.fullName)
+	endKey := getKVKeyForTopicEnd(t.fullName)
+	wb := t.kvEng.NewWriteBatch()
+	wb.DeleteRange(startKey, endKey)
+	defer wb.Clear()
+	return wb.Commit()
 }
 
 // maybe should return the cleaned offset to allow commit log clean
-func (t *KVTopic) TryCleanOldData(retentionSize int64, noRealClean bool, maxCleanOffset BackendOffset) (BackendQueueEnd, error) {
+func (t *KVTopic) TryCleanOldData(retentionSize int64, cleanEndInfo BackendQueueOffset, maxCleanOffset BackendOffset) error {
 	// clean the data that has been consumed and keep the retention policy
-	var oldestPos BackendQueueEnd
-	t.channelLock.RLock()
-	for _, ch := range t.channelMap {
-		pos := ch.GetConfirmed()
-		if oldestPos == nil {
-			oldestPos = pos
-		} else if oldestPos.Offset() > pos.Offset() {
-			oldestPos = pos
-		}
-	}
-	t.channelLock.RUnlock()
-	if oldestPos == nil {
-		t.tpLog.Debugf("no consume position found for topic: %v", t.GetFullName())
-		return nil, nil
-	}
-	cleanStart := t.backend.GetQueueReadStart()
-	t.tpLog.Debugf("clean topic data current start: %v, oldest confirmed %v, max clean end: %v",
-		cleanStart, oldestPos, maxCleanOffset)
-	if cleanStart.Offset()+BackendOffset(retentionSize) >= oldestPos.Offset() {
-		return nil, nil
-	}
-
-	if oldestPos.Offset() < maxCleanOffset || maxCleanOffset == BackendOffset(0) {
-		maxCleanOffset = oldestPos.Offset()
-	}
-	snapReader := NewDiskQueueSnapshot(getBackendName(t.tname, t.partition), t.dataPath, oldestPos)
-	snapReader.SetQueueStart(cleanStart)
-
-	seekCnt := int64(0)
-	if cleanStart.TotalMsgCnt() > 0 {
-		seekCnt = cleanStart.TotalMsgCnt() - 1
-	}
-	err := snapReader.SeekTo(cleanStart.Offset(), seekCnt)
-	if err != nil {
-		t.tpLog.Errorf("topic failed to seek to %v: %v", cleanStart, err)
-		return nil, err
-	}
-
-	var cleanEndInfo BackendQueueOffset
-	t.Lock()
-	retentionDay := atomic.LoadInt32(&t.dynamicConf.RetentionDay)
-	if retentionDay == 0 {
-		retentionDay = int32(DEFAULT_RETENTION_DAYS)
-	}
-	cleanTime := time.Now().Add(-1 * time.Hour * 24 * time.Duration(retentionDay))
-	t.Unlock()
-	for {
-		readInfo := snapReader.GetCurrentReadQueueOffset()
-		data := snapReader.ReadOne()
-		if data.Err != nil {
-			if data.Err == io.EOF {
-				break
-			}
-			t.tpLog.Warningf("failed to read at %v - %s", readInfo, data.Err)
-			err := snapReader.SkipToNext()
-			if err != nil {
-				t.tpLog.Logf("failed to skip - %s ", err)
-				break
-			}
-			continue
-		}
-		if retentionSize > 0 {
-			// clean data ignore the retention day
-			// only keep the retention size (start from the last consumed)
-			if data.Offset > maxCleanOffset-BackendOffset(retentionSize) {
-				break
-			}
-			cleanEndInfo = readInfo
-		} else {
-			msg, decodeErr := decodeMessage(data.Data, t.IsExt())
-			if decodeErr != nil {
-				t.tpLog.LogErrorf("failed to decode message - %s - %v", decodeErr, data)
-			} else {
-				if msg.Timestamp >= cleanTime.UnixNano() {
-					break
-				}
-				if data.Offset >= maxCleanOffset {
-					break
-				}
-				cleanEndInfo = readInfo
-			}
-		}
-		err = snapReader.SkipToNext()
-		if err != nil {
-			t.tpLog.Logf("failed to skip - %s ", err)
-			break
-		}
-	}
-
 	if cleanEndInfo == nil || cleanEndInfo.Offset()+BackendOffset(retentionSize) >= maxCleanOffset {
 		if cleanEndInfo != nil {
-			t.tpLog.Infof("clean topic data at position: %v could not exceed current oldest confirmed %v and max clean end: %v",
-				cleanEndInfo, oldestPos, maxCleanOffset)
+			t.tpLog.Infof("clean topic data at position: %v could not exceed max clean end: %v",
+				cleanEndInfo, maxCleanOffset)
 		}
-		return nil, nil
-	}
-	t.tpLog.Infof("clean topic data from %v under retention %v, %v",
-		cleanEndInfo, cleanTime, retentionSize)
-	return t.backend.CleanOldDataByRetention(cleanEndInfo, noRealClean, maxCleanOffset)
-}
-
-func (t *KVTopic) TryFixQueueEnd(vend BackendOffset, totalCnt int64) error {
-	old := t.backend.GetQueueWriteEnd()
-	if old.Offset() == vend && old.TotalMsgCnt() == totalCnt {
 		return nil
 	}
-	t.tpLog.Logf("topic try fix the backend end from %v to : %v, %v", old, vend, totalCnt)
-	dend, err := t.backend.TryFixWriteEnd(vend, totalCnt)
-	if err != nil {
-		t.tpLog.LogErrorf("fix backend to %v error: %v", vend, err)
-	} else {
-		t.UpdateCommittedOffset(&dend)
-		t.updateChannelsEnd(true, true)
-	}
-	return err
+	// clean data old then cleanEndInfo
+
+	return t.ResetBackendWithQueueStart(int64(cleanEndInfo.Offset()))
 }
 
-func (t *KVTopic) ResetBackendWithQueueStartNoLock(queueStartOffset int64, queueStartCnt int64) error {
-	if !t.IsWriteDisabled() {
-		t.tpLog.Warningf("reset the topic backend only allow while write disabled")
-		return ErrOperationInvalidState
-	}
-	if queueStartOffset < 0 || queueStartCnt < 0 {
-		return errors.New("queue start should not less than 0")
-	}
-	queueStart := t.backend.GetQueueWriteEnd().(*diskQueueEndInfo)
-	queueStart.virtualEnd = BackendOffset(queueStartOffset)
-	queueStart.totalMsgCnt = queueStartCnt
-	t.tpLog.Warningf("reset the topic backend with queue start: %v", queueStart)
-	err := t.backend.ResetWriteWithQueueStart(queueStart)
+func (t *KVTopic) ResetBackendWithQueueStart(queueStartOffset int64) error {
+	t.tpLog.Warningf("reset the topic backend with queue start: %v", queueStartOffset)
+	// delete the data old than queueStartOffset
+	// tag info or trace key info currently not cleaned
+	minKey := getKVKeyForMsgOffset(t.fullName, int64(0), 0)
+	maxKey := getKVKeyForMsgOffset(t.fullName, int64(queueStartOffset), 0)
+	itopts := engine.IteratorOpts{}
+	itopts.Min = minKey
+	itopts.Max = maxKey
+	itopts.Type = engine.RangeOpen
+	it, err := t.kvEng.GetIterator(itopts)
 	if err != nil {
 		return err
 	}
-	newEnd := t.backend.GetQueueReadEnd()
-	t.UpdateCommittedOffset(newEnd)
-
-	t.channelLock.RLock()
-	for _, ch := range t.channelMap {
-		t.tpLog.Infof("channel stats: %v", ch.GetChannelDebugStats())
-		ch.UpdateQueueEnd(newEnd, true)
-		ch.ConfirmBackendQueueOnSlave(newEnd.Offset(), newEnd.TotalMsgCnt(), true)
-	}
-	t.channelLock.RUnlock()
-	return nil
-}
-
-func (t *KVTopic) GetDelayedQueueUpdateTs() (int64, bool) {
-	if t.IsOrdered() {
-		return 0, false
-	}
-	dq := t.GetDelayedQueue()
-	if dq == nil {
-		return 0, false
-	}
-	ts := dq.GetChangedTs()
-	return ts, true
-}
-
-func (t *KVTopic) GetDelayedQueueConsumedState() (int64, RecentKeyList, map[int]uint64, map[string]uint64) {
-	if t.IsOrdered() {
-		return 0, nil, nil, nil
-	}
-	dq := t.GetDelayedQueue()
-	if dq == nil {
-		return 0, nil, nil, nil
-	}
-	ts := time.Now().UnixNano()
-	chList := make([]string, 0)
-	t.channelLock.RLock()
-	for _, ch := range t.channelMap {
-		chList = append(chList, ch.GetName())
-	}
-	t.channelLock.RUnlock()
-	kl, cntList, chDelayCntList := dq.GetOldestConsumedState(chList, true)
-	return ts, kl, cntList, chDelayCntList
-}
-
-func (t *KVTopic) UpdateDelayedQueueConsumedState(ts int64, keyList RecentKeyList, cntList map[int]uint64, channelCntList map[string]uint64) error {
-	if t.IsOrdered() {
-		t.tpLog.Infof("should never delayed queue in ordered topic")
+	defer it.Close()
+	it.SeekToLast()
+	if !it.Valid() {
 		return nil
 	}
-	dq := t.GetDelayedQueue()
-	if dq == nil {
-		t.tpLog.Infof("no delayed queue while update delayed state on topic")
-		return nil
+	v := it.RefValue()
+	msgid, msgCnt, msgTs, err := decodeMsgOffsetValue(v)
+	if err != nil {
+		return err
 	}
+	wb := t.kvEng.NewWriteBatch()
+	defer wb.Destroy()
+	wb.DeleteRange(minKey, maxKey)
 
-	return dq.UpdateConsumedState(ts, keyList, cntList, channelCntList)
+	minKey = getKVKeyForMsgID(t.fullName, MessageID(0))
+	maxKey = getKVKeyForMsgID(t.fullName, MessageID(msgid))
+	wb.DeleteRange(minKey, maxKey)
+
+	minKey = getKVKeyForMsgCnt(t.fullName, 0)
+	maxKey = getKVKeyForMsgCnt(t.fullName, msgCnt)
+	wb.DeleteRange(minKey, maxKey)
+
+	minKey = getKVKeyForMsgTs(t.fullName, 0, 0)
+	maxKey = getKVKeyForMsgTs(t.fullName, MessageID(msgid), msgTs)
+	wb.DeleteRange(minKey, maxKey)
+	err = wb.Commit()
+	return err
 }
 
-// after crash, some topic meta need to be fixed by manual
-func (t *KVTopic) TryFixData() error {
-	t.backend.tryFixData()
-	dq := t.GetDelayedQueue()
-	if dq != nil {
-		dq.backend.tryFixData()
+func (t *KVTopic) GetMsgByID(id MessageID) (*Message, error) {
+	key := getKVKeyForMsgID(t.fullName, id)
+	v, err := t.kvEng.GetBytes(key)
+	if err != nil {
+		return nil, err
 	}
-	// TODO: fix channel meta
-	return nil
+	if v == nil {
+		return nil, ErrMsgNotFoundInIndex
+	}
+	return DecodeMessage(v, t.IsExt())
+}
+
+func (t *KVTopic) GetMsgByTraceID(tid uint64, limit int) ([]*Message, error) {
+	minKey := getKVKeyForMsgTrace(t.fullName, 0, tid)
+	maxKey := getKVKeyForMsgTraceIDEnd(t.fullName, tid)
+	itopts := engine.IteratorOpts{}
+	itopts.Min = minKey
+	itopts.Max = maxKey
+	itopts.Type = engine.RangeOpen
+	it, err := t.kvEng.GetIterator(itopts)
+	if err != nil {
+		return nil, err
+	}
+	defer it.Close()
+	it.SeekToFirst()
+	msgs := make([]*Message, 0, 3)
+	for ; it.Valid(); it.Next() {
+		k := it.RefKey()
+		_, ftid, msgid, err := decodeMsgTraceKey(k)
+		if err != nil {
+			return nil, err
+		}
+		if ftid != tid {
+			continue
+		}
+		m, err := t.GetMsgByID(msgid)
+		if err != nil {
+			return nil, err
+		}
+		msgs = append(msgs, m)
+		if len(msgs) > limit {
+			break
+		}
+	}
+	return msgs, nil
+}
+
+func (t *KVTopic) GetMsgByOffset(offset int64) (*Message, error) {
+	minKey := getKVKeyForMsgOffset(t.fullName, int64(offset), 0)
+	maxKey := getKVKeyForMsgOffsetEnd(t.fullName)
+	itopts := engine.IteratorOpts{}
+	itopts.Min = minKey
+	itopts.Max = maxKey
+	itopts.Type = engine.RangeOpen
+	it, err := t.kvEng.GetIterator(itopts)
+	if err != nil {
+		return nil, err
+	}
+	defer it.Close()
+	it.SeekToFirst()
+	if !it.Valid() {
+		return nil, ErrMsgNotFoundInIndex
+	}
+	v := it.RefValue()
+	if v == nil {
+		return nil, ErrMsgNotFoundInIndex
+	}
+	msgid, _, _, err := decodeMsgOffsetValue(v)
+	if err != nil {
+		return nil, err
+	}
+	return t.GetMsgByID(MessageID(msgid))
+}
+
+func (t *KVTopic) GetMsgByCnt(cnt int64) (*Message, error) {
+	key := getKVKeyForMsgCnt(t.fullName, cnt)
+	v, err := t.kvEng.GetBytes(key)
+	if err != nil {
+		return nil, err
+	}
+	if v == nil {
+		return nil, ErrMsgNotFoundInIndex
+	}
+	id, err := decodeMsgIDValue(v)
+	if err != nil {
+		return nil, err
+	}
+	return t.GetMsgByID(id)
+}
+
+func (t *KVTopic) GetMsgByTime(ts int64, limit int) ([]*Message, error) {
+	return nil, nil
 }
