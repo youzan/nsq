@@ -2,6 +2,7 @@ package nsqd
 
 import (
 	"bytes"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"os"
@@ -14,13 +15,15 @@ import (
 )
 
 const (
-	SepStart = ":"
-	SepStop  = ";"
+	SepStart     = ":"
+	SepStop      = ";"
+	maxBatchSize = 1000
 )
 
 const (
 	TopicPrefix = "topic"
 	// TopicPrefix + topicFullName + SepStart + SomeOtherPrefix
+	TopicMetaPrefix      = "metav1"
 	TopicMsgIDPrefix     = "msgid"
 	TopicTagPrefix       = "tag"
 	TopicTraceKeyPrefix  = "tracekey"
@@ -32,6 +35,8 @@ const (
 var (
 	ErrMsgNotFoundInIndex = errors.New("message not found in index")
 	errInvalidEncodedData = errors.New("invalid encoded data")
+	errBatchSizeLimit     = errors.New("batch size limit exceeded")
+	errInvalidLimit       = errors.New("invalid limit, should be >0")
 )
 
 func getKVKeyForTopicBegin(fullName string) []byte {
@@ -43,6 +48,31 @@ func getKVKeyForTopicEnd(fullName string) []byte {
 	endKey := make([]byte, 0, len(TopicPrefix)+len(fullName)+2+4)
 	endKey, _ = codec.EncodeMemCmpKey(endKey[:0], TopicPrefix, SepStart, fullName, SepStop)
 	return endKey
+}
+
+func getKVKeyForTopicMeta(fullName string) []byte {
+	key := make([]byte, 0, len(TopicPrefix)+len(fullName)+len(TopicMetaPrefix)+2+5)
+	key, _ = codec.EncodeMemCmpKey(key[:0], TopicPrefix, SepStart, fullName, SepStart, TopicMetaPrefix)
+	return key
+}
+
+func encodeTopicMetaValue(offset int64, cnt int64) []byte {
+	buf := make([]byte, 0, 8+8+2)
+	buf, _ = codec.EncodeMemCmpKey(buf, offset, cnt)
+	return buf
+}
+
+func decodeTopicMetaValue(buf []byte) (int64, int64, error) {
+	vals, err := codec.Decode(buf, 2)
+	if err != nil {
+		return 0, 0, err
+	}
+	if len(vals) < 2 {
+		return 0, 0, errInvalidEncodedData
+	}
+	offset := vals[0].(int64)
+	cnt := vals[1].(int64)
+	return offset, cnt, nil
 }
 
 func getKVKeyForMsgID(fullName string, msgid MessageID) []byte {
@@ -221,6 +251,13 @@ func NewKVTopicWithExt(topicName string, part int, ext bool, opt *Options) *KVTo
 		return nil
 	}
 	t.kvEng = eng
+	offset, cnt, err := t.GetTopicMeta()
+	if err != nil {
+		t.tpLog.LogErrorf("failed to init topic meta: %s ", err)
+		return nil
+	}
+	t.lastOffset = offset
+	t.lastCnt = cnt
 	return t
 }
 
@@ -251,6 +288,31 @@ func (t *KVTopic) GetTopicPart() int {
 	return t.partition
 }
 
+func (t *KVTopic) GetTopicMeta() (int64, int64, error) {
+	key := getKVKeyForTopicMeta(t.fullName)
+	v, err := t.kvEng.GetBytes(key)
+	if err != nil {
+		return 0, 0, err
+	}
+	if v == nil {
+		return 0, 0, nil
+	}
+	return decodeTopicMetaValue(v)
+}
+
+func (t *KVTopic) SaveTopicMeta(offset int64, cnt int64) error {
+	wb := t.kvEng.DefaultWriteBatch()
+	defer wb.Clear()
+	t.saveTopicMetaInBatch(wb, offset, cnt)
+	return wb.Commit()
+}
+
+func (t *KVTopic) saveTopicMetaInBatch(wb engine.WriteBatch, offset int64, cnt int64) {
+	key := getKVKeyForTopicMeta(t.fullName)
+	buf := encodeTopicMetaValue(offset, cnt)
+	wb.Put(key, buf)
+}
+
 func (t *KVTopic) ResetBackendEnd(vend BackendOffset, totalCnt int64) error {
 	// tag info or trace key info currently not cleaned
 	minKey := getKVKeyForMsgOffset(t.fullName, int64(vend), 0)
@@ -273,6 +335,9 @@ func (t *KVTopic) ResetBackendEnd(vend BackendOffset, totalCnt int64) error {
 	if err != nil {
 		return err
 	}
+	if msgCnt != totalCnt {
+		t.tpLog.Warningf("total count %v not matched with db %v", totalCnt, msgCnt)
+	}
 	wb := t.kvEng.NewWriteBatch()
 	defer wb.Destroy()
 	wb.DeleteRange(minKey, maxKey)
@@ -285,16 +350,25 @@ func (t *KVTopic) ResetBackendEnd(vend BackendOffset, totalCnt int64) error {
 	maxKey = getKVKeyForMsgCntEnd(t.fullName)
 	wb.DeleteRange(minKey, maxKey)
 
+	t.saveTopicMetaInBatch(wb, int64(vend), totalCnt)
 	//minKey = getKVKeyForMsgTs(t.fullName, MessageID(msgid), msgTs)
 	//maxKey = getKVKeyForMsgTsEnd(t.fullName)
 	//wb.DeleteRange(minKey, maxKey)
 	err = wb.Commit()
-	return err
+	if err != nil {
+		return err
+	}
+	t.lastOffset = int64(vend)
+	t.lastCnt = totalCnt
+	return nil
 }
 
 // PutMessage writes a Message to the queue
 func (t *KVTopic) PutMessage(m *Message) (int32, BackendQueueEnd, error) {
 	endOffset, writeBytes, dendCnt, err := t.put(m, 0)
+	if err != nil {
+		return writeBytes, nil, err
+	}
 	dn := &diskQueueEndInfo{totalMsgCnt: dendCnt}
 	dn.virtualEnd = endOffset
 	return writeBytes, dn, err
@@ -325,7 +399,30 @@ func (t *KVTopic) PutRawDataOnReplica(rawData []byte, offset BackendOffset, chec
 		return dend, nil
 	} else {
 		// batched
-		return nil, fmt.Errorf("unsupport batched message on index")
+		msgs := make([]*Message, 0, msgNum)
+		leftBuf := rawData
+		for {
+			if len(leftBuf) < 4 {
+				return nil, fmt.Errorf("invalid raw message data: %v", rawData)
+			}
+			sz := int32(binary.BigEndian.Uint32(leftBuf[:4]))
+			if sz <= 0 || sz > MAX_POSSIBLE_MSG_SIZE {
+				// this file is corrupt and we have no reasonable guarantee on
+				// where a new message should begin
+				return nil, fmt.Errorf("invalid message read size (%d)", sz)
+			}
+
+			m, err := DecodeMessage(leftBuf[4:sz+4], t.IsExt())
+			if err != nil {
+				return nil, err
+			}
+			msgs = append(msgs, m)
+			leftBuf = leftBuf[sz+4:]
+			if len(leftBuf) == 0 {
+				break
+			}
+		}
+		return t.PutMessagesOnReplica(msgs, offset, checkSize)
 	}
 }
 
@@ -345,8 +442,6 @@ func (t *KVTopic) PutMessageOnReplica(m *Message, offset BackendOffset, checkSiz
 }
 
 func (t *KVTopic) PutMessagesOnReplica(msgs []*Message, offset BackendOffset, checkSize int64) (BackendQueueEnd, error) {
-	wb := t.kvEng.DefaultWriteBatch()
-	defer wb.Clear()
 	wend := t.lastOffset
 	if wend != int64(offset) {
 		t.tpLog.LogErrorf(
@@ -354,25 +449,14 @@ func (t *KVTopic) PutMessagesOnReplica(msgs []*Message, offset BackendOffset, ch
 			offset, wend)
 		return nil, ErrWriteOffsetMismatch
 	}
-
-	var dend diskQueueEndInfo
-	wsizeTotal := int32(0)
-	dend.totalMsgCnt = t.lastCnt
-	dend.virtualEnd = BackendOffset(t.lastOffset)
-	for _, m := range msgs {
-		wend, wsize, err := t.putBatched(wb, int64(dend.Offset()), dend.TotalMsgCnt(), m, 0)
-		if err != nil {
-			return nil, err
-		}
-		dend.totalMsgCnt = dend.totalMsgCnt + 1
-		dend.virtualEnd = wend
-		wsizeTotal += wsize
+	_, wsizeTotal, dend, err := t.PutMessages(msgs)
+	if err != nil {
+		return dend, err
 	}
 	if checkSize > 0 && int64(wsizeTotal) != checkSize {
 		return nil, fmt.Errorf("batch message size mismatch: %v vs %v", checkSize, wsizeTotal)
 	}
-	err := wb.Commit()
-	return &dend, err
+	return dend, nil
 }
 
 func (t *KVTopic) PutMessages(msgs []*Message) (BackendOffset, int32, BackendQueueEnd, error) {
@@ -392,6 +476,7 @@ func (t *KVTopic) PutMessages(msgs []*Message) (BackendOffset, int32, BackendQue
 		diskEnd.virtualEnd = offset
 		batchBytes += bytes
 	}
+	t.saveTopicMetaInBatch(wb, int64(diskEnd.Offset()), diskEnd.TotalMsgCnt())
 	err := wb.Commit()
 	if err != nil {
 		return firstOffset, batchBytes, &diskEnd, err
@@ -440,6 +525,7 @@ func (t *KVTopic) put(m *Message, checkSize int64) (BackendOffset, int32, int64,
 		return writeEnd, wsize, writeCnt, err
 	}
 	writeCnt = t.lastCnt + 1
+	t.saveTopicMetaInBatch(wb, int64(writeEnd), writeCnt)
 	// add tag if ext has tag info
 	err = wb.Commit()
 	if err != nil {
@@ -476,8 +562,15 @@ func (t *KVTopic) Empty() error {
 	endKey := getKVKeyForTopicEnd(t.fullName)
 	wb := t.kvEng.NewWriteBatch()
 	wb.DeleteRange(startKey, endKey)
+	t.saveTopicMetaInBatch(wb, int64(0), 0)
 	defer wb.Clear()
-	return wb.Commit()
+	err := wb.Commit()
+	if err != nil {
+		return err
+	}
+	t.lastOffset = 0
+	t.lastCnt = 0
+	return nil
 }
 
 // maybe should return the cleaned offset to allow commit log clean
@@ -551,6 +644,9 @@ func (t *KVTopic) GetMsgByID(id MessageID) (*Message, error) {
 }
 
 func (t *KVTopic) GetMsgByTraceID(tid uint64, limit int) ([]*Message, error) {
+	if limit > maxBatchSize {
+		return nil, errBatchSizeLimit
+	}
 	minKey := getKVKeyForMsgTrace(t.fullName, 0, tid)
 	maxKey := getKVKeyForMsgTraceIDEnd(t.fullName, tid)
 	itopts := engine.IteratorOpts{}
@@ -578,7 +674,7 @@ func (t *KVTopic) GetMsgByTraceID(tid uint64, limit int) ([]*Message, error) {
 			return nil, err
 		}
 		msgs = append(msgs, m)
-		if len(msgs) > limit {
+		if len(msgs) >= limit {
 			break
 		}
 	}
@@ -629,5 +725,66 @@ func (t *KVTopic) GetMsgByCnt(cnt int64) (*Message, error) {
 }
 
 func (t *KVTopic) GetMsgByTime(ts int64, limit int) ([]*Message, error) {
+	if limit > maxBatchSize {
+		return nil, errBatchSizeLimit
+	}
 	return nil, nil
+}
+
+func (t *KVTopic) PullMsgByCntFrom(cnt int64, limit int64) ([]*Message, error) {
+	if limit > maxBatchSize {
+		return nil, errBatchSizeLimit
+	}
+	if limit <= 0 {
+		return nil, errInvalidLimit
+	}
+	key := getKVKeyForMsgCnt(t.fullName, cnt)
+	v, err := t.kvEng.GetBytes(key)
+	if err != nil {
+		return nil, err
+	}
+	if v == nil {
+		return nil, nil
+	}
+
+	id, err := decodeMsgIDValue(v)
+	if err != nil {
+		return nil, err
+	}
+	_, lastCnt, err := t.GetTopicMeta()
+	if err != nil {
+		return nil, err
+	}
+	if lastCnt <= cnt {
+		t.tpLog.Warningf("total count %v less than count %v, but have cnt key: %v", t.lastCnt, cnt, id)
+		return nil, nil
+	}
+	minKey := getKVKeyForMsgID(t.fullName, id)
+	maxKey := getKVKeyForMsgIDEnd(t.fullName)
+	itopts := engine.IteratorOpts{}
+	itopts.Min = minKey
+	itopts.Max = maxKey
+	itopts.Type = engine.RangeClose
+	it, err := t.kvEng.GetIterator(itopts)
+	if err != nil {
+		return nil, err
+	}
+	defer it.Close()
+	it.SeekToFirst()
+	sz := limit
+	if lastCnt-cnt < sz {
+		sz = t.lastCnt - cnt
+	}
+	msgs := make([]*Message, 0, sz)
+	for ; it.Valid(); it.Next() {
+		m, err := DecodeMessage(it.Value(), t.IsExt())
+		if err != nil {
+			return nil, err
+		}
+		msgs = append(msgs, m)
+		if int64(len(msgs)) >= limit {
+			break
+		}
+	}
+	return msgs, nil
 }
