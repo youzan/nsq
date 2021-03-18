@@ -23,6 +23,7 @@ func testKVTopicWriteRead(t *testing.T, replica bool) {
 	opts.DataPath = tmpDir
 	defer os.RemoveAll(tmpDir)
 	kvt := NewKVTopic("test-kv-topic", 0, opts)
+	defer kvt.Close()
 	test.NotNil(t, kvt)
 	offset, totalCnt, err := kvt.GetTopicMeta()
 	test.Nil(t, err)
@@ -74,6 +75,15 @@ func testKVTopicWriteRead(t *testing.T, replica bool) {
 	test.Equal(t, int64(end.Offset()), kvt.lastOffset)
 	test.Equal(t, end.TotalMsgCnt(), kvt.lastCnt)
 
+	offset, totalCnt, err = kvt.GetTopicMeta()
+	test.Nil(t, err)
+	test.Equal(t, int64(msgCnt*int(singleSize)), offset)
+	test.Equal(t, int64(msgCnt), totalCnt)
+
+	// test reopen
+	kvt.Close()
+	kvt = NewKVTopic("test-kv-topic", 0, opts)
+	test.NotNil(t, kvt)
 	offset, totalCnt, err = kvt.GetTopicMeta()
 	test.Nil(t, err)
 	test.Equal(t, int64(msgCnt*int(singleSize)), offset)
@@ -133,6 +143,14 @@ func testKVTopicWriteRead(t *testing.T, replica bool) {
 			}
 		}
 	}
+	kvt.Empty()
+	offset, totalCnt, err = kvt.GetTopicMeta()
+	test.Nil(t, err)
+	test.Equal(t, int64(0), offset)
+	test.Equal(t, int64(0), totalCnt)
+	dbmsgs, err := kvt.PullMsgByCntFrom(0, int64(msgCnt))
+	test.Nil(t, err)
+	test.Equal(t, 0, len(dbmsgs))
 }
 
 func TestKVTopicWriteRead(t *testing.T) {
@@ -151,7 +169,8 @@ func TestKVTopicWriteRawData(t *testing.T) {
 	}
 	opts.DataPath = tmpDir
 	defer os.RemoveAll(tmpDir)
-	kvt := NewKVTopic("test-kv-topic", 0, opts)
+	kvt := NewKVTopic("test-kv-topic-raw", 0, opts)
+	defer kvt.Close()
 	test.NotNil(t, kvt)
 	singleSize := int32(47)
 	m := NewMessageWithExt(1, make([]byte, 10), ext.JSON_HEADER_EXT_VER, []byte("tes1"))
@@ -206,5 +225,98 @@ func TestKVTopicWriteRawData(t *testing.T) {
 	test.Nil(t, err)
 	test.Equal(t, int64(3*singleSize), offset)
 	test.Equal(t, int64(3), totalCnt)
+	// test reopen
+	kvt.Close()
+	kvt = NewKVTopic("test-kv-topic-raw", 0, opts)
+	test.NotNil(t, kvt)
+	offset, totalCnt, err = kvt.GetTopicMeta()
+	test.Nil(t, err)
+	test.Equal(t, int64(3*singleSize), offset)
+	test.Equal(t, int64(3), totalCnt)
+}
 
+func TestKVTopicResetStartEnd(t *testing.T) {
+	opts := NewOptions()
+	tmpDir, err := ioutil.TempDir("", fmt.Sprintf("nsq-test-%d", time.Now().UnixNano()))
+	if err != nil {
+		panic(err)
+	}
+	opts.DataPath = tmpDir
+	defer os.RemoveAll(tmpDir)
+	kvt := NewKVTopic("test-kv-topic-reset", 0, opts)
+	defer kvt.Close()
+	test.NotNil(t, kvt)
+	singleSize := int32(47)
+	msgs := make([]*Message, 0)
+	msgCnt := 6
+	for i := 0; i < msgCnt; i++ {
+		m := NewMessageWithExt(MessageID(i+1), make([]byte, 10), ext.JSON_HEADER_EXT_VER, []byte("tes"+strconv.Itoa(i)))
+		if i <= msgCnt-2 {
+			m.TraceID = uint64(i + 1)
+		}
+		msgs = append(msgs, m)
+	}
+	var wsize int32
+	var end BackendQueueEnd
+	wsize, end, err = kvt.PutMessage(msgs[0])
+	test.Nil(t, err)
+	test.Equal(t, singleSize, wsize)
+	test.Equal(t, end.Offset(), BackendOffset(singleSize))
+	test.Equal(t, end.TotalMsgCnt(), int64(1))
+
+	_, wsize, end, err = kvt.PutMessages(msgs[1:])
+	test.Nil(t, err)
+	test.Equal(t, BackendOffset(int(singleSize)*msgCnt), end.Offset())
+	test.Equal(t, int64(msgCnt), end.TotalMsgCnt())
+
+	offset, totalCnt, err := kvt.GetTopicMeta()
+	test.Nil(t, err)
+	test.Equal(t, int64(msgCnt*int(singleSize)), offset)
+	test.Equal(t, int64(msgCnt), totalCnt)
+
+	err = kvt.ResetBackendWithQueueStart(int64(singleSize) * 2)
+	test.Nil(t, err)
+	err = kvt.ResetBackendEnd(BackendOffset(singleSize)*BackendOffset(msgCnt-2), int64(msgCnt-2))
+	test.Nil(t, err)
+
+	offset, totalCnt, err = kvt.GetTopicMeta()
+	test.Nil(t, err)
+	test.Equal(t, int64((msgCnt-2)*int(singleSize)), offset)
+	test.Equal(t, int64(msgCnt-2), totalCnt)
+	dbmsgs, err := kvt.PullMsgByCntFrom(2, int64(msgCnt))
+	test.Nil(t, err)
+	test.Equal(t, int(msgCnt)-4, len(dbmsgs))
+	for i := 0; i < msgCnt; i++ {
+		if i < msgCnt-4 {
+			test.Equal(t, msgs[i+2].ID, dbmsgs[i].ID)
+			test.Equal(t, msgs[i+2].TraceID, dbmsgs[i].TraceID)
+		}
+		dbmsg, err := kvt.GetMsgByOffset(int64(i * int(singleSize)))
+		t.Logf("%v:%v", i, dbmsg)
+		if i < 2 || i >= msgCnt-2 {
+			test.Equal(t, ErrMsgNotFoundInIndex, err)
+		} else {
+			test.Nil(t, err)
+			test.Equal(t, msgs[i].ID, dbmsg.ID)
+			test.Equal(t, msgs[i].TraceID, dbmsg.TraceID)
+		}
+		dbmsg, err = kvt.GetMsgByID(msgs[i].ID)
+		t.Logf("%v:%v", i, dbmsg)
+		if i < 2 || i >= msgCnt-2 {
+			test.Equal(t, ErrMsgNotFoundInIndex, err)
+		} else {
+			test.Nil(t, err)
+			test.Equal(t, msgs[i].ID, dbmsg.ID)
+			test.Equal(t, msgs[i].TraceID, dbmsg.TraceID)
+		}
+		dbmsg, err = kvt.GetMsgByCnt(int64(i))
+		t.Logf("%v:%v", i, dbmsg)
+		if i < 2 || i >= msgCnt-2 {
+			test.Equal(t, ErrMsgNotFoundInIndex, err)
+		} else {
+			test.Nil(t, err)
+			test.Equal(t, msgs[i].ID, dbmsg.ID)
+			test.Equal(t, msgs[i].TraceID, dbmsg.TraceID)
+		}
+	}
 }

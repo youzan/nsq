@@ -193,12 +193,10 @@ func getKVKeyForMsgTs(fullName string, msgid MessageID, ts int64) []byte {
 }
 
 type KVTopic struct {
-	kvEng     engine.KVEngine
-	tname     string
-	fullName  string
-	partition int
-	dataPath  string
-
+	kvEng      engine.KVEngine
+	tname      string
+	fullName   string
+	partition  int
 	option     *Options
 	putBuffer  bytes.Buffer
 	bp         sync.Pool
@@ -206,6 +204,7 @@ type KVTopic struct {
 	tpLog      *levellogger.LevelLogger
 	lastOffset int64
 	lastCnt    int64
+	magicCode  int64
 }
 
 func NewKVTopic(topicName string, part int, opt *Options) *KVTopic {
@@ -229,8 +228,8 @@ func NewKVTopicWithExt(topicName string, part int, ext bool, opt *Options) *KVTo
 		return &bytes.Buffer{}
 	}
 
-	t.dataPath = path.Join(opt.DataPath, topicName)
-	err := os.MkdirAll(t.dataPath, 0755)
+	dataPath := path.Join(opt.DataPath, topicName)
+	err := os.MkdirAll(dataPath, 0755)
 	if err != nil {
 		t.tpLog.LogErrorf("failed to create directory: %v ", err)
 		return nil
@@ -239,7 +238,7 @@ func NewKVTopicWithExt(topicName string, part int, ext bool, opt *Options) *KVTo
 	backendName := getBackendName(t.tname, t.partition)
 	cfg := engine.NewRockConfig()
 	cfg.MaxWriteBufferNumber = 4
-	cfg.DataDir = path.Join(t.dataPath, backendName)
+	cfg.DataDir = path.Join(dataPath, backendName)
 	eng, err := engine.NewKVEng(cfg)
 	if err != nil {
 		t.tpLog.LogErrorf("failed to create engine: %v ", err)
@@ -300,13 +299,6 @@ func (t *KVTopic) GetTopicMeta() (int64, int64, error) {
 	return decodeTopicMetaValue(v)
 }
 
-func (t *KVTopic) SaveTopicMeta(offset int64, cnt int64) error {
-	wb := t.kvEng.DefaultWriteBatch()
-	defer wb.Clear()
-	t.saveTopicMetaInBatch(wb, offset, cnt)
-	return wb.Commit()
-}
-
 func (t *KVTopic) saveTopicMetaInBatch(wb engine.WriteBatch, offset int64, cnt int64) {
 	key := getKVKeyForTopicMeta(t.fullName)
 	buf := encodeTopicMetaValue(offset, cnt)
@@ -320,7 +312,7 @@ func (t *KVTopic) ResetBackendEnd(vend BackendOffset, totalCnt int64) error {
 	itopts := engine.IteratorOpts{}
 	itopts.Min = minKey
 	itopts.Max = maxKey
-	itopts.Type = engine.RangeOpen
+	itopts.Type = engine.RangeClose
 	it, err := t.kvEng.GetIterator(itopts)
 	if err != nil {
 		return err
@@ -336,7 +328,7 @@ func (t *KVTopic) ResetBackendEnd(vend BackendOffset, totalCnt int64) error {
 		return err
 	}
 	if msgCnt != totalCnt {
-		t.tpLog.Warningf("total count %v not matched with db %v", totalCnt, msgCnt)
+		t.tpLog.Warningf("total count %v not matched with db %v at offset: %v, id: %v", totalCnt, msgCnt, it.RefKey(), msgid)
 	}
 	wb := t.kvEng.NewWriteBatch()
 	defer wb.Destroy()
@@ -561,9 +553,11 @@ func (t *KVTopic) Empty() error {
 	startKey := getKVKeyForTopicBegin(t.fullName)
 	endKey := getKVKeyForTopicEnd(t.fullName)
 	wb := t.kvEng.NewWriteBatch()
+	defer wb.Destroy()
+	// note the meta will be deleted also
+	// maybe we can padding magic code in the topic name, so
+	// we can auto lazy delete (recreate with magic code changed)
 	wb.DeleteRange(startKey, endKey)
-	t.saveTopicMetaInBatch(wb, int64(0), 0)
-	defer wb.Clear()
 	err := wb.Commit()
 	if err != nil {
 		return err
@@ -619,14 +613,17 @@ func (t *KVTopic) ResetBackendWithQueueStart(queueStartOffset int64) error {
 	minKey = getKVKeyForMsgID(t.fullName, MessageID(0))
 	maxKey = getKVKeyForMsgID(t.fullName, MessageID(msgid))
 	wb.DeleteRange(minKey, maxKey)
+	wb.Delete(maxKey)
 
 	minKey = getKVKeyForMsgCnt(t.fullName, 0)
 	maxKey = getKVKeyForMsgCnt(t.fullName, msgCnt)
 	wb.DeleteRange(minKey, maxKey)
+	wb.Delete(maxKey)
 
 	minKey = getKVKeyForMsgTs(t.fullName, 0, 0)
 	maxKey = getKVKeyForMsgTs(t.fullName, MessageID(msgid), msgTs)
 	wb.DeleteRange(minKey, maxKey)
+	wb.Delete(maxKey)
 	err = wb.Commit()
 	return err
 }
@@ -682,8 +679,8 @@ func (t *KVTopic) GetMsgByTraceID(tid uint64, limit int) ([]*Message, error) {
 }
 
 func (t *KVTopic) GetMsgByOffset(offset int64) (*Message, error) {
-	minKey := getKVKeyForMsgOffset(t.fullName, int64(offset), 0)
-	maxKey := getKVKeyForMsgOffsetEnd(t.fullName)
+	minKey := getKVKeyForMsgOffset(t.fullName, offset, 0)
+	maxKey := getKVKeyForMsgOffset(t.fullName, offset+1, 0)
 	itopts := engine.IteratorOpts{}
 	itopts.Min = minKey
 	itopts.Max = maxKey
