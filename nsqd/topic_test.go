@@ -302,7 +302,7 @@ func TestTopicPutChannelWait(t *testing.T) {
 	msg.ID = 0
 	topic.PutMessage(msg)
 	// wait channel end notify done
-	time.Sleep(time.Millisecond)
+	time.Sleep(time.Millisecond * 2000)
 	test.Equal(t, false, channel.IsWaitingMoreData())
 	test.Equal(t, topic.backend.GetQueueReadEnd(), topic.backend.GetQueueWriteEnd())
 	test.Equal(t, topic.backend.GetQueueReadEnd(), channel.GetChannelEnd())
@@ -316,13 +316,13 @@ func TestTopicPutChannelWait(t *testing.T) {
 	test.Equal(t, true, channel.IsWaitingMoreData())
 	msg.ID = 0
 	topic.PutMessage(msg)
-	time.Sleep(time.Millisecond)
+	time.Sleep(time.Millisecond * 2000)
 	test.Equal(t, false, channel.IsWaitingMoreData())
 	test.Equal(t, topic.backend.GetQueueReadEnd(), topic.backend.GetQueueWriteEnd())
 	test.Equal(t, topic.backend.GetQueueReadEnd(), channel.GetChannelEnd())
 	msg.ID = 0
 	topic.PutMessage(msg)
-	time.Sleep(time.Millisecond)
+	time.Sleep(time.Millisecond * 2000)
 	test.NotEqual(t, topic.backend.GetQueueReadEnd(), topic.backend.GetQueueWriteEnd())
 	test.Equal(t, topic.backend.GetQueueReadEnd(), channel.GetChannelEnd())
 }
@@ -701,6 +701,79 @@ func TestTopicResetWithQueueStart(t *testing.T) {
 		msg := <-channel.clientMsgChan
 		channel.ConfirmBackendQueue(msg)
 		test.Equal(t, msg.Offset+msg.RawMoveSize, channel.GetConfirmed().Offset())
+	}
+}
+
+func TestTopicWriteRollback(t *testing.T) {
+	opts := NewOptions()
+	opts.Logger = newTestLogger(t)
+	opts.MaxBytesPerFile = 1024 * 1024
+	_, _, nsqd := mustStartNSQD(opts)
+	defer os.RemoveAll(opts.DataPath)
+	defer nsqd.Exit()
+
+	topic := nsqd.GetTopic("test", 0, false)
+	changeDynamicConfAutCommit(topic.dynamicConf)
+
+	msgNum := 100
+	channel := topic.GetChannel("ch")
+	test.NotNil(t, channel)
+	msg := NewMessage(0, make([]byte, 1000))
+	msg.Timestamp = time.Now().UnixNano()
+	singleSize := int32(0)
+	var qend BackendOffset
+	for i := 0; i < msgNum; i++ {
+		msg.ID = 0
+		_, _, msgSize, dend, err := topic.PutMessage(msg)
+		test.Nil(t, err)
+		msg.Timestamp = time.Now().UnixNano()
+		singleSize = msgSize
+		qend = dend.Offset()
+	}
+	topic.ForceFlush()
+
+	// rollback single
+	nend := topic.backend.GetQueueWriteEnd()
+	_, err := topic.kvTopic.GetMsgByCnt(nend.TotalMsgCnt() - 1)
+	test.Equal(t, nil, err)
+	err = topic.RollbackNoLock(qend-BackendOffset(singleSize), 1)
+	test.Nil(t, err)
+	if topic.kvTopic != nil {
+		_, err = topic.kvTopic.GetMsgByCnt(nend.TotalMsgCnt() - 1)
+		test.Equal(t, ErrMsgNotFoundInIndex, err)
+	}
+	nend = topic.backend.GetQueueWriteEnd()
+	test.Equal(t, qend-BackendOffset(singleSize), nend.Offset())
+	test.Equal(t, int64(msgNum-1), nend.TotalMsgCnt())
+	if topic.kvTopic != nil {
+		loffset, lcnt, err := topic.kvTopic.GetTopicMeta()
+		test.Nil(t, err)
+		test.Equal(t, int64(nend.Offset()), topic.kvTopic.lastOffset)
+		test.Equal(t, nend.TotalMsgCnt(), topic.kvTopic.lastCnt)
+		test.Equal(t, int64(nend.Offset()), loffset)
+		test.Equal(t, nend.TotalMsgCnt(), lcnt)
+	}
+	// rollback batch
+	_, err = topic.kvTopic.GetMsgByCnt(nend.TotalMsgCnt() - 1)
+	test.Nil(t, err)
+	err = topic.RollbackNoLock(qend-BackendOffset(singleSize)*10, 9)
+	test.Nil(t, err)
+	if topic.kvTopic != nil {
+		_, err = topic.kvTopic.GetMsgByCnt(nend.TotalMsgCnt() - 1)
+		test.Equal(t, ErrMsgNotFoundInIndex, err)
+		_, err = topic.kvTopic.GetMsgByCnt(nend.TotalMsgCnt() - 9)
+		test.Equal(t, ErrMsgNotFoundInIndex, err)
+	}
+	nend = topic.backend.GetQueueWriteEnd()
+	test.Equal(t, qend-BackendOffset(singleSize)*10, nend.Offset())
+	test.Equal(t, int64(msgNum-10), nend.TotalMsgCnt())
+	if topic.kvTopic != nil {
+		loffset, lcnt, err := topic.kvTopic.GetTopicMeta()
+		test.Nil(t, err)
+		test.Equal(t, int64(nend.Offset()), topic.kvTopic.lastOffset)
+		test.Equal(t, nend.TotalMsgCnt(), topic.kvTopic.lastCnt)
+		test.Equal(t, int64(nend.Offset()), loffset)
+		test.Equal(t, nend.TotalMsgCnt(), lcnt)
 	}
 }
 

@@ -91,7 +91,10 @@ func mustStartNSQD(opts *Options) (*net.TCPAddr, *net.TCPAddr, *NSQD) {
 		}
 		opts.DataPath = tmpDir
 	}
-	nsqd := New(opts)
+	nsqd, err := New(opts)
+	if err != nil {
+		panic(err)
+	}
 	nsqd.Start()
 	return nil, nil, nsqd
 }
@@ -433,7 +436,8 @@ func TestSkipMetaData(t *testing.T) {
 func TestSetHealth(t *testing.T) {
 	opts := NewOptions()
 	opts.Logger = newTestLogger(t)
-	nsqd := New(opts)
+	nsqd, err := New(opts)
+	equal(t, err, nil)
 
 	equal(t, nsqd.GetError(), nil)
 	equal(t, nsqd.IsHealthy(), true)

@@ -18,6 +18,7 @@ import (
 	"github.com/youzan/nsq/internal/protocol"
 	"github.com/youzan/nsq/internal/quantile"
 	"github.com/youzan/nsq/internal/util"
+	"github.com/youzan/nsq/nsqd/engine"
 )
 
 const (
@@ -146,6 +147,7 @@ type Topic struct {
 	// the pub data waiting pub ok returned
 	pubWaitingBytes int64
 	tpLog           *levellogger.LevelLogger
+	kvTopic         *KVTopic
 }
 
 func (t *Topic) setExt() {
@@ -190,19 +192,23 @@ func GetTopicFullName(topic string, part int) string {
 
 func NewTopic(topicName string, part int, opt *Options,
 	writeDisabled int32, metaStorage IMetaStorage,
+	kvEng engine.KVEngine,
 	notify INsqdNotify, loopFunc func(v *Topic)) *Topic {
-	return NewTopicWithExt(topicName, part, false, false, opt, writeDisabled, metaStorage, notify, loopFunc)
+	return NewTopicWithExt(topicName, part, false, false, opt, writeDisabled, metaStorage, kvEng, notify, loopFunc)
 }
 
 func NewTopicWithExt(topicName string, part int, ext bool, ordered bool, opt *Options,
 	writeDisabled int32, metaStorage IMetaStorage,
+	kvEng engine.KVEngine,
 	notify INsqdNotify, loopFunc func(v *Topic)) *Topic {
-	return NewTopicWithExtAndDisableChannelAutoCreate(topicName, part, ext, ordered, false, opt, writeDisabled, metaStorage, notify, loopFunc)
+	return NewTopicWithExtAndDisableChannelAutoCreate(topicName, part, ext, ordered, false, opt, writeDisabled, metaStorage, kvEng, notify, loopFunc)
 }
 
 // Topic constructor
-func NewTopicWithExtAndDisableChannelAutoCreate(topicName string, part int, ext bool, ordered bool, disbaleChannelAutoCreate bool, opt *Options,
+func NewTopicWithExtAndDisableChannelAutoCreate(topicName string, part int, ext bool, ordered bool,
+	disbaleChannelAutoCreate bool, opt *Options,
 	writeDisabled int32, metaStorage IMetaStorage,
+	kvEng engine.KVEngine,
 	notify INsqdNotify, loopFunc func(v *Topic)) *Topic {
 	if part > MAX_TOPIC_PARTITION {
 		return nil
@@ -222,6 +228,7 @@ func NewTopicWithExtAndDisableChannelAutoCreate(topicName string, part int, ext 
 		quitChan:        make(chan struct{}),
 		pubLoopFunc:     loopFunc,
 		metaStorage:     metaStorage,
+		kvTopic:         NewKVTopicWithEngine(topicName, part, ext, kvEng),
 	}
 	t.fullName = GetTopicFullName(t.tname, t.partition)
 	t.tpLog = nsqLog.WrappedWithPrefix("["+t.fullName+"]", 0)
@@ -733,6 +740,9 @@ func (t *Topic) SetDynamicInfo(dynamicConf TopicDynamicConf, idGen MsgIDGenerato
 	t.dynamicConf.Ext = dynamicConf.Ext
 	if dynamicConf.Ext {
 		t.setExt()
+		if t.kvTopic != nil {
+			t.kvTopic.setExt()
+		}
 	}
 	t.dynamicConf.DisableChannelAutoCreate = dynamicConf.DisableChannelAutoCreate
 	channelAutoCreateDisabled := t.IsChannelAutoCreateDisabled()
@@ -837,7 +847,7 @@ func (t *Topic) getOrCreateChannel(channelName string) (*Channel, bool) {
 		start := t.backend.GetQueueReadStart()
 		channel = NewChannel(t.GetTopicName(), t.GetTopicPart(), t.IsOrdered(), channelName, readEnd,
 			t.option, deleteCallback, t.flushForChannelMoreData, atomic.LoadInt32(&t.writeDisabled),
-			t.nsqdNotify, ext, start, t.metaStorage, !t.IsDataNeedFix())
+			t.nsqdNotify, ext, start, t.metaStorage, t.kvTopic, !t.IsDataNeedFix())
 
 		channel.UpdateQueueEnd(readEnd, false)
 		channel.SetDelayedQueue(t.GetDelayedQueue())
@@ -910,6 +920,9 @@ func (t *Topic) RollbackNoLock(vend BackendOffset, diffCnt uint64) error {
 	t.tpLog.Logf("reset the backend from %v to : %v, %v", old, vend, diffCnt)
 	dend, err := t.backend.RollbackWriteV2(vend, diffCnt)
 	if err == nil {
+		if t.kvTopic != nil {
+			t.kvTopic.ResetBackendEnd(vend, dend.TotalMsgCnt())
+		}
 		t.UpdateCommittedOffset(&dend)
 		t.updateChannelsEnd(true, true)
 	}
@@ -926,6 +939,9 @@ func (t *Topic) ResetBackendEndNoLock(vend BackendOffset, totalCnt int64) error 
 	if err != nil {
 		t.tpLog.LogErrorf("reset backend to %v error: %v", vend, err)
 	} else {
+		if t.kvTopic != nil {
+			t.kvTopic.ResetBackendEnd(vend, totalCnt)
+		}
 		t.UpdateCommittedOffset(&dend)
 		t.updateChannelsEnd(true, true)
 	}
@@ -1033,6 +1049,14 @@ func (t *Topic) PutRawDataOnReplica(rawData []byte, offset BackendOffset, checkS
 		return &dend, fmt.Errorf("message write size mismatch %v vs %v", checkSize, writeBytes)
 	}
 	atomic.StoreInt32(&t.needFlush, 1)
+	if t.kvTopic != nil {
+		kvEnd, kverr := t.kvTopic.PutRawDataOnReplica(rawData, offset, checkSize, msgNum)
+		if kverr != nil {
+			t.tpLog.LogWarningf("kv topic write failed: %s", kverr)
+		} else if kvEnd.Offset() != dend.Offset() || kvEnd.TotalMsgCnt() != dend.TotalMsgCnt() {
+			t.tpLog.LogWarningf("kv topic write end mismatch: %v, %v", kvEnd, dend)
+		}
+	}
 	if atomic.LoadInt32(&t.dynamicConf.AutoCommit) == 1 {
 		t.UpdateCommittedOffset(&dend)
 	}
@@ -1148,6 +1172,14 @@ func (t *Topic) put(m *Message, trace bool, checkSize int64) (MessageID, Backend
 		return m.ID, offset, writeBytes, dend, err
 	}
 
+	if t.kvTopic != nil {
+		kvOffset, kvSize, kvEnd, kverr := t.kvTopic.put(m, checkSize)
+		if kverr != nil {
+			t.tpLog.LogWarningf("kv topic write failed: %s", kverr)
+		} else if kvEnd != dend.TotalMsgCnt() || kvOffset != dend.Offset() || kvSize != writeBytes {
+			t.tpLog.LogWarningf("kv topic write end mismatch: %v-%v vs %v, %v vs %v", kvEnd, kvOffset, dend, kvSize, writeBytes)
+		}
+	}
 	if atomic.LoadInt32(&t.dynamicConf.AutoCommit) == 1 {
 		t.UpdateCommittedOffset(&dend)
 	}
@@ -1553,6 +1585,9 @@ func (t *Topic) TryCleanOldData(retentionSize int64, noRealClean bool, maxCleanO
 	}
 	t.tpLog.Infof("clean topic data from %v under retention %v, %v",
 		cleanEndInfo, cleanTime, retentionSize)
+	if !noRealClean && t.kvTopic != nil {
+		t.kvTopic.TryCleanOldData(retentionSize, cleanEndInfo, maxCleanOffset)
+	}
 	return t.backend.CleanOldDataByRetention(cleanEndInfo, noRealClean, maxCleanOffset)
 }
 
@@ -1587,6 +1622,12 @@ func (t *Topic) ResetBackendWithQueueStartNoLock(queueStartOffset int64, queueSt
 	err := t.backend.ResetWriteWithQueueStart(queueStart)
 	if err != nil {
 		return err
+	}
+	if t.kvTopic != nil {
+		err = t.kvTopic.ResetBackendWithQueueStart(queueStartOffset, queueStartCnt)
+		if err != nil {
+			return err
+		}
 	}
 	newEnd := t.backend.GetQueueReadEnd()
 	t.UpdateCommittedOffset(newEnd)

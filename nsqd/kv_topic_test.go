@@ -22,7 +22,7 @@ func testKVTopicWriteRead(t *testing.T, replica bool) {
 	}
 	opts.DataPath = tmpDir
 	defer os.RemoveAll(tmpDir)
-	kvt := NewKVTopic("test-kv-topic", 0, opts)
+	kvt := NewKVTopicWithExt("test-kv-topic", 0, true, opts)
 	defer kvt.Close()
 	test.NotNil(t, kvt)
 	offset, totalCnt, err := kvt.GetTopicMeta()
@@ -82,7 +82,7 @@ func testKVTopicWriteRead(t *testing.T, replica bool) {
 
 	// test reopen
 	kvt.Close()
-	kvt = NewKVTopic("test-kv-topic", 0, opts)
+	kvt = NewKVTopicWithExt("test-kv-topic", 0, true, opts)
 	test.NotNil(t, kvt)
 	offset, totalCnt, err = kvt.GetTopicMeta()
 	test.Nil(t, err)
@@ -169,7 +169,7 @@ func TestKVTopicWriteRawData(t *testing.T) {
 	}
 	opts.DataPath = tmpDir
 	defer os.RemoveAll(tmpDir)
-	kvt := NewKVTopic("test-kv-topic-raw", 0, opts)
+	kvt := NewKVTopicWithExt("test-kv-topic-raw", 0, true, opts)
 	defer kvt.Close()
 	test.NotNil(t, kvt)
 	singleSize := int32(47)
@@ -243,7 +243,7 @@ func TestKVTopicResetStartEnd(t *testing.T) {
 	}
 	opts.DataPath = tmpDir
 	defer os.RemoveAll(tmpDir)
-	kvt := NewKVTopic("test-kv-topic-reset", 0, opts)
+	kvt := NewKVTopicWithExt("test-kv-topic-reset", 0, true, opts)
 	defer kvt.Close()
 	test.NotNil(t, kvt)
 	singleSize := int32(47)
@@ -274,7 +274,7 @@ func TestKVTopicResetStartEnd(t *testing.T) {
 	test.Equal(t, int64(msgCnt*int(singleSize)), offset)
 	test.Equal(t, int64(msgCnt), totalCnt)
 
-	err = kvt.ResetBackendWithQueueStart(int64(singleSize) * 2)
+	err = kvt.CleanBackendWithQueueStart(int64(singleSize) * 2)
 	test.Nil(t, err)
 	err = kvt.ResetBackendEnd(BackendOffset(singleSize)*BackendOffset(msgCnt-2), int64(msgCnt-2))
 	test.Nil(t, err)

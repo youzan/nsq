@@ -1911,24 +1911,24 @@ func TestConsumeMultiTagMessages(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		msgOut := recvNextMsgAndCheckWithCloseChan(t, conn, len(msg.Body), msg.TraceID, true, true, closeChan)
 		test.Nil(t, msgOut)
 		t.Logf("subscrieb without tag stops.")
-		wg.Done()
 	}()
 
 	var wgTag sync.WaitGroup
 	wgTag.Add(1)
 	go func() {
+		defer wgTag.Done()
 		msgOut1 := recvNextMsgAndCheckExt(t, conn1, len(msg.Body), msg.TraceID, true, true)
 		test.NotNil(t, msgOut1)
-		wgTag.Done()
 	}()
 	wgTag.Add(1)
 	go func() {
+		defer wgTag.Done()
 		msgOut2 := recvNextMsgAndCheckExt(t, conn2, len(msg.Body), msg.TraceID, true, true)
 		test.NotNil(t, msgOut2)
-		wgTag.Done()
 	}()
 
 	wgTag.Wait()
@@ -7373,10 +7373,12 @@ func testIOLoopReturnsClientErr(t *testing.T, fakeConn test.FakeNetConn) {
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
 
-	prot := &protocolV2{ctx: &context{nsqd: nsqdNs.New(opts)}}
+	nd, err := nsqdNs.New(opts)
+	test.Nil(t, err)
+	prot := &protocolV2{ctx: &context{nsqd: nd}}
 	defer prot.ctx.nsqd.Exit()
 
-	err := prot.IOLoop(fakeConn)
+	err = prot.IOLoop(fakeConn)
 
 	test.NotNil(t, err)
 	test.Equal(t, strings.HasPrefix(err.Error(), "E_INVALID "), true)

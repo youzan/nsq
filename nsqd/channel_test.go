@@ -119,13 +119,24 @@ func TestPutMessage2Chan(t *testing.T) {
 	topic.PutMessage(msg)
 	topic.flushBuffer(true)
 
-	outputMsg1 := <-channel1.clientMsgChan
-	equal(t, msg.ID, outputMsg1.ID)
-	equal(t, msg.Body, outputMsg1.Body)
+	timer := time.NewTimer(time.Second * 10)
+	select {
+	case outputMsg1 := <-channel1.clientMsgChan:
+		equal(t, msg.ID, outputMsg1.ID)
+		equal(t, msg.Body, outputMsg1.Body)
+	case <-timer.C:
+		t.Errorf("timeout waiting consume")
+		return
+	}
 
-	outputMsg2 := <-channel2.clientMsgChan
-	equal(t, msg.ID, outputMsg2.ID)
-	equal(t, msg.Body, outputMsg2.Body)
+	select {
+	case outputMsg2 := <-channel2.clientMsgChan:
+		equal(t, msg.ID, outputMsg2.ID)
+		equal(t, msg.Body, outputMsg2.Body)
+	case <-timer.C:
+		t.Errorf("timeout waiting consume")
+		return
+	}
 }
 
 func TestChannelBackendMaxMsgSize(t *testing.T) {
@@ -818,7 +829,7 @@ func TestChannelEmptyWhileReqDelayedMessageWaitingInReq(t *testing.T) {
 		ast.True(t, waitReqMoreCnt > 0, "should have wait more req count")
 		ast.Equal(t, waitChCnt, realWaitChCnt+1)
 		ast.Equal(t, 0, inflightCnt)
-		ast.Equal(t, int64(waitChCnt+waitReqMoreCnt), atomic.LoadInt64(&channel.deferredFromDelay)+1)
+		ast.InDelta(t, int64(waitChCnt+waitReqMoreCnt), atomic.LoadInt64(&channel.deferredFromDelay), 1)
 		break
 	}
 

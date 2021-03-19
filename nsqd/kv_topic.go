@@ -8,6 +8,7 @@ import (
 	"os"
 	"path"
 	"sync"
+	"sync/atomic"
 
 	"github.com/youzan/nsq/internal/levellogger"
 	"github.com/youzan/nsq/nsqd/codec"
@@ -197,7 +198,6 @@ type KVTopic struct {
 	tname      string
 	fullName   string
 	partition  int
-	option     *Options
 	putBuffer  bytes.Buffer
 	bp         sync.Pool
 	isExt      int32
@@ -212,43 +212,51 @@ func NewKVTopic(topicName string, part int, opt *Options) *KVTopic {
 }
 
 func NewKVTopicWithExt(topicName string, part int, ext bool, opt *Options) *KVTopic {
+	dataPath := path.Join(opt.DataPath, topicName)
+	err := os.MkdirAll(dataPath, 0755)
+	if err != nil {
+		nsqLog.LogErrorf("failed to create directory %s: %s ", dataPath, err)
+		return nil
+	}
+	backendName := getBackendName(topicName, part)
+	cfg := engine.NewRockConfig()
+	cfg.MaxWriteBufferNumber = 4
+	cfg.DataDir = path.Join(dataPath, backendName)
+	eng, err := engine.NewKVEng(cfg)
+	if err != nil {
+		nsqLog.LogErrorf("failed to create engine: %s ", err)
+		return nil
+	}
+	err = eng.OpenEng()
+	if err != nil {
+		nsqLog.LogErrorf("failed to open engine: %s ", err)
+		return nil
+	}
+	return NewKVTopicWithEngine(topicName, part, ext, eng)
+}
+
+func NewKVTopicWithEngine(topicName string, part int, ext bool, eng engine.KVEngine) *KVTopic {
+	if eng == nil {
+		return nil
+	}
 	if part > MAX_TOPIC_PARTITION {
 		return nil
 	}
 	t := &KVTopic{
 		tname:     topicName,
 		partition: part,
-		option:    opt,
 		putBuffer: bytes.Buffer{},
 	}
 	t.fullName = GetTopicFullName(t.tname, t.partition)
 	t.tpLog = nsqLog.WrappedWithPrefix("["+t.fullName+"]", 0)
+	if ext {
+		t.setExt()
+	}
 
 	t.bp.New = func() interface{} {
 		return &bytes.Buffer{}
 	}
 
-	dataPath := path.Join(opt.DataPath, topicName)
-	err := os.MkdirAll(dataPath, 0755)
-	if err != nil {
-		t.tpLog.LogErrorf("failed to create directory: %v ", err)
-		return nil
-	}
-
-	backendName := getBackendName(t.tname, t.partition)
-	cfg := engine.NewRockConfig()
-	cfg.MaxWriteBufferNumber = 4
-	cfg.DataDir = path.Join(dataPath, backendName)
-	eng, err := engine.NewKVEng(cfg)
-	if err != nil {
-		t.tpLog.LogErrorf("failed to create engine: %v ", err)
-		return nil
-	}
-	err = eng.OpenEng()
-	if err != nil {
-		t.tpLog.LogErrorf("failed to create engine: %v ", err)
-		return nil
-	}
 	t.kvEng = eng
 	offset, cnt, err := t.GetTopicMeta()
 	if err != nil {
@@ -260,8 +268,12 @@ func NewKVTopicWithExt(topicName string, part int, ext bool, opt *Options) *KVTo
 	return t
 }
 
+func (t *KVTopic) setExt() {
+	atomic.StoreInt32(&t.isExt, 1)
+}
+
 func (t *KVTopic) IsExt() bool {
-	return true
+	return atomic.LoadInt32(&t.isExt) == 1
 }
 
 func (t *KVTopic) BufferPoolGet(capacity int) *bytes.Buffer {
@@ -320,6 +332,7 @@ func (t *KVTopic) ResetBackendEnd(vend BackendOffset, totalCnt int64) error {
 	defer it.Close()
 	it.SeekToFirst()
 	if !it.Valid() {
+		// maybe no data before vend while sync data from leader on replica
 		return nil
 	}
 	v := it.RefValue()
@@ -579,11 +592,29 @@ func (t *KVTopic) TryCleanOldData(retentionSize int64, cleanEndInfo BackendQueue
 	}
 	// clean data old then cleanEndInfo
 
-	return t.ResetBackendWithQueueStart(int64(cleanEndInfo.Offset()))
+	return t.CleanBackendWithQueueStart(int64(cleanEndInfo.Offset()))
 }
 
-func (t *KVTopic) ResetBackendWithQueueStart(queueStartOffset int64) error {
-	t.tpLog.Warningf("reset the topic backend with queue start: %v", queueStartOffset)
+func (t *KVTopic) ResetBackendWithQueueStart(queueStartOffset int64, totalCnt int64) error {
+	t.tpLog.Warningf("reset the topic backend with queue start: %v, %v", queueStartOffset, totalCnt)
+	err := t.Empty()
+	if err != nil {
+		return err
+	}
+	wb := t.kvEng.NewWriteBatch()
+	defer wb.Destroy()
+	t.saveTopicMetaInBatch(wb, queueStartOffset, totalCnt)
+	err = wb.Commit()
+	if err != nil {
+		return err
+	}
+	t.lastOffset = queueStartOffset
+	t.lastCnt = totalCnt
+	return nil
+}
+
+func (t *KVTopic) CleanBackendWithQueueStart(queueStartOffset int64) error {
+	t.tpLog.Infof("clean with queue start: %v", queueStartOffset)
 	// delete the data old than queueStartOffset
 	// tag info or trace key info currently not cleaned
 	minKey := getKVKeyForMsgOffset(t.fullName, int64(0), 0)
@@ -628,7 +659,7 @@ func (t *KVTopic) ResetBackendWithQueueStart(queueStartOffset int64) error {
 	return err
 }
 
-func (t *KVTopic) GetMsgByID(id MessageID) (*Message, error) {
+func (t *KVTopic) GetMsgRawByID(id MessageID) ([]byte, error) {
 	key := getKVKeyForMsgID(t.fullName, id)
 	v, err := t.kvEng.GetBytes(key)
 	if err != nil {
@@ -636,6 +667,14 @@ func (t *KVTopic) GetMsgByID(id MessageID) (*Message, error) {
 	}
 	if v == nil {
 		return nil, ErrMsgNotFoundInIndex
+	}
+	return v, nil
+}
+
+func (t *KVTopic) GetMsgByID(id MessageID) (*Message, error) {
+	v, err := t.GetMsgRawByID(id)
+	if err != nil {
+		return nil, err
 	}
 	return DecodeMessage(v, t.IsExt())
 }
@@ -663,9 +702,13 @@ func (t *KVTopic) GetMsgByTraceID(tid uint64, limit int) ([]*Message, error) {
 		if err != nil {
 			return nil, err
 		}
+		if ftid > tid {
+			break
+		}
 		if ftid != tid {
 			continue
 		}
+
 		m, err := t.GetMsgByID(msgid)
 		if err != nil {
 			return nil, err
@@ -705,16 +748,32 @@ func (t *KVTopic) GetMsgByOffset(offset int64) (*Message, error) {
 	return t.GetMsgByID(MessageID(msgid))
 }
 
-func (t *KVTopic) GetMsgByCnt(cnt int64) (*Message, error) {
+func (t *KVTopic) GetMsgIDByCnt(cnt int64) (MessageID, error) {
 	key := getKVKeyForMsgCnt(t.fullName, cnt)
 	v, err := t.kvEng.GetBytes(key)
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
 	if v == nil {
-		return nil, ErrMsgNotFoundInIndex
+		return 0, ErrMsgNotFoundInIndex
 	}
 	id, err := decodeMsgIDValue(v)
+	if err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
+func (t *KVTopic) GetMsgRawByCnt(cnt int64) ([]byte, error) {
+	id, err := t.GetMsgIDByCnt(cnt)
+	if err != nil {
+		return nil, err
+	}
+	return t.GetMsgRawByID(id)
+}
+
+func (t *KVTopic) GetMsgByCnt(cnt int64) (*Message, error) {
+	id, err := t.GetMsgIDByCnt(cnt)
 	if err != nil {
 		return nil, err
 	}
@@ -735,17 +794,11 @@ func (t *KVTopic) PullMsgByCntFrom(cnt int64, limit int64) ([]*Message, error) {
 	if limit <= 0 {
 		return nil, errInvalidLimit
 	}
-	key := getKVKeyForMsgCnt(t.fullName, cnt)
-	v, err := t.kvEng.GetBytes(key)
+	id, err := t.GetMsgIDByCnt(cnt)
 	if err != nil {
-		return nil, err
-	}
-	if v == nil {
-		return nil, nil
-	}
-
-	id, err := decodeMsgIDValue(v)
-	if err != nil {
+		if err == ErrMsgNotFoundInIndex {
+			return nil, nil
+		}
 		return nil, err
 	}
 	_, lastCnt, err := t.GetTopicMeta()
