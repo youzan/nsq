@@ -242,6 +242,11 @@ func (d *DiskQueueSnapshot) ReadRaw(size int32) ([]byte, error) {
 			curFileName := d.fileName(d.readPos.EndOffset.FileNum)
 			d.readFile, err = os.OpenFile(curFileName, os.O_RDONLY, 0600)
 			if err != nil {
+				if d.readPos.Offset() == d.endPos.Offset() && d.readPos.EndOffset == d.endPos.EndOffset {
+					if os.IsNotExist(err) {
+						return nil, io.EOF
+					}
+				}
 				return result, err
 			}
 			nsqLog.LogDebugf("DISKQUEUE snapshot(%s): readRaw() opened %s", d.readFrom, curFileName)
@@ -313,6 +318,11 @@ CheckFileOpen:
 		curFileName := d.fileName(d.readPos.EndOffset.FileNum)
 		d.readFile, result.Err = os.OpenFile(curFileName, os.O_RDONLY, 0600)
 		if result.Err != nil {
+			if d.readPos.Offset() == d.endPos.Offset() && d.readPos.EndOffset == d.endPos.EndOffset {
+				if os.IsNotExist(result.Err) {
+					result.Err = io.EOF
+				}
+			}
 			return result
 		}
 

@@ -102,7 +102,7 @@ func testKVTopicWriteRead(t *testing.T, replica bool) {
 		test.Equal(t, msgs[i].Body, dbMsg.Body)
 		test.Equal(t, msgs[i].TraceID, dbMsg.TraceID)
 		test.Equal(t, msgs[i].ExtBytes, dbMsg.ExtBytes)
-		dbMsg, err = kvt.GetMsgByCnt(int64(i))
+		dbMsg, _, err = kvt.GetMsgByCnt(int64(i))
 		test.Nil(t, err)
 		test.Equal(t, msgs[i].ID, dbMsg.ID)
 		test.Equal(t, msgs[i].Body, dbMsg.Body)
@@ -309,7 +309,7 @@ func TestKVTopicResetStartEnd(t *testing.T) {
 			test.Equal(t, msgs[i].ID, dbmsg.ID)
 			test.Equal(t, msgs[i].TraceID, dbmsg.TraceID)
 		}
-		dbmsg, err = kvt.GetMsgByCnt(int64(i))
+		dbmsg, _, err = kvt.GetMsgByCnt(int64(i))
 		t.Logf("%v:%v", i, dbmsg)
 		if i < 2 || i >= msgCnt-2 {
 			test.Equal(t, ErrMsgNotFoundInIndex, err)

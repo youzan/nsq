@@ -175,6 +175,9 @@ func New(opts *Options) (*NSQD, error) {
 		}
 
 		cfg := engine.NewRockConfig()
+		// we disable wal here, because we use this for index data, and we will
+		// auto recovery it from disk queue data
+		cfg.DisableWAL = true
 		cfg.UseSharedCache = true
 		cfg.UseSharedRateLimiter = true
 		if opts.KVMaxWriteBufferNumber > 0 {

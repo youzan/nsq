@@ -178,6 +178,7 @@ func NewPebbleEng(cfg *RockEngConfig) (*PebbleEng, error) {
 		L0CompactionThreshold:       cfg.Level0FileNumCompactionTrigger,
 		MaxOpenFiles:                -1,
 		MaxConcurrentCompactions:    cfg.MaxBackgroundCompactions,
+		EventListener:               pebble.MakeLoggingEventListener(nil),
 	}
 	if cfg.DisableWAL {
 		opts.DisableWAL = true

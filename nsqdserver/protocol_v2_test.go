@@ -5650,6 +5650,7 @@ func TestSubOrderedWithFilter(t *testing.T) {
 func TestSubWithLargeReady(t *testing.T) {
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
+	opts.MaxRdyCount = 250
 	if testing.Verbose() {
 		opts.LogLevel = 2
 		nsqdNs.SetLogger(opts.Logger)
@@ -5668,7 +5669,7 @@ func TestSubWithLargeReady(t *testing.T) {
 	msg := nsqdNs.NewMessage(0, []byte("test body"))
 	topic.PutMessage(msg)
 
-	for i := 0; i < 100000; i++ {
+	for i := 0; i < 1000; i++ {
 		topic.PutMessage(nsqdNs.NewMessage(0, []byte("test body")))
 	}
 
@@ -5677,13 +5678,13 @@ func TestSubWithLargeReady(t *testing.T) {
 
 	defer conn.Close()
 
-	_, err = nsq.Ready(2500).WriteTo(conn)
+	_, err = nsq.Ready(250).WriteTo(conn)
 	test.Equal(t, err, nil)
 
 	_, err = nsq.Ready(int(opts.MaxRdyCount)).WriteTo(conn)
 	test.Equal(t, err, nil)
 
-	for i := 0; i < 100000; i++ {
+	for i := 0; i < 1000; i++ {
 		msgOut := recvNextMsgAndCheckClientMsg(t, conn, len(msg.Body), 0, false)
 		_, err = nsq.Finish(msgOut.ID).WriteTo(conn)
 		if err != nil {

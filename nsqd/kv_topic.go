@@ -88,22 +88,24 @@ func getKVKeyForMsgIDEnd(fullName string) []byte {
 	return keyBuf
 }
 
-func encodeMsgIDValue(msgid MessageID) []byte {
-	idBuf := make([]byte, 0, 8+1)
-	idBuf, _ = codec.EncodeMemCmpKey(idBuf, uint64(msgid))
+func encodeMsgIDOffsetCntValue(msgid MessageID, offset, cnt int64) []byte {
+	idBuf := make([]byte, 0, 3*(8+1))
+	idBuf, _ = codec.EncodeMemCmpKey(idBuf, uint64(msgid), offset, cnt)
 	return idBuf
 }
 
-func decodeMsgIDValue(buf []byte) (MessageID, error) {
-	vals, err := codec.Decode(buf, 1)
+func decodeMsgIDOffsetCntValue(buf []byte) (MessageID, int64, int64, error) {
+	vals, err := codec.Decode(buf, 3)
 	if err != nil {
-		return 0, err
+		return 0, 0, 0, err
 	}
-	if len(vals) < 1 {
-		return 0, errInvalidEncodedData
+	if len(vals) < 3 {
+		return 0, 0, 0, errInvalidEncodedData
 	}
 	id := vals[0].(uint64)
-	return MessageID(id), nil
+	offset := vals[1].(int64)
+	cnt := vals[2].(int64)
+	return MessageID(id), offset, cnt, nil
 }
 
 func getKVKeyForMsgTrace(fullName string, msgid MessageID, traceID uint64) []byte {
@@ -505,18 +507,18 @@ func (t *KVTopic) putBatched(wb engine.WriteBatch, lastOffset int64, lastCnt int
 	writeEnd = BackendOffset(lastOffset) + BackendOffset(wsize+4)
 	keyBuf := getKVKeyForMsgID(t.fullName, m.ID)
 	wb.Put(keyBuf, t.putBuffer.Bytes())
-	idBuf := encodeMsgIDValue(m.ID)
+	valBuf := encodeMsgIDOffsetCntValue(m.ID, lastOffset, lastCnt)
 	if m.TraceID > 0 {
 		keyBuf = getKVKeyForMsgTrace(t.fullName, m.ID, m.TraceID)
-		wb.Put(keyBuf, idBuf)
+		wb.Put(keyBuf, valBuf)
 	}
 	keyBuf = getKVKeyForMsgOffset(t.fullName, lastOffset, int64(writeEnd))
 	valueBuf := encodeMsgOffsetValue(m.ID, lastCnt, m.Timestamp)
 	wb.Put(keyBuf, valueBuf)
 	keyBuf = getKVKeyForMsgCnt(t.fullName, lastCnt)
-	wb.Put(keyBuf, idBuf)
+	wb.Put(keyBuf, valBuf)
 	keyBuf = getKVKeyForMsgTs(t.fullName, m.ID, m.Timestamp)
-	wb.Put(keyBuf, idBuf)
+	wb.Put(keyBuf, valBuf)
 	return writeEnd, int32(wsize + 4), nil
 }
 
@@ -748,36 +750,37 @@ func (t *KVTopic) GetMsgByOffset(offset int64) (*Message, error) {
 	return t.GetMsgByID(MessageID(msgid))
 }
 
-func (t *KVTopic) GetMsgIDByCnt(cnt int64) (MessageID, error) {
+func (t *KVTopic) GetMsgIDOffsetByCnt(cnt int64) (MessageID, int64, error) {
 	key := getKVKeyForMsgCnt(t.fullName, cnt)
 	v, err := t.kvEng.GetBytes(key)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	if v == nil {
-		return 0, ErrMsgNotFoundInIndex
+		return 0, 0, ErrMsgNotFoundInIndex
 	}
-	id, err := decodeMsgIDValue(v)
+	id, offset, _, err := decodeMsgIDOffsetCntValue(v)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
-	return id, nil
+	return id, offset, nil
 }
 
 func (t *KVTopic) GetMsgRawByCnt(cnt int64) ([]byte, error) {
-	id, err := t.GetMsgIDByCnt(cnt)
+	id, _, err := t.GetMsgIDOffsetByCnt(cnt)
 	if err != nil {
 		return nil, err
 	}
 	return t.GetMsgRawByID(id)
 }
 
-func (t *KVTopic) GetMsgByCnt(cnt int64) (*Message, error) {
-	id, err := t.GetMsgIDByCnt(cnt)
+func (t *KVTopic) GetMsgByCnt(cnt int64) (*Message, int64, error) {
+	id, offset, err := t.GetMsgIDOffsetByCnt(cnt)
 	if err != nil {
-		return nil, err
+		return nil, offset, err
 	}
-	return t.GetMsgByID(id)
+	msg, err := t.GetMsgByID(id)
+	return msg, offset, err
 }
 
 func (t *KVTopic) GetMsgByTime(ts int64, limit int) ([]*Message, error) {
@@ -794,7 +797,7 @@ func (t *KVTopic) PullMsgByCntFrom(cnt int64, limit int64) ([]*Message, error) {
 	if limit <= 0 {
 		return nil, errInvalidLimit
 	}
-	id, err := t.GetMsgIDByCnt(cnt)
+	id, _, err := t.GetMsgIDOffsetByCnt(cnt)
 	if err != nil {
 		if err == ErrMsgNotFoundInIndex {
 			return nil, nil

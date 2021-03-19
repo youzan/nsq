@@ -572,6 +572,7 @@ func TestTopicResetWithQueueStart(t *testing.T) {
 		opts.LogLevel = 3
 		glog.SetFlags(0, "", "", true, true, 1)
 		glog.StartWorker(time.Second)
+		SetLogger(opts.Logger)
 	}
 	opts.MaxBytesPerFile = 1024 * 1024
 	_, _, nsqd := mustStartNSQD(opts)
@@ -734,12 +735,12 @@ func TestTopicWriteRollback(t *testing.T) {
 
 	// rollback single
 	nend := topic.backend.GetQueueWriteEnd()
-	_, err := topic.kvTopic.GetMsgByCnt(nend.TotalMsgCnt() - 1)
+	_, _, err := topic.kvTopic.GetMsgByCnt(nend.TotalMsgCnt() - 1)
 	test.Equal(t, nil, err)
 	err = topic.RollbackNoLock(qend-BackendOffset(singleSize), 1)
 	test.Nil(t, err)
 	if topic.kvTopic != nil {
-		_, err = topic.kvTopic.GetMsgByCnt(nend.TotalMsgCnt() - 1)
+		_, _, err = topic.kvTopic.GetMsgByCnt(nend.TotalMsgCnt() - 1)
 		test.Equal(t, ErrMsgNotFoundInIndex, err)
 	}
 	nend = topic.backend.GetQueueWriteEnd()
@@ -754,14 +755,14 @@ func TestTopicWriteRollback(t *testing.T) {
 		test.Equal(t, nend.TotalMsgCnt(), lcnt)
 	}
 	// rollback batch
-	_, err = topic.kvTopic.GetMsgByCnt(nend.TotalMsgCnt() - 1)
+	_, _, err = topic.kvTopic.GetMsgByCnt(nend.TotalMsgCnt() - 1)
 	test.Nil(t, err)
 	err = topic.RollbackNoLock(qend-BackendOffset(singleSize)*10, 9)
 	test.Nil(t, err)
 	if topic.kvTopic != nil {
-		_, err = topic.kvTopic.GetMsgByCnt(nend.TotalMsgCnt() - 1)
+		_, _, err = topic.kvTopic.GetMsgByCnt(nend.TotalMsgCnt() - 1)
 		test.Equal(t, ErrMsgNotFoundInIndex, err)
-		_, err = topic.kvTopic.GetMsgByCnt(nend.TotalMsgCnt() - 9)
+		_, _, err = topic.kvTopic.GetMsgByCnt(nend.TotalMsgCnt() - 9)
 		test.Equal(t, ErrMsgNotFoundInIndex, err)
 	}
 	nend = topic.backend.GetQueueWriteEnd()
@@ -777,6 +778,127 @@ func TestTopicWriteRollback(t *testing.T) {
 	}
 }
 
+type testEndOffset struct {
+	offset BackendOffset
+}
+
+func (t *testEndOffset) Offset() BackendOffset { return t.offset }
+
+func TestTopicFixKV(t *testing.T) {
+	opts := NewOptions()
+	opts.Logger = newTestLogger(t)
+	opts.MaxBytesPerFile = 1024 * 2
+	if testing.Verbose() {
+		opts.LogLevel = 3
+		glog.SetFlags(0, "", "", true, true, 1)
+		glog.StartWorker(time.Second)
+		SetLogger(opts.Logger)
+	}
+	_, _, nsqd := mustStartNSQD(opts)
+	defer os.RemoveAll(opts.DataPath)
+	defer nsqd.Exit()
+
+	topic := nsqd.GetTopic("test", 0, false)
+	changeDynamicConfAutCommit(topic.dynamicConf)
+
+	msgNum := 2000
+	channel := topic.GetChannel("ch")
+	test.NotNil(t, channel)
+	msg := NewMessage(0, make([]byte, 100))
+	msg.Timestamp = time.Now().UnixNano()
+	singleSize := int32(0)
+	var qend BackendOffset
+	var resetStart testEndOffset
+	for i := 0; i < msgNum; i++ {
+		msg.ID = 0
+		_, _, msgSize, dend, err := topic.PutMessage(msg)
+		test.Nil(t, err)
+		msg.Timestamp = time.Now().UnixNano()
+		singleSize = msgSize
+		qend = dend.Offset()
+		if i == msgNum/2 {
+			resetStart.offset = (dend.Offset())
+		}
+	}
+	topic.ForceFlush()
+
+	// rollback single
+	nend := topic.backend.GetQueueWriteEnd()
+	_, _, err := topic.kvTopic.GetMsgByCnt(nend.TotalMsgCnt() - 1)
+	test.Equal(t, nil, err)
+	err = topic.kvTopic.ResetBackendEnd(qend-BackendOffset(singleSize), nend.TotalMsgCnt()-1)
+	test.Nil(t, err)
+	_, _, err = topic.kvTopic.GetMsgByCnt(nend.TotalMsgCnt() - 1)
+	test.Equal(t, ErrMsgNotFoundInIndex, err)
+	loffset, lcnt, err := topic.kvTopic.GetTopicMeta()
+	test.Nil(t, err)
+	test.Equal(t, int64(nend.Offset()-BackendOffset(singleSize)), topic.kvTopic.lastOffset)
+	test.Equal(t, nend.TotalMsgCnt()-1, topic.kvTopic.lastCnt)
+	test.Equal(t, int64(nend.Offset()-BackendOffset(singleSize)), loffset)
+	test.Equal(t, nend.TotalMsgCnt()-1, lcnt)
+
+	fixedCnt, err := topic.tryFixKVTopic()
+	if err != nil {
+		t.Log(err.Error())
+	}
+	test.Nil(t, err)
+	test.Equal(t, int64(1), fixedCnt)
+	_, _, err = topic.kvTopic.GetMsgByCnt(nend.TotalMsgCnt() - 1)
+	test.Equal(t, nil, err)
+	loffset, lcnt, err = topic.kvTopic.GetTopicMeta()
+	test.Nil(t, err)
+	test.Equal(t, int64(nend.Offset()), topic.kvTopic.lastOffset)
+	test.Equal(t, nend.TotalMsgCnt(), topic.kvTopic.lastCnt)
+	test.Equal(t, int64(nend.Offset()), loffset)
+	test.Equal(t, nend.TotalMsgCnt(), lcnt)
+
+	// rollback batch
+	err = topic.kvTopic.ResetBackendEnd(qend-BackendOffset(singleSize)*10, nend.TotalMsgCnt()-10)
+	test.Nil(t, err)
+	_, _, err = topic.kvTopic.GetMsgByCnt(nend.TotalMsgCnt() - 1)
+	test.Equal(t, ErrMsgNotFoundInIndex, err)
+	_, _, err = topic.kvTopic.GetMsgByCnt(nend.TotalMsgCnt() - 9)
+	test.Equal(t, ErrMsgNotFoundInIndex, err)
+
+	fixedCnt, err = topic.tryFixKVTopic()
+	test.Nil(t, err)
+	test.Equal(t, int64(10), fixedCnt)
+	loffset, lcnt, err = topic.kvTopic.GetTopicMeta()
+	test.Nil(t, err)
+	test.Equal(t, int64(nend.Offset()), topic.kvTopic.lastOffset)
+	test.Equal(t, nend.TotalMsgCnt(), topic.kvTopic.lastCnt)
+	test.Equal(t, int64(nend.Offset()), loffset)
+	test.Equal(t, nend.TotalMsgCnt(), lcnt)
+
+	_, _, err = topic.kvTopic.GetMsgByCnt(nend.TotalMsgCnt() - 1)
+	test.Nil(t, err)
+	_, _, err = topic.kvTopic.GetMsgByCnt(nend.TotalMsgCnt() - 9)
+	test.Nil(t, err)
+	// fix empty kv
+	topic.kvTopic.Empty()
+	fixedCnt, err = topic.tryFixKVTopic()
+	test.Nil(t, err)
+	test.Equal(t, int64(msgNum), fixedCnt)
+	// fix which queue start is not 0, and kv is less than start
+	topic.backend.CleanOldDataByRetention(&resetStart, false, nend.Offset())
+	topic.kvTopic.Empty()
+	fixedCnt, err = topic.tryFixKVTopic()
+	test.Nil(t, err)
+	test.Equal(t, int64(msgNum/2+8), fixedCnt)
+
+	loffset, lcnt, err = topic.kvTopic.GetTopicMeta()
+	test.Nil(t, err)
+	test.Equal(t, int64(nend.Offset()), topic.kvTopic.lastOffset)
+	test.Equal(t, nend.TotalMsgCnt(), topic.kvTopic.lastCnt)
+	test.Equal(t, int64(nend.Offset()), loffset)
+	test.Equal(t, nend.TotalMsgCnt(), lcnt)
+
+	_, _, err = topic.kvTopic.GetMsgByCnt(nend.TotalMsgCnt() - 1)
+	test.Nil(t, err)
+	_, _, err = topic.kvTopic.GetMsgByCnt(nend.TotalMsgCnt() - 9)
+	test.Nil(t, err)
+}
+
 func TestTopicFixQueueEnd(t *testing.T) {
 	opts := NewOptions()
 	opts.Logger = newTestLogger(t)
@@ -784,6 +906,7 @@ func TestTopicFixQueueEnd(t *testing.T) {
 		opts.LogLevel = 3
 		glog.SetFlags(0, "", "", true, true, 1)
 		glog.StartWorker(time.Second)
+		SetLogger(opts.Logger)
 	}
 	opts.MaxBytesPerFile = 1024 * 1024
 	_, _, nsqd := mustStartNSQD(opts)

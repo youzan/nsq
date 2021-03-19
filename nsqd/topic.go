@@ -282,6 +282,10 @@ func NewTopicWithExtAndDisableChannelAutoCreate(topicName string, part int, ext 
 	if err != ErrNeedFixQueueEnd {
 		t.UpdateCommittedOffset(t.backend.GetQueueWriteEnd())
 	}
+	if _, err := t.tryFixKVTopic(); err != nil {
+		t.tpLog.LogErrorf("failed to auto fix kv topic while init: %s", err)
+		t.SetDataFixState(true)
+	}
 	err = t.loadMagicCode()
 	if err != nil {
 		t.tpLog.LogErrorf("failed to load magic code: %v", err)
@@ -1600,11 +1604,16 @@ func (t *Topic) TryFixQueueEnd(vend BackendOffset, totalCnt int64) error {
 	dend, err := t.backend.TryFixWriteEnd(vend, totalCnt)
 	if err != nil {
 		t.tpLog.LogErrorf("fix backend to %v error: %v", vend, err)
-	} else {
-		t.UpdateCommittedOffset(&dend)
-		t.updateChannelsEnd(true, true)
+		return err
 	}
-	return err
+	// should check if there are kvtopic data missing
+	t.UpdateCommittedOffset(&dend)
+	t.updateChannelsEnd(true, true)
+	_, err = t.tryFixKVTopic()
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func (t *Topic) ResetBackendWithQueueStartNoLock(queueStartOffset int64, queueStartCnt int64) error {
@@ -1695,5 +1704,88 @@ func (t *Topic) TryFixData() error {
 		dq.backend.tryFixData()
 	}
 	// TODO: fix channel meta
-	return nil
+	_, err := t.tryFixKVTopic()
+	return err
+}
+
+func (t *Topic) tryFixKVTopic() (int64, error) {
+	// try replay with the disk queue if kv topic data missing some data in end
+	// try handle some case :
+	// 1. empty kv data
+	// 2. queue start not matched
+	// 3. queue end not matched
+	if t.kvTopic == nil {
+		return 0, nil
+	}
+	dqEnd := t.backend.GetQueueWriteEnd()
+	dqStart := t.backend.GetQueueReadStart()
+
+	offset, cnt, err := t.kvTopic.GetTopicMeta()
+	if err != nil {
+		return 0, err
+	}
+	if cnt > 0 {
+		if _, _, err := t.kvTopic.GetMsgByCnt(cnt - 1); err != nil {
+			// since the meta is not matched msg, we try fix all index data
+			t.tpLog.Warningf("kv topic end need fix since last count message not found: %v-%v, %v", offset, cnt, dqEnd)
+			offset = int64(dqStart.Offset())
+			cnt = dqStart.TotalMsgCnt()
+			// will be reset start below
+		}
+	}
+	snap := t.GetDiskQueueSnapshot()
+	defer snap.Close()
+	if dqEnd.TotalMsgCnt() == cnt && dqEnd.Offset() == BackendOffset(offset) {
+		return 0, nil
+	} else if offset <= int64(dqStart.Offset()) || cnt <= dqStart.TotalMsgCnt() {
+		t.tpLog.Warningf("kv topic need empty since end is less than queue start: %v-%v, %v", offset, cnt, dqStart)
+		err = t.kvTopic.ResetBackendWithQueueStart(int64(dqStart.Offset()), dqStart.TotalMsgCnt())
+		if err != nil {
+			return 0, err
+		}
+		offset = int64(dqStart.Offset())
+		cnt = dqStart.TotalMsgCnt()
+		if dqStart.Offset() == dqEnd.Offset() {
+			return 0, nil
+		}
+		err = snap.SeekTo(dqStart.Offset(), dqStart.TotalMsgCnt())
+		if err != nil {
+			return 0, err
+		}
+	} else {
+		err = snap.SeekTo(BackendOffset(offset), cnt)
+		if err != nil {
+			return 0, err
+		}
+	}
+	t.tpLog.Warningf("kv topic end need fix since not matched: %v-%v, %v", offset, cnt, dqEnd)
+	fixedCnt := int64(0)
+	for {
+		rr := snap.ReadOne()
+		if rr.Err != nil {
+			if rr.Err == io.EOF {
+				break
+			}
+			return fixedCnt, rr.Err
+		}
+		m, err := DecodeMessage(rr.Data, t.IsExt())
+		if err != nil {
+			return fixedCnt, err
+		}
+		_, err = t.kvTopic.PutMessageOnReplica(m, rr.Offset, int64(rr.MovedSize))
+		if err != nil {
+			return fixedCnt, err
+		}
+		fixedCnt++
+	}
+	offset, cnt, err = t.kvTopic.GetTopicMeta()
+	if err != nil {
+		return fixedCnt, err
+	}
+	t.tpLog.Warningf("kv topic end fixed to: %v-%v, %v", offset, cnt, fixedCnt)
+	if BackendOffset(offset) != dqEnd.Offset() || cnt != dqEnd.TotalMsgCnt() {
+		t.tpLog.Warningf("kv topic end not matched after fixed: %v, %v-%v", dqEnd, offset, cnt)
+		return fixedCnt, errors.New("failed to fix kv topic")
+	}
+	return fixedCnt, nil
 }
