@@ -978,6 +978,9 @@ func (c *ClusterInfo) getNSQDStats(producers Producers, selectedTopic string, so
 
 			addr := p.HTTPAddress()
 			endpoint := fmt.Sprintf("http://%s/stats?format=json&leaderOnly=%t&needClients=%t", addr, leaderOnly, needClient)
+			if !needClient {
+				endpoint = fmt.Sprintf("http://%s/stats?format=json&leaderOnly=%t", addr, leaderOnly)
+			}
 			if selectedTopic != "" {
 				endpoint = fmt.Sprintf("http://%s/stats?format=json&topic=%s&leaderOnly=%t", addr, selectedTopic, leaderOnly)
 			}

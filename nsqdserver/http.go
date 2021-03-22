@@ -1354,7 +1354,7 @@ func (s *httpServer) doStats(w http.ResponseWriter, req *http.Request, ps httpro
 	leaderOnly, _ = strconv.ParseBool(leaderOnlyStr)
 
 	jsonFormat := formatString == "json"
-	filterClients := len(needClients) == 0
+	filterClients := needClients != "true"
 
 	stats := s.ctx.getStats(leaderOnly, topicName, filterClients)
 	health := s.ctx.getHealth()
