@@ -377,6 +377,27 @@ func doLogQClean(tcData *coordData, localTopic *nsqd.Topic, retentionSize int64,
 			// so we should not clean the segment at the middle of the batch.
 			maxCleanOffset = nsqd.BackendOffset(l.MsgOffset)
 		}
+		oldMatchOffset := matchOffset
+		matchOffset, err = logMgr.GetMaxAvailableCleanOffset(matchIndex, matchOffset)
+		if err != nil {
+			coordLog.Infof("clean commit log no more available clean at (%v-%v): %s", matchIndex, matchOffset, err)
+			return
+		}
+		if matchOffset >= oldMatchOffset {
+			// should not exceed last check
+			matchOffset = oldMatchOffset
+		} else {
+			// relocate the offset for the topic data
+			l, err = logMgr.GetCommitLogFromOffsetV2(matchIndex, matchOffset)
+			if err != nil {
+				coordLog.Infof("clean commit log failed at (%v-%v): %s", matchIndex, matchOffset, err)
+				return
+			}
+			if l.MsgOffset < int64(maxCleanOffset) {
+				maxCleanOffset = nsqd.BackendOffset(l.MsgOffset)
+			}
+		}
+		coordLog.Infof("clean commit log relocated at : %v, %v, %v, %v", matchIndex, matchOffset, maxCleanOffset, l)
 		err = logMgr.CleanOldData(matchIndex, matchOffset)
 		if err != nil {
 			coordLog.Infof("clean commit log err : %v", err)

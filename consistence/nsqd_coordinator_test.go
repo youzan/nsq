@@ -195,7 +195,7 @@ func mustStartNSQD(opts *nsqdNs.Options) *nsqdNs.NSQD {
 		}
 		opts.DataPath = tmpDir
 	}
-	nsqd := nsqdNs.New(opts)
+	nsqd, _ := nsqdNs.New(opts)
 	return nsqd
 }
 
