@@ -79,7 +79,7 @@ func checkTopicStats() {
 		log.Printf("error: %v", err.Error())
 		return
 	}
-	producers, _, err := ci.GetNSQDStats(srcnodes, "", "", true)
+	producers, _, err := ci.GetNSQDStatsWithClients(srcnodes, "", "", true)
 	if err != nil {
 		log.Printf("error: %v", err.Error())
 		return
