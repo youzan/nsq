@@ -3,6 +3,7 @@ package nsqd
 import (
 	"errors"
 	"os"
+	"sync"
 	"sync/atomic"
 
 	//"runtime"
@@ -979,6 +980,69 @@ func TestTopicFixQueueEnd(t *testing.T) {
 	topic.ForceFlush()
 	newEnd = topic.backend.GetQueueWriteEnd().(*diskQueueEndInfo)
 	test.Equal(t, oldEnd.TotalMsgCnt()+int64(msgNum), newEnd.TotalMsgCnt())
+}
+
+func TestTopicWriteConcurrentMulti(t *testing.T) {
+	opts := NewOptions()
+	opts.Logger = newTestLogger(t)
+	opts.MaxBytesPerFile = 1024 * 2
+	opts.KVWriteBufferSize = 1024 * 1024
+	opts.KVMaxWriteBufferNumber = 2
+	if testing.Verbose() {
+		opts.LogLevel = 3
+		glog.SetFlags(0, "", "", true, true, 1)
+		glog.StartWorker(time.Second)
+		SetLogger(opts.Logger)
+	}
+	_, _, nsqd := mustStartNSQD(opts)
+	defer os.RemoveAll(opts.DataPath)
+	defer nsqd.Exit()
+
+	topic := nsqd.GetTopic("test", 0, false)
+	changeDynamicConfAutCommit(topic.dynamicConf)
+	topic2 := nsqd.GetTopic("test", 0, false)
+	changeDynamicConfAutCommit(topic2.dynamicConf)
+
+	msgNum := 1000
+	channel := topic.GetChannel("ch")
+	test.NotNil(t, channel)
+	channel2 := topic2.GetChannel("ch")
+	test.NotNil(t, channel2)
+	var wg sync.WaitGroup
+	t.Logf("begin test: %s", time.Now())
+	for g := 0; g < 4; g++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			msg := NewMessage(0, make([]byte, 100))
+			msg.Timestamp = time.Now().UnixNano()
+			for i := 0; i < msgNum; i++ {
+				msg.ID = 0
+				_, _, _, _, err := topic.PutMessage(msg)
+				test.Nil(t, err)
+				msg.Timestamp = time.Now().UnixNano()
+				topic.kvTopic.GetMsgByCnt(int64(i))
+			}
+			topic.ForceFlush()
+		}()
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			msg := NewMessage(0, make([]byte, 100))
+			msg.Timestamp = time.Now().UnixNano()
+			for i := 0; i < msgNum; i++ {
+				msg.ID = 0
+				_, _, _, _, err := topic2.PutMessage(msg)
+				test.Nil(t, err)
+				msg.Timestamp = time.Now().UnixNano()
+				topic2.kvTopic.GetMsgByCnt(int64(i))
+			}
+			topic2.ForceFlush()
+		}()
+	}
+
+	wg.Wait()
+	t.Logf("end test: %s", time.Now())
 }
 
 func benchmarkTopicPut(b *testing.B, size int, useExt bool) {
