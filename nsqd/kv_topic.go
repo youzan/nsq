@@ -45,6 +45,7 @@ func getKVKeyForTopicBegin(fullName string) []byte {
 	startKey, _ = codec.EncodeMemCmpKey(startKey[:0], TopicPrefix, SepStart, fullName, SepStart)
 	return startKey
 }
+
 func getKVKeyForTopicEnd(fullName string) []byte {
 	endKey := make([]byte, 0, len(TopicPrefix)+len(fullName)+2+4)
 	endKey, _ = codec.EncodeMemCmpKey(endKey[:0], TopicPrefix, SepStart, fullName, SepStop)
@@ -153,6 +154,19 @@ func getKVKeyForMsgOffsetEnd(fullName string) []byte {
 	keyBuf := make([]byte, 0, len(TopicPrefix)+len(fullName)+len(TopicTraceKeyPrefix)+3+6)
 	keyBuf, _ = codec.EncodeMemCmpKey(keyBuf[:0], TopicPrefix, SepStart, fullName, SepStart, TopicMsgOffsetPrefix, SepStop)
 	return keyBuf
+}
+
+func decodeMsgOffsetKey(b []byte) (int64, int64, error) {
+	vals, err := codec.Decode(b, 9)
+	if err != nil {
+		return 0, 0, err
+	}
+	if len(vals) < 9 {
+		return 0, 0, errInvalidEncodedData
+	}
+	start := vals[6].(int64)
+	end := vals[8].(int64)
+	return start, end, nil
 }
 
 func encodeMsgOffsetValue(msgid MessageID, cnt int64, ts int64) []byte {
@@ -322,7 +336,7 @@ func (t *KVTopic) saveTopicMetaInBatch(wb engine.WriteBatch, offset int64, cnt i
 }
 
 // search the first msg [offset, end]
-func (t *KVTopic) getMsgIDCntTsStartFromOffset(vend int64) (MessageID, int64, int64, error) {
+func (t *KVTopic) getMsgIDCntTsStartFromOffset(vend int64) (MessageID, int64, int64, int64, error) {
 	// tag info or trace key info currently not cleaned
 	minKey := getKVKeyForMsgOffset(t.fullName, vend, 0)
 	maxKey := getKVKeyForMsgOffsetEnd(t.fullName)
@@ -332,23 +346,29 @@ func (t *KVTopic) getMsgIDCntTsStartFromOffset(vend int64) (MessageID, int64, in
 	itopts.Type = engine.RangeClose
 	it, err := t.kvEng.GetIterator(itopts)
 	if err != nil {
-		return 0, 0, 0, err
+		return 0, 0, 0, 0, err
 	}
 	defer it.Close()
 	it.SeekToFirst()
 	if !it.Valid() {
 		// maybe no data before vend while sync data from leader on replica
-		return 0, 0, 0, nil
+		return 0, 0, 0, 0, ErrMsgNotFoundInIndex
 	}
 	v := it.RefValue()
 	if v == nil {
-		return 0, 0, 0, ErrMsgNotFoundInIndex
+		return 0, 0, 0, 0, ErrMsgNotFoundInIndex
 	}
-	return decodeMsgOffsetValue(v)
+	start, _, err := decodeMsgOffsetKey(it.RefKey())
+	if err != nil {
+		return 0, 0, 0, 0, err
+	}
+	id, cnt, ts, err := decodeMsgOffsetValue(v)
+	return id, cnt, ts, start, err
 }
 
 // search the last msg at [begin, offset)
-func (t *KVTopic) getMsgIDCntTsLessThanOffset(vend int64) (MessageID, int64, int64, error) {
+// return id, cnt, ts, realoffset
+func (t *KVTopic) getMsgIDCntTsLessThanOffset(vend int64) (MessageID, int64, int64, int64, error) {
 	// tag info or trace key info currently not cleaned
 	minKey := getKVKeyForMsgOffset(t.fullName, 0, 0)
 	maxKey := getKVKeyForMsgOffset(t.fullName, vend, 0)
@@ -358,19 +378,24 @@ func (t *KVTopic) getMsgIDCntTsLessThanOffset(vend int64) (MessageID, int64, int
 	itopts.Type = engine.RangeOpen
 	it, err := t.kvEng.GetIterator(itopts)
 	if err != nil {
-		return 0, 0, 0, err
+		return 0, 0, 0, 0, err
 	}
 	defer it.Close()
 	it.SeekToLast()
 	if !it.Valid() {
 		// maybe no data before vend while sync data from leader on replica
-		return 0, 0, 0, nil
+		return 0, 0, 0, 0, nil
 	}
 	v := it.RefValue()
 	if v == nil {
-		return 0, 0, 0, ErrMsgNotFoundInIndex
+		return 0, 0, 0, 0, ErrMsgNotFoundInIndex
 	}
-	return decodeMsgOffsetValue(v)
+	start, _, err := decodeMsgOffsetKey(it.RefKey())
+	if err != nil {
+		return 0, 0, 0, 0, err
+	}
+	id, cnt, ts, err := decodeMsgOffsetValue(v)
+	return id, cnt, ts, start, err
 }
 
 func (t *KVTopic) getMsgIDCntTsAtOffset(vend int64) (MessageID, int64, int64, error) {
@@ -399,14 +424,19 @@ func (t *KVTopic) getMsgIDCntTsAtOffset(vend int64) (MessageID, int64, int64, er
 }
 
 func (t *KVTopic) ResetBackendEnd(vend BackendOffset, totalCnt int64) error {
-	msgid, msgCnt, _, err := t.getMsgIDCntTsStartFromOffset(int64(vend))
+	msgid, msgCnt, _, foundOffset, err := t.getMsgIDCntTsStartFromOffset(int64(vend))
 	if err != nil {
 		return err
 	}
+	if foundOffset != int64(vend) {
+		t.tpLog.Warningf("reset offset %v not matched with db at offset: %v, id: %v", vend, foundOffset, msgid)
+	}
+	// the message at offset and greater than offset should be removed
+	// so the left count is the count index at offset
 	if msgCnt != totalCnt {
 		t.tpLog.Warningf("total count %v not matched with db %v at offset: %v, id: %v", totalCnt, msgCnt, vend, msgid)
 	}
-	minKey := getKVKeyForMsgOffset(t.fullName, int64(vend), 0)
+	minKey := getKVKeyForMsgOffset(t.fullName, foundOffset, 0)
 	maxKey := getKVKeyForMsgOffsetEnd(t.fullName)
 	wb := t.kvEng.NewWriteBatch()
 	defer wb.Destroy()
@@ -420,7 +450,7 @@ func (t *KVTopic) ResetBackendEnd(vend BackendOffset, totalCnt int64) error {
 	maxKey = getKVKeyForMsgCntEnd(t.fullName)
 	wb.DeleteRange(minKey, maxKey)
 
-	t.saveTopicMetaInBatch(wb, int64(vend), totalCnt)
+	t.saveTopicMetaInBatch(wb, foundOffset, msgCnt)
 	//minKey = getKVKeyForMsgTs(t.fullName, MessageID(msgid), msgTs)
 	//maxKey = getKVKeyForMsgTsEnd(t.fullName)
 	//wb.DeleteRange(minKey, maxKey)
@@ -428,8 +458,8 @@ func (t *KVTopic) ResetBackendEnd(vend BackendOffset, totalCnt int64) error {
 	if err != nil {
 		return err
 	}
-	t.lastOffset = int64(vend)
-	t.lastCnt = totalCnt
+	t.lastOffset = foundOffset
+	t.lastCnt = msgCnt
 	return nil
 }
 
@@ -682,7 +712,7 @@ func (t *KVTopic) CleanBackendWithQueueStart(queueStartOffset int64) error {
 	t.tpLog.Infof("clean with queue start: %v", queueStartOffset)
 	// delete the data old than queueStartOffset
 	// tag info or trace key info currently not cleaned
-	msgid, msgCnt, msgTs, err := t.getMsgIDCntTsLessThanOffset(queueStartOffset)
+	msgid, msgCnt, msgTs, _, err := t.getMsgIDCntTsLessThanOffset(queueStartOffset)
 	if err != nil {
 		return err
 	}

@@ -196,6 +196,7 @@ func New(opts *Options) (*NSQD, error) {
 		n.sharedCfg = sharedCfg
 		cfg.SharedConfig = sharedCfg
 		cfg.DataDir = kvPath
+		engine.FillDefaultOptions(&cfg.RockOptions)
 		eng, err := engine.NewKVEng(cfg)
 		if err != nil {
 			nsqLog.LogErrorf("failed to create engine: %s ", err)

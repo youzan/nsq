@@ -72,7 +72,7 @@ type ILocalLogQueue interface {
 	ForceFlush()
 	ResetBackendEndNoLock(nsqd.BackendOffset, int64) error
 	ResetBackendWithQueueStartNoLock(int64, int64) error
-	GetDiskQueueSnapshot() *nsqd.DiskQueueSnapshot
+	GetDiskQueueSnapshot(checkCommit bool) *nsqd.DiskQueueSnapshot
 	TotalMessageCnt() uint64
 	TotalDataSize() int64
 	TryFixQueueEnd(nsqd.BackendOffset, int64) error
@@ -983,7 +983,7 @@ func checkAndFixLocalLogQueueEnd(tc *coordData,
 			if localErr != nil {
 				continue
 			}
-			snap := localLogQ.GetDiskQueueSnapshot()
+			snap := localLogQ.GetDiskQueueSnapshot(false)
 			seekCnt := int64(0)
 			if logData.MsgCnt > 0 {
 				seekCnt = logData.MsgCnt - 1
@@ -1019,7 +1019,7 @@ func checkAndFixLocalLogQueueData(tc *coordData,
 	}
 	endFixErr := checkAndFixLocalLogQueueEnd(tc, localLogQ, logMgr, true, forceFix)
 
-	snap := localLogQ.GetDiskQueueSnapshot()
+	snap := localLogQ.GetDiskQueueSnapshot(false)
 	for {
 		seekCnt := int64(0)
 		if log.MsgCnt > 0 {
@@ -1293,7 +1293,7 @@ func (ncoord *NsqdCoordinator) SearchLogByMsgOffset(topic string, part int, offs
 		if localErr != nil {
 			return l, 0, 0, localErr
 		}
-		snap := t.GetDiskQueueSnapshot()
+		snap := t.GetDiskQueueSnapshot(true)
 
 		seekCnt := int64(0)
 		if l.MsgCnt > 0 {
@@ -1342,7 +1342,7 @@ func (ncoord *NsqdCoordinator) SearchLogByMsgCnt(topic string, part int, count i
 		if localErr != nil {
 			return l, 0, 0, localErr
 		}
-		snap := t.GetDiskQueueSnapshot()
+		snap := t.GetDiskQueueSnapshot(true)
 
 		seekCnt := int64(0)
 		if l.MsgCnt > 0 {
@@ -1450,7 +1450,7 @@ func (ncoord *NsqdCoordinator) SearchLogByMsgTimestamp(topic string, part int, t
 		return nil, 0, 0, localErr
 	}
 
-	snap := t.GetDiskQueueSnapshot()
+	snap := t.GetDiskQueueSnapshot(true)
 	comp := &MsgTimestampComparator{
 		localTopicReader: snap,
 		searchEnd:        tcData.logMgr.GetCurrentStart(),
@@ -2888,13 +2888,13 @@ func (ncoord *NsqdCoordinator) readTopicRawData(topic string, partition int, off
 		return nil, ErrLocalTopicPartitionMismatch
 	}
 	dataList := make([][]byte, 0, len(offsetList))
-	snap := t.GetDiskQueueSnapshot()
+	snap := t.GetDiskQueueSnapshot(true)
 	if fromDelayedQueue {
 		dq := t.GetDelayedQueue()
 		if dq == nil {
 			return nil, ErrLocalDelayedQueueMissing
 		}
-		snap = dq.GetDiskQueueSnapshot()
+		snap = dq.GetDiskQueueSnapshot(true)
 	}
 	for i, offset := range offsetList {
 		size := sizeList[i]

@@ -1000,10 +1000,10 @@ func TestTopicWriteConcurrentMulti(t *testing.T) {
 
 	topic := nsqd.GetTopic("test", 0, false)
 	changeDynamicConfAutCommit(topic.dynamicConf)
-	topic2 := nsqd.GetTopic("test", 0, false)
+	topic2 := nsqd.GetTopic("test2", 0, false)
 	changeDynamicConfAutCommit(topic2.dynamicConf)
 
-	msgNum := 1000
+	msgNum := 2000
 	channel := topic.GetChannel("ch")
 	test.NotNil(t, channel)
 	channel2 := topic2.GetChannel("ch")
@@ -1014,14 +1014,38 @@ func TestTopicWriteConcurrentMulti(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			start := time.Now()
+			for time.Since(start) < time.Second*25 {
+				topic.kvTopic.kvEng.CompactAllRange()
+				time.Sleep(time.Second * 5)
+			}
+		}()
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			msg := NewMessage(0, make([]byte, 100))
 			msg.Timestamp = time.Now().UnixNano()
 			for i := 0; i < msgNum; i++ {
 				msg.ID = 0
-				_, _, _, _, err := topic.PutMessage(msg)
+				_, _, _, dend, err := topic.PutMessage(msg)
 				test.Nil(t, err)
+				if err != nil {
+					t.Errorf("failed to write : %s", err)
+					return
+				}
 				msg.Timestamp = time.Now().UnixNano()
 				topic.kvTopic.GetMsgByCnt(int64(i))
+				if i%100 == 0 {
+					topic.ForceFlush()
+					topic.Lock()
+					topic.kvTopic.ResetBackendEnd(dend.Offset()/2, dend.TotalMsgCnt()/2)
+					_, err := topic.tryFixKVTopic()
+					topic.Unlock()
+					if err != nil {
+						t.Errorf("failed to fix kv topic: %s", err)
+						return
+					}
+				}
 			}
 			topic.ForceFlush()
 		}()
@@ -1032,10 +1056,25 @@ func TestTopicWriteConcurrentMulti(t *testing.T) {
 			msg.Timestamp = time.Now().UnixNano()
 			for i := 0; i < msgNum; i++ {
 				msg.ID = 0
-				_, _, _, _, err := topic2.PutMessage(msg)
+				_, _, _, dend, err := topic2.PutMessage(msg)
 				test.Nil(t, err)
+				if err != nil {
+					t.Errorf("failed to write : %s", err)
+					return
+				}
 				msg.Timestamp = time.Now().UnixNano()
 				topic2.kvTopic.GetMsgByCnt(int64(i))
+				if i%100 == 0 {
+					topic2.ForceFlush()
+					topic2.Lock()
+					topic2.kvTopic.ResetBackendEnd(dend.Offset()/2, dend.TotalMsgCnt()/2)
+					_, err := topic2.tryFixKVTopic()
+					topic2.Unlock()
+					if err != nil {
+						t.Errorf("failed to fix kv topic: %s", err)
+						return
+					}
+				}
 			}
 			topic2.ForceFlush()
 		}()

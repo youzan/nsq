@@ -545,7 +545,7 @@ func (q *DelayQueue) ResetBackendWithQueueStartNoLock(queueStartOffset int64, qu
 	return nil
 }
 
-func (q *DelayQueue) GetDiskQueueSnapshot() *DiskQueueSnapshot {
+func (q *DelayQueue) GetDiskQueueSnapshot(checkCommit bool) *DiskQueueSnapshot {
 	e := q.backend.GetQueueReadEnd()
 	start := q.backend.GetQueueReadStart()
 	d := NewDiskQueueSnapshot(getDelayQueueBackendName(q.tname, q.partition), q.dataPath, e)

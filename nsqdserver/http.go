@@ -1199,7 +1199,7 @@ func (s *httpServer) doMessageGet(w http.ResponseWriter, req *http.Request, ps h
 	if err != nil {
 		return nil, http_api.Err{404, err.Error()}
 	}
-	backendReader := t.GetDiskQueueSnapshot()
+	backendReader := t.GetDiskQueueSnapshot(true)
 	if backendReader == nil {
 		return nil, http_api.Err{500, "Failed to get queue reader"}
 	}
