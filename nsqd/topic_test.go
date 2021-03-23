@@ -1027,6 +1027,7 @@ func TestTopicWriteConcurrentMulti(t *testing.T) {
 			msg.Timestamp = time.Now().UnixNano()
 			for i := 0; i < msgNum; i++ {
 				msg.ID = 0
+				msg.Body = []byte("test" + strconv.Itoa(int(i)))
 				_, _, _, dend, err := topic.PutMessage(msg)
 				test.Nil(t, err)
 				if err != nil {
@@ -1056,6 +1057,7 @@ func TestTopicWriteConcurrentMulti(t *testing.T) {
 			msg.Timestamp = time.Now().UnixNano()
 			for i := 0; i < msgNum; i++ {
 				msg.ID = 0
+				msg.Body = []byte("test2" + strconv.Itoa(int(i)))
 				_, _, _, dend, err := topic2.PutMessage(msg)
 				test.Nil(t, err)
 				if err != nil {

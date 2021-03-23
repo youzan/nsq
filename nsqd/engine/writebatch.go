@@ -12,7 +12,6 @@ type WriteBatch interface {
 	DeleteRange(start, end []byte)
 	Delete(key []byte)
 	Put(key []byte, value []byte)
-	Merge(key []byte, value []byte)
 	Commit() error
 }
 
@@ -51,10 +50,6 @@ func (wb *pebbleWriteBatch) Delete(key []byte) {
 
 func (wb *pebbleWriteBatch) Put(key []byte, value []byte) {
 	wb.wb.Set(key, value, wb.wo)
-}
-
-func (wb *pebbleWriteBatch) Merge(key []byte, value []byte) {
-	wb.wb.Merge(key, value, wb.wo)
 }
 
 func (wb *pebbleWriteBatch) Commit() error {

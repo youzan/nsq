@@ -191,13 +191,7 @@ func NewPebbleEng(cfg *RockEngConfig) (*PebbleEng, error) {
 		}
 		return 3
 	}
-	if !cfg.DisableMergeCounter {
-		if cfg.EnableTableCounter {
-			opts.Merger = newUint64AddMerger()
-		}
-	} else {
-		cfg.EnableTableCounter = false
-	}
+	cfg.EnableTableCounter = false
 	db := &PebbleEng{
 		cfg:  cfg,
 		opts: opts,
