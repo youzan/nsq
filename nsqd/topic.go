@@ -1795,7 +1795,13 @@ func (t *Topic) tryFixKVTopic() (int64, error) {
 		}
 		_, err = t.kvTopic.PutMessageOnReplica(m, rr.Offset, int64(rr.MovedSize))
 		if err != nil {
-			t.tpLog.Warningf("kv topic end fix error: %s", err)
+			if err != ErrWriteOffsetMismatch {
+				tmpBuf := bytes.NewBuffer(make([]byte, 0, len(rr.Data)))
+				wsize, err := m.WriteTo(tmpBuf, t.kvTopic.IsExt())
+				t.tpLog.Warningf("kv topic end fix error: %s, %v, %v, %v, %v, %v", err, rr, m, tmpBuf, wsize, t.kvTopic.putBuffer.Bytes())
+			} else {
+				t.tpLog.Warningf("kv topic end fix error: %s, %v", err, rr)
+			}
 			return fixedCnt, err
 		}
 		fixedCnt++

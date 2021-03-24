@@ -495,6 +495,7 @@ func (t *KVTopic) PutRawDataOnReplica(rawData []byte, offset BackendOffset, chec
 			return dend, err
 		}
 		if checkSize > 0 && int64(writeBytes) != checkSize {
+			t.tpLog.Warningf("raw: %v, message: %v, %v", rawData, m, t.putBuffer.Bytes())
 			return dend, fmt.Errorf("message write size mismatch %v vs %v", checkSize, writeBytes)
 		}
 		return dend, nil

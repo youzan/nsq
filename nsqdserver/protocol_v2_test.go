@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"math"
 	"math/rand"
 	"net"
@@ -7373,6 +7374,15 @@ func testIOLoopReturnsClientErr(t *testing.T, fakeConn test.FakeNetConn) {
 
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
+	opts.KVEnabled = false
+	if opts.DataPath == "" {
+		tmpDir, err := ioutil.TempDir("", fmt.Sprintf("nsq-test-%d", time.Now().UnixNano()))
+		if err != nil {
+			panic(err)
+		}
+		opts.DataPath = tmpDir
+		defer os.RemoveAll(tmpDir)
+	}
 
 	nd, err := nsqdNs.New(opts)
 	test.Nil(t, err)
