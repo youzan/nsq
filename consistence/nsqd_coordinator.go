@@ -863,6 +863,7 @@ func (ncoord *NsqdCoordinator) loadLocalTopicData() error {
 		maybeInitDelayedQ(tc.GetData(), topic)
 		topic.SetDynamicInfo(*dyConf, tc.GetData().logMgr)
 
+		// do we need hold lock for local topic? since it will not run concurrently with catchup and will run in single goroutine
 		localErr := checkAndFixLocalLogQueueData(tc.GetData(), topic, tc.GetData().logMgr, forceFix)
 		if localErr != nil {
 			coordLog.Errorf("check local topic %v data need to be fixed:%v", topicInfo.GetTopicDesp(), localErr)
@@ -1697,6 +1698,7 @@ func (ncoord *NsqdCoordinator) decideCatchupCommitLogInfo(tc *TopicCoordinator,
 		}
 		needFullSync = true
 	}
+	// do we need hold lock for local topic?  Maybe no since it will not run concurrently while catchup
 	localErr := checkAndFixLocalLogQueueData(tc.GetData(), localLogQ, logMgr, false)
 	if localErr != nil {
 		coordLog.Errorf("check local topic %v data need to be fixed:%v", topicInfo.GetTopicDesp(), localErr)
@@ -3026,7 +3028,9 @@ func (ncoord *NsqdCoordinator) updateLocalTopic(topicInfo *TopicPartitionMetaInf
 	}
 
 	if t.IsDataNeedFix() {
+		t.Lock()
 		endFixErr := checkAndFixLocalLogQueueEnd(tcData, t, tcData.logMgr, true, ForceFixLeaderData)
+		t.Unlock()
 		if endFixErr != nil {
 			t.SetDataFixState(true)
 		}

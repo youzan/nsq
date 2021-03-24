@@ -1700,6 +1700,8 @@ func (t *Topic) UpdateDelayedQueueConsumedState(ts int64, keyList RecentKeyList,
 
 // after crash, some topic meta need to be fixed by manual
 func (t *Topic) TryFixData() error {
+	t.Lock()
+	defer t.Unlock()
 	t.backend.tryFixData()
 	dq := t.GetDelayedQueue()
 	if dq != nil {
@@ -1784,7 +1786,7 @@ func (t *Topic) tryFixKVTopic() (int64, error) {
 			if rr.Err == io.EOF {
 				break
 			}
-			t.tpLog.Warningf("kv topic end fix error: %s", rr.Err)
+			t.tpLog.Warningf("kv topic end fix error: %s, cnt: %v", rr.Err, fixedCnt)
 			return fixedCnt, rr.Err
 		}
 		m, err := DecodeMessage(rr.Data, t.IsExt())

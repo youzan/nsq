@@ -361,7 +361,7 @@ CheckFileOpen:
 		// where a new message should begin
 		d.readFile.Close()
 		d.readFile = nil
-		result.Err = fmt.Errorf("invalid message read size (%d)", msgSize)
+		result.Err = fmt.Errorf("invalid message read size (%d) at offset: %v", msgSize, d.readPos)
 		return result
 	}
 

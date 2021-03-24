@@ -19,7 +19,7 @@ require (
 	github.com/cenkalti/backoff v2.1.0+incompatible
 	github.com/certifi/gocertifi v0.0.0-20200211180108-c7c1fbc02894 // indirect
 	github.com/cockroachdb/pebble v0.0.0-20210322142411-65860c8c27ac
-	github.com/coreos/etcd v3.3.10+incompatible
+	github.com/coreos/etcd v3.3.13+incompatible
 	github.com/getsentry/raven-go v0.2.0 // indirect
 	github.com/go-ole/go-ole v1.2.5 // indirect
 	github.com/gobwas/glob v0.2.3
@@ -51,3 +51,5 @@ require (
 	gopkg.in/stretchr/testify.v1 v1.2.2 // indirect
 	gopkg.in/yaml.v2 v2.3.0
 )
+
+replace github.com/ugorji/go => github.com/ugorji/go/codec v1.1.7

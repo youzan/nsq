@@ -436,6 +436,7 @@ func TestSkipMetaData(t *testing.T) {
 func TestSetHealth(t *testing.T) {
 	opts := NewOptions()
 	opts.Logger = newTestLogger(t)
+	opts.KVEnabled = false
 	nsqd, err := New(opts)
 	equal(t, err, nil)
 
