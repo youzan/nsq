@@ -799,6 +799,9 @@ func (n *NSQD) flushAll(all bool, flushCnt int) {
 	}
 	if all {
 		n.metaStorage.Sync()
+		if n.kvTopicStorage != nil {
+			n.kvTopicStorage.FlushAll()
+		}
 	}
 }
 

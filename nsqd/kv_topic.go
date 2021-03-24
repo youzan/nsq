@@ -237,6 +237,7 @@ func NewKVTopicWithExt(topicName string, part int, ext bool, opt *Options) *KVTo
 	}
 	backendName := getBackendName(topicName, part)
 	cfg := engine.NewRockConfig()
+	cfg.DisableWAL = true
 	cfg.MaxWriteBufferNumber = 4
 	cfg.DataDir = path.Join(dataPath, backendName)
 	eng, err := engine.NewKVEng(cfg)

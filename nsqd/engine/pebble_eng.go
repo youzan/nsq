@@ -366,6 +366,12 @@ func (pe *PebbleEng) IsClosed() bool {
 	return false
 }
 
+func (pe *PebbleEng) FlushAll() {
+	if pe.cfg.DisableWAL {
+		pe.eng.Flush()
+	}
+}
+
 func (pe *PebbleEng) CloseEng() bool {
 	pe.rwmutex.Lock()
 	defer pe.rwmutex.Unlock()
@@ -373,6 +379,9 @@ func (pe *PebbleEng) CloseEng() bool {
 		if atomic.CompareAndSwapInt32(&pe.engOpened, 1, 0) {
 			if pe.wb != nil {
 				pe.wb.Destroy()
+			}
+			if pe.cfg.DisableWAL {
+				pe.eng.Flush()
 			}
 			pe.eng.Close()
 			dbLog.Infof("engine closed: %v", pe.GetDataDir())

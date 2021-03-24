@@ -201,6 +201,7 @@ type KVEngine interface {
 	GetApproximateSizes(ranges []CRange, includeMem bool) []uint64
 	IsClosed() bool
 	CloseEng() bool
+	FlushAll()
 	CloseAll()
 	GetStatistics() string
 	GetInternalStatus() map[string]interface{}

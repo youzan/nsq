@@ -23,7 +23,9 @@ func testKVTopicWriteRead(t *testing.T, replica bool) {
 	opts.DataPath = tmpDir
 	defer os.RemoveAll(tmpDir)
 	kvt := NewKVTopicWithExt("test-kv-topic", 0, true, opts)
+	defer kvt.kvEng.CloseAll()
 	defer kvt.Close()
+
 	test.NotNil(t, kvt)
 	offset, totalCnt, err := kvt.GetTopicMeta()
 	test.Nil(t, err)
@@ -82,6 +84,7 @@ func testKVTopicWriteRead(t *testing.T, replica bool) {
 
 	// test reopen
 	kvt.Close()
+	kvt.kvEng.CloseAll()
 	kvt = NewKVTopicWithExt("test-kv-topic", 0, true, opts)
 	test.NotNil(t, kvt)
 	offset, totalCnt, err = kvt.GetTopicMeta()
@@ -170,6 +173,7 @@ func TestKVTopicWriteRawData(t *testing.T) {
 	opts.DataPath = tmpDir
 	defer os.RemoveAll(tmpDir)
 	kvt := NewKVTopicWithExt("test-kv-topic-raw", 0, true, opts)
+	defer kvt.kvEng.CloseAll()
 	defer kvt.Close()
 	test.NotNil(t, kvt)
 	singleSize := int32(47)
@@ -227,6 +231,7 @@ func TestKVTopicWriteRawData(t *testing.T) {
 	test.Equal(t, int64(3), totalCnt)
 	// test reopen
 	kvt.Close()
+	kvt.kvEng.CloseAll()
 	kvt = NewKVTopic("test-kv-topic-raw", 0, opts)
 	test.NotNil(t, kvt)
 	offset, totalCnt, err = kvt.GetTopicMeta()
