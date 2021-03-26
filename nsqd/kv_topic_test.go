@@ -34,17 +34,21 @@ func testKVTopicWriteRead(t *testing.T, replica bool) {
 	singleSize := int32(47)
 	msgs := make([]*Message, 0)
 	msgCnt := 6
+	rawMsgData := bytes.NewBuffer(make([]byte, 0, int(singleSize)*msgCnt))
 	for i := 0; i < msgCnt; i++ {
 		m := NewMessageWithExt(MessageID(i+1), make([]byte, 10), ext.JSON_HEADER_EXT_VER, []byte("tes"+strconv.Itoa(i)))
 		if i <= msgCnt-2 {
 			m.TraceID = uint64(i + 1)
 		}
 		msgs = append(msgs, m)
+		binary.Write(rawMsgData, binary.BigEndian, singleSize-4)
+		m.WriteTo(rawMsgData, kvt.IsExt())
 	}
+	test.Equal(t, int(singleSize)*msgCnt, len(rawMsgData.Bytes()))
 	var wsize int32
 	var end BackendQueueEnd
 	if replica {
-		end, err = kvt.PutMessageOnReplica(msgs[0], BackendOffset(kvt.lastOffset), int64(singleSize))
+		end, err = kvt.PutRawDataOnReplica(rawMsgData.Bytes()[:singleSize], BackendOffset(kvt.lastOffset), int64(singleSize), 1)
 	} else {
 		wsize, end, err = kvt.PutMessage(msgs[0])
 	}
@@ -63,7 +67,7 @@ func testKVTopicWriteRead(t *testing.T, replica bool) {
 
 	var wfirst BackendOffset
 	if replica {
-		end, err = kvt.PutMessagesOnReplica(msgs[1:], BackendOffset(kvt.lastOffset), int64(singleSize*int32(msgCnt-1)))
+		end, err = kvt.PutRawDataOnReplica(rawMsgData.Bytes()[singleSize:], BackendOffset(kvt.lastOffset), int64(singleSize*int32(msgCnt-1)), int32(msgCnt-1))
 	} else {
 		wfirst, wsize, end, err = kvt.PutMessages(msgs[1:])
 	}

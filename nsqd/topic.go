@@ -1058,9 +1058,12 @@ func (t *Topic) PutRawDataOnReplica(rawData []byte, offset BackendOffset, checkS
 	if t.kvTopic != nil {
 		kvEnd, kverr := t.kvTopic.PutRawDataOnReplica(rawData, offset, checkSize, msgNum)
 		if kverr != nil {
-			t.tpLog.LogWarningf("kv topic write failed: %s", kverr)
+			t.tpLog.LogWarningf("kv topic write failed: %s, %v", kverr, rawData)
+			t.SetDataFixState(true)
+			return &dend, kverr
 		} else if kvEnd.Offset() != dend.Offset() || kvEnd.TotalMsgCnt() != dend.TotalMsgCnt() {
 			t.tpLog.LogWarningf("kv topic write end mismatch: %v, %v", kvEnd, dend)
+			t.SetDataFixState(true)
 		}
 	}
 	if atomic.LoadInt32(&t.dynamicConf.AutoCommit) == 1 {
@@ -1789,19 +1792,9 @@ func (t *Topic) tryFixKVTopic() (int64, error) {
 			t.tpLog.Warningf("kv topic end fix error: %s, cnt: %v", rr.Err, fixedCnt)
 			return fixedCnt, rr.Err
 		}
-		m, err := DecodeMessage(rr.Data, t.IsExt())
+		_, _, _, err = t.kvTopic.putRaw(rr.Data, rr.Offset, int64(rr.MovedSize))
 		if err != nil {
-			return fixedCnt, err
-		}
-		_, err = t.kvTopic.PutMessageOnReplica(m, rr.Offset, int64(rr.MovedSize))
-		if err != nil {
-			if err != ErrWriteOffsetMismatch {
-				tmpBuf := bytes.NewBuffer(make([]byte, 0, len(rr.Data)))
-				wsize, err := m.WriteTo(tmpBuf, t.kvTopic.IsExt())
-				t.tpLog.Warningf("kv topic end fix error: %s, %v, %v, %v, %v, %v", err, rr, m, tmpBuf, wsize, t.kvTopic.putBuffer.Bytes())
-			} else {
-				t.tpLog.Warningf("kv topic end fix error: %s, %v", err, rr)
-			}
+			t.tpLog.Warningf("kv topic end fix error: %s, %v", err, rr)
 			return fixedCnt, err
 		}
 		fixedCnt++

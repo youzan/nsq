@@ -475,6 +475,7 @@ func (t *KVTopic) PutMessage(m *Message) (int32, BackendQueueEnd, error) {
 	return writeBytes, dn, err
 }
 
+// this raw data include size header
 func (t *KVTopic) PutRawDataOnReplica(rawData []byte, offset BackendOffset, checkSize int64, msgNum int32) (BackendQueueEnd, error) {
 	wend := t.lastOffset
 	if wend != int64(offset) {
@@ -484,81 +485,51 @@ func (t *KVTopic) PutRawDataOnReplica(rawData []byte, offset BackendOffset, chec
 	if len(rawData) < 4 {
 		return nil, fmt.Errorf("invalid raw message data: %v", rawData)
 	}
-	if msgNum == 1 {
-		m, err := DecodeMessage(rawData[4:], t.IsExt())
+	wb := t.defaultWB
+	defer wb.Clear()
+	// batched
+	leftBuf := rawData
+	wsizeTotal := int32(0)
+	var diskEnd diskQueueEndInfo
+	diskEnd.totalMsgCnt = t.lastCnt
+	diskEnd.virtualEnd = BackendOffset(t.lastOffset)
+	for {
+		if len(leftBuf) < 4 {
+			return nil, fmt.Errorf("invalid raw message data: %v", rawData)
+		}
+		sz := int32(binary.BigEndian.Uint32(leftBuf[:4]))
+		if sz <= 0 || sz > MAX_POSSIBLE_MSG_SIZE {
+			// this file is corrupt and we have no reasonable guarantee on
+			// where a new message should begin
+			return nil, fmt.Errorf("invalid message read size (%d)", sz)
+		}
+		wend, wsize, err := t.putBatchedRaw(wb, int64(diskEnd.Offset()), diskEnd.TotalMsgCnt(), leftBuf[4:sz+4], 0)
 		if err != nil {
 			return nil, err
 		}
-		writeBytes, dend, err := t.PutMessage(m)
-		if err != nil {
-			t.tpLog.LogErrorf("topic write to disk error: %v, %v", offset, err.Error())
-			return dend, err
+		msgNum--
+		wsizeTotal += wsize
+		diskEnd.virtualEnd = wend
+		diskEnd.totalMsgCnt = diskEnd.totalMsgCnt + 1
+		leftBuf = leftBuf[sz+4:]
+		if len(leftBuf) == 0 {
+			break
 		}
-		if checkSize > 0 && int64(writeBytes) != checkSize {
-			t.tpLog.Warningf("raw: %v, message: %v, %v", rawData, m, t.putBuffer.Bytes())
-			return dend, fmt.Errorf("message write size mismatch %v vs %v", checkSize, writeBytes)
-		}
-		return dend, nil
-	} else {
-		// batched
-		msgs := make([]*Message, 0, msgNum)
-		leftBuf := rawData
-		for {
-			if len(leftBuf) < 4 {
-				return nil, fmt.Errorf("invalid raw message data: %v", rawData)
-			}
-			sz := int32(binary.BigEndian.Uint32(leftBuf[:4]))
-			if sz <= 0 || sz > MAX_POSSIBLE_MSG_SIZE {
-				// this file is corrupt and we have no reasonable guarantee on
-				// where a new message should begin
-				return nil, fmt.Errorf("invalid message read size (%d)", sz)
-			}
-
-			m, err := DecodeMessage(leftBuf[4:sz+4], t.IsExt())
-			if err != nil {
-				return nil, err
-			}
-			msgs = append(msgs, m)
-			leftBuf = leftBuf[sz+4:]
-			if len(leftBuf) == 0 {
-				break
-			}
-		}
-		return t.PutMessagesOnReplica(msgs, offset, checkSize)
-	}
-}
-
-func (t *KVTopic) PutMessageOnReplica(m *Message, offset BackendOffset, checkSize int64) (BackendQueueEnd, error) {
-	wend := t.lastOffset
-	if wend != int64(offset) {
-		t.tpLog.LogErrorf("topic write offset mismatch: %v, %v", offset, wend)
-		return nil, ErrWriteOffsetMismatch
-	}
-	endOffset, _, dendCnt, err := t.put(m, checkSize)
-	if err != nil {
-		return nil, err
-	}
-	dn := &diskQueueEndInfo{totalMsgCnt: dendCnt}
-	dn.virtualEnd = endOffset
-	return dn, nil
-}
-
-func (t *KVTopic) PutMessagesOnReplica(msgs []*Message, offset BackendOffset, checkSize int64) (BackendQueueEnd, error) {
-	wend := t.lastOffset
-	if wend != int64(offset) {
-		t.tpLog.LogErrorf(
-			"TOPIC write message offset mismatch %v, %v",
-			offset, wend)
-		return nil, ErrWriteOffsetMismatch
-	}
-	_, wsizeTotal, dend, err := t.PutMessages(msgs)
-	if err != nil {
-		return dend, err
 	}
 	if checkSize > 0 && int64(wsizeTotal) != checkSize {
 		return nil, fmt.Errorf("batch message size mismatch: %v vs %v", checkSize, wsizeTotal)
 	}
-	return dend, nil
+	if msgNum != 0 {
+		return nil, fmt.Errorf("should have the same message number in raw: %v", msgNum)
+	}
+	t.saveTopicMetaInBatch(wb, int64(diskEnd.Offset()), diskEnd.TotalMsgCnt())
+	err := wb.Commit()
+	if err != nil {
+		return nil, err
+	}
+	t.lastOffset = int64(diskEnd.Offset())
+	t.lastCnt = diskEnd.TotalMsgCnt()
+	return &diskEnd, nil
 }
 
 func (t *KVTopic) PutMessages(msgs []*Message) (BackendOffset, int32, BackendQueueEnd, error) {
@@ -615,6 +586,67 @@ func (t *KVTopic) putBatched(wb engine.WriteBatch, lastOffset int64, lastCnt int
 	keyBuf = getKVKeyForMsgTs(t.fullName, m.ID, m.Timestamp)
 	wb.Put(keyBuf, valBuf)
 	return writeEnd, int32(wsize + 4), nil
+}
+
+// note: the rawdata should not include the size header
+func (t *KVTopic) putBatchedRaw(wb engine.WriteBatch, lastOffset int64, lastCnt int64, rawData []byte, checkSize int64) (BackendOffset, int32, error) {
+	var writeEnd BackendOffset
+	wsize := len(rawData)
+	// there are 4bytes data length on disk.
+	if checkSize > 0 && int64(wsize+4) != checkSize {
+		return writeEnd, 0, fmt.Errorf("message write size mismatch %v vs %v", checkSize, wsize+4)
+	}
+	m, err := DecodeMessage(rawData, t.IsExt())
+	// note, if the origin message is not ext, we should not write the ext to the data on replica
+	if err != nil {
+		return writeEnd, 0, err
+	}
+	if m.ID <= 0 {
+		return writeEnd, 0, fmt.Errorf("message data invalid")
+	}
+	writeEnd = BackendOffset(lastOffset) + BackendOffset(wsize+4)
+	keyBuf := getKVKeyForMsgID(t.fullName, m.ID)
+	wb.Put(keyBuf, rawData)
+	valBuf := encodeMsgIDOffsetCntValue(m.ID, lastOffset, lastCnt)
+	if m.TraceID > 0 {
+		keyBuf = getKVKeyForMsgTrace(t.fullName, m.ID, m.TraceID)
+		wb.Put(keyBuf, valBuf)
+	}
+	keyBuf = getKVKeyForMsgOffset(t.fullName, lastOffset, int64(writeEnd))
+	valueBuf := encodeMsgOffsetValue(m.ID, lastCnt, m.Timestamp)
+	wb.Put(keyBuf, valueBuf)
+	keyBuf = getKVKeyForMsgCnt(t.fullName, lastCnt)
+	wb.Put(keyBuf, valBuf)
+	keyBuf = getKVKeyForMsgTs(t.fullName, m.ID, m.Timestamp)
+	wb.Put(keyBuf, valBuf)
+	return writeEnd, int32(wsize + 4), nil
+}
+
+// this raw has no size header
+func (t *KVTopic) putRaw(rawData []byte, offset BackendOffset, checkSize int64) (BackendOffset, int32, int64, error) {
+	wend := t.lastOffset
+	if wend != int64(offset) {
+		t.tpLog.LogErrorf("topic write offset mismatch: %v, %v", offset, wend)
+		return 0, 0, 0, ErrWriteOffsetMismatch
+	}
+	wb := t.defaultWB
+	defer wb.Clear()
+
+	var writeCnt int64
+	writeEnd, wsize, err := t.putBatchedRaw(wb, t.lastOffset, t.lastCnt, rawData, checkSize)
+	if err != nil {
+		return writeEnd, wsize, writeCnt, err
+	}
+	writeCnt = t.lastCnt + 1
+	t.saveTopicMetaInBatch(wb, int64(writeEnd), writeCnt)
+	// add tag if ext has tag info
+	err = wb.Commit()
+	if err != nil {
+		return writeEnd, 0, writeCnt, err
+	}
+	t.lastOffset = int64(writeEnd)
+	t.lastCnt = writeCnt
+	return writeEnd, int32(wsize), writeCnt, nil
 }
 
 func (t *KVTopic) put(m *Message, checkSize int64) (BackendOffset, int32, int64, error) {
