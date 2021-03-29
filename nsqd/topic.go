@@ -1715,6 +1715,20 @@ func (t *Topic) TryFixData() error {
 	return err
 }
 
+func (t *Topic) CheckDiskQueueReadToEndOK(offset int64, seekCnt int64, endOffset BackendOffset) error {
+	if seekCnt > 0 {
+		seekCnt = seekCnt - 1
+	}
+	snap := t.GetDiskQueueSnapshot(false)
+	defer snap.Close()
+	err := snap.CheckDiskQueueReadToEndOK(offset, seekCnt, endOffset)
+	if err != nil {
+		t.tpLog.Warningf("check read failed at: %v, err: %s", offset, err)
+		return err
+	}
+	return nil
+}
+
 // should be locked outside
 func (t *Topic) tryFixKVTopic() (int64, error) {
 	// try replay with the disk queue if kv topic data missing some data in end

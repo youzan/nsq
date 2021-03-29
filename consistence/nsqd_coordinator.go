@@ -76,6 +76,7 @@ type ILocalLogQueue interface {
 	TotalMessageCnt() uint64
 	TotalDataSize() int64
 	TryFixQueueEnd(nsqd.BackendOffset, int64) error
+	CheckDiskQueueReadToEndOK(offset int64, seekCnt int64, endOffset nsqd.BackendOffset) error
 
 	PutRawDataOnReplica(rawData []byte, offset nsqd.BackendOffset, checkSize int64, msgNum int32) (nsqd.BackendQueueEnd, error)
 	PutMessageOnReplica(msgs *nsqd.Message, offset nsqd.BackendOffset, checkSize int64) (nsqd.BackendQueueEnd, error)
@@ -928,7 +929,12 @@ func checkAndFixLocalLogQueueEnd(tc *coordData,
 	commitEndOffset := nsqd.BackendOffset(logData.MsgOffset + int64(logData.MsgSize))
 	commitEndCnt := logData.MsgCnt + int64(logData.MsgNum) - 1
 	if localLogQ.TotalDataSize() == int64(commitEndOffset) && localLogQ.TotalMessageCnt() == uint64(commitEndCnt) {
-		return nil
+		// need read one data to ensure the data can be read ok (In some case, such as disk full, it may have zero data padding unexpected)
+		if localErr := localLogQ.CheckDiskQueueReadToEndOK(logData.MsgOffset, logData.MsgCnt, commitEndOffset); localErr == nil {
+			return nil
+		} else {
+			coordLog.Errorf("topic %v need fix, read end failed: %v , %v:%v", tname, localErr, logIndex, logOffset)
+		}
 	}
 	coordLog.Infof("current topic %v log: %v:%v, %v, diskqueue end: %v",
 		tname, logIndex, logOffset, logData, localLogQ.TotalDataSize())
@@ -938,7 +944,13 @@ func checkAndFixLocalLogQueueEnd(tc *coordData,
 	}
 	localErr := localLogQ.ResetBackendEndNoLock(commitEndOffset, commitEndCnt)
 	if localErr == nil {
-		return nil
+		// need read one data to ensure the data can be read ok (In some case, such as disk full, it may have zero data padding unexpected)
+		localErr = localLogQ.CheckDiskQueueReadToEndOK(logData.MsgOffset, logData.MsgCnt, commitEndOffset)
+		if localErr == nil {
+			return nil
+		} else {
+			coordLog.Errorf("topic %v need fix, read end failed: %v , %v:%v", tname, localErr, logIndex, logOffset)
+		}
 	}
 	coordLog.Errorf("topic %v reset local queue backend failed: %v", tname, localErr)
 	if !forceFix {
@@ -962,8 +974,9 @@ func checkAndFixLocalLogQueueEnd(tc *coordData,
 			coordLog.Errorf("topic %v try fix failed: %v , %v:%v", tname, localErr, logIndex, logOffset)
 			break
 		}
-		if logData.MsgOffset+int64(logData.MsgSize) <= realEnd {
-			localErr = localLogQ.ResetBackendEndNoLock(nsqd.BackendOffset(logData.MsgOffset+int64(logData.MsgSize)),
+		endOffset := nsqd.BackendOffset(logData.MsgOffset + int64(logData.MsgSize))
+		if int64(endOffset) <= realEnd {
+			localErr = localLogQ.ResetBackendEndNoLock(endOffset,
 				logData.MsgCnt+int64(logData.MsgNum)-1)
 			if localErr != nil {
 				coordLog.Infof("topic %v reset local queue failed: %v at %v:%v", tname, localErr, logIndex, logOffset)
@@ -975,29 +988,25 @@ func checkAndFixLocalLogQueueEnd(tc *coordData,
 					coordLog.Errorf("topic %v reset local queue failed: %v, at %v:%v", tname,
 						localErr, logIndex, logOffset)
 				} else {
-					return nil
+					// need read one data to ensure the data can be read ok (In some case, such as disk full, it may have zero data padding unexpected)
+					localErr = localLogQ.CheckDiskQueueReadToEndOK(logData.MsgOffset, logData.MsgCnt, endOffset)
+					if localErr == nil {
+						return nil
+					} else {
+						coordLog.Errorf("topic %v need fix, read end failed: %v , %v:%v", tname, localErr, logIndex, logOffset)
+					}
 				}
 			}
 		} else {
-			localErr = localLogQ.TryFixQueueEnd(nsqd.BackendOffset(logData.MsgOffset+int64(logData.MsgSize)),
+			localErr = localLogQ.TryFixQueueEnd(endOffset,
 				logData.MsgCnt+int64(logData.MsgNum)-1)
 			if localErr != nil {
 				continue
 			}
-			snap := localLogQ.GetDiskQueueSnapshot(false)
-			seekCnt := int64(0)
-			if logData.MsgCnt > 0 {
-				seekCnt = logData.MsgCnt - 1
-			}
-			localErr = snap.SeekTo(nsqd.BackendOffset(logData.MsgOffset), seekCnt)
+			localErr = localLogQ.CheckDiskQueueReadToEndOK(logData.MsgOffset, logData.MsgCnt, endOffset)
 			if localErr != nil {
-				coordLog.Errorf("topic %v try fix end failed: %v , %v:%v", tname, localErr, logIndex, logOffset)
-				break
-			}
-			r := snap.ReadOne()
-			if r.Err != nil {
-				coordLog.Errorf("topic %v try fix end failed: %v , %v:%v", tname, r.Err, logIndex, logOffset)
-				break
+				coordLog.Errorf("topic %v try fix end, read failed: %v , %v:%v", tname, localErr, logIndex, logOffset)
+				continue
 			}
 			return nil
 		}

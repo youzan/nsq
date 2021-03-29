@@ -779,6 +779,38 @@ func TestTopicWriteRollback(t *testing.T) {
 	}
 }
 
+func TestTopicCheckDiskQueueReadToEndOK(t *testing.T) {
+	opts := NewOptions()
+	opts.Logger = newTestLogger(t)
+	opts.MaxBytesPerFile = 1024 * 1024
+	_, _, nsqd := mustStartNSQD(opts)
+	defer os.RemoveAll(opts.DataPath)
+	defer nsqd.Exit()
+
+	topic := nsqd.GetTopic("test", 0, false)
+	changeDynamicConfAutCommit(topic.dynamicConf)
+
+	msgNum := 100
+	channel := topic.GetChannel("ch")
+	test.NotNil(t, channel)
+	msg := NewMessage(0, make([]byte, 100))
+	msg.Timestamp = time.Now().UnixNano()
+	singleSize := BackendOffset(0)
+	for i := 0; i < msgNum; i++ {
+		msg.ID = 0
+		_, _, msgSize, _, err := topic.PutMessage(msg)
+		test.Nil(t, err)
+		msg.Timestamp = time.Now().UnixNano()
+		singleSize = BackendOffset(msgSize)
+	}
+	topic.ForceFlush()
+
+	for i := 0; i < msgNum; i++ {
+		err := topic.CheckDiskQueueReadToEndOK(int64(i)*int64(singleSize), int64(i), BackendOffset(msgNum)*singleSize)
+		test.Nil(t, err)
+	}
+}
+
 type testEndOffset struct {
 	offset BackendOffset
 }

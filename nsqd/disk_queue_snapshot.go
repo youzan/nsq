@@ -388,6 +388,34 @@ CheckFileOpen:
 	return result
 }
 
+func (d *DiskQueueSnapshot) CheckDiskQueueReadToEndOK(offset int64, seekCnt int64, endOffset BackendOffset) error {
+	localErr := d.SeekTo(BackendOffset(offset), seekCnt)
+	if localErr != nil {
+		return localErr
+	}
+	// read until end since it may have multi in the last batch
+	lastOffset := offset
+	for {
+		r := d.ReadOne()
+		if r.Err != nil {
+			// should not have eof since it will break after last read
+			nsqLog.Warningf("check read failed at: %v, err: %s", lastOffset, r.Err)
+			return r.Err
+		} else {
+			lastOffset = int64(r.Offset)
+			if r.Offset+r.MovedSize == endOffset {
+				break
+			}
+			if r.Offset+r.MovedSize > endOffset {
+				err := fmt.Errorf("check read failed, unexpected end offset: %v, %v, %v", r.Offset, r.MovedSize, endOffset)
+				nsqLog.Warningf("%s", err)
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func (d *DiskQueueSnapshot) handleReachEnd() {
 	if d.readFile != nil {
 		d.readFile.Close()
