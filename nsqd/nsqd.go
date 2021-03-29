@@ -701,8 +701,8 @@ func (n *NSQD) ForceDeleteTopicData(name string, partition int) error {
 	if err != nil {
 		// not exist, create temp for check
 		n.Lock()
-		topic = NewTopic(name, partition, n.GetOpts(), 1, n.metaStorage,
-			n.getKVStorageForTopic(name), n,
+		topic = NewTopicForDelete(name, partition, n.GetOpts(), 1, n.metaStorage,
+			n,
 			n.pubLoopFunc)
 		if topic != nil && !topic.IsOrdered() {
 			// init delayed so we can remove it later
@@ -718,12 +718,12 @@ func (n *NSQD) ForceDeleteTopicData(name string, partition int) error {
 	return nil
 }
 
-func (n *NSQD) CheckMagicCode(name string, partition int, code int64, tryFix bool) (string, error) {
+func (n *NSQD) CheckMagicCode(name string, partition int, code int64, isExt bool, tryFix bool) (string, error) {
 	localTopic, err := n.GetExistingTopic(name, partition)
 	if err != nil {
 		// not exist, create temp for check
 		n.Lock()
-		localTopic = NewTopic(name, partition, n.GetOpts(), 1, n.metaStorage, n.getKVStorageForTopic(name), n,
+		localTopic = NewTopicWithExt(name, partition, isExt, false, n.GetOpts(), 1, n.metaStorage, n.getKVStorageForTopic(name), n,
 			n.pubLoopFunc)
 		n.Unlock()
 		if localTopic == nil {

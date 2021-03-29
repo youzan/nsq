@@ -190,11 +190,10 @@ func GetTopicFullName(topic string, part int) string {
 	return topic + "-" + strconv.Itoa(part)
 }
 
-func NewTopic(topicName string, part int, opt *Options,
+func NewTopicForDelete(topicName string, part int, opt *Options,
 	writeDisabled int32, metaStorage IMetaStorage,
-	kvEng engine.KVEngine,
 	notify INsqdNotify, loopFunc func(v *Topic)) *Topic {
-	return NewTopicWithExt(topicName, part, false, false, opt, writeDisabled, metaStorage, kvEng, notify, loopFunc)
+	return NewTopicWithExt(topicName, part, false, false, opt, writeDisabled, metaStorage, nil, notify, loopFunc)
 }
 
 func NewTopicWithExt(topicName string, part int, ext bool, ordered bool, opt *Options,
@@ -1710,6 +1709,13 @@ func (t *Topic) TryFixData() error {
 	if dq != nil {
 		dq.backend.tryFixData()
 	}
+	// TODO: try check the disk queue data by read from start to end, if corrupt is head or tail of queue,
+	// we can just truncate header or tail.
+	// if corrupt is in the middle (start, corrupt-pos, end), we should handle like below
+	// 1.if all consumed is higher than corrupt-pos, we truncate the data between start and corrupt-pos
+	// 2.if all consumed is less than corrupt-pos, we move consumed to the corrupt-pos, and truncate the data between start and corrupt-pos
+	// 3.if some consumed higher and some less than corrupt-pos, we truncate the data between start and corrupt-pos, and move consumed pos
+	// which less than corrupt-pos to the corrupt-pos.
 	// TODO: fix channel meta
 	_, err := t.tryFixKVTopic()
 	return err

@@ -614,7 +614,7 @@ func (ncoord *NsqdCoordinator) watchNsqLookupd() {
 // should not hold any coordinator lock outside, since we may wait local topic pub loop quit.
 // pub loop may be blocked by coordinator lock.
 func (ncoord *NsqdCoordinator) checkLocalTopicMagicCode(topicInfo *TopicPartitionMetaInfo, tryFix bool) error {
-	removedPath, err := ncoord.localNsqd.CheckMagicCode(topicInfo.Name, topicInfo.Partition, topicInfo.MagicCode, tryFix)
+	removedPath, err := ncoord.localNsqd.CheckMagicCode(topicInfo.Name, topicInfo.Partition, topicInfo.MagicCode, topicInfo.Ext, tryFix)
 	if err != nil {
 		coordLog.Infof("check magic code error: %v", err)
 		return err
