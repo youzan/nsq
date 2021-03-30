@@ -1709,25 +1709,94 @@ func (t *Topic) TryFixData() error {
 	if dq != nil {
 		dq.backend.tryFixData()
 	}
-	// TODO: try check the disk queue data by read from start to end, if corrupt is head or tail of queue,
-	// we can just truncate header or tail.
-	// if corrupt is in the middle (start, corrupt-pos, end), we should handle like below
-	// 1.if all consumed is higher than corrupt-pos, we truncate the data between start and corrupt-pos
-	// 2.if all consumed is less than corrupt-pos, we move consumed to the corrupt-pos, and truncate the data between start and corrupt-pos
-	// 3.if some consumed higher and some less than corrupt-pos, we truncate the data between start and corrupt-pos, and move consumed pos
-	// which less than corrupt-pos to the corrupt-pos.
+	err := t.tryFixCorruptData()
+	if err != nil {
+		return err
+	}
 	// TODO: fix channel meta
-	_, err := t.tryFixKVTopic()
+	_, err = t.tryFixKVTopic()
 	return err
 }
 
-func (t *Topic) CheckDiskQueueReadToEndOK(offset int64, seekCnt int64, endOffset BackendOffset) error {
-	if seekCnt > 0 {
-		seekCnt = seekCnt - 1
-	}
+func (t *Topic) tryFixCorruptData() error {
+	// try check the disk queue data by read from start to end, if corrupt is head or tail of queue,
+	// we can just truncate header or tail.
+	// if corrupt is in the middle (start, corrupt-pos, end), we should handle like below
+	// 1.if all consumed is higher than corrupt-pos, we truncate the data between start and oldest consumed
+	// 2.if some consumed less than corrupt-pos, we truncate the data between start and corrupt-pos, and move consumed pos
+	// which less than corrupt-pos to the corrupt-pos.
 	snap := t.GetDiskQueueSnapshot(false)
 	defer snap.Close()
-	err := snap.CheckDiskQueueReadToEndOK(offset, seekCnt, endOffset)
+	start := t.backend.GetQueueReadStart()
+	seekCnt := start.TotalMsgCnt()
+	lastCorrupt, lastCnt, err := snap.CheckDiskQueueReadToEndOK(int64(start.Offset()), seekCnt, t.getCommittedEnd().Offset())
+	if err == nil {
+		return nil
+	}
+	t.tpLog.Warningf("check read failed at: %v, %v, err: %s", lastCorrupt, lastCnt, err)
+	var oldestPos BackendQueueEnd
+	t.channelLock.RLock()
+	for _, ch := range t.channelMap {
+		pos := ch.GetConfirmed()
+		if oldestPos == nil {
+			oldestPos = pos
+		} else if oldestPos.Offset() > pos.Offset() {
+			oldestPos = pos
+		}
+	}
+	t.channelLock.RUnlock()
+	if oldestPos != nil && int64(oldestPos.Offset()) > lastCorrupt {
+		t.tpLog.Warningf("clean corrupt topic data to %v", oldestPos)
+		t.backend.CleanOldDataByRetention(oldestPos, false, t.getCommittedEnd().Offset())
+	} else {
+		// check if all the tail is corrupt
+		snap.ResetToStart()
+		var fixerr error
+		for {
+			fixerr = snap.SkipToNext()
+			if fixerr == ErrReadEndOfQueue {
+				break
+			}
+			curRead := snap.GetCurrentReadQueueOffset()
+			if curRead.Offset() > BackendOffset(lastCorrupt) {
+				break
+			}
+		}
+		if fixerr != nil && fixerr != ErrReadEndOfQueue {
+			t.tpLog.Warningf("clean corrupt topic data failed, err %s", fixerr)
+			return fixerr
+		}
+		curRead := snap.GetCurrentReadQueueOffset()
+		if curRead.Offset() <= BackendOffset(lastCorrupt) {
+			t.tpLog.Warningf("clean corrupt topic data since tail is corrupted, %v", curRead)
+			// all tail is corrupt, we need truncate the tail
+			t.ResetBackendEndNoLock(BackendOffset(lastCorrupt), lastCnt)
+		} else {
+			t.tpLog.Warningf("clean corrupt topic data since old is corrupted, %v", curRead)
+			// some middle is corrupt, we just truncate old
+			newStart, err := t.backend.CleanOldDataByRetention(curRead, false, t.getCommittedEnd().Offset())
+			if err != nil {
+				return err
+			}
+			t.tpLog.Warningf("clean corrupt topic data since old is corrupted, %v, %v", curRead, newStart)
+			t.channelLock.RLock()
+			for _, ch := range t.channelMap {
+				pos := ch.GetConfirmed()
+				if pos.Offset() < newStart.Offset() {
+					t.tpLog.Infof("channel set new offset %v, old stats: %v", newStart, ch.GetChannelDebugStats())
+					ch.SetConsumeOffset(newStart.Offset(), newStart.TotalMsgCnt(), true)
+				}
+			}
+			t.channelLock.RUnlock()
+		}
+	}
+	return nil
+}
+
+func (t *Topic) CheckDiskQueueReadToEndOK(offset int64, seekCnt int64, endOffset BackendOffset) error {
+	snap := t.GetDiskQueueSnapshot(false)
+	defer snap.Close()
+	_, _, err := snap.CheckDiskQueueReadToEndOK(offset, seekCnt, endOffset)
 	if err != nil {
 		t.tpLog.Warningf("check read failed at: %v, err: %s", offset, err)
 		return err

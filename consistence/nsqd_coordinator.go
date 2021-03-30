@@ -930,7 +930,7 @@ func checkAndFixLocalLogQueueEnd(tc *coordData,
 	commitEndCnt := logData.MsgCnt + int64(logData.MsgNum) - 1
 	if localLogQ.TotalDataSize() == int64(commitEndOffset) && localLogQ.TotalMessageCnt() == uint64(commitEndCnt) {
 		// need read one data to ensure the data can be read ok (In some case, such as disk full, it may have zero data padding unexpected)
-		if localErr := localLogQ.CheckDiskQueueReadToEndOK(logData.MsgOffset, logData.MsgCnt, commitEndOffset); localErr == nil {
+		if localErr := localLogQ.CheckDiskQueueReadToEndOK(logData.MsgOffset, logData.dqSeekCnt(), commitEndOffset); localErr == nil {
 			return nil
 		} else {
 			coordLog.Errorf("topic %v need fix, read end failed: %v , %v:%v", tname, localErr, logIndex, logOffset)
@@ -945,7 +945,7 @@ func checkAndFixLocalLogQueueEnd(tc *coordData,
 	localErr := localLogQ.ResetBackendEndNoLock(commitEndOffset, commitEndCnt)
 	if localErr == nil {
 		// need read one data to ensure the data can be read ok (In some case, such as disk full, it may have zero data padding unexpected)
-		localErr = localLogQ.CheckDiskQueueReadToEndOK(logData.MsgOffset, logData.MsgCnt, commitEndOffset)
+		localErr = localLogQ.CheckDiskQueueReadToEndOK(logData.MsgOffset, logData.dqSeekCnt(), commitEndOffset)
 		if localErr == nil {
 			return nil
 		} else {
@@ -989,7 +989,7 @@ func checkAndFixLocalLogQueueEnd(tc *coordData,
 						localErr, logIndex, logOffset)
 				} else {
 					// need read one data to ensure the data can be read ok (In some case, such as disk full, it may have zero data padding unexpected)
-					localErr = localLogQ.CheckDiskQueueReadToEndOK(logData.MsgOffset, logData.MsgCnt, endOffset)
+					localErr = localLogQ.CheckDiskQueueReadToEndOK(logData.MsgOffset, logData.dqSeekCnt(), endOffset)
 					if localErr == nil {
 						return nil
 					} else {
@@ -1003,7 +1003,7 @@ func checkAndFixLocalLogQueueEnd(tc *coordData,
 			if localErr != nil {
 				continue
 			}
-			localErr = localLogQ.CheckDiskQueueReadToEndOK(logData.MsgOffset, logData.MsgCnt, endOffset)
+			localErr = localLogQ.CheckDiskQueueReadToEndOK(logData.MsgOffset, logData.dqSeekCnt(), endOffset)
 			if localErr != nil {
 				coordLog.Errorf("topic %v try fix end, read failed: %v , %v:%v", tname, localErr, logIndex, logOffset)
 				continue
@@ -1031,10 +1031,7 @@ func checkAndFixLocalLogQueueData(tc *coordData,
 
 	snap := localLogQ.GetDiskQueueSnapshot(false)
 	for {
-		seekCnt := int64(0)
-		if log.MsgCnt > 0 {
-			seekCnt = log.MsgCnt - 1
-		}
+		seekCnt := log.dqSeekCnt()
 		err = snap.SeekTo(nsqd.BackendOffset(log.MsgOffset), seekCnt)
 		if err == nil {
 			break
@@ -1281,7 +1278,7 @@ func (ncoord *NsqdCoordinator) SearchLogByMsgID(topic string, part int, msgID in
 		return nil, 0, 0, localErr
 	}
 	realOffset := l.MsgOffset
-	curCount := l.MsgCnt - 1
+	curCount := l.dqSeekCnt()
 	return l, realOffset, curCount, nil
 }
 
@@ -1297,7 +1294,7 @@ func (ncoord *NsqdCoordinator) SearchLogByMsgOffset(topic string, part int, offs
 		return nil, 0, 0, localErr
 	}
 	realOffset := l.MsgOffset
-	curCount := l.MsgCnt - 1
+	curCount := l.dqSeekCnt()
 	if l.MsgOffset < offset {
 		t, localErr := ncoord.localNsqd.GetExistingTopic(topic, part)
 		if localErr != nil {
@@ -1305,10 +1302,7 @@ func (ncoord *NsqdCoordinator) SearchLogByMsgOffset(topic string, part int, offs
 		}
 		snap := t.GetDiskQueueSnapshot(true)
 
-		seekCnt := int64(0)
-		if l.MsgCnt > 0 {
-			seekCnt = l.MsgCnt - 1
-		}
+		seekCnt := l.dqSeekCnt()
 		localErr = snap.SeekTo(nsqd.BackendOffset(realOffset), seekCnt)
 		if localErr != nil {
 			coordLog.Infof("seek to disk queue error: %v, %v", localErr, realOffset)
@@ -1346,7 +1340,7 @@ func (ncoord *NsqdCoordinator) SearchLogByMsgCnt(topic string, part int, count i
 		return nil, 0, 0, localErr
 	}
 	realOffset := l.MsgOffset
-	curCount := l.MsgCnt - 1
+	curCount := l.dqSeekCnt()
 	if l.MsgCnt < count {
 		t, localErr := ncoord.localNsqd.GetExistingTopic(topic, part)
 		if localErr != nil {
@@ -1354,10 +1348,7 @@ func (ncoord *NsqdCoordinator) SearchLogByMsgCnt(topic string, part int, count i
 		}
 		snap := t.GetDiskQueueSnapshot(true)
 
-		seekCnt := int64(0)
-		if l.MsgCnt > 0 {
-			seekCnt = l.MsgCnt - 1
-		}
+		seekCnt := l.dqSeekCnt()
 		localErr = snap.SeekTo(nsqd.BackendOffset(realOffset), seekCnt)
 		if localErr != nil {
 			coordLog.Infof("seek to disk queue error: %v, %v", localErr, realOffset)
@@ -1396,11 +1387,7 @@ func (ncoord *MsgTimestampComparator) SearchEndBoundary() int64 {
 }
 
 func (ncoord *MsgTimestampComparator) LessThanLeftBoundary(l *CommitLogData) bool {
-
-	seekCnt := int64(0)
-	if l.MsgCnt > 0 {
-		seekCnt = l.MsgCnt - 1
-	}
+	seekCnt := l.dqSeekCnt()
 	err := ncoord.localTopicReader.ResetSeekTo(nsqd.BackendOffset(l.MsgOffset), seekCnt)
 	if err != nil {
 		coordLog.Errorf("seek disk queue failed: %v, %v", l, err)
@@ -1423,10 +1410,7 @@ func (ncoord *MsgTimestampComparator) LessThanLeftBoundary(l *CommitLogData) boo
 }
 
 func (ncoord *MsgTimestampComparator) GreatThanRightBoundary(l *CommitLogData) bool {
-	seekCnt := int64(0)
-	if l.MsgCnt > 0 {
-		seekCnt = l.MsgCnt - 1
-	}
+	seekCnt := l.dqSeekCnt()
 	// we may read the eof , in this situation we reach the end, so the search should not be great than right boundary
 	err := ncoord.localTopicReader.ResetSeekTo(nsqd.BackendOffset(l.MsgOffset+int64(l.MsgSize)), seekCnt)
 	if err != nil {
@@ -1480,17 +1464,14 @@ func (ncoord *NsqdCoordinator) SearchLogByMsgTimestamp(topic string, part int, t
 	}
 	realOffset := l.MsgOffset
 
-	seekCnt := int64(0)
-	if l.MsgCnt > 0 {
-		seekCnt = l.MsgCnt - 1
-	}
+	seekCnt := l.dqSeekCnt()
 	// check if the message timestamp is fit the require
 	localErr = snap.ResetSeekTo(nsqd.BackendOffset(realOffset), seekCnt)
 	if localErr != nil {
 		coordLog.Infof("seek to disk queue error: %v, %v", localErr, realOffset)
 		return l, 0, 0, localErr
 	}
-	curCount := l.MsgCnt - 1
+	curCount := l.dqSeekCnt()
 
 	for {
 		ret := snap.ReadOne()

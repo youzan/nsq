@@ -79,6 +79,13 @@ type CommitLogData struct {
 	MsgNum int32
 }
 
+func (cl *CommitLogData) dqSeekCnt() int64 {
+	if cl.MsgCnt > 0 {
+		return cl.MsgCnt - 1
+	}
+	return 0
+}
+
 func GetLogDataSize() int {
 	return logDataSize
 }

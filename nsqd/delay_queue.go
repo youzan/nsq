@@ -530,12 +530,9 @@ func (q *DelayQueue) TryFixQueueEnd(vend BackendOffset, totalCnt int64) error {
 }
 
 func (q *DelayQueue) CheckDiskQueueReadToEndOK(offset int64, seekCnt int64, endOffset BackendOffset) error {
-	if seekCnt > 0 {
-		seekCnt = seekCnt - 1
-	}
 	snap := q.GetDiskQueueSnapshot(false)
 	defer snap.Close()
-	err := snap.CheckDiskQueueReadToEndOK(offset, seekCnt, endOffset)
+	_, _, err := snap.CheckDiskQueueReadToEndOK(offset, seekCnt, endOffset)
 	if err != nil {
 		nsqLog.Warningf("check read failed at: %v, err: %s", offset, err)
 		return err

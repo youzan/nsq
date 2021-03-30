@@ -811,6 +811,91 @@ func TestTopicCheckDiskQueueReadToEndOK(t *testing.T) {
 	}
 }
 
+func TestTopicFixCorruptData(t *testing.T) {
+	opts := NewOptions()
+	opts.Logger = newTestLogger(t)
+	opts.MaxBytesPerFile = 1024 * 32
+	if testing.Verbose() {
+		opts.LogLevel = 3
+		glog.SetFlags(0, "", "", true, true, 1)
+		glog.StartWorker(time.Second)
+		SetLogger(opts.Logger)
+	}
+	_, _, nsqd := mustStartNSQD(opts)
+	defer os.RemoveAll(opts.DataPath)
+	defer nsqd.Exit()
+
+	topic := nsqd.GetTopic("test-corrupt-header", 0, false)
+	changeDynamicConfAutCommit(topic.dynamicConf)
+	topic2 := nsqd.GetTopic("test-corrupt-tail", 0, false)
+	changeDynamicConfAutCommit(topic.dynamicConf)
+
+	msgNum := 100
+	channel := topic.GetChannel("ch")
+	test.NotNil(t, channel)
+	channel2 := topic2.GetChannel("ch2")
+	test.NotNil(t, channel2)
+	channel3 := topic2.GetChannel("ch3")
+	test.NotNil(t, channel3)
+	msg := NewMessage(0, make([]byte, 1000))
+	msg.Timestamp = time.Now().UnixNano()
+	singleSize := int32(0)
+	var qend BackendQueueEnd
+	for i := 0; i < msgNum; i++ {
+		msg.ID = 0
+		_, _, msgSize, dend, err := topic.PutMessage(msg)
+		test.Nil(t, err)
+		msg.Timestamp = time.Now().UnixNano()
+		singleSize = msgSize
+		qend = dend
+		msg.ID = 0
+		topic2.PutMessage(msg)
+	}
+	topic.ForceFlush()
+	topic2.ForceFlush()
+	channel2.skipChannelToEnd()
+	time.Sleep(time.Second)
+	test.Equal(t, qend, channel2.GetChannelEnd())
+	test.Equal(t, qend, channel3.GetChannelEnd())
+
+	fs, err := os.OpenFile(topic.backend.fileName(0), os.O_RDWR, 0755)
+	test.Nil(t, err)
+	_, err = fs.WriteAt(make([]byte, singleSize/2), 0)
+	test.Nil(t, err)
+	fs.Close()
+	fs, err = os.OpenFile(topic2.backend.fileName(qend.(*diskQueueEndInfo).EndOffset.FileNum), os.O_RDWR, 0755)
+	test.Nil(t, err)
+	fs.WriteAt(make([]byte, singleSize), 0)
+	fs.Close()
+
+	err = topic.tryFixCorruptData()
+	test.Nil(t, err)
+	test.Equal(t, qend, topic.GetCommitted())
+	time.Sleep(time.Second)
+	consumed := channel.GetConfirmed()
+	t.Logf("new consumed: %v", consumed)
+	test.Equal(t, topic.GetQueueReadStart(), int64(consumed.Offset()))
+	test.Equal(t, true, consumed.TotalMsgCnt() > 1)
+
+	err = topic2.tryFixCorruptData()
+	test.Nil(t, err)
+	t.Logf("new end: %v", topic2.GetCommitted())
+	diskEnd := qend.(*diskQueueEndInfo)
+	test.Equal(t, diskEnd.EndOffset.FileNum, topic2.GetCommitted().(*diskQueueEndInfo).EndOffset.FileNum)
+	test.Equal(t, int64(0), topic2.GetCommitted().(*diskQueueEndInfo).EndOffset.Pos)
+	test.Assert(t, diskEnd.Offset() > topic2.GetCommitted().Offset(), "should truncate tail")
+	test.Assert(t, diskEnd.TotalMsgCnt() > topic2.GetCommitted().TotalMsgCnt(), "should truncate tail")
+	time.Sleep(time.Second)
+	consumed = channel2.GetConfirmed()
+	t.Logf("new consumed: %v", consumed)
+	test.Equal(t, topic2.getCommittedEnd(), channel2.GetConfirmed())
+	test.Equal(t, topic2.getCommittedEnd(), channel2.GetChannelEnd())
+	consumed = channel3.GetConfirmed()
+	t.Logf("new consumed: %v", consumed)
+	test.Equal(t, topic2.GetQueueReadStart(), channel3.GetConfirmed().TotalMsgCnt())
+	test.Equal(t, topic2.getCommittedEnd(), channel3.GetChannelEnd())
+}
+
 type testEndOffset struct {
 	offset BackendOffset
 }
