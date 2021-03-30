@@ -1701,7 +1701,7 @@ func (t *Topic) UpdateDelayedQueueConsumedState(ts int64, keyList RecentKeyList,
 }
 
 // after crash, some topic meta need to be fixed by manual
-func (t *Topic) TryFixData() error {
+func (t *Topic) TryFixData(checkCorrupt bool) error {
 	t.Lock()
 	defer t.Unlock()
 	t.backend.tryFixData()
@@ -1709,12 +1709,14 @@ func (t *Topic) TryFixData() error {
 	if dq != nil {
 		dq.backend.tryFixData()
 	}
-	err := t.tryFixCorruptData()
-	if err != nil {
-		return err
+	if checkCorrupt {
+		err := t.tryFixCorruptData()
+		if err != nil {
+			return err
+		}
 	}
 	// TODO: fix channel meta
-	_, err = t.tryFixKVTopic()
+	_, err := t.tryFixKVTopic()
 	return err
 }
 
