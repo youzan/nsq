@@ -2380,6 +2380,8 @@ func (c *Channel) CheckIfTimeoutToomuch(msg *Message, msgTimeout time.Duration) 
 	if toCnt > maxTimeoutCntToReq && !c.IsEphemeral() && !c.IsOrdered() {
 		tnow := time.Now().UnixNano()
 		if tnow-c.DepthTimestamp() > timeoutBlockingWait.Nanoseconds() {
+			c.inFlightMutex.Lock()
+			defer c.inFlightMutex.Unlock()
 			nmsg, ok := c.checkMsgRequeueToEnd(msg, msgTimeout)
 			if ok {
 				if c.isTracedOrDebugTraceLog(msg) {
