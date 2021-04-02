@@ -196,7 +196,7 @@ func NewOptions() *Options {
 
 		RetentionDays:    int32(DEFAULT_RETENTION_DAYS),
 		MaxConnForClient: 500000,
-		KVEnabled:        true,
+		KVEnabled:        false,
 	}
 
 	return opts
