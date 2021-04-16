@@ -2251,6 +2251,12 @@ func TestChannelCreateSync(t *testing.T) {
 	test.Equal(t, c1, t3ch1.GetConfirmed())
 }
 
+func TestNsqdCoordFixTopicCorruptEnd(t *testing.T) {
+	// fix start
+	// fix end
+	// fix end zero padding (may happend while disk full)
+}
+
 func benchmarkNsqdCoordPubWithArg(b *testing.B, replica int, size int, useExt bool) {
 	b.StopTimer()
 	topicBase := "coordBenchTestTopic"

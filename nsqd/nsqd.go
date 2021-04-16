@@ -16,7 +16,7 @@ import (
 	"time"
 
 	"github.com/bitly/go-simplejson"
-	"github.com/spaolacci/murmur3"
+	"github.com/twmb/murmur3"
 	"github.com/youzan/nsq/internal/clusterinfo"
 	"github.com/youzan/nsq/internal/dirlock"
 	"github.com/youzan/nsq/internal/http_api"

@@ -6,7 +6,7 @@ require (
 	github.com/BurntSushi/toml v0.3.1
 	github.com/StackExchange/wmi v0.0.0-20210224194228-fe8f1750fd46 // indirect
 	github.com/Workiva/go-datastructures v1.0.50
-	github.com/absolute8511/bolt v1.5.0
+	github.com/absolute8511/bolt v1.5.1
 	github.com/absolute8511/glog v0.3.1
 	github.com/absolute8511/gorpc v0.0.0-20161203145636-60ee7d4359cb
 	github.com/absolute8511/goskiplist v0.0.0-20170727031420-3ba6f667c3df
@@ -41,6 +41,7 @@ require (
 	github.com/tidwall/gjson v1.1.3
 	github.com/tidwall/match v1.0.1 // indirect
 	github.com/twinj/uuid v1.0.0
+	github.com/twmb/murmur3 v1.1.5
 	github.com/valyala/fastjson v1.6.1
 	github.com/viki-org/dnscache v0.0.0-20130720023526-c70c1f23c5d8
 	github.com/youzan/go-nsq v1.7.2-HA
