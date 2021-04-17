@@ -124,7 +124,6 @@ type coordData struct {
 	syncedConsumeMgr   *ChannelConsumeMgr
 	logMgr             *TopicCommitLogMgr
 	delayedLogMgr      *TopicCommitLogMgr
-	forceLeave         int32
 }
 
 func (cd *coordData) updateBufferSize(bs int) {
@@ -161,6 +160,7 @@ func (cd *coordData) GetCopy() *coordData {
 type TopicCoordinator struct {
 	dataMutex sync.Mutex
 	*coordData
+	forceLeave int32
 	// hold for write to avoid disable or exiting or catchup
 	// lock order: first lock writehold then lock data to avoid deadlock
 	writeHold      sync.Mutex
@@ -300,6 +300,32 @@ func (tc *TopicCoordinator) Exiting() {
 	atomic.StoreInt32(&tc.exiting, 1)
 }
 
+func (tc *TopicCoordinator) checkWriteForLeader(myID string) *CoordErr {
+	if tc.IsForceLeave() {
+		return ErrNotTopicLeader
+	}
+	cd := tc.GetData()
+	if cd.GetLeaderSessionID() != myID || cd.topicInfo.Leader != myID {
+		return ErrNotTopicLeader
+	}
+	if cd.topicLeaderSession.Session == "" {
+		return ErrMissingTopicLeaderSession
+	}
+	return nil
+}
+
+func (tc *TopicCoordinator) SetForceLeave(leave bool) {
+	if leave {
+		atomic.StoreInt32(&tc.forceLeave, 1)
+	} else {
+		atomic.StoreInt32(&tc.forceLeave, 0)
+	}
+}
+
+func (tc *TopicCoordinator) IsForceLeave() bool {
+	return atomic.LoadInt32(&tc.forceLeave) == 1
+}
+
 func (cd *coordData) GetLeader() string {
 	return cd.topicInfo.Leader
 }
@@ -336,35 +362,6 @@ func (cd *coordData) GetTopicEpochForWrite() EpochType {
 	return cd.topicInfo.EpochForWrite
 }
 
-func (cd *TopicCoordinator) checkWriteForLeader(myID string) *CoordErr {
-	return cd.GetData().checkWriteForLeader(myID)
-}
-
-func (cd *coordData) checkWriteForLeader(myID string) *CoordErr {
-	if cd.IsForceLeave() {
-		return ErrNotTopicLeader
-	}
-	if cd.GetLeaderSessionID() != myID || cd.topicInfo.Leader != myID {
-		return ErrNotTopicLeader
-	}
-	if cd.topicLeaderSession.Session == "" {
-		return ErrMissingTopicLeaderSession
-	}
-	return nil
-}
-
 func (cd *coordData) IsISRReadyForWrite(myID string) bool {
 	return (len(cd.topicInfo.ISR) > cd.topicInfo.Replica/2) && cd.IsMineISR(myID)
-}
-
-func (cd *coordData) SetForceLeave(leave bool) {
-	if leave {
-		atomic.StoreInt32(&cd.forceLeave, 1)
-	} else {
-		atomic.StoreInt32(&cd.forceLeave, 0)
-	}
-}
-
-func (cd *coordData) IsForceLeave() bool {
-	return atomic.LoadInt32(&cd.forceLeave) == 1
 }

@@ -368,7 +368,7 @@ func (ncoord *NsqdCoordinator) doSyncOpToCluster(isWrite bool, coord *TopicCoord
 	topicFullName := topicName + strconv.Itoa(topicPartition)
 
 	var clusterWriteErr *CoordErr
-	if clusterWriteErr = tcData.checkWriteForLeader(ncoord.myNode.GetID()); clusterWriteErr != nil {
+	if clusterWriteErr = coord.checkWriteForLeader(ncoord.myNode.GetID()); clusterWriteErr != nil {
 		coordLog.Warningf("topic(%v) check write failed :%v", topicFullName, clusterWriteErr)
 		coordErrStats.incWriteErr(clusterWriteErr)
 		return clusterWriteErr
@@ -421,7 +421,7 @@ retrysync:
 	}
 	if needRefreshISR {
 		tcData = coord.GetData()
-		if clusterWriteErr = tcData.checkWriteForLeader(ncoord.myNode.GetID()); clusterWriteErr != nil {
+		if clusterWriteErr = coord.checkWriteForLeader(ncoord.myNode.GetID()); clusterWriteErr != nil {
 			coordLog.Warningf("topic(%v) check operation failed :%v", topicFullName, clusterWriteErr)
 			goto exitsync
 		}
