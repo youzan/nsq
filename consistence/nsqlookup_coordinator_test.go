@@ -2421,7 +2421,7 @@ func TestNsqLookupMovePartitionAndSlaveTimeoutWhileReadWrite(t *testing.T) {
 			defer wg.Done()
 			wcnt := 0
 			for {
-				time.Sleep(time.Millisecond * 10)
+				time.Sleep(time.Millisecond * 50)
 				select {
 				case <-stopC:
 					t.Logf("write %v cnt at end: %v", wcnt, time.Now())
@@ -2444,6 +2444,7 @@ func TestNsqLookupMovePartitionAndSlaveTimeoutWhileReadWrite(t *testing.T) {
 						if err == nil {
 							wcnt++
 							atomic.AddInt32(&totalPub, 1)
+							localT.ForceFlushForChannels(true)
 						}
 					}
 				}
@@ -2485,7 +2486,7 @@ func TestNsqLookupMovePartitionAndSlaveTimeoutWhileReadWrite(t *testing.T) {
 								if ch.IsConfirmed(msg) {
 									continue
 								}
-								ch.StartInFlightTimeout(msg, NewFakeConsumer(1), "", time.Second)
+								ch.StartInFlightTimeout(msg, NewFakeConsumer(1), "", time.Second*3)
 								if stoppedTime == nil {
 									time.Sleep(time.Millisecond * time.Duration(rand.Intn(10)))
 								}
@@ -2518,8 +2519,9 @@ func TestNsqLookupMovePartitionAndSlaveTimeoutWhileReadWrite(t *testing.T) {
 								stoppedTime = &tn
 							}
 							if ch.Depth() <= 0 && stoppedTime != nil {
+								localT.ForceFlush()
 								if time.Since(*stoppedTime) > time.Second*5 {
-									t.Logf("consumed %v cnt, depth: %v at end: %v", cnt, ch.Depth(), time.Now())
+									t.Logf("consumed %v cnt, depth: %v,%v at end: %v", cnt, ch.Depth(), ch.GetDelayedQueueCnt(), time.Now())
 									return
 								}
 							}
@@ -2559,18 +2561,18 @@ func TestNsqLookupMovePartitionAndSlaveTimeoutWhileReadWrite(t *testing.T) {
 			setTestSlaveTimeout(true)
 			select {
 			case <-stopC:
-			case <-time.After(time.Second * MAX_WRITE_RETRY * 3):
+			case <-time.After(time.Second * MAX_WRITE_RETRY * 2):
 			}
 			setTestSlaveTimeout(false)
 			select {
 			case <-stopC:
 				return
-			case <-time.After(time.Second * MAX_WRITE_RETRY * 10):
+			case <-time.After(time.Second * MAX_WRITE_RETRY * 5):
 			}
 		}
 	}()
 	for {
-		if time.Since(start) > time.Minute*5 {
+		if time.Since(start) > time.Minute*2 {
 			break
 		}
 		// TODO: reset queue end to make sure we can consume all
