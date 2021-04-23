@@ -24,6 +24,7 @@ import (
 const (
 	resetReaderTimeoutSec      = 10
 	MaxMemReqTimes             = 10
+	maxTimeoutCntToReq         = 20
 	MaxWaitingDelayed          = 100
 	MaxDepthReqToEnd           = 1000000
 	ZanTestSkip                = 0
@@ -32,6 +33,14 @@ const (
 	delayedReqToEndMinInterval = time.Millisecond * 128
 	DefaultMaxChDelayedQNum    = 10000 * 16
 	limitSmallMsgBytes         = 1024
+)
+
+func ChangeIntervalForTest() {
+	timeoutBlockingWait = time.Second * 2
+}
+
+var (
+	timeoutBlockingWait = time.Hour / 2
 )
 
 var (
@@ -1159,10 +1168,7 @@ func (c *Channel) ShouldRequeueToEnd(clientID int64, clientAddr string, id Messa
 	if c.IsOrdered() || c.IsEphemeral() {
 		return nil, false
 	}
-	threshold := time.Minute
-	if c.option.ReqToEndThreshold >= time.Millisecond {
-		threshold = c.option.ReqToEndThreshold
-	}
+
 	c.inFlightMutex.Lock()
 	defer c.inFlightMutex.Unlock()
 	// change the timeout for inflight
@@ -1174,6 +1180,16 @@ func (c *Channel) ShouldRequeueToEnd(clientID int64, clientAddr string, id Messa
 		return nil, false
 	}
 
+	return c.checkMsgRequeueToEnd(msg, timeout)
+}
+
+func (c *Channel) checkMsgRequeueToEnd(msg *Message,
+	timeout time.Duration) (*Message, bool) {
+	id := msg.ID
+	threshold := time.Minute
+	if c.option.ReqToEndThreshold >= time.Millisecond {
+		threshold = c.option.ReqToEndThreshold
+	}
 	if c.chLog.Level() >= levellogger.LOG_DEBUG || c.IsTraced() {
 		c.chLog.Logf("check requeue to end, timeout:%v, msg timestamp:%v, depth ts:%v, msg attempt:%v, waiting :%v",
 			timeout, msg.Timestamp,
@@ -2355,6 +2371,24 @@ func (c *Channel) GetChannelDebugStats() string {
 	return debugStr
 }
 
+func (c *Channel) CheckIfTimeoutToomuch(msg *Message, msgTimeout time.Duration) {
+	toCnt := atomic.LoadInt32(&msg.timedoutCnt)
+	// check is it a normal slow or a unnormal message caused timeout too much times
+	// In order to avoid timeout blocking normal, we check and req it to delayed queue
+	if toCnt > maxTimeoutCntToReq && !c.IsEphemeral() && !c.IsOrdered() {
+		tnow := time.Now().UnixNano()
+		if tnow-c.DepthTimestamp() > timeoutBlockingWait.Nanoseconds() {
+			nmsg, ok := c.checkMsgRequeueToEnd(msg, msgTimeout)
+			if ok {
+				if c.isTracedOrDebugTraceLog(msg) {
+					c.chLog.Logf("msg %v timeout too much, requeue to end: %v", msg.ID, toCnt)
+				}
+				c.nsqdNotify.ReqToEnd(c, nmsg, msgTimeout*10)
+			}
+		}
+	}
+}
+
 func (c *Channel) doPeekInFlightQueue(tnow int64) (bool, bool) {
 	dirty := false
 	flightCnt := 0
@@ -2439,6 +2473,7 @@ func (c *Channel) doPeekInFlightQueue(tnow int64) (bool, bool) {
 				"partition": strconv.Itoa(c.GetTopicPart()),
 				"channel":   c.GetName(),
 			}).Inc()
+			atomic.AddInt32(&msg.timedoutCnt, 1)
 		}
 		client := msg.belongedConsumer
 		if msg.belongedConsumer != nil {
