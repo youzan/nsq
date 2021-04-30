@@ -180,11 +180,20 @@ func NewPebbleEng(cfg *RockEngConfig) (*PebbleEng, error) {
 		MaxConcurrentCompactions:    cfg.MaxBackgroundCompactions,
 		EventListener:               pebble.MakeLoggingEventListener(nil),
 	}
+	opts.EventListener.WALCreated = nil
+	opts.EventListener.WALDeleted = nil
+	opts.EventListener.FlushBegin = nil
+	opts.EventListener.FlushEnd = nil
+	opts.EventListener.TableCreated = nil
+	opts.EventListener.TableDeleted = nil
+	opts.EventListener.ManifestCreated = nil
+	opts.EventListener.ManifestDeleted = nil
 	if cfg.DisableWAL {
 		opts.DisableWAL = true
 	}
 	// prefix search
-	opts.Comparer = pebble.DefaultComparer
+	comp := *pebble.DefaultComparer
+	opts.Comparer = &comp
 	opts.Comparer.Split = func(a []byte) int {
 		if len(a) <= 3 {
 			return len(a)
