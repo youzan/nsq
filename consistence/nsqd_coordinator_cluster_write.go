@@ -1070,7 +1070,11 @@ func (ncoord *NsqdCoordinator) UpdateChannelStateToCluster(channel *nsqd.Channel
 		return rpcErr
 	}
 	handleSyncResult := func(successNum int, tcData *coordData) bool {
-		return true
+		// make sure the state sync failed can be known for api  caller
+		if successNum == len(tcData.topicInfo.ISR) {
+			return true
+		}
+		return false
 	}
 	clusterErr := ncoord.doSyncOpToCluster(false, coord, doLocalWrite, doLocalExit, doLocalCommit, doLocalRollback,
 		doRefresh, doSlaveSync, handleSyncResult)
