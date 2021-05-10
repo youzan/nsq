@@ -1323,11 +1323,14 @@ func (ncoord *NsqdCoordinator) DeleteChannel(topic *nsqd.Topic, channelName stri
 	}
 	coord.GetData().syncedConsumeMgr.Clear()
 
+	var leaderErr error
 	doLocalWrite := func(d *coordData) *CoordErr {
 		localErr := topic.DeleteExistingChannel(channelName)
+		// we continue try to delete on the follower even leader failed since it can be auto-created by client.
 		if localErr != nil {
 			coordLog.Infof("topic %v deleteing local channel %v error: %v",
 				topicName, channelName, localErr)
+			leaderErr = localErr
 		}
 		return nil
 	}
@@ -1351,7 +1354,6 @@ func (ncoord *NsqdCoordinator) DeleteChannel(topic *nsqd.Topic, channelName stri
 		return rpcErr
 	}
 	handleSyncResult := func(successNum int, tcData *coordData) bool {
-		// we can ignore the error if this channel is not ordered. (just sync next time)
 		if successNum == len(tcData.topicInfo.ISR) {
 			return true
 		}
@@ -1361,6 +1363,10 @@ func (ncoord *NsqdCoordinator) DeleteChannel(topic *nsqd.Topic, channelName stri
 		doRefresh, doSlaveSync, handleSyncResult)
 	if clusterErr != nil {
 		return clusterErr.ToErrorType()
+	}
+	if leaderErr != nil {
+		// leader failed should also be notified to caller
+		return leaderErr
 	}
 	return nil
 }
@@ -1383,6 +1389,8 @@ func (ncoord *NsqdCoordinator) deleteChannelOnSlave(tc *coordData, channelName s
 	localErr = topic.DeleteExistingChannel(channelName)
 	if localErr != nil {
 		coordLog.Logf("topic %v delete channel %v on slave failed: %v ", topicName, channelName, localErr)
+		// since delete not exist will have no error, err should be returned to caller
+		return &CoordErr{localErr.Error(), RpcNoErr, CoordLocalErr}
 	} else {
 		tc.syncedConsumeMgr.Clear()
 	}

@@ -33,6 +33,7 @@ var (
 	ErrOperationInvalidState      = errors.New("the operation is not allowed under current state")
 	ErrMessageInvalidDelayedState = errors.New("the message is invalid for delayed")
 	PubQueue                      = 500
+	errChannelNotExist            = errors.New("channel does not exist")
 )
 
 func writeMessageToBackend(writeExt bool, buf *bytes.Buffer, msg *Message, bq *diskQueueWriter) (BackendOffset, int32, diskQueueEndInfo, error) {
@@ -886,7 +887,7 @@ func (t *Topic) CloseExistingChannel(channelName string, deleteData bool) error 
 		if numChannels == 0 && t.ephemeral == true {
 			go t.deleter.Do(func() { t.nsqdNotify.NotifyDeleteTopic(t) })
 		}
-		return errors.New("channel does not exist")
+		return errChannelNotExist
 	}
 	t.channelMap[channelName] = nil
 	delete(t.channelMap, channelName)
@@ -914,8 +915,11 @@ func (t *Topic) CloseExistingChannel(channelName string, deleteData bool) error 
 // DeleteExistingChannel removes a channel from the topic only if it exists
 func (t *Topic) DeleteExistingChannel(channelName string) error {
 	err := t.CloseExistingChannel(channelName, true)
+	if err == errChannelNotExist {
+		return nil
+	}
 	if err == nil {
-		t.SaveChannelMeta()
+		return t.SaveChannelMeta()
 	}
 	return err
 }
