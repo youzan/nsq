@@ -107,7 +107,7 @@ func NewHTTPServer(ctx *Context) *httpServer {
 	router.Handle("POST", "/api/search/messages", http_api.Decorate(s.searchMessageTrace, s.authCheck, log, http_api.V1))
 	router.Handle("POST", "/api/topics", http_api.Decorate(s.createTopicChannelHandler, s.authCheck, log, http_api.V1))
 	router.Handle("POST", "/api/topics/:topic", http_api.Decorate(s.topicActionHandler, s.authCheck, log, http_api.V1))
-	router.Handle("POST", "/api/topics/:topic/:channel", http_api.Decorate(s.channelActionHandler, s.authCheck, log, http_api.V1))
+	router.Handle("POST", "/api/topics/:topic/:channel", http_api.Decorate(s.channelActionHandler, s.adminCheck, log, http_api.V1))
 	router.Handle("POST", "/api/topics/:topic/:channel/admin", http_api.Decorate(s.channelAdminActionHandler, s.adminCheck, log, http_api.V1))
 	router.Handle("POST", "/api/topics/:topic/:channel/client", http_api.Decorate(s.channelClientActionHandler, s.authCheck, log, http_api.V1))
 	router.Handle("DELETE", "/api/nodes/:node", http_api.Decorate(s.tombstoneNodeForTopicHandler, s.adminCheck, log, http_api.V1))
@@ -536,11 +536,11 @@ func (s *httpServer) topicHandler(w http.ResponseWriter, req *http.Request, ps h
 	}
 
 	allNodesTopicStats := &clusterinfo.TopicStats{
-		TopicName:      topicName,
-		StatsdName:     topicName,
-		IsMultiOrdered: isOrdered,
-		IsMultiPart:    isMultiPart,
-		IsExt:          isExt,
+		TopicName:                   topicName,
+		StatsdName:                  topicName,
+		IsMultiOrdered:              isOrdered,
+		IsMultiPart:                 isMultiPart,
+		IsExt:                       isExt,
 		IsChannelAutoCreateDisabled: isChannelAutoCreateDisabled,
 	}
 	for _, t := range topicStats {
@@ -1036,15 +1036,15 @@ func (s *httpServer) createTopicChannelHandler(w http.ResponseWriter, req *http.
 	var messages []string
 
 	var body struct {
-		Topic         string `json:"topic"`
-		PartitionNum  string `json:"partition_num"`
-		Replicator    string `json:"replicator"`
-		RetentionDays string `json:"retention_days"`
-		SyncDisk      string `json:"syncdisk"`
-		Channel       string `json:"channel"`
-		OrderedMulti  string `json:"orderedmulti"`
-		Ext           string `json:"extend"`
-		DisableChannelAutoCreate	string	`json:"disable_channel_auto_create"`
+		Topic                    string `json:"topic"`
+		PartitionNum             string `json:"partition_num"`
+		Replicator               string `json:"replicator"`
+		RetentionDays            string `json:"retention_days"`
+		SyncDisk                 string `json:"syncdisk"`
+		Channel                  string `json:"channel"`
+		OrderedMulti             string `json:"orderedmulti"`
+		Ext                      string `json:"extend"`
+		DisableChannelAutoCreate string `json:"disable_channel_auto_create"`
 	}
 	err := json.NewDecoder(req.Body).Decode(&body)
 	if err != nil {
@@ -1076,7 +1076,7 @@ func (s *httpServer) createTopicChannelHandler(w http.ResponseWriter, req *http.
 	}
 	syncDisk, _ := strconv.Atoi(body.SyncDisk)
 	err = s.ci.CreateTopic(body.Topic, pnum, replica,
-		syncDisk, body.RetentionDays, body.OrderedMulti, body.Ext, body.DisableChannelAutoCreate, 
+		syncDisk, body.RetentionDays, body.OrderedMulti, body.Ext, body.DisableChannelAutoCreate,
 		s.ctx.nsqadmin.opts.NSQLookupdHTTPAddressesDC)
 
 	if err != nil {
