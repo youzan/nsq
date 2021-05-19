@@ -263,7 +263,13 @@ func (s *httpServer) doFixTopicData(w http.ResponseWriter, req *http.Request, ps
 	if err != nil {
 		return nil, http_api.Err{http.StatusInternalServerError, err.Error()}
 	}
-	localTopic.TryFixData()
+	reqParams, err := url.ParseQuery(req.URL.RawQuery)
+	if err != nil {
+		nsqd.NsqLogger().LogErrorf("failed to parse request params - %s", err)
+		return nil, http_api.Err{400, "INVALID_REQUEST"}
+	}
+	checkCorrupt := reqParams.Get("checkcorrupt")
+	localTopic.TryFixData(checkCorrupt == "true")
 
 	if s.ctx.nsqdCoord != nil {
 		err = s.ctx.nsqdCoord.TryFixLocalTopic(localTopic.GetTopicName(), localTopic.GetTopicPart())
@@ -1199,7 +1205,7 @@ func (s *httpServer) doMessageGet(w http.ResponseWriter, req *http.Request, ps h
 	if err != nil {
 		return nil, http_api.Err{404, err.Error()}
 	}
-	backendReader := t.GetDiskQueueSnapshot()
+	backendReader := t.GetDiskQueueSnapshot(true)
 	if backendReader == nil {
 		return nil, http_api.Err{500, "Failed to get queue reader"}
 	}
@@ -1354,7 +1360,7 @@ func (s *httpServer) doStats(w http.ResponseWriter, req *http.Request, ps httpro
 	leaderOnly, _ = strconv.ParseBool(leaderOnlyStr)
 
 	jsonFormat := formatString == "json"
-	filterClients := len(needClients) == 0
+	filterClients := needClients != "true"
 
 	stats := s.ctx.getStats(leaderOnly, topicName, filterClients)
 	health := s.ctx.getHealth()

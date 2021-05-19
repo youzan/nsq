@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"math"
 	"math/rand"
 	"net"
@@ -1911,24 +1912,24 @@ func TestConsumeMultiTagMessages(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		msgOut := recvNextMsgAndCheckWithCloseChan(t, conn, len(msg.Body), msg.TraceID, true, true, closeChan)
 		test.Nil(t, msgOut)
 		t.Logf("subscrieb without tag stops.")
-		wg.Done()
 	}()
 
 	var wgTag sync.WaitGroup
 	wgTag.Add(1)
 	go func() {
+		defer wgTag.Done()
 		msgOut1 := recvNextMsgAndCheckExt(t, conn1, len(msg.Body), msg.TraceID, true, true)
 		test.NotNil(t, msgOut1)
-		wgTag.Done()
 	}()
 	wgTag.Add(1)
 	go func() {
+		defer wgTag.Done()
 		msgOut2 := recvNextMsgAndCheckExt(t, conn2, len(msg.Body), msg.TraceID, true, true)
 		test.NotNil(t, msgOut2)
-		wgTag.Done()
 	}()
 
 	wgTag.Wait()
@@ -5650,6 +5651,7 @@ func TestSubOrderedWithFilter(t *testing.T) {
 func TestSubWithLargeReady(t *testing.T) {
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
+	opts.MaxRdyCount = 250
 	if testing.Verbose() {
 		opts.LogLevel = 2
 		nsqdNs.SetLogger(opts.Logger)
@@ -5668,7 +5670,7 @@ func TestSubWithLargeReady(t *testing.T) {
 	msg := nsqdNs.NewMessage(0, []byte("test body"))
 	topic.PutMessage(msg)
 
-	for i := 0; i < 100000; i++ {
+	for i := 0; i < 1000; i++ {
 		topic.PutMessage(nsqdNs.NewMessage(0, []byte("test body")))
 	}
 
@@ -5677,13 +5679,13 @@ func TestSubWithLargeReady(t *testing.T) {
 
 	defer conn.Close()
 
-	_, err = nsq.Ready(2500).WriteTo(conn)
+	_, err = nsq.Ready(250).WriteTo(conn)
 	test.Equal(t, err, nil)
 
 	_, err = nsq.Ready(int(opts.MaxRdyCount)).WriteTo(conn)
 	test.Equal(t, err, nil)
 
-	for i := 0; i < 100000; i++ {
+	for i := 0; i < 1000; i++ {
 		msgOut := recvNextMsgAndCheckClientMsg(t, conn, len(msg.Body), 0, false)
 		_, err = nsq.Finish(msgOut.ID).WriteTo(conn)
 		if err != nil {
@@ -7372,11 +7374,22 @@ func testIOLoopReturnsClientErr(t *testing.T, fakeConn test.FakeNetConn) {
 
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
+	opts.KVEnabled = false
+	if opts.DataPath == "" {
+		tmpDir, err := ioutil.TempDir("", fmt.Sprintf("nsq-test-%d", time.Now().UnixNano()))
+		if err != nil {
+			panic(err)
+		}
+		opts.DataPath = tmpDir
+		defer os.RemoveAll(tmpDir)
+	}
 
-	prot := &protocolV2{ctx: &context{nsqd: nsqdNs.New(opts)}}
+	nd, err := nsqdNs.New(opts)
+	test.Nil(t, err)
+	prot := &protocolV2{ctx: &context{nsqd: nd}}
 	defer prot.ctx.nsqd.Exit()
 
-	err := prot.IOLoop(fakeConn)
+	err = prot.IOLoop(fakeConn)
 
 	test.NotNil(t, err)
 	test.Equal(t, strings.HasPrefix(err.Error(), "E_INVALID "), true)

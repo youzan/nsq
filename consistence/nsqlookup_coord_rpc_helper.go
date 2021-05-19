@@ -45,7 +45,7 @@ func (nlcoord *NsqLookupCoordinator) rpcFailRetryFunc(monitorChan chan struct{})
 				nlcoord.rpcMutex.Unlock()
 			}
 
-			epoch := nlcoord.leaderNode.Epoch
+			epoch := nlcoord.GetLookupLeader().Epoch
 			for _, info := range failList {
 				// check if exiting
 				select {
@@ -162,14 +162,14 @@ func (nlcoord *NsqLookupCoordinator) notifyTopicLeaderSession(topicInfo *TopicPa
 	others := getOthersExceptLeader(topicInfo)
 	coordLog.Infof("notify topic leader session changed: %v, %v, others: %v", topicInfo.GetTopicDesp(), leaderSession.Session, others)
 	err := nlcoord.doNotifyToTopicLeaderThenOthers(false, topicInfo.Leader, others, func(nid string) *CoordErr {
-		return nlcoord.sendTopicLeaderSessionToNsqd(nlcoord.leaderNode.Epoch, nid, topicInfo, leaderSession, joinSession)
+		return nlcoord.sendTopicLeaderSessionToNsqd(nlcoord.GetLookupLeader().Epoch, nid, topicInfo, leaderSession, joinSession)
 	})
 	return err
 }
 
 func (nlcoord *NsqLookupCoordinator) notifyAcquireTopicLeader(topicInfo *TopicPartitionMetaInfo) *CoordErr {
 	rpcErr := nlcoord.doNotifyToSingleNsqdNode(topicInfo.Leader, func(nid string) *CoordErr {
-		return nlcoord.sendAcquireTopicLeaderToNsqd(nlcoord.leaderNode.Epoch, nid, topicInfo)
+		return nlcoord.sendAcquireTopicLeaderToNsqd(nlcoord.GetLookupLeader().Epoch, nid, topicInfo)
 	})
 	if rpcErr != nil {
 		coordLog.Infof("notify leader to acquire leader failed: %v", rpcErr)
@@ -180,7 +180,7 @@ func (nlcoord *NsqLookupCoordinator) notifyAcquireTopicLeader(topicInfo *TopicPa
 func (nlcoord *NsqLookupCoordinator) notifyReleaseTopicLeader(topicInfo *TopicPartitionMetaInfo,
 	leaderSessionEpoch EpochType, leaderSession string) *CoordErr {
 	rpcErr := nlcoord.doNotifyToSingleNsqdNode(topicInfo.Leader, func(nid string) *CoordErr {
-		return nlcoord.sendReleaseTopicLeaderToNsqd(nlcoord.leaderNode.Epoch, nid, topicInfo, leaderSessionEpoch, leaderSession)
+		return nlcoord.sendReleaseTopicLeaderToNsqd(nlcoord.GetLookupLeader().Epoch, nid, topicInfo, leaderSessionEpoch, leaderSession)
 	})
 	if rpcErr != nil {
 		coordLog.Infof("notify leader to acquire leader failed: %v", rpcErr)
@@ -190,7 +190,7 @@ func (nlcoord *NsqLookupCoordinator) notifyReleaseTopicLeader(topicInfo *TopicPa
 
 func (nlcoord *NsqLookupCoordinator) notifyISRTopicMetaInfo(topicInfo *TopicPartitionMetaInfo) *CoordErr {
 	rpcErr := nlcoord.doNotifyToNsqdNodes(topicInfo.ISR, func(nid string) *CoordErr {
-		return nlcoord.sendTopicInfoToNsqd(nlcoord.leaderNode.Epoch, nid, topicInfo)
+		return nlcoord.sendTopicInfoToNsqd(nlcoord.GetLookupLeader().Epoch, nid, topicInfo)
 	})
 	if rpcErr != nil {
 		coordLog.Infof("notify isr for topic meta info failed: %v", rpcErr)
@@ -200,7 +200,7 @@ func (nlcoord *NsqLookupCoordinator) notifyISRTopicMetaInfo(topicInfo *TopicPart
 
 func (nlcoord *NsqLookupCoordinator) notifyCatchupTopicMetaInfo(topicInfo *TopicPartitionMetaInfo) *CoordErr {
 	rpcErr := nlcoord.doNotifyToNsqdNodes(topicInfo.CatchupList, func(nid string) *CoordErr {
-		return nlcoord.sendTopicInfoToNsqd(nlcoord.leaderNode.Epoch, nid, topicInfo)
+		return nlcoord.sendTopicInfoToNsqd(nlcoord.GetLookupLeader().Epoch, nid, topicInfo)
 	})
 	if rpcErr != nil {
 		coordLog.Infof("notify catchup for topic meta info failed: %v", rpcErr)
@@ -215,7 +215,7 @@ func (nlcoord *NsqLookupCoordinator) notifyTopicMetaInfo(topicInfo *TopicPartiti
 		coordLog.Infof("==== notify topic name is empty")
 	}
 	rpcErr := nlcoord.doNotifyToTopicLeaderThenOthers(false, topicInfo.Leader, others, func(nid string) *CoordErr {
-		return nlcoord.sendTopicInfoToNsqd(nlcoord.leaderNode.Epoch, nid, topicInfo)
+		return nlcoord.sendTopicInfoToNsqd(nlcoord.GetLookupLeader().Epoch, nid, topicInfo)
 	})
 	if rpcErr != nil {
 		coordLog.Infof("notify topic meta info failed: %v", rpcErr)
@@ -225,7 +225,7 @@ func (nlcoord *NsqLookupCoordinator) notifyTopicMetaInfo(topicInfo *TopicPartiti
 
 func (nlcoord *NsqLookupCoordinator) notifyOldNsqdsForTopicMetaInfo(topicInfo *TopicPartitionMetaInfo, oldNodes []string) *CoordErr {
 	return nlcoord.doNotifyToNsqdNodes(oldNodes, func(nid string) *CoordErr {
-		return nlcoord.sendTopicInfoToNsqd(nlcoord.leaderNode.Epoch, nid, topicInfo)
+		return nlcoord.sendTopicInfoToNsqd(nlcoord.GetLookupLeader().Epoch, nid, topicInfo)
 	})
 }
 
@@ -299,7 +299,7 @@ func (nlcoord *NsqLookupCoordinator) notifyLeaderDisableTopicWriteFast(topicInfo
 		coordLog.Infof("failed to get rpc client: %v, %v", err, topicInfo.Leader)
 		return err
 	}
-	err = c.DisableTopicWriteFast(nlcoord.leaderNode.Epoch, topicInfo)
+	err = c.DisableTopicWriteFast(nlcoord.GetLookupLeader().Epoch, topicInfo)
 	return err
 }
 
@@ -309,7 +309,7 @@ func (nlcoord *NsqLookupCoordinator) notifyLeaderDisableTopicWrite(topicInfo *To
 		coordLog.Infof("failed to get rpc client: %v, %v", err, topicInfo.Leader)
 		return err
 	}
-	err = c.DisableTopicWrite(nlcoord.leaderNode.Epoch, topicInfo)
+	err = c.DisableTopicWrite(nlcoord.GetLookupLeader().Epoch, topicInfo)
 	return err
 }
 
@@ -322,7 +322,7 @@ func (nlcoord *NsqLookupCoordinator) notifyISRDisableTopicWrite(topicInfo *Topic
 		if err != nil {
 			return node, err
 		}
-		err = c.DisableTopicWrite(nlcoord.leaderNode.Epoch, topicInfo)
+		err = c.DisableTopicWrite(nlcoord.GetLookupLeader().Epoch, topicInfo)
 		if err != nil {
 			return node, err
 		}
@@ -339,7 +339,7 @@ func (nlcoord *NsqLookupCoordinator) notifyEnableTopicWrite(topicInfo *TopicPart
 		if err != nil {
 			return err
 		}
-		err = c.EnableTopicWrite(nlcoord.leaderNode.Epoch, topicInfo)
+		err = c.EnableTopicWrite(nlcoord.GetLookupLeader().Epoch, topicInfo)
 		if err != nil {
 			return err
 		}
@@ -348,7 +348,7 @@ func (nlcoord *NsqLookupCoordinator) notifyEnableTopicWrite(topicInfo *TopicPart
 	if err != nil {
 		return err
 	}
-	err = c.EnableTopicWrite(nlcoord.leaderNode.Epoch, topicInfo)
+	err = c.EnableTopicWrite(nlcoord.GetLookupLeader().Epoch, topicInfo)
 	return err
 }
 

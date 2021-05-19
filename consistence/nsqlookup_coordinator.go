@@ -2,6 +2,7 @@ package consistence
 
 import (
 	"errors"
+	"fmt"
 	"math/rand"
 	"net"
 	"runtime"
@@ -54,6 +55,11 @@ type JoinISRState struct {
 	isLeadershipWait bool
 }
 
+func (s *JoinISRState) String() string {
+	return fmt.Sprintf("join %v, session %v, start %s, readys %v, isLeader %v",
+		s.waitingJoin, s.waitingSession, s.waitingStart, s.readyNodes, s.isLeadershipWait)
+}
+
 type RpcFailedInfo struct {
 	nodeID    string
 	topic     string
@@ -89,6 +95,7 @@ type Options struct {
 type NsqLookupCoordinator struct {
 	clusterKey         string
 	myNode             NsqLookupdNodeInfo
+	leaderMu           sync.RWMutex
 	leaderNode         NsqLookupdNodeInfo
 	leadership         NSQLookupdLeadership
 	nodesMutex         sync.RWMutex
@@ -238,11 +245,13 @@ func (nlcoord *NsqLookupCoordinator) handleLeadership() {
 				coordLog.Warningln("leader is lost.")
 				continue
 			}
-			if l.GetID() != nlcoord.leaderNode.GetID() ||
-				l.Epoch != nlcoord.leaderNode.Epoch {
-				coordLog.Infof("lookup leader changed from %v to %v", nlcoord.leaderNode, *l)
+			if l.GetID() != nlcoord.GetLookupLeader().GetID() ||
+				l.Epoch != nlcoord.GetLookupLeader().Epoch {
+				coordLog.Infof("lookup leader changed from %v to %v", nlcoord.GetLookupLeader(), *l)
+				nlcoord.leaderMu.Lock()
 				nlcoord.leaderNode = *l
-				if nlcoord.leaderNode.GetID() != nlcoord.myNode.GetID() {
+				nlcoord.leaderMu.Unlock()
+				if nlcoord.GetLookupLeader().GetID() != nlcoord.myNode.GetID() {
 					// remove watchers.
 					if nlcoord.nsqdMonitorChan != nil {
 						close(nlcoord.nsqdMonitorChan)
@@ -251,7 +260,7 @@ func (nlcoord *NsqLookupCoordinator) handleLeadership() {
 				}
 				nlcoord.notifyLeaderChanged(nlcoord.nsqdMonitorChan)
 			}
-			if nlcoord.leaderNode.GetID() == "" {
+			if nlcoord.GetLookupLeader().GetID() == "" {
 				coordLog.Warningln("leader is missing.")
 			}
 		case <-ticker.C:
@@ -265,8 +274,8 @@ func (nlcoord *NsqLookupCoordinator) handleLeadership() {
 }
 
 func (nlcoord *NsqLookupCoordinator) notifyLeaderChanged(monitorChan chan struct{}) {
-	if nlcoord.leaderNode.GetID() != nlcoord.myNode.GetID() {
-		coordLog.Infof("I am slave (%v). Leader is: %v", nlcoord.myNode, nlcoord.leaderNode)
+	if nlcoord.GetLookupLeader().GetID() != nlcoord.myNode.GetID() {
+		coordLog.Infof("I am slave (%v). Leader is: %v", nlcoord.myNode, nlcoord.GetLookupLeader())
 		nlcoord.nodesMutex.Lock()
 		nlcoord.removingNodes = make(map[string]string)
 		nlcoord.nodesMutex.Unlock()
@@ -1457,7 +1466,7 @@ func (nlcoord *NsqLookupCoordinator) initJoinStateAndWait(topicInfo *TopicPartit
 	state.readyNodes = make(map[string]struct{})
 	state.readyNodes[topicInfo.Leader] = struct{}{}
 
-	coordLog.Infof("topic %v isr waiting session init : %v", topicInfo.GetTopicDesp(), state)
+	coordLog.Infof("topic %v isr waiting session init : %s", topicInfo.GetTopicDesp(), state.String())
 	if len(topicInfo.ISR) <= 1 {
 		rpcErr := nlcoord.notifyISRTopicMetaInfo(topicInfo)
 		state.waitingJoin = false
@@ -1492,7 +1501,7 @@ func (nlcoord *NsqLookupCoordinator) initJoinStateAndWait(topicInfo *TopicPartit
 
 func (nlcoord *NsqLookupCoordinator) notifySingleNsqdForTopicReload(topicInfo TopicPartitionMetaInfo, nodeID string) *CoordErr {
 	// TODO: maybe should disable write if reload node is in isr.
-	rpcErr := nlcoord.sendTopicInfoToNsqd(nlcoord.leaderNode.Epoch, nodeID, &topicInfo)
+	rpcErr := nlcoord.sendTopicInfoToNsqd(nlcoord.GetLookupLeader().Epoch, nodeID, &topicInfo)
 	if rpcErr != nil {
 		coordLog.Infof("failed to notify topic %v info to %v : %v", topicInfo.GetTopicDesp(), nodeID, rpcErr)
 		if rpcErr.IsEqual(ErrTopicCoordStateInvalid) {
@@ -1505,7 +1514,7 @@ func (nlcoord *NsqLookupCoordinator) notifySingleNsqdForTopicReload(topicInfo To
 		coordLog.Infof("get leader session failed: %v", err)
 		return &CoordErr{err.Error(), RpcCommonErr, CoordNetErr}
 	}
-	return nlcoord.sendTopicLeaderSessionToNsqd(nlcoord.leaderNode.Epoch, nodeID, &topicInfo, leaderSession, "")
+	return nlcoord.sendTopicLeaderSessionToNsqd(nlcoord.GetLookupLeader().Epoch, nodeID, &topicInfo, leaderSession, "")
 }
 
 func (nlcoord *NsqLookupCoordinator) notifyAllNsqdsForTopicReload(topicInfo TopicPartitionMetaInfo) *CoordErr {
@@ -1714,7 +1723,7 @@ func (nlcoord *NsqLookupCoordinator) handleReadyForISR(topic string, partition i
 		defer state.Unlock()
 		if !state.waitingJoin || state.waitingSession != joinISRSession {
 			go nlcoord.triggerCheckTopicsRandom(topicInfo.Name, topicInfo.Partition, time.Second)
-			coordLog.Infof("%v state mismatch: %v, request join session: %v", topicInfo.GetTopicDesp(), state, joinISRSession)
+			coordLog.Infof("%v state mismatch: %s, request join session: %v", topicInfo.GetTopicDesp(), state, joinISRSession)
 			return
 		}
 
@@ -1737,7 +1746,7 @@ func (nlcoord *NsqLookupCoordinator) handleReadyForISR(topic string, partition i
 			coordLog.Infof("the isr nodes: %v not consistence", wrongISR)
 			return
 		}
-		coordLog.Infof("topic %v isr new state is ready for all: %v", topicInfo.GetTopicDesp(), state)
+		coordLog.Infof("topic %v isr new state is ready for all: %s", topicInfo.GetTopicDesp(), state)
 		if len(topicInfo.ISR) > topicInfo.Replica/2 {
 			rpcErr = nlcoord.notifyEnableTopicWrite(topicInfo)
 			if rpcErr != nil {
@@ -1933,13 +1942,13 @@ func (nlcoord *NsqLookupCoordinator) handleRequestNewTopicInfo(topic string, par
 		coordLog.Infof("get topic info failed : %v", err.Error())
 		return nil
 	}
-	nlcoord.sendTopicInfoToNsqd(nlcoord.leaderNode.Epoch, nodeID, topicInfo)
+	nlcoord.sendTopicInfoToNsqd(nlcoord.GetLookupLeader().Epoch, nodeID, topicInfo)
 	leaderSession, err := nlcoord.leadership.GetTopicLeaderSession(topicInfo.Name, topicInfo.Partition)
 	if err != nil {
 		coordLog.Infof("get leader session failed: %v", err)
 		return nil
 	}
-	nlcoord.sendTopicLeaderSessionToNsqd(nlcoord.leaderNode.Epoch, nodeID, topicInfo, leaderSession, "")
+	nlcoord.sendTopicLeaderSessionToNsqd(nlcoord.GetLookupLeader().Epoch, nodeID, topicInfo, leaderSession, "")
 	return nil
 }
 

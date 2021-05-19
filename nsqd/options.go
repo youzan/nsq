@@ -115,6 +115,12 @@ type Options struct {
 	QueueWriteBufferSize      int   `flag:"queue-write-buffer-size" cfg:"queue_write_buffer_size"`
 	PubQueueSize              int   `flag:"pub-queue-size" cfg:"pub_queue_size"`
 	SleepMsBetweenLogSyncPull int   `flag:"sleepms-between-log-sync-pull" cfg:"sleepms_between_log_sync_pull"`
+
+	// options for kv engine
+	KVEnabled              bool  `flag:"kv-enabled" cfg:"kv_enabled"`
+	KVBlockCache           int64 `flag:"kv-block-cache" cfg:"kv_block_cache"`
+	KVWriteBufferSize      int64 `flag:"kv-write-buffer-size" cfg:"kv_write_buffer_size"`
+	KVMaxWriteBufferNumber int64 `flag:"kv-max-write-buffer-number" cfg:"kv_max_write_buffer_number"`
 }
 
 func NewOptions() *Options {
@@ -190,6 +196,7 @@ func NewOptions() *Options {
 
 		RetentionDays:    int32(DEFAULT_RETENTION_DAYS),
 		MaxConnForClient: 500000,
+		KVEnabled:        false,
 	}
 
 	return opts

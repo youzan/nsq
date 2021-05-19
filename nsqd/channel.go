@@ -178,7 +178,8 @@ type Channel struct {
 // NewChannel creates a new instance of the Channel type and returns a pointer
 func NewChannel(topicName string, part int, topicOrdered bool, channelName string, chEnd BackendQueueEnd, opt *Options,
 	deleteCallback func(*Channel), moreDataCallback func(*Channel), consumeDisabled int32,
-	notify INsqdNotify, ext int32, queueStart BackendQueueEnd, metaStorage IMetaStorage, forceReload bool) *Channel {
+	notify INsqdNotify, ext int32, queueStart BackendQueueEnd, metaStorage IMetaStorage,
+	kvTopic *KVTopic, forceReload bool) *Channel {
 
 	c := &Channel{
 		topicName:          topicName,
@@ -254,6 +255,7 @@ func NewChannel(topicName string, part int, topicOrdered bool, channelName strin
 		chEnd,
 		false,
 		metaStorage,
+		kvTopic,
 		forceReload,
 	)
 
@@ -2378,6 +2380,8 @@ func (c *Channel) CheckIfTimeoutToomuch(msg *Message, msgTimeout time.Duration) 
 	if toCnt > maxTimeoutCntToReq && !c.IsEphemeral() && !c.IsOrdered() {
 		tnow := time.Now().UnixNano()
 		if tnow-c.DepthTimestamp() > timeoutBlockingWait.Nanoseconds() {
+			c.inFlightMutex.Lock()
+			defer c.inFlightMutex.Unlock()
 			nmsg, ok := c.checkMsgRequeueToEnd(msg, msgTimeout)
 			if ok {
 				if c.isTracedOrDebugTraceLog(msg) {

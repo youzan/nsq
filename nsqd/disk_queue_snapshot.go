@@ -41,6 +41,20 @@ func NewDiskQueueSnapshot(readFrom string, dataPath string, endInfo BackendQueue
 	return &d
 }
 
+func (d *DiskQueueSnapshot) ResetToStart() {
+	d.Lock()
+	defer d.Unlock()
+
+	if d.exitFlag == 1 {
+		return
+	}
+	d.readPos = d.queueStart
+	if d.readFile != nil {
+		d.readFile.Close()
+		d.readFile = nil
+	}
+}
+
 func (d *DiskQueueSnapshot) getCurrentFileEnd(offset diskQueueOffset) (int64, error) {
 	curFileName := d.fileName(offset.FileNum)
 	f, err := os.Stat(curFileName)
@@ -242,6 +256,11 @@ func (d *DiskQueueSnapshot) ReadRaw(size int32) ([]byte, error) {
 			curFileName := d.fileName(d.readPos.EndOffset.FileNum)
 			d.readFile, err = os.OpenFile(curFileName, os.O_RDONLY, 0600)
 			if err != nil {
+				if d.readPos.Offset() == d.endPos.Offset() && d.readPos.EndOffset == d.endPos.EndOffset {
+					if os.IsNotExist(err) {
+						return nil, io.EOF
+					}
+				}
 				return result, err
 			}
 			nsqLog.LogDebugf("DISKQUEUE snapshot(%s): readRaw() opened %s", d.readFrom, curFileName)
@@ -313,6 +332,11 @@ CheckFileOpen:
 		curFileName := d.fileName(d.readPos.EndOffset.FileNum)
 		d.readFile, result.Err = os.OpenFile(curFileName, os.O_RDONLY, 0600)
 		if result.Err != nil {
+			if d.readPos.Offset() == d.endPos.Offset() && d.readPos.EndOffset == d.endPos.EndOffset {
+				if os.IsNotExist(result.Err) {
+					result.Err = io.EOF
+				}
+			}
 			return result
 		}
 
@@ -351,7 +375,7 @@ CheckFileOpen:
 		// where a new message should begin
 		d.readFile.Close()
 		d.readFile = nil
-		result.Err = fmt.Errorf("invalid message read size (%d)", msgSize)
+		result.Err = fmt.Errorf("invalid message read size (%d) at offset: %v", msgSize, d.readPos)
 		return result
 	}
 
@@ -376,6 +400,38 @@ CheckFileOpen:
 		d.readPos)
 
 	return result
+}
+
+func (d *DiskQueueSnapshot) CheckDiskQueueReadToEndOK(offset int64, seekCnt int64, endOffset BackendOffset) (int64, int64, error) {
+	localErr := d.SeekTo(BackendOffset(offset), seekCnt)
+	if localErr != nil {
+		return offset, seekCnt, localErr
+	}
+	// read until end since it may have multi in the last batch
+	lastOffset := offset
+	lastCnt := seekCnt
+	for {
+		r := d.ReadOne()
+		if r.Err != nil {
+			// should not have eof since it will break after last read
+			nsqLog.Warningf("check read failed at: %v, err: %s", lastOffset, r.Err)
+			return lastOffset, lastCnt, r.Err
+		} else {
+			if r.Offset+r.MovedSize == endOffset {
+				lastOffset = int64(endOffset)
+				lastCnt = r.CurCnt
+				break
+			}
+			if r.Offset+r.MovedSize > endOffset {
+				err := fmt.Errorf("check read failed, unexpected end offset: %v, %v, %v", r.Offset, r.MovedSize, endOffset)
+				nsqLog.Warningf("%s", err)
+				return lastOffset, lastCnt, err
+			}
+			lastOffset = int64(r.Offset + r.MovedSize)
+			lastCnt = r.CurCnt
+		}
+	}
+	return lastOffset, lastCnt, nil
 }
 
 func (d *DiskQueueSnapshot) handleReachEnd() {

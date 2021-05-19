@@ -11,7 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/spaolacci/murmur3"
+	"github.com/twmb/murmur3"
 
 	"github.com/youzan/nsq/nsqd"
 )

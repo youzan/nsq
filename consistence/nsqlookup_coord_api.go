@@ -22,6 +22,8 @@ func (nlcoord *NsqLookupCoordinator) GetAllLookupdNodes() ([]NsqLookupdNodeInfo,
 }
 
 func (nlcoord *NsqLookupCoordinator) GetLookupLeader() NsqLookupdNodeInfo {
+	nlcoord.leaderMu.RLock()
+	defer nlcoord.leaderMu.RUnlock()
 	return nlcoord.leaderNode
 }
 
@@ -82,7 +84,7 @@ func (nlcoord *NsqLookupCoordinator) GetTopicLeaderForConsume(topicName string, 
 }
 
 func (nlcoord *NsqLookupCoordinator) IsMineLeader() bool {
-	return nlcoord.leaderNode.GetID() == nlcoord.myNode.GetID()
+	return nlcoord.GetLookupLeader().GetID() == nlcoord.myNode.GetID()
 }
 
 func (nlcoord *NsqLookupCoordinator) IsClusterStable() bool {
@@ -91,7 +93,7 @@ func (nlcoord *NsqLookupCoordinator) IsClusterStable() bool {
 }
 
 func (nlcoord *NsqLookupCoordinator) SetTopNBalance(enable bool) error {
-	if nlcoord.leaderNode.GetID() != nlcoord.myNode.GetID() {
+	if nlcoord.GetLookupLeader().GetID() != nlcoord.myNode.GetID() {
 		coordLog.Infof("not leader while delete topic")
 		return ErrNotNsqLookupLeader
 	}
@@ -104,7 +106,7 @@ func (nlcoord *NsqLookupCoordinator) SetTopNBalance(enable bool) error {
 }
 
 func (nlcoord *NsqLookupCoordinator) SetClusterUpgradeState(upgrading bool) error {
-	if nlcoord.leaderNode.GetID() != nlcoord.myNode.GetID() {
+	if nlcoord.GetLookupLeader().GetID() != nlcoord.myNode.GetID() {
 		coordLog.Infof("not leader while delete topic")
 		return ErrNotNsqLookupLeader
 	}
@@ -201,7 +203,7 @@ func (nlcoord *NsqLookupCoordinator) IsTopicLeader(topic string, part int, nid s
 }
 
 func (nlcoord *NsqLookupCoordinator) MarkNodeAsRemoving(nid string) error {
-	if nlcoord.leaderNode.GetID() != nlcoord.myNode.GetID() {
+	if nlcoord.GetLookupLeader().GetID() != nlcoord.myNode.GetID() {
 		coordLog.Infof("not leader while delete topic")
 		return ErrNotNsqLookupLeader
 	}
@@ -223,7 +225,7 @@ func (nlcoord *NsqLookupCoordinator) MarkNodeAsRemoving(nid string) error {
 }
 
 func (nlcoord *NsqLookupCoordinator) DeleteTopicForce(topic string, partition string) error {
-	if nlcoord.leaderNode.GetID() != nlcoord.myNode.GetID() {
+	if nlcoord.GetLookupLeader().GetID() != nlcoord.myNode.GetID() {
 		coordLog.Infof("not leader while delete topic")
 		return ErrNotNsqLookupLeader
 	}
@@ -272,7 +274,7 @@ func (nlcoord *NsqLookupCoordinator) DeleteTopicForce(topic string, partition st
 }
 
 func (nlcoord *NsqLookupCoordinator) DeleteTopic(topic string, partition string) error {
-	if nlcoord.leaderNode.GetID() != nlcoord.myNode.GetID() {
+	if nlcoord.GetLookupLeader().GetID() != nlcoord.myNode.GetID() {
 		coordLog.Infof("not leader while delete topic")
 		return ErrNotNsqLookupLeader
 	}
@@ -350,7 +352,7 @@ func (nlcoord *NsqLookupCoordinator) deleteTopicPartitionForce(topic string, pid
 			coordLog.Infof("failed to get rpc client: %v, %v", node.ID, rpcErr)
 			continue
 		}
-		rpcErr = c.DeleteNsqdTopic(nlcoord.leaderNode.Epoch, &topicInfo)
+		rpcErr = c.DeleteNsqdTopic(nlcoord.GetLookupLeader().Epoch, &topicInfo)
 		if rpcErr != nil {
 			coordLog.Infof("failed to call rpc : %v, %v", node.ID, rpcErr)
 		}
@@ -375,7 +377,7 @@ func (nlcoord *NsqLookupCoordinator) deleteTopicPartition(topic string, pid int)
 			coordLog.Infof("failed to get rpc client: %v, %v", id, rpcErr)
 			continue
 		}
-		rpcErr = c.DeleteNsqdTopic(nlcoord.leaderNode.Epoch, topicInfo)
+		rpcErr = c.DeleteNsqdTopic(nlcoord.GetLookupLeader().Epoch, topicInfo)
 		if rpcErr != nil {
 			coordLog.Infof("failed to call rpc : %v, %v", id, rpcErr)
 		}
@@ -386,7 +388,7 @@ func (nlcoord *NsqLookupCoordinator) deleteTopicPartition(topic string, pid int)
 			coordLog.Infof("failed to get rpc client: %v, %v", id, rpcErr)
 			continue
 		}
-		rpcErr = c.DeleteNsqdTopic(nlcoord.leaderNode.Epoch, topicInfo)
+		rpcErr = c.DeleteNsqdTopic(nlcoord.GetLookupLeader().Epoch, topicInfo)
 		if rpcErr != nil {
 			coordLog.Infof("failed to call rpc : %v, %v", id, rpcErr)
 		}
@@ -398,7 +400,7 @@ func (nlcoord *NsqLookupCoordinator) deleteTopicPartition(topic string, pid int)
 		if rpcErr != nil {
 			continue
 		}
-		c.DeleteNsqdTopic(nlcoord.leaderNode.Epoch, topicInfo)
+		c.DeleteNsqdTopic(nlcoord.GetLookupLeader().Epoch, topicInfo)
 	}
 
 	return nil
@@ -435,7 +437,7 @@ func (nlcoord *NsqLookupCoordinator) GetRegisteredChannel(topic string) ([]strin
 
 //Update registered channels
 func (nlcoord *NsqLookupCoordinator) UpdateRegisteredChannel(topic string, registeredChannels []string) error {
-	if nlcoord.leaderNode.GetID() != nlcoord.myNode.GetID() {
+	if nlcoord.GetLookupLeader().GetID() != nlcoord.myNode.GetID() {
 		coordLog.Infof("not leader while create topic")
 		return ErrNotNsqLookupLeader
 	}
@@ -507,7 +509,7 @@ func (nlcoord *NsqLookupCoordinator) UpdateRegisteredChannel(topic string, regis
 
 func (nlcoord *NsqLookupCoordinator) ChangeTopicMetaParam(topic string,
 	newSyncEvery int, newRetentionDay int, newReplicator int, upgradeExt string, disableChannelAutoCreate string) error {
-	if nlcoord.leaderNode.GetID() != nlcoord.myNode.GetID() {
+	if nlcoord.GetLookupLeader().GetID() != nlcoord.myNode.GetID() {
 		coordLog.Infof("not leader while create topic")
 		return ErrNotNsqLookupLeader
 	}
@@ -645,7 +647,7 @@ func (nlcoord *NsqLookupCoordinator) updateTopicMeta(currentNodes map[string]Nsq
 }
 
 func (nlcoord *NsqLookupCoordinator) ExpandTopicPartition(topic string, newPartitionNum int) error {
-	if nlcoord.leaderNode.GetID() != nlcoord.myNode.GetID() {
+	if nlcoord.GetLookupLeader().GetID() != nlcoord.myNode.GetID() {
 		coordLog.Infof("not leader while create topic")
 		return ErrNotNsqLookupLeader
 	}
@@ -701,7 +703,7 @@ func (nlcoord *NsqLookupCoordinator) ExpandTopicPartition(topic string, newParti
 }
 
 func (nlcoord *NsqLookupCoordinator) CreateTopic(topic string, meta TopicMetaInfo) error {
-	if nlcoord.leaderNode.GetID() != nlcoord.myNode.GetID() {
+	if nlcoord.GetLookupLeader().GetID() != nlcoord.myNode.GetID() {
 		coordLog.Infof("not leader while create topic")
 		return ErrNotNsqLookupLeader
 	}

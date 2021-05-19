@@ -79,6 +79,13 @@ type CommitLogData struct {
 	MsgNum int32
 }
 
+func (cl *CommitLogData) dqSeekCnt() int64 {
+	if cl.MsgCnt > 0 {
+		return cl.MsgCnt - 1
+	}
+	return 0
+}
+
 func GetLogDataSize() int {
 	return logDataSize
 }
@@ -756,6 +763,35 @@ func (self *TopicCommitLogMgr) GetCurrentEnd() (int64, int64) {
 	self.Lock()
 	defer self.Unlock()
 	return self.currentStart, int64(self.currentCount) * int64(GetLogDataSize())
+}
+
+func (self *TopicCommitLogMgr) GetMaxAvailableCleanOffset(fileIndex int64, fileOffset int64) (int64, error) {
+	self.Lock()
+	defer self.Unlock()
+	if fileIndex == self.currentStart {
+		if fileOffset/int64(GetLogDataSize())+int64(MIN_KEEP_LOG_ITEM) >= int64(self.currentCount) {
+			if int64(self.currentCount) <= int64(MIN_KEEP_LOG_ITEM) {
+				return fileOffset, ErrCommitLogCleanKeepMin
+			} else {
+				return (int64(self.currentCount-1) - int64(MIN_KEEP_LOG_ITEM)) * int64(GetLogDataSize()), nil
+			}
+		}
+	} else if fileIndex == self.currentStart-1 {
+		fName := getSegmentFilename(self.path, fileIndex)
+		stat, err := os.Stat(fName)
+		if err != nil {
+			return fileOffset, err
+		}
+		leftSize := stat.Size() - fileOffset
+		if leftSize < 0 {
+			return fileOffset, ErrCommitLogOffsetInvalid
+		}
+		if leftSize/int64(GetLogDataSize())+int64(self.currentCount) <= int64(MIN_KEEP_LOG_ITEM) {
+			noffset := stat.Size() - (int64(MIN_KEEP_LOG_ITEM)-int64(self.currentCount)+1)*int64(GetLogDataSize())
+			return noffset, nil
+		}
+	}
+	return fileOffset, nil
 }
 
 func (self *TopicCommitLogMgr) prepareCleanOldData(fileIndex int64, fileOffset int64) (LogStartInfo, int64, error) {

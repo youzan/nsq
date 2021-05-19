@@ -162,10 +162,10 @@ func (nrpc *NsqdRpcClient) CallWithRetry(method string, arg interface{}) (interf
 		reply, err = nrpc.dc.Call(method, arg)
 		if testRPCTimeoutAndWait {
 			time.Sleep(maxWriteWaitTimeout)
-			e := gorpc.ErrCanceled
+			e := *gorpc.ErrCanceled
 			e.Timeout = true
 			e.Connection = true
-			err = e
+			err = &e
 		}
 		if err != nil {
 			cerr, ok := err.(*gorpc.ClientError)

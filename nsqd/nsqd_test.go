@@ -84,6 +84,7 @@ func mustStartNSQD(opts *Options) (*net.TCPAddr, *net.TCPAddr, *NSQD) {
 	opts.TCPAddress = "127.0.0.1:0"
 	opts.HTTPAddress = "127.0.0.1:0"
 	opts.HTTPSAddress = "127.0.0.1:0"
+	opts.KVEnabled = true
 	if opts.DataPath == "" {
 		tmpDir, err := ioutil.TempDir("", fmt.Sprintf("nsq-test-%d", time.Now().UnixNano()))
 		if err != nil {
@@ -91,7 +92,10 @@ func mustStartNSQD(opts *Options) (*net.TCPAddr, *net.TCPAddr, *NSQD) {
 		}
 		opts.DataPath = tmpDir
 	}
-	nsqd := New(opts)
+	nsqd, err := New(opts)
+	if err != nil {
+		panic(err)
+	}
 	nsqd.Start()
 	return nil, nil, nsqd
 }
@@ -433,7 +437,9 @@ func TestSkipMetaData(t *testing.T) {
 func TestSetHealth(t *testing.T) {
 	opts := NewOptions()
 	opts.Logger = newTestLogger(t)
-	nsqd := New(opts)
+	opts.KVEnabled = false
+	nsqd, err := New(opts)
+	equal(t, err, nil)
 
 	equal(t, nsqd.GetError(), nil)
 	equal(t, nsqd.IsHealthy(), true)
