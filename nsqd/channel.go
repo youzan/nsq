@@ -292,22 +292,44 @@ func (c *Channel) ChangeLimiterBytes(kb int64) {
 }
 
 func (c *Channel) checkAndFixStart(start BackendQueueEnd) {
+	dr, _ := c.backend.(*diskQueueReader)
+	dstart, _ := start.(*diskQueueEndInfo)
+	if dr != nil && dstart != nil && dstart.EndOffset.GreatThan(&dr.confirmedQueueInfo.EndOffset) {
+		c.chLog.Infof("confirm start need be fixed since file number is greater %v, %v",
+			start, c.GetConfirmed())
+		// new queue start file name is great than the confirmed, we move confirmed to new start
+		oldConfirmed := c.GetConfirmed()
+		dr.ResetReadToQueueStart(*dstart)
+		if c.GetConfirmed().Offset() < oldConfirmed.Offset() {
+			c.chLog.Infof("confirm start need be fixed %v, %v, %v",
+				start, oldConfirmed, c.GetConfirmed())
+			c.backend.SkipReadToOffset(oldConfirmed.Offset(), oldConfirmed.TotalMsgCnt())
+		}
+		return
+	}
 	if c.GetConfirmed().Offset() >= start.Offset() {
 		return
 	}
 	c.chLog.Infof("confirm start need be fixed %v, %v",
 		start, c.GetConfirmed())
-	newStart, err := c.backend.SkipReadToOffset(start.Offset(), start.TotalMsgCnt())
+	_, err := c.backend.SkipReadToOffset(start.Offset(), start.TotalMsgCnt())
 	if err != nil {
 		c.chLog.Warningf("skip to new start failed: %v",
 			err)
-		newStart, err = c.backend.SkipReadToEnd()
-		if err != nil {
-			c.chLog.Warningf("skip to new start failed: %v",
-				err)
+		if dr != nil && dstart != nil {
+			oldConfirmed := c.GetConfirmed()
+			dr.ResetReadToQueueStart(*dstart)
+			if c.GetConfirmed().Offset() < oldConfirmed.Offset() {
+				c.chLog.Infof("confirm start need be fixed %v, %v, %v",
+					start, oldConfirmed, c.GetConfirmed())
+				c.backend.SkipReadToOffset(oldConfirmed.Offset(), oldConfirmed.TotalMsgCnt())
+			}
+			c.chLog.Warningf("fix channel read to queue start: %v",
+				dstart)
 		} else {
-			c.chLog.Infof("skip to end : %v",
-				newStart)
+			newRead, _ := c.backend.SkipReadToEnd()
+			c.chLog.Warningf("fix channel read to : %v",
+				newRead)
 		}
 	}
 }
