@@ -118,6 +118,7 @@ type NsqLookupCoordinator struct {
 	dpm                *DataPlacement
 	balanceWaiting     int32
 	doChecking         int32
+	interruptChecking  int32
 	enableTopNBalance  int32
 	cachedNodeStats    map[string]cachedNodeTopicStats
 	cachedMutex        sync.Mutex
@@ -686,6 +687,7 @@ func (nlcoord *NsqLookupCoordinator) doCheckTopics(monitorChan chan struct{}, fa
 		return
 	}
 	defer atomic.StoreInt32(&nlcoord.doChecking, 0)
+	atomic.StoreInt32(&nlcoord.interruptChecking, 0)
 
 	topics := []TopicPartitionMetaInfo{}
 	if failedInfo == nil || failedInfo.TopicName == "" || failedInfo.TopicPartition < 0 {
@@ -745,6 +747,9 @@ func (nlcoord *NsqLookupCoordinator) doCheckTopics(monitorChan chan struct{}, fa
 			// exiting
 			return
 		default:
+		}
+		if atomic.LoadInt32(&nlcoord.interruptChecking) == 1 {
+			return
 		}
 
 		if failedInfo != nil && failedInfo.TopicName != "" {

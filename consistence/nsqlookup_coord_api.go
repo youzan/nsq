@@ -230,8 +230,10 @@ func (nlcoord *NsqLookupCoordinator) DeleteTopicForce(topic string, partition st
 		return ErrNotNsqLookupLeader
 	}
 	begin := time.Now()
+	defer atomic.StoreInt32(&nlcoord.interruptChecking, 0)
 	for !atomic.CompareAndSwapInt32(&nlcoord.doChecking, 0, 1) {
 		coordLog.Infof("waiting check topic finish")
+		atomic.StoreInt32(&nlcoord.interruptChecking, 1)
 		time.Sleep(time.Millisecond * 200)
 		if time.Since(begin) > time.Second*5 {
 			return ErrClusterUnstable
@@ -280,8 +282,10 @@ func (nlcoord *NsqLookupCoordinator) DeleteTopic(topic string, partition string)
 	}
 
 	begin := time.Now()
+	defer atomic.StoreInt32(&nlcoord.interruptChecking, 0)
 	for !atomic.CompareAndSwapInt32(&nlcoord.doChecking, 0, 1) {
 		coordLog.Infof("delete topic %v waiting check topic finish", topic)
+		atomic.StoreInt32(&nlcoord.interruptChecking, 1)
 		time.Sleep(time.Millisecond * 200)
 		if time.Since(begin) > time.Second*5 {
 			return ErrClusterUnstable
