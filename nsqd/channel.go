@@ -1376,6 +1376,10 @@ func (c *Channel) RequeueMessage(clientID int64, clientAddr string, id MessageID
 		if msg.Attempts() >= MaxAttempts/2 && byClient {
 			return ErrMsgTooMuchReq
 		}
+		if msg.Attempts() > MaxMemReqTimes*10 && byClient && time.Now().Sub(msg.deliveryTS) < time.Second/10 {
+			// avoid too short req for the message
+			return ErrMsgTooMuchReq
+		}
 
 		// remove from inflight first
 		msg, err := c.popInFlightMessage(clientID, id, false)
@@ -1406,6 +1410,12 @@ func (c *Channel) RequeueMessage(clientID int64, clientAddr string, id MessageID
 	}
 	// change the timeout for inflight
 	newTimeout := time.Now().Add(timeout)
+	if msg.Attempts() > MaxMemReqTimes*10 && newTimeout.Sub(msg.deliveryTS) < time.Second {
+		// avoid too short req for the message
+		c.chLog.LogDebugf("too short req %v, %v, %v, %v, %v",
+			newTimeout, msg.deliveryTS, timeout, id, msg.Attempts())
+		newTimeout = newTimeout.Add(time.Second)
+	}
 	if (timeout > c.option.ReqToEndThreshold) ||
 		(newTimeout.Sub(msg.deliveryTS) >=
 			c.option.MaxReqTimeout) {

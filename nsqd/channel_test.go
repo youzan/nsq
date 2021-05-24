@@ -307,7 +307,7 @@ func TestChannelReqNowTooMuch(t *testing.T) {
 	opts.SyncEvery = 1
 	opts.MaxRdyCount = 100
 	opts.Logger = newTestLogger(t)
-	opts.MsgTimeout = 100 * time.Millisecond
+	opts.MsgTimeout = 200 * time.Millisecond
 	// use large to delay the period scan
 	opts.QueueScanRefreshInterval = 10 * time.Second
 	opts.QueueScanInterval = 5 * time.Second
@@ -359,7 +359,72 @@ func TestChannelReqNowTooMuch(t *testing.T) {
 	if timeout <= count/2 {
 		t.Errorf("should waiting for req 0 too much")
 	}
-	ast.True(t, reqCnt >= count*MaxAttempts/2)
+	ast.True(t, reqCnt >= count*MaxMemReqTimes*10)
+	ast.True(t, reqCnt < count*MaxMemReqTimes*20)
+}
+
+func TestChannelReqShortTooMuch(t *testing.T) {
+	// test the 0 requeued message should be avoided if too much attempts
+	count := 5
+	opts := NewOptions()
+	opts.SyncEvery = 1
+	opts.MaxRdyCount = 100
+	opts.Logger = newTestLogger(t)
+	opts.MsgTimeout = 200 * time.Millisecond
+	// use large to delay the period scan
+	opts.QueueScanRefreshInterval = 10 * time.Second
+	opts.QueueScanInterval = time.Millisecond * 50
+	if testing.Verbose() {
+		opts.LogLevel = 3
+		SetLogger(opts.Logger)
+	}
+	_, _, nsqd := mustStartNSQD(opts)
+	defer os.RemoveAll(opts.DataPath)
+	defer nsqd.Exit()
+
+	topicName := "test_requeued_short" + strconv.Itoa(int(time.Now().Unix()))
+	topic := nsqd.GetTopicIgnPart(topicName)
+	channel := topic.GetChannel("channel")
+
+	for i := 0; i < count; i++ {
+		msg := NewMessage(0, []byte("test"))
+		_, _, _, _, err := topic.PutMessage(msg)
+		equal(t, err, nil)
+	}
+
+	channel.AddClient(1, NewFakeConsumer(1))
+	start := time.Now()
+	reqCnt := 0
+	timeout := 0
+	for time.Since(start) < time.Second*20 {
+		select {
+		case <-time.After(time.Second):
+			timeout++
+		case outputMsg, ok := <-channel.clientMsgChan:
+			if !ok {
+				t.Error("eror recv")
+				return
+			}
+			channel.inFlightMutex.Lock()
+			waitingReq := len(channel.waitingRequeueMsgs)
+			reqChanLen := len(channel.requeuedMsgChan)
+			channel.inFlightMutex.Unlock()
+
+			reqCnt++
+			now := time.Now()
+			t.Logf("consume %v at %s , %v, %v", outputMsg.ID, now, waitingReq, reqChanLen)
+			channel.StartInFlightTimeout(outputMsg, NewFakeConsumer(1), "", opts.MsgTimeout)
+			err := channel.RequeueMessage(1, "", outputMsg.ID, time.Millisecond, true)
+			ast.True(t, outputMsg.Attempts() <= MaxAttempts)
+			if outputMsg.Attempts() >= MaxAttempts/2 {
+				ast.NotNil(t, err)
+			}
+		}
+	}
+
+	t.Logf("total req cnt: %v, timeout: %v", reqCnt, timeout)
+	ast.True(t, reqCnt >= count*MaxMemReqTimes*10)
+	ast.True(t, reqCnt < count*MaxMemReqTimes*20)
 }
 
 func TestChannelReqTooMuchInDeferShouldNotContinueReadBackend(t *testing.T) {
