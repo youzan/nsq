@@ -672,7 +672,13 @@ func (nlcoord *NsqLookupCoordinator) checkTopics(monitorChan chan struct{}) {
 			if nlcoord.leadership == nil {
 				continue
 			}
+			if failedInfo.TopicName == "" && time.Since(lastFullCheck) < doCheckInterval/10 {
+				continue
+			}
 			nlcoord.doCheckTopics(monitorChan, &failedInfo, waitingMigrateTopic, lostLeaderSessions, failedInfo.TopicName == "")
+			if failedInfo.TopicName == "" {
+				lastFullCheck = time.Now()
+			}
 		}
 	}
 }
