@@ -30,7 +30,7 @@ const (
 	ZanTestSkip                = 0
 	ZanTestUnskip              = 1
 	memSizeForSmall            = 2
-	delayedReqToEndMinInterval = time.Millisecond * 128
+	delayedReqToEndMinInterval = time.Millisecond * 512
 	DefaultMaxChDelayedQNum    = 10000 * 16
 	limitSmallMsgBytes         = 1024
 )
@@ -1235,7 +1235,8 @@ func (c *Channel) checkMsgRequeueToEnd(msg *Message,
 		dqDepthTs, dqCnt := c.GetDelayedQueueConsumedState()
 		blockingTooLong := tn.UnixNano()-dqDepthTs > 10*threshold.Nanoseconds()
 		waitingDelayCnt := atomic.LoadInt64(&c.deferredFromDelay)
-		if (blockingTooLong || (msg.Attempts() < MaxMemReqTimes*10)) && (tn.UnixNano()-atomic.LoadInt64(&c.lastDelayedReqToEndTs) > delayedReqToEndMinInterval.Nanoseconds()) {
+		if blockingTooLong || (msg.Attempts() < MaxMemReqTimes) ||
+			(tn.UnixNano()-atomic.LoadInt64(&c.lastDelayedReqToEndTs) > delayedReqToEndMinInterval.Nanoseconds()) {
 			// if the message is peeked from disk delayed queue,
 			// we can try to put it back to end if there are some other
 			// delayed queue messages waiting.
@@ -1246,7 +1247,7 @@ func (c *Channel) checkMsgRequeueToEnd(msg *Message,
 			// dqCnt is all the delayed diskqueue counter, so
 			// if all delayed messages are in memory, we no need to put them back to disk.
 			blocking := tn.UnixNano()-dqDepthTs > threshold.Nanoseconds()
-			if dqDepthTs > 0 && blocking && int64(dqCnt) > waitingDelayCnt && int64(dqCnt) > MaxWaitingDelayed {
+			if dqDepthTs > 0 && blocking && int64(dqCnt) > waitingDelayCnt {
 				if c.isTracedOrDebugTraceLog(msg) {
 					c.chLog.Logf("delayed queue message %v req to end, timestamp:%v, attempt:%v, delayed depth timestamp: %v, delay waiting : %v, %v",
 						id, msg.Timestamp,

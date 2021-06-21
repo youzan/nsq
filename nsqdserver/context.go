@@ -529,11 +529,16 @@ func (c *context) internalRequeueToEnd(ch *nsqd.Channel,
 	newMsg.ID = 0
 	newMsg.DelayedType = nsqd.ChannelDelayed
 
-	if newMsg.Attempts() >= nsqd.MaxAttempts/4 {
+	if newMsg.Attempts() > nsqd.MaxMemReqTimes {
+		if timeoutDuration < time.Minute*5 {
+			timeoutDuration = time.Minute * 5
+		}
+	}
+	if newMsg.Attempts() >= nsqd.MaxAttempts/10 {
 		// to avoid requeue to end again and again, the message attempts many times should be
 		// delayed enough time.
-		nto := time.Second * time.Duration(newMsg.Attempts())
-		if timeoutDuration <= nto {
+		nto := time.Hour/4 + time.Second*time.Duration(newMsg.Attempts())
+		if timeoutDuration < nto {
 			timeoutDuration = nto
 		}
 	}
