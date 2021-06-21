@@ -3,6 +3,7 @@ package nsqd
 import (
 	"bytes"
 	"encoding/binary"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -1078,6 +1079,108 @@ func TestDelayQueueCompactStore(t *testing.T) {
 			break
 		}
 		time.Sleep(time.Millisecond)
+	}
+}
+
+func TestDelayQueueCompactStoreCrash(t *testing.T) {
+	// It may crash while compact to new db and the old is closed
+	// test this for bug
+	tmpDir, err := ioutil.TempDir("", fmt.Sprintf("nsq-test-delaycompact-%d", time.Now().UnixNano()))
+	if err != nil {
+		panic(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	opts := NewOptions()
+	opts.Logger = newTestLogger(t)
+	opts.SyncEvery = 1
+	if testing.Verbose() {
+		SetLogger(opts.Logger)
+	}
+
+	dq, err := NewDelayQueue("test-compact", 0, tmpDir, opts, nil, false)
+	test.Nil(t, err)
+	defer dq.Close()
+	cnt := 1000
+	bodyLen := 1024 * 128
+	for i := 0; i < cnt; i++ {
+		msg := NewMessage(0, append(make([]byte, bodyLen), []byte("body")...))
+		msg.DelayedType = ChannelDelayed
+		msg.DelayedTs = time.Now().Add(time.Millisecond).UnixNano()
+		msg.DelayedChannel = "test"
+		msg.DelayedOrigID = MessageID(i + 1)
+		_, _, _, _, err := dq.PutDelayMessage(msg)
+		test.Nil(t, err)
+	}
+	go func() {
+		for i := 0; i < cnt; i++ {
+			msg := NewMessage(0, append(make([]byte, bodyLen), []byte("body")...))
+			msg.DelayedType = ChannelDelayed
+			msg.DelayedTs = time.Now().Add(time.Millisecond).UnixNano()
+			msg.DelayedChannel = "test"
+			msg.DelayedOrigID = MessageID(i + 1)
+			_, _, _, _, err := dq.PutDelayMessage(msg)
+			test.Nil(t, err)
+			time.Sleep(time.Second * 10)
+		}
+	}()
+	go func() {
+		time.Sleep(time.Second)
+		for i := 0; i < 10; i++ {
+			err := dq.compactStore(true)
+			test.Nil(t, err)
+		}
+	}()
+	go func() {
+		time.Sleep(time.Second * 2)
+		for i := 0; i < 10; i++ {
+			err := dq.compactStore(true)
+			test.Nil(t, err)
+		}
+	}()
+	for i := 0; i < 15; i++ {
+		err := dq.compactStore(true)
+		test.Nil(t, err)
+	}
+	ret := make([]Message, 100)
+	done := false
+	for !done {
+		n, err := dq.PeekRecentChannelTimeout(time.Now().UnixNano(), ret, "test")
+		test.Nil(t, err)
+		for _, m := range ret[:n] {
+			origID := m.DelayedOrigID
+			test.Equal(t, true, dq.IsChannelMessageDelayed(origID, "test"))
+			m.DelayedOrigID = m.ID
+			dq.ConfirmedMessage(&m)
+			test.Equal(t, false, dq.IsChannelMessageDelayed(origID, "test"))
+			newCnt, _ := dq.GetCurrentDelayedCnt(ChannelDelayed, "test")
+			if int(newCnt) < cnt/2 {
+				done = true
+				break
+			}
+		}
+	}
+	dq.getStore().Sync()
+	go func() {
+		time.Sleep(time.Second * 2)
+		for i := 0; i < 10; i++ {
+			err := dq.compactStore(true)
+			test.Nil(t, err)
+		}
+	}()
+	for i := 0; i < 15; i++ {
+		err := dq.compactStore(true)
+		test.Nil(t, err)
+	}
+	ret = make([]Message, cnt)
+	n, err := dq.PeekRecentChannelTimeout(time.Now().UnixNano(), ret, "test")
+	t.Log(n)
+	test.Nil(t, err)
+	test.Equal(t, true, n >= cnt/10-10)
+	for _, m := range ret[:n] {
+		test.Equal(t, "test", m.DelayedChannel)
+		test.Equal(t, true, strings.HasSuffix(string(m.Body), "body"))
+		test.Equal(t, bodyLen+4, len(string(m.Body)))
 	}
 }
 
