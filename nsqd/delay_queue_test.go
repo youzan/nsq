@@ -989,8 +989,8 @@ func TestDelayQueueCompactStore(t *testing.T) {
 	err = dq.compactStore(false)
 	test.Nil(t, err)
 	fi2, err := os.Stat(dq.getStore().Path())
-	t.Log(fi)
-	t.Log(fi2)
+	t.Log(fi.Size())
+	t.Log(fi2.Size())
 	afterCompact, _ := dq.GetCurrentDelayedCnt(ChannelDelayed, "test")
 	test.Equal(t, beforeCompact, afterCompact)
 	test.Equal(t, true, fi2.Size() == fi.Size())
@@ -1025,8 +1025,8 @@ func TestDelayQueueCompactStore(t *testing.T) {
 	test.Nil(t, err)
 	fi2, err = os.Stat(dq.getStore().Path())
 	test.Nil(t, err)
-	t.Log(fi)
-	t.Log(fi2)
+	t.Log(fi.Size())
+	t.Log(fi2.Size())
 	afterCompact, _ = dq.GetCurrentDelayedCnt(ChannelDelayed, "test")
 	test.Equal(t, beforeCompact, afterCompact)
 	test.Equal(t, true, fi2.Size() == fi.Size())
@@ -1043,7 +1043,7 @@ func TestDelayQueueCompactStore(t *testing.T) {
 			dq.ConfirmedMessage(&m)
 			test.Equal(t, false, dq.IsChannelMessageDelayed(origID, "test"))
 			newCnt, _ := dq.GetCurrentDelayedCnt(ChannelDelayed, "test")
-			if int(newCnt) < cnt/100 {
+			if int(newCnt) < 5 {
 				done = true
 				break
 			}
@@ -1052,7 +1052,7 @@ func TestDelayQueueCompactStore(t *testing.T) {
 	dq.getStore().Sync()
 
 	beforeCompact, _ = dq.GetCurrentDelayedCnt(ChannelDelayed, "test")
-	test.Equal(t, true, int(beforeCompact) <= cnt/100)
+	test.Equal(t, true, int(beforeCompact) <= 5)
 	t.Log(beforeCompact)
 
 	fi, err = os.Stat(dq.getStore().Path())
@@ -1061,8 +1061,8 @@ func TestDelayQueueCompactStore(t *testing.T) {
 	test.Nil(t, err)
 	fi2, err = os.Stat(dq.getStore().Path())
 	test.Nil(t, err)
-	t.Log(fi)
-	t.Log(fi2)
+	t.Log(fi.Size())
+	t.Log(fi2.Size())
 	afterCompact, _ = dq.GetCurrentDelayedCnt(ChannelDelayed, "test")
 	test.Equal(t, beforeCompact, afterCompact)
 	test.Equal(t, true, fi2.Size() < fi.Size())
@@ -1112,16 +1112,23 @@ func TestDelayQueueCompactStoreCrash(t *testing.T) {
 		_, _, _, _, err := dq.PutDelayMessage(msg)
 		test.Nil(t, err)
 	}
+	doneC := make(chan bool, 1)
+	var wg sync.WaitGroup
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		for i := 0; i < cnt; i++ {
 			msg := NewMessage(0, append(make([]byte, bodyLen), []byte("body")...))
 			msg.DelayedType = ChannelDelayed
 			msg.DelayedTs = time.Now().Add(time.Millisecond).UnixNano()
 			msg.DelayedChannel = "test"
 			msg.DelayedOrigID = MessageID(i + 1)
-			_, _, _, _, err := dq.PutDelayMessage(msg)
-			test.Nil(t, err)
-			time.Sleep(time.Second * 10)
+			dq.PutDelayMessage(msg)
+			select {
+			case <-doneC:
+				return
+			case <-time.After(time.Second * 10):
+			}
 		}
 	}()
 	go func() {
@@ -1172,6 +1179,7 @@ func TestDelayQueueCompactStoreCrash(t *testing.T) {
 		err := dq.compactStore(true)
 		test.Nil(t, err)
 	}
+	close(doneC)
 	ret = make([]Message, cnt)
 	n, err := dq.PeekRecentChannelTimeout(time.Now().UnixNano(), ret, "test")
 	t.Log(n)
@@ -1182,6 +1190,7 @@ func TestDelayQueueCompactStoreCrash(t *testing.T) {
 		test.Equal(t, true, strings.HasSuffix(string(m.Body), "body"))
 		test.Equal(t, bodyLen+4, len(string(m.Body)))
 	}
+	wg.Wait()
 }
 
 func TestDelayQueueReopenWithEmpty(t *testing.T) {
