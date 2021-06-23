@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"errors"
-
 	"github.com/julienschmidt/httprouter"
 	"github.com/youzan/nsq/internal/levellogger"
 )
