@@ -321,6 +321,29 @@ func (d *diskQueueReader) ResetReadToConfirmed() (BackendQueueEnd, error) {
 	return &e, skiperr
 }
 
+func (d *diskQueueReader) ResetReadToQueueStart(start diskQueueEndInfo) error {
+	d.Lock()
+	defer d.Unlock()
+	if d.exitFlag == 1 {
+		return ErrExiting
+	}
+	if d.readFile != nil {
+		d.readFile.Close()
+		d.readFile = nil
+	}
+	d.readBuffer.Reset()
+
+	nsqLog.Warningf("reset read to start: %v, %v to: %v", d.readQueueInfo, d.confirmedQueueInfo, start)
+	d.confirmedQueueInfo = start
+	d.readQueueInfo = d.confirmedQueueInfo
+	d.updateDepth()
+	d.needSync = true
+	if d.syncEvery == 1 {
+		d.syncAll(false)
+	}
+	return nil
+}
+
 // reset can be set to the old offset before confirmed, skip can only skip forward confirmed.
 func (d *diskQueueReader) ResetReadToOffset(offset BackendOffset, cnt int64) (BackendQueueEnd, error) {
 	d.Lock()

@@ -5644,6 +5644,7 @@ func TestSubOrderedWithFilter(t *testing.T) {
 		msgOut := recvNextMsgAndCheckExt(t, conn, 0, msg.TraceID, true, true)
 		test.NotNil(t, msgOut)
 		msgOut.Body = msgOut.Body[12:]
+		t.Logf("recv: %v", string(msgOut.Body))
 		test.Equal(t, msgOut.Body, []byte("second"))
 	}
 }

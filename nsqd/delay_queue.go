@@ -20,12 +20,13 @@ import (
 )
 
 var (
-	syncedOffsetKey              = []byte("synced_offset")
-	bucketDelayedMsg             = []byte("delayed_message")
-	bucketDelayedMsgIndex        = []byte("delayed_message_index")
-	bucketMeta                   = []byte("meta")
-	CompactThreshold             = 1024 * 1024 * 16
-	compactSingleAvgSize         = 1024 * 32
+	syncedOffsetKey       = []byte("synced_offset")
+	bucketDelayedMsg      = []byte("delayed_message")
+	bucketDelayedMsgIndex = []byte("delayed_message_index")
+	bucketMeta            = []byte("meta")
+	CompactThreshold      = 1024 * 1024 * 32
+	// should equal or larger than the max msg size
+	compactSingleAvgSize         = 1024 * 1024
 	errBucketKeyNotFound         = errors.New("bucket key not found")
 	txMaxBatch                   = 5000
 	largeDBSize            int64 = 1024 * 1024 * 1024 * 4
@@ -42,7 +43,7 @@ const (
 	TransactionDelayed  = 3
 	MaxDelayedType      = 4
 	TxMaxSize           = 65536
-	CompactCntThreshold = 40000
+	CompactCntThreshold = 20000
 	maxEmptyRunning     = 5
 )
 
@@ -1641,6 +1642,7 @@ func (q *DelayQueue) compactStore(force bool) error {
 	q.dbLock.Lock()
 	defer q.dbLock.Unlock()
 	q.kvStore.Close()
+	nsqLog.Infof("old db %v closed", origPath)
 	// TODO: speed up , first rename old to tmp, if failed rename back, if success , delete in background
 	err = os.Rename(tmpPath, origPath)
 	openErr := q.reOpenStore()
@@ -1722,9 +1724,10 @@ func compactBolt(dst, src *bolt.DB, maxCompactTime time.Duration) error {
 				return errors.New("compact timeout")
 			}
 			// Start new transaction.
-			tx, err = dst.Begin(true)
-			if err != nil {
-				return err
+			var innererr error
+			tx, innererr = dst.Begin(true)
+			if innererr != nil {
+				return innererr
 			}
 			size = 0
 		}
@@ -1764,14 +1767,16 @@ func compactBolt(dst, src *bolt.DB, maxCompactTime time.Duration) error {
 		}
 
 		// Otherwise treat it as a key/value pair.
-		return b.Put(k, v)
+		vv := make([]byte, len(v))
+		copy(vv, v)
+		return b.Put(k, vv)
 	}); err != nil {
 		return err
 	}
 
 	err = tx.Commit()
 	if err == nil {
-		dst.Sync()
+		err = dst.Sync()
 	}
 	return err
 }
