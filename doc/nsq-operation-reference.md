@@ -1,40 +1,56 @@
 # 新版运维指南
 
 ## 源码编译步骤
-- 首先确保安装了依赖管理工具: dep
+- 首先确保安装了依赖管理工具: dep , go1.13版本默认开启go module功能之后可以忽略此步骤
 - 获取源码, 使用 go get github.com/youzan/nsq , 使用git clone 务必确保代码在正确的GOPATH路径下面并且保持github.com/youzan/nsq的目录结构
-- 执行 ./pre-dist.sh, 准备编译环境并安装依赖
+- 执行 ./pre-dist.sh, 准备编译环境并安装依赖, go1.13版本开启go module功能之后可以忽略此步骤
 - 执行 ./dist.sh, 编译并打包
 
 ## 简易部署配置指南
-大部分参数和原版本一致, 除了几个新的集群相关的配置之外. 简单的配置步骤如下:
 
-对nsqlookup和nsqd 使用模板配置文件并在配置文件中修改几个必要配置项
+由于大部分功能和原版保持兼容, 因此可以先看官方示例 https://nsq.io/overview/quick_start.html
+
+大部分参数和原版本一致, 除了几个新的集群相关的配置之外. 新增的部分配置说明如下:
+
+对nsqlookup和nsqd 建议使用模板配置文件(在contrib目录下), 并在配置文件中修改几个必要配置项
 <pre>
 broadcast_interface = // 监听的网卡名称
 cluster_id = // 集群id, 用于区分不同集群
-cluster_leadership_addresses = // etcd集群地址
+cluster_leadership_addresses = // etcd集群地址, 需要支持V2 api
 rpc_port = "12345"  // 用于集群内部通信
 log_dir=
 data_path=
 </pre>
-然后分别使用 `nsqlookupd -config=/path/to/config` 启动nsqlookup, `nsqd -config=/path/to/config` 启动nsqd. (先启动nsqlookupd).
+
+然后分别使用 `nsqlookupd -config=/path/to/config` 启动nsqlookup, `nsqd -config=/path/to/config` 启动nsqd. (必须先启动nsqlookupd).
 nsqdadmin使用默认配置和nsqlookupd同机部署即可.
 
-注意etcd集群需要使用支持v2 api的版本, 目前仅支持v2 api.
+注意etcd集群需要使用支持v2 api的版本, 目前仅支持v2 api. (可以在启动etcd时通过 --enable-v2=true 参数开启)
+
+其他官方配置和接口说明参考
+[nsqd](http://nsq.io/components/nsqd.html)
+[nsqlookupd](http://nsq.io/components/nsqlookupd.html)
+[nsqadmin](http://nsq.io/components/nsqadmin.html)
 
 ## 此fork和原版的几点运维上的不同
 ### 关于topic的创建和删除
 此版本为了内部的运维方便, 去掉了nsqd上的自动创建和删除topic的接口, 避免大量业务使用时创建的topic不在运维团队的管理范围之内, 因此把创建topic的API禁用了, 统一由运维通过nsqadmin创建需要的topic.
 
 ### 关于topic的分区限制
-由于老版本没有完整的分区概念, 每台机子上面只能有一个同名的topic, 因此新版本为了兼容老版本的客户端, 对topic的partition数量做了限制, 每台机子每个topic只能有一个分区(含副本). 因此创建topic时的分区数*副本数应该不能大于集群的nsqd节点数. 对于顺序消费的topic无此限制, 因为老版本的客户端不支持顺序消费特性.
+由于老版本没有完整的分区概念, 每台机子上面只能有一个同名的topic, 因此新版本为了兼容老版本的客户端, 对topic的partition数量做了限制, 每台机子每个topic只能有一个分区(含副本). 因此创建topic时的分区数*副本数应该不能大于集群的nsqd节点数. 对于顺序消费的topic无此限制(需要副本数<=nsqd节点数即可), 因为老版本的客户端不支持顺序消费特性.
+如果不需要兼容老版本, 可以使用参数`multipart=true`强制在单节点创建多分区, 这样只需要副本数<=nsqd节点数.
+
+### 关于topic副本
+新版增加了数据副本能力, 确保少于副本数的nsqd节点异常后, 数据不会丢失. 创建topic时可以指定副本参数, topic的每个分区数据都会保持设定的多副本, 每个副本数据会强制分布在不同的nsqd节点上, 如果节点数不够会导致创建和写入失败.
 
 ### 关于topic的初始化
 由于topic本身是数据存储资源的单位, 为了避免垃圾资源, 运维限制没有初始化的topic是不能写入的. 没有初始化的topic表现为没有任何业务客户端创建channel. 因此一个没有任何channel的topic是不能写入数据的. 为了能完成初始化, 需要在nsqadmin界面创建一个默认的channel用于消费. 没有任何channel的topic如果允许写入, 会导致写入的数据没有任何人去消费, 导致磁盘一直增长.
 
 ### 关于顺序topic
 顺序topic允许同一个节点存储多个分区, 创建是需要在api指定 `orderedmulti=true` 参数. 顺序topic不允许使用非顺序的方式进行消费. 因此老的官方客户端不能使用该功能
+
+### 关于支持扩展头的topic特性
+新版支持在消息头部写入一些扩展数据, 用于在消息体之外进行消息特性的动态扩展, 为了保持兼容, 默认是不开启的. 如果需要开启扩展头功能, 需要在创建topic时指定参数`extend=true`. 只有创建时带上extend参数, 才能使用后继提到的所有扩展高级特性功能.
 
 ### 关于channel自动创建配置
 创建topic参数支持`DisableChannelAutoCreate`配置，通过在`topic/create`api中指定`disable_channel_auto_create=true`. topic创建后，*未经过nsqlookup创建的channel将不允许在消费者建连时创建*
@@ -84,6 +100,16 @@ PUT -d '10000' /config/max_conn_for_client
 <pre>
 PUT -d '100000000' /config/max_pub_waiting_size
 </pre>
+
+### 查看消息内容
+新版使用如下API可以获取消息的具体内容, 注意此接口仅用于临时排查使用, 性能比较弱.
+<pre>
+GET /message/get?topic=xxx&partition=xx&search_mode=xxx&search_pos=xxx&delayed_queue=false&needext=true
+</pre>
+参数说明:
+search_mode:取值是count/id/virtual_offset三种之一, 不同的参数对应的search_pos含义不同
+search_pos:这里的参数取决于search_mode的值, 如果是count, 表示搜索对应位置的消息, 如果是id则搜索对应消息id的消息, 如果是virtual_offset则搜索对应消息队列磁盘偏移量的消息.
+delayed_queue:是否查询磁盘延迟队列的消息, 如果是true, 则搜索search_mode必须是id.
 
 ### 动态调整服务端日志级别
 <pre>

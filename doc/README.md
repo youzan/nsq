@@ -4,6 +4,8 @@
 
 [有赞NSQ用户指南](NSQ-user-guide.md)
 
+[有赞NSQ运维指南](nsq-operation-reference.md)
+
 [JavaSDK使用指南](https://github.com/youzan/nsqJavaSDK/wiki/Get-started)
 
 ## 内部实现文档

@@ -60,6 +60,8 @@ Other deploy can be the same as the Official.
 
 [有赞NSQ用户指南](doc/NSQ-user-guide.md)
 
+[有赞NSQ部署运维指南](doc/nsq-operation-reference.md)
+
 [JavaSDK使用指南](https://github.com/youzan/nsqJavaSDK/wiki/Get-started)
 
 ### 内部实现文档
