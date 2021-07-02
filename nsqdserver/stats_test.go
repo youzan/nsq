@@ -46,6 +46,19 @@ func TestStats(t *testing.T) {
 	msg := nsqdNs.NewMessage(0, []byte("test body"))
 	topic.PutMessage(msg)
 
+	prodconn, err := mustConnectNSQD(tcpAddr)
+	test.Equal(t, err, nil)
+	defer prodconn.Close()
+	identify(t, prodconn, nil, frameTypeResponse)
+
+	cmd := nsq.Publish(topicName, []byte("0"))
+	test.Nil(t, err)
+	cmd.WriteTo(prodconn)
+	resp, _ := nsq.ReadResponse(prodconn)
+	frameType, data, _ := nsq.UnpackResponse(resp)
+	t.Logf("frameType: %d, data: %s", frameType, data)
+	test.Equal(t, int32(0), frameType)
+
 	conn, err := mustConnectNSQD(tcpAddr)
 	test.Equal(t, err, nil)
 	defer conn.Close()
@@ -57,6 +70,8 @@ func TestStats(t *testing.T) {
 	t.Logf("stats: %+v", stats)
 
 	test.Equal(t, len(stats), 1)
+	test.Equal(t, 1, len(stats[0].Clients))
+	test.Equal(t, int64(1), stats[0].ClientNum)
 	test.Equal(t, len(stats[0].Channels), 1)
 	test.Equal(t, len(stats[0].Channels[0].Clients), 1)
 
@@ -67,6 +82,8 @@ func TestStats(t *testing.T) {
 	test.Equal(t, len(stats[0].Channels), 1)
 	test.Equal(t, len(stats[0].Channels[0].Clients), 0)
 	test.Equal(t, stats[0].Channels[0].ClientNum, int64(1))
+	test.Equal(t, 0, len(stats[0].Clients))
+	test.Equal(t, int64(1), stats[0].ClientNum)
 }
 
 func TestClientAttributes(t *testing.T) {
