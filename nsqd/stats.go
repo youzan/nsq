@@ -34,6 +34,7 @@ type TopicStats struct {
 	IsLeader                    bool             `json:"is_leader"`
 	HourlyPubSize               int64            `json:"hourly_pubsize"`
 	Clients                     []ClientPubStats `json:"client_pub_stats"`
+	ClientNum                   int64            `json:"client_num"`
 	MsgSizeStats                []int64          `json:"msg_size_stats"`
 	MsgWriteLatencyStats        []int64          `json:"msg_write_latency_stats"`
 	IsMultiOrdered              bool             `json:"is_multi_ordered"`
@@ -52,6 +53,7 @@ func NewTopicStats(t *Topic, channels []ChannelStats, filterClients bool) TopicS
 		statsdName += "." + strconv.Itoa(t.GetTopicPart())
 	}
 	var clients []ClientPubStats
+	clientNum := t.detailStats.GetPubClientNum()
 	if !filterClients {
 		clients = t.detailStats.GetPubClientStats()
 	}
@@ -66,6 +68,7 @@ func NewTopicStats(t *Topic, channels []ChannelStats, filterClients bool) TopicS
 		MessageCount:                t.TotalMessageCnt(),
 		IsLeader:                    !t.IsWriteDisabled(),
 		Clients:                     clients,
+		ClientNum:                   int64(clientNum),
 		MsgSizeStats:                t.detailStats.GetMsgSizeStats(),
 		MsgWriteLatencyStats:        t.detailStats.GetMsgWriteLatencyStats(),
 		IsMultiOrdered:              t.IsOrdered(),
@@ -531,6 +534,13 @@ func (self *DetailStatsInfo) RemovePubStats(remote string, protocol string) {
 	self.Lock()
 	delete(self.clientPubStats, remote)
 	self.Unlock()
+}
+
+func (self *DetailStatsInfo) GetPubClientNum() int {
+	self.Lock()
+	cnt := len(self.clientPubStats)
+	self.Unlock()
+	return cnt
 }
 
 func (self *DetailStatsInfo) GetPubClientStats() []ClientPubStats {

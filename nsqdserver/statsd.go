@@ -79,10 +79,14 @@ func (n *NsqdServer) statsdLoop() {
 					"topic":     topic.TopicName,
 					"partition": topic.TopicPartition,
 				}).Set(float64(topic.MessageCount))
+				clientNum := len(topic.Clients)
+				if clientNum == 0 {
+					clientNum = int(topic.ClientNum)
+				}
 				nsqd.TopicPubClientCnt.With(prometheus.Labels{
 					"topic":     topic.TopicName,
 					"partition": topic.TopicPartition,
-				}).Set(float64(len(topic.Clients)))
+				}).Set(float64(clientNum))
 				// try to find the topic in the last collection
 				lastTopic := nsqd.TopicStats{}
 				for _, checkTopic := range lastStats {

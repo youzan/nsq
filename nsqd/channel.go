@@ -64,7 +64,6 @@ type Consumer interface {
 	FinishedMessage()
 	Stats() ClientStats
 	Exit()
-	Empty()
 	String() string
 	GetID() int64
 	SetLimitedRdy(cnt int)
@@ -544,7 +543,10 @@ func (c *Channel) initPQ() {
 
 	for _, m := range c.inFlightMessages {
 		if m.belongedConsumer != nil {
-			m.belongedConsumer.Empty()
+			// Do we need empty client here?
+			// Req may be better for counter stats (any race case that make inflight count not 0?)
+			m.belongedConsumer.RequeuedMessage()
+			m.belongedConsumer = nil
 		}
 
 		if m.DelayedType == ChannelDelayed {
@@ -1674,6 +1676,8 @@ func (c *Channel) pushInFlightMessage(msg *Message, client Consumer, now time.Ti
 		// It may conflict if both normal diskqueue and the delayed queue has the same message (because of the rpc timeout)
 		// We need check and clean the state to make sure we can have the right stats
 		c.cleanWaitingRequeueChanNoLock(msg)
+		// Since the belongedConsumer on the new msg is not actually used for sending, so we do not need handle it
+		// and the old message will continue be handled in next peek
 		if msg.DelayedType == 0 {
 			if oldm.DelayedType == ChannelDelayed {
 				c.ConfirmBackendQueue(msg)
