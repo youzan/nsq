@@ -2,11 +2,21 @@ package levellogger
 
 import (
 	"fmt"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 	"log"
 	"os"
 	"sync/atomic"
 
 	"github.com/absolute8511/glog"
+)
+
+var (
+	//metrics for nsqd
+	ServerErrorLogCnt = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "nsqd_error_log_cnt",
+		Help: "error log counter for nsqd",
+	})
 )
 
 type Logger interface {
@@ -120,6 +130,7 @@ func (self *LevelLogger) LogErrorf(f string, args ...interface{}) {
 	if self.Logger != nil {
 		self.Logger.OutputErr(self.depth, self.prefix+fmt.Sprintf(f, args...))
 	}
+	ServerErrorLogCnt.Inc()
 }
 
 func (self *LevelLogger) LogWarningf(f string, args ...interface{}) {
@@ -144,6 +155,7 @@ func (self *LevelLogger) Errorf(f string, args ...interface{}) {
 	if self.Logger != nil {
 		self.Logger.OutputErr(self.depth, self.prefix+fmt.Sprintf(f, args...))
 	}
+	ServerErrorLogCnt.Inc()
 }
 
 func (self *LevelLogger) Warningf(f string, args ...interface{}) {
