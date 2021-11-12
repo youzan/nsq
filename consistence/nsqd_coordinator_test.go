@@ -66,6 +66,7 @@ type testClusterNodeInfo struct {
 }
 
 type fakeLookupRemoteProxy struct {
+	mu             sync.Mutex
 	leaderSessions map[string]map[int]*TopicLeaderSession
 	fakeNsqdCoords map[string]*NsqdCoordinator
 	lookupEpoch    EpochType
@@ -79,6 +80,12 @@ func NewFakeLookupRemoteProxy(addr string, timeout time.Duration) (INsqlookupRem
 		fakeNsqdCoords: make(map[string]*NsqdCoordinator),
 		addr:           addr,
 	}, nil
+}
+
+func (self *fakeLookupRemoteProxy) changeNodeCoord(id string, coord *NsqdCoordinator) {
+	self.mu.Lock()
+	defer self.mu.Unlock()
+	self.fakeNsqdCoords[id] = coord
 }
 
 func (self *fakeLookupRemoteProxy) RemoteAddr() string {
@@ -118,6 +125,8 @@ func (self *fakeLookupRemoteProxy) RequestJoinTopicISR(topic string, partition i
 		self.t.Log("requesting join isr")
 	}
 	// notify disable topic write
+	self.mu.Lock()
+	defer self.mu.Unlock()
 	for nid, nsqdCoord := range self.fakeNsqdCoords {
 		tp, err := nsqdCoord.getTopicCoord(topic, partition)
 		if err != nil {
@@ -139,6 +148,8 @@ func (self *fakeLookupRemoteProxy) ReadyForTopicISR(topic string, partition int,
 	if self.t != nil {
 		self.t.Log("requesting ready for isr")
 	}
+	self.mu.Lock()
+	defer self.mu.Unlock()
 	localSession, ok := self.leaderSessions[topic]
 	if !ok {
 		return ErrMissingTopicLeaderSession
@@ -178,6 +189,8 @@ func (self *fakeLookupRemoteProxy) RequestLeaveFromISRByLeader(topic string, par
 	if self.t != nil {
 		self.t.Log("requesting leave isr by leader")
 	}
+	self.mu.Lock()
+	defer self.mu.Unlock()
 	if self.leaderSessions[topic][partition].IsSame(leaderSession) {
 		return nil
 	}
@@ -195,7 +208,7 @@ func mustStartNSQD(opts *nsqdNs.Options) *nsqdNs.NSQD {
 		}
 		opts.DataPath = tmpDir
 	}
-	nsqd := nsqdNs.New(opts)
+	nsqd, _ := nsqdNs.New(opts)
 	return nsqd
 }
 
@@ -1467,7 +1480,7 @@ func TestNsqdCoordCatchupWhileWriting(t *testing.T) {
 	test.Nil(t, err)
 	test.Equal(t, len(logs1), int(msgCnt))
 	// add to fake lookup to notify flush data while join isr notify
-	fakeLookupProxy.(*fakeLookupRemoteProxy).fakeNsqdCoords[nsqdCoord1.GetMyID()] = nsqdCoord1
+	fakeLookupProxy.(*fakeLookupRemoteProxy).changeNodeCoord(nsqdCoord1.GetMyID(), nsqdCoord1)
 	// the follower should notify join isr while reached EOF error,
 	// and the faked lookup will flush the left disk queue data to make no EOF error, and need retry for catchup
 	topicData3.ForceFlush()
@@ -2249,6 +2262,12 @@ func TestChannelCreateSync(t *testing.T) {
 	t.Log(t3ch1.GetConfirmed())
 	t.Log(t3ch1.GetChannelEnd())
 	test.Equal(t, c1, t3ch1.GetConfirmed())
+}
+
+func TestNsqdCoordFixTopicCorruptEnd(t *testing.T) {
+	// fix start
+	// fix end
+	// fix end zero padding (may happend while disk full)
 }
 
 func benchmarkNsqdCoordPubWithArg(b *testing.B, replica int, size int, useExt bool) {

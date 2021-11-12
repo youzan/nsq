@@ -317,7 +317,7 @@ func mainJs() (*asset, error) {
 		return nil, err
 	}
 
-	info := bindataFileInfo{name: "main.js", size: 276684, mode: os.FileMode(420), modTime: time.Unix(1602649163, 0)}
+	info := bindataFileInfo{name: "main.js", size: 276684, mode: os.FileMode(420), modTime: time.Unix(1620879563, 0)}
 	a := &asset{bytes: bytes, info: info}
 	return a, nil
 }
@@ -337,7 +337,7 @@ func mainJsMap() (*asset, error) {
 		return nil, err
 	}
 
-	info := bindataFileInfo{name: "main.js.map", size: 803456, mode: os.FileMode(420), modTime: time.Unix(1602649163, 0)}
+	info := bindataFileInfo{name: "main.js.map", size: 803456, mode: os.FileMode(420), modTime: time.Unix(1620879563, 0)}
 	a := &asset{bytes: bytes, info: info}
 	return a, nil
 }
@@ -377,7 +377,7 @@ func vendorJs() (*asset, error) {
 		return nil, err
 	}
 
-	info := bindataFileInfo{name: "vendor.js", size: 140091, mode: os.FileMode(420), modTime: time.Unix(1602649149, 0)}
+	info := bindataFileInfo{name: "vendor.js", size: 140091, mode: os.FileMode(420), modTime: time.Unix(1620879561, 0)}
 	a := &asset{bytes: bytes, info: info}
 	return a, nil
 }
@@ -434,21 +434,21 @@ func AssetNames() []string {
 
 // _bindata is a table, holding each asset generator, mapped to its name.
 var _bindata = map[string]func() (*asset, error){
-	"base.css": baseCss,
-	"bootstrap.min.css": bootstrapMinCss,
-	"favicon.png": faviconPng,
-	"glyphicons-halflings-regular.eot": glyphiconsHalflingsRegularEot,
-	"glyphicons-halflings-regular.svg": glyphiconsHalflingsRegularSvg,
-	"glyphicons-halflings-regular.ttf": glyphiconsHalflingsRegularTtf,
-	"glyphicons-halflings-regular.woff": glyphiconsHalflingsRegularWoff,
+	"base.css":                           baseCss,
+	"bootstrap.min.css":                  bootstrapMinCss,
+	"favicon.png":                        faviconPng,
+	"glyphicons-halflings-regular.eot":   glyphiconsHalflingsRegularEot,
+	"glyphicons-halflings-regular.svg":   glyphiconsHalflingsRegularSvg,
+	"glyphicons-halflings-regular.ttf":   glyphiconsHalflingsRegularTtf,
+	"glyphicons-halflings-regular.woff":  glyphiconsHalflingsRegularWoff,
 	"glyphicons-halflings-regular.woff2": glyphiconsHalflingsRegularWoff2,
-	"index.html": indexHtml,
-	"jquery-latest.js": jqueryLatestJs,
-	"jquery.tablesorter.js": jqueryTablesorterJs,
-	"main.js": mainJs,
-	"main.js.map": mainJsMap,
-	"nsq_blue.png": nsq_bluePng,
-	"vendor.js": vendorJs,
+	"index.html":                         indexHtml,
+	"jquery-latest.js":                   jqueryLatestJs,
+	"jquery.tablesorter.js":              jqueryTablesorterJs,
+	"main.js":                            mainJs,
+	"main.js.map":                        mainJsMap,
+	"nsq_blue.png":                       nsq_bluePng,
+	"vendor.js":                          vendorJs,
 }
 
 // AssetDir returns the file names below a certain
@@ -490,22 +490,23 @@ type bintree struct {
 	Func     func() (*asset, error)
 	Children map[string]*bintree
 }
+
 var _bintree = &bintree{nil, map[string]*bintree{
-	"base.css": &bintree{baseCss, map[string]*bintree{}},
-	"bootstrap.min.css": &bintree{bootstrapMinCss, map[string]*bintree{}},
-	"favicon.png": &bintree{faviconPng, map[string]*bintree{}},
-	"glyphicons-halflings-regular.eot": &bintree{glyphiconsHalflingsRegularEot, map[string]*bintree{}},
-	"glyphicons-halflings-regular.svg": &bintree{glyphiconsHalflingsRegularSvg, map[string]*bintree{}},
-	"glyphicons-halflings-regular.ttf": &bintree{glyphiconsHalflingsRegularTtf, map[string]*bintree{}},
-	"glyphicons-halflings-regular.woff": &bintree{glyphiconsHalflingsRegularWoff, map[string]*bintree{}},
+	"base.css":                           &bintree{baseCss, map[string]*bintree{}},
+	"bootstrap.min.css":                  &bintree{bootstrapMinCss, map[string]*bintree{}},
+	"favicon.png":                        &bintree{faviconPng, map[string]*bintree{}},
+	"glyphicons-halflings-regular.eot":   &bintree{glyphiconsHalflingsRegularEot, map[string]*bintree{}},
+	"glyphicons-halflings-regular.svg":   &bintree{glyphiconsHalflingsRegularSvg, map[string]*bintree{}},
+	"glyphicons-halflings-regular.ttf":   &bintree{glyphiconsHalflingsRegularTtf, map[string]*bintree{}},
+	"glyphicons-halflings-regular.woff":  &bintree{glyphiconsHalflingsRegularWoff, map[string]*bintree{}},
 	"glyphicons-halflings-regular.woff2": &bintree{glyphiconsHalflingsRegularWoff2, map[string]*bintree{}},
-	"index.html": &bintree{indexHtml, map[string]*bintree{}},
-	"jquery-latest.js": &bintree{jqueryLatestJs, map[string]*bintree{}},
-	"jquery.tablesorter.js": &bintree{jqueryTablesorterJs, map[string]*bintree{}},
-	"main.js": &bintree{mainJs, map[string]*bintree{}},
-	"main.js.map": &bintree{mainJsMap, map[string]*bintree{}},
-	"nsq_blue.png": &bintree{nsq_bluePng, map[string]*bintree{}},
-	"vendor.js": &bintree{vendorJs, map[string]*bintree{}},
+	"index.html":                         &bintree{indexHtml, map[string]*bintree{}},
+	"jquery-latest.js":                   &bintree{jqueryLatestJs, map[string]*bintree{}},
+	"jquery.tablesorter.js":              &bintree{jqueryTablesorterJs, map[string]*bintree{}},
+	"main.js":                            &bintree{mainJs, map[string]*bintree{}},
+	"main.js.map":                        &bintree{mainJsMap, map[string]*bintree{}},
+	"nsq_blue.png":                       &bintree{nsq_bluePng, map[string]*bintree{}},
+	"vendor.js":                          &bintree{vendorJs, map[string]*bintree{}},
 }}
 
 // RestoreAsset restores an asset under the given directory
@@ -554,4 +555,3 @@ func _filePath(dir, name string) string {
 	cannonicalName := strings.Replace(name, "\\", "/", -1)
 	return filepath.Join(append([]string{dir}, strings.Split(cannonicalName, "/")...)...)
 }
-

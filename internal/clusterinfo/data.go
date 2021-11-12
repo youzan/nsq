@@ -947,11 +947,19 @@ func (c *ClusterInfo) GetClusterInfoDC(lookupdAdresses []LookupdAddressDC) ([]*C
 	return dcClusterInfo, nil
 }
 
+func (c *ClusterInfo) GetNSQDStatsWithClients(producers Producers, selectedTopic string, sortBy string, leaderOnly bool) ([]*TopicStats, map[string]*ChannelStats, error) {
+	return c.getNSQDStats(producers, selectedTopic, sortBy, leaderOnly, true)
+}
+
 // GetNSQDStats returns aggregate topic and channel stats from the given Producers
 //
 // if selectedTopic is empty, this will return stats for *all* topic/channels
 // and the ChannelStats dict will be keyed by topic + ':' + channel
 func (c *ClusterInfo) GetNSQDStats(producers Producers, selectedTopic string, sortBy string, leaderOnly bool) ([]*TopicStats, map[string]*ChannelStats, error) {
+	return c.getNSQDStats(producers, selectedTopic, sortBy, leaderOnly, false)
+}
+
+func (c *ClusterInfo) getNSQDStats(producers Producers, selectedTopic string, sortBy string, leaderOnly bool, needClient bool) ([]*TopicStats, map[string]*ChannelStats, error) {
 	var lock sync.Mutex
 	var wg sync.WaitGroup
 	var topicStatsList TopicStatsList
@@ -969,7 +977,10 @@ func (c *ClusterInfo) GetNSQDStats(producers Producers, selectedTopic string, so
 			defer wg.Done()
 
 			addr := p.HTTPAddress()
-			endpoint := fmt.Sprintf("http://%s/stats?format=json&leaderOnly=%t&needClients=true", addr, leaderOnly)
+			endpoint := fmt.Sprintf("http://%s/stats?format=json&leaderOnly=%t&needClients=%t", addr, leaderOnly, needClient)
+			if !needClient {
+				endpoint = fmt.Sprintf("http://%s/stats?format=json&leaderOnly=%t", addr, leaderOnly)
+			}
 			if selectedTopic != "" {
 				endpoint = fmt.Sprintf("http://%s/stats?format=json&topic=%s&leaderOnly=%t", addr, selectedTopic, leaderOnly)
 			}

@@ -263,7 +263,13 @@ func (s *httpServer) doFixTopicData(w http.ResponseWriter, req *http.Request, ps
 	if err != nil {
 		return nil, http_api.Err{http.StatusInternalServerError, err.Error()}
 	}
-	localTopic.TryFixData()
+	reqParams, err := url.ParseQuery(req.URL.RawQuery)
+	if err != nil {
+		nsqd.NsqLogger().LogErrorf("failed to parse request params - %s", err)
+		return nil, http_api.Err{400, "INVALID_REQUEST"}
+	}
+	checkCorrupt := reqParams.Get("checkcorrupt")
+	localTopic.TryFixData(checkCorrupt == "true")
 
 	if s.ctx.nsqdCoord != nil {
 		err = s.ctx.nsqdCoord.TryFixLocalTopic(localTopic.GetTopicName(), localTopic.GetTopicPart())
@@ -1149,6 +1155,7 @@ func (s *httpServer) doMessageGet(w http.ResponseWriter, req *http.Request, ps h
 		return nil, http_api.Err{400, err.Error()}
 	}
 	searchDelayedQueue := reqParams.Get("delayed_queue")
+	searchNeedExt := reqParams.Get("needext")
 	if searchDelayedQueue == "true" {
 		dq := t.GetDelayedQueue()
 		if dq == nil {
@@ -1168,6 +1175,10 @@ func (s *httpServer) doMessageGet(w http.ResponseWriter, req *http.Request, ps h
 		if msg == nil {
 			return nil, http_api.Err{404, "no message found in delayed queue"}
 		}
+		var extStr string
+		if searchNeedExt == "true" {
+			extStr = string(msg.ExtBytes)
+		}
 		return struct {
 			ID        nsqd.MessageID `json:"id"`
 			OrigID    uint64         `json:"orig_id"`
@@ -1177,7 +1188,8 @@ func (s *httpServer) doMessageGet(w http.ResponseWriter, req *http.Request, ps h
 			Attempts  uint16         `json:"attempts"`
 
 			Offset nsqd.BackendOffset `json:"offset"`
-		}{msg.ID, uint64(msg.DelayedOrigID), msg.TraceID, string(msg.Body), msg.Timestamp, msg.Attempts(), msg.Offset}, nil
+			Ext    string             `json:"ext"`
+		}{msg.ID, uint64(msg.DelayedOrigID), msg.TraceID, string(msg.Body), msg.Timestamp, msg.Attempts(), msg.Offset, extStr}, nil
 	}
 	var realOffset int64
 	var curCnt int64
@@ -1193,7 +1205,7 @@ func (s *httpServer) doMessageGet(w http.ResponseWriter, req *http.Request, ps h
 	if err != nil {
 		return nil, http_api.Err{404, err.Error()}
 	}
-	backendReader := t.GetDiskQueueSnapshot()
+	backendReader := t.GetDiskQueueSnapshot(true)
 	if backendReader == nil {
 		return nil, http_api.Err{500, "Failed to get queue reader"}
 	}
@@ -1208,6 +1220,10 @@ func (s *httpServer) doMessageGet(w http.ResponseWriter, req *http.Request, ps h
 		nsqd.NsqLogger().LogErrorf("search %v-%v, decode data error: %v", searchMode, searchPos, err)
 		return nil, http_api.Err{400, err.Error()}
 	}
+	var extStr string
+	if searchNeedExt == "true" {
+		extStr = string(msg.ExtBytes)
+	}
 	return struct {
 		ID        nsqd.MessageID `json:"id"`
 		TraceID   uint64         `json:"trace_id"`
@@ -1217,7 +1233,8 @@ func (s *httpServer) doMessageGet(w http.ResponseWriter, req *http.Request, ps h
 
 		Offset        nsqd.BackendOffset `json:"offset"`
 		QueueCntIndex int64              `json:"queue_cnt_index"`
-	}{msg.ID, msg.TraceID, string(msg.Body), msg.Timestamp, msg.Attempts(), ret.Offset, ret.CurCnt}, nil
+		Ext           string             `json:"ext"`
+	}{msg.ID, msg.TraceID, string(msg.Body), msg.Timestamp, msg.Attempts(), ret.Offset, ret.CurCnt, extStr}, nil
 }
 
 func (s *httpServer) doMessageStats(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {
@@ -1343,7 +1360,7 @@ func (s *httpServer) doStats(w http.ResponseWriter, req *http.Request, ps httpro
 	leaderOnly, _ = strconv.ParseBool(leaderOnlyStr)
 
 	jsonFormat := formatString == "json"
-	filterClients := len(needClients) == 0
+	filterClients := needClients != "true"
 
 	stats := s.ctx.getStats(leaderOnly, topicName, filterClients)
 	health := s.ctx.getHealth()

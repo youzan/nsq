@@ -12,8 +12,7 @@ import (
 )
 
 const (
-	ETCD_TTL         = 20
-	watchEtcdTimeout = time.Second * time.Duration(ETCD_TTL*10)
+	ETCD_TTL = 20
 )
 
 type MasterChanInfo struct {

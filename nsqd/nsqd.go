@@ -16,7 +16,7 @@ import (
 	"time"
 
 	"github.com/bitly/go-simplejson"
-	"github.com/spaolacci/murmur3"
+	"github.com/twmb/murmur3"
 	"github.com/youzan/nsq/internal/clusterinfo"
 	"github.com/youzan/nsq/internal/dirlock"
 	"github.com/youzan/nsq/internal/http_api"
@@ -25,6 +25,7 @@ import (
 	"github.com/youzan/nsq/internal/statsd"
 	"github.com/youzan/nsq/internal/util"
 	"github.com/youzan/nsq/internal/version"
+	"github.com/youzan/nsq/nsqd/engine"
 )
 
 const (
@@ -95,9 +96,11 @@ type NSQD struct {
 	persistClosed    chan struct{}
 	persistWaitGroup util.WaitGroupWrapper
 	metaStorage      IMetaStorage
+	kvTopicStorage   engine.KVEngine
+	sharedCfg        engine.SharedRockConfig
 }
 
-func New(opts *Options) *NSQD {
+func New(opts *Options) (*NSQD, error) {
 	dataPath := opts.DataPath
 	if opts.DataPath == "" {
 		cwd, _ := os.Getwd()
@@ -107,7 +110,7 @@ func New(opts *Options) *NSQD {
 	err := os.MkdirAll(dataPath, 0755)
 	if err != nil {
 		nsqLog.LogErrorf("failed to create directory: %v ", err)
-		os.Exit(1)
+		return nil, err
 	}
 	if opts.RetentionSizePerDay > 0 {
 		DEFAULT_RETENTION_DAYS = int(opts.RetentionDays)
@@ -144,24 +147,67 @@ func New(opts *Options) *NSQD {
 	err = n.dl.Lock()
 	if err != nil {
 		nsqLog.LogErrorf("FATAL: --data-path=%s in use (possibly by another instance of nsqd: %v", dataPath, err)
-		os.Exit(1)
+		return nil, err
 	}
 
 	if opts.MaxDeflateLevel < 1 || opts.MaxDeflateLevel > 9 {
 		nsqLog.LogErrorf("FATAL: --max-deflate-level must be [1,9]")
-		os.Exit(1)
+		return nil, errors.New("configure invalid")
 	}
 
 	if opts.ID < 0 || opts.ID >= MAX_NODE_ID {
 		nsqLog.LogErrorf("FATAL: --worker-id must be [0,%d)", MAX_NODE_ID)
-		os.Exit(1)
+		return nil, errors.New("configure invalid")
 	}
 	nsqLog.Logf("broadcast option: %s, %s", opts.BroadcastAddress, opts.BroadcastInterface)
 
 	n.metaStorage, err = NewShardedDBMetaStorage(path.Join(dataPath, "shared_meta"))
 	if err != nil {
 		nsqLog.LogErrorf("FATAL: init shared meta storage failed: %v", err.Error())
-		os.Exit(1)
+		return nil, err
+	}
+	if opts.KVEnabled {
+		kvPath := path.Join(dataPath, "shared_kvdata")
+		err = os.MkdirAll(kvPath, 0755)
+		if err != nil {
+			nsqLog.LogErrorf("failed to create directory %s: %s ", kvPath, err)
+			return nil, err
+		}
+
+		cfg := engine.NewRockConfig()
+		// we disable wal here, because we use this for index data, and we will
+		// auto recovery it from disk queue data
+		cfg.DisableWAL = true
+		cfg.UseSharedCache = true
+		cfg.UseSharedRateLimiter = true
+		if opts.KVMaxWriteBufferNumber > 0 {
+			cfg.MaxWriteBufferNumber = int(opts.KVMaxWriteBufferNumber)
+		}
+		if opts.KVWriteBufferSize > 0 {
+			cfg.WriteBufferSize = int(opts.KVWriteBufferSize)
+		}
+		if opts.KVBlockCache > 0 {
+			cfg.BlockCache = opts.KVBlockCache
+		}
+		sharedCfg, err := engine.NewSharedEngConfig(cfg.RockOptions)
+		if err != nil {
+			nsqLog.LogErrorf("failed to init engine config %v: %s ", cfg, err)
+		}
+		n.sharedCfg = sharedCfg
+		cfg.SharedConfig = sharedCfg
+		cfg.DataDir = kvPath
+		engine.FillDefaultOptions(&cfg.RockOptions)
+		eng, err := engine.NewKVEng(cfg)
+		if err != nil {
+			nsqLog.LogErrorf("failed to create engine: %s ", err)
+			return nil, err
+		}
+		err = eng.OpenEng()
+		if err != nil {
+			nsqLog.LogErrorf("failed to open engine: %s ", err)
+			return nil, err
+		}
+		n.kvTopicStorage = eng
 	}
 
 	if opts.StatsdPrefix != "" {
@@ -172,7 +218,7 @@ func New(opts *Options) *NSQD {
 			_, port, err = net.SplitHostPort(opts.HTTPAddress)
 			if err != nil {
 				nsqLog.LogErrorf("failed to parse HTTP address (%s) - %s", opts.HTTPAddress, err)
-				os.Exit(1)
+				return nil, err
 			}
 		}
 		statsdHostKey := statsd.HostKey(net.JoinHostPort(opts.BroadcastAddress, port))
@@ -188,7 +234,7 @@ func New(opts *Options) *NSQD {
 		opts.TLSRequired = TLSRequired
 	}
 
-	return n
+	return n, nil
 }
 
 func (n *NSQD) SetReqToEndCB(reqToEndCB ReqToEndFunc) {
@@ -488,6 +534,12 @@ func (n *NSQD) Exit() {
 	close(n.exitChan)
 	n.waitGroup.Wait()
 	n.metaStorage.Close()
+	if n.kvTopicStorage != nil {
+		n.kvTopicStorage.CloseAll()
+	}
+	if n.sharedCfg != nil {
+		n.sharedCfg.Destroy()
+	}
 
 	n.dl.Unlock()
 	nsqLog.Logf("NSQ: exited")
@@ -537,6 +589,12 @@ func (n *NSQD) GetTopicWithExt(topicName string, part int, ordered bool) *Topic 
 	return n.internalGetTopic(topicName, part, true, ordered, false, 0)
 }
 
+func (n *NSQD) getKVStorageForTopic(topicName string) engine.KVEngine {
+	// check if kv topic is enabled for this topic, and check if a isolated storage is needed for this topic
+	// should not be changed after the data is written
+	return n.kvTopicStorage
+}
+
 func (n *NSQD) internalGetTopic(topicName string, part int, ext bool, ordered bool, disableChannelAutoCreate bool, disabled int32) *Topic {
 	if part > MAX_TOPIC_PARTITION || part < 0 {
 		return nil
@@ -571,7 +629,9 @@ func (n *NSQD) internalGetTopic(topicName string, part int, ext bool, ordered bo
 		n.topicMap[topicName] = topics
 	}
 	var t *Topic
-	t = NewTopicWithExtAndDisableChannelAutoCreate(topicName, part, ext, ordered, disableChannelAutoCreate, n.GetOpts(), disabled, n.metaStorage, n,
+	t = NewTopicWithExtAndDisableChannelAutoCreate(topicName, part, ext, ordered,
+		disableChannelAutoCreate, n.GetOpts(), disabled, n.metaStorage,
+		n.getKVStorageForTopic(topicName), n,
 		n.pubLoopFunc)
 	if t == nil {
 		nsqLog.Errorf("TOPIC(%s): create failed", topicName)
@@ -641,7 +701,8 @@ func (n *NSQD) ForceDeleteTopicData(name string, partition int) error {
 	if err != nil {
 		// not exist, create temp for check
 		n.Lock()
-		topic = NewTopic(name, partition, n.GetOpts(), 1, n.metaStorage, n,
+		topic = NewTopicForDelete(name, partition, n.GetOpts(), 1, n.metaStorage,
+			n,
 			n.pubLoopFunc)
 		if topic != nil && !topic.IsOrdered() {
 			// init delayed so we can remove it later
@@ -657,12 +718,12 @@ func (n *NSQD) ForceDeleteTopicData(name string, partition int) error {
 	return nil
 }
 
-func (n *NSQD) CheckMagicCode(name string, partition int, code int64, tryFix bool) (string, error) {
+func (n *NSQD) CheckMagicCode(name string, partition int, code int64, isExt bool, tryFix bool) (string, error) {
 	localTopic, err := n.GetExistingTopic(name, partition)
 	if err != nil {
 		// not exist, create temp for check
 		n.Lock()
-		localTopic = NewTopic(name, partition, n.GetOpts(), 1, n.metaStorage, n,
+		localTopic = NewTopicWithExt(name, partition, isExt, false, n.GetOpts(), 1, n.metaStorage, n.getKVStorageForTopic(name), n,
 			n.pubLoopFunc)
 		n.Unlock()
 		if localTopic == nil {
@@ -738,11 +799,18 @@ func (n *NSQD) flushAll(all bool, flushCnt int) {
 	}
 	if all {
 		n.metaStorage.Sync()
+		if n.kvTopicStorage != nil {
+			n.kvTopicStorage.FlushAll()
+		}
 	}
 }
 
 func (n *NSQD) ReqToEnd(ch *Channel, msg *Message, t time.Duration) error {
-	go n.reqToEndCB(ch, msg, t)
+	if n.reqToEndCB != nil {
+		n.PushTopicJob(ch.GetTopicName(), func() {
+			n.reqToEndCB(ch, msg, t)
+		})
+	}
 	return nil
 }
 

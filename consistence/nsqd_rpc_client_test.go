@@ -227,7 +227,9 @@ func startNsqdCoordWithFakeData(t *testing.T, rpcport string, dataPath string,
 	nsqdCoord.leadership = fakeLeadership
 	nsqdCoord.lookupRemoteCreateFunc = func(addr string, to time.Duration) (INsqlookupRemoteProxy, error) {
 		fakeLookupProxy.t = t
+		fakeLookupProxy.mu.Lock()
 		fakeLookupProxy.fakeNsqdCoords[nsqdCoord.myNode.GetID()] = nsqdCoord
+		fakeLookupProxy.mu.Unlock()
 		return fakeLookupProxy, nil
 	}
 	nsqdCoord.lookupLeader = NsqLookupdNodeInfo{}

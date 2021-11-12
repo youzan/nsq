@@ -116,6 +116,7 @@ type diskQueueReader struct {
 	autoSkipError   bool
 	waitingMoreData int32
 	metaStorage     IMetaStorage
+	kvTopic         *KVTopic
 }
 
 func newDiskQueueReaderWithFileMeta(readFrom string, metaname string, dataPath string, maxBytesPerFile int64,
@@ -123,7 +124,7 @@ func newDiskQueueReaderWithFileMeta(readFrom string, metaname string, dataPath s
 	syncEvery int64, syncTimeout time.Duration, readEnd BackendQueueEnd, autoSkip bool) BackendQueueReader {
 	metaStorage := &fileMetaStorage{}
 	return newDiskQueueReader(readFrom, metaname, dataPath, maxBytesPerFile, minMsgSize, maxMsgSize, syncEvery,
-		syncTimeout, readEnd, autoSkip, metaStorage, true)
+		syncTimeout, readEnd, autoSkip, metaStorage, nil, true)
 }
 
 // newDiskQueue instantiates a new instance of diskQueueReader, retrieving metadata
@@ -133,7 +134,7 @@ func newDiskQueueReader(readFrom string, metaname string,
 	minMsgSize int32, maxMsgSize int32,
 	syncEvery int64, syncTimeout time.Duration,
 	readEnd BackendQueueEnd, autoSkip bool,
-	metaStorage IMetaStorage, forceReload bool) BackendQueueReader {
+	metaStorage IMetaStorage, kvTopic *KVTopic, forceReload bool) BackendQueueReader {
 
 	d := diskQueueReader{
 		readFrom:        readFrom,
@@ -144,6 +145,7 @@ func newDiskQueueReader(readFrom string, metaname string,
 		exitChan:        make(chan int),
 		syncEvery:       syncEvery,
 		autoSkipError:   autoSkip,
+		kvTopic:         kvTopic,
 		readBuffer:      bytes.NewBuffer(make([]byte, 0, readBufferSize)),
 	}
 	if metaStorage == nil {
@@ -319,6 +321,29 @@ func (d *diskQueueReader) ResetReadToConfirmed() (BackendQueueEnd, error) {
 	return &e, skiperr
 }
 
+func (d *diskQueueReader) ResetReadToQueueStart(start diskQueueEndInfo) error {
+	d.Lock()
+	defer d.Unlock()
+	if d.exitFlag == 1 {
+		return ErrExiting
+	}
+	if d.readFile != nil {
+		d.readFile.Close()
+		d.readFile = nil
+	}
+	d.readBuffer.Reset()
+
+	nsqLog.Warningf("reset read to start: %v, %v to: %v", d.readQueueInfo, d.confirmedQueueInfo, start)
+	d.confirmedQueueInfo = start
+	d.readQueueInfo = d.confirmedQueueInfo
+	d.updateDepth()
+	d.needSync = true
+	if d.syncEvery == 1 {
+		d.syncAll(false)
+	}
+	return nil
+}
+
 // reset can be set to the old offset before confirmed, skip can only skip forward confirmed.
 func (d *diskQueueReader) ResetReadToOffset(offset BackendOffset, cnt int64) (BackendQueueEnd, error) {
 	d.Lock()
@@ -459,6 +484,18 @@ func (d *diskQueueReader) TryReadOne() (ReadResult, bool) {
 				if rerr != ErrReadQueueCountMissing && d.autoSkipError {
 					d.handleReadError()
 					continue
+				}
+			}
+			if d.kvTopic != nil {
+				rmsg, err := d.kvTopic.GetMsgRawByCnt(dataRead.CurCnt - 1)
+				if err != nil {
+					nsqLog.Logf("reading from kv failed: %v, %v, %v", dataRead.CurCnt, dataRead.Offset, err.Error())
+					dataRead.Err = err
+				} else {
+					if !bytes.Equal(rmsg, dataRead.Data) {
+						nsqLog.LogWarningf("reading from kv not matched: %v, %v, %v, %v", dataRead.CurCnt, dataRead.Offset, rmsg, dataRead.Data)
+						dataRead.Err = errors.New("kv data not matched")
+					}
 				}
 			}
 			return dataRead, true

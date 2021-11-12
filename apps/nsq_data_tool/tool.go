@@ -79,7 +79,7 @@ func checkTopicStats() {
 		log.Printf("error: %v", err.Error())
 		return
 	}
-	producers, _, err := ci.GetNSQDStats(srcnodes, "", "", true)
+	producers, _, err := ci.GetNSQDStatsWithClients(srcnodes, "", "", true)
 	if err != nil {
 		log.Printf("error: %v", err.Error())
 		return
@@ -263,7 +263,7 @@ func main() {
 				return
 			}
 			nsqd.NsqLogger().Infof("found msg: %v", msg)
-			fmt.Printf("%v:%v:%v:%v, body: %v\n", msg.ID, msg.TraceID, msg.Timestamp, msg.Attempts(), string(msg.Body))
+			fmt.Printf("%v:%v:%v:%v, header:%v, body: %v\n", msg.ID, msg.TraceID, msg.Timestamp, msg.Attempts(), string(msg.ExtBytes), string(msg.Body))
 			return
 		}
 		recentKeys, cntList, chCntList := delayQ.GetOldestConsumedState([]string{*viewCh}, true)
@@ -383,7 +383,7 @@ func main() {
 				log.Fatalf("decode data error: %v", err)
 				continue
 			}
-			fmt.Printf("%v:%v:%v:%v, body: %v\n", msg.ID, msg.TraceID, msg.Timestamp, msg.Attempts(), string(msg.Body))
+			fmt.Printf("%v:%v:%v:%v, header:%v, body: %v\n", msg.ID, msg.TraceID, msg.Timestamp, msg.Attempts(), string(msg.ExtBytes), string(msg.Body))
 		}
 	}
 }

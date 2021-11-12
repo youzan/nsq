@@ -182,6 +182,11 @@ func nsqdFlagSet(opts *nsqd.Options) *flag.FlagSet {
 	flagSet.Int("queue-write-buffer-size", int(opts.QueueWriteBufferSize), "the write buffer size for topic disk queue file")
 	flagSet.Int("pub-queue-size", int(opts.PubQueueSize), "the pub queue size for topic")
 	flagSet.Int("sleepms-between-log-sync-pull", int(opts.SleepMsBetweenLogSyncPull), "the sleep ms between each log sync pull")
+
+	flagSet.Bool("kv-enabled", opts.KVEnabled, "enable the kv topic")
+	flagSet.Int("kv-block-cache", int(opts.KVBlockCache), "kv engine block cache")
+	flagSet.Int("kv-write-buffer-size", int(opts.KVWriteBufferSize), "kv engine write buffer size")
+	flagSet.Int("kv-max-write-buffer-number", int(opts.KVMaxWriteBufferNumber), "kv max write buffer number")
 	return flagSet
 }
 

@@ -75,6 +75,7 @@ type Message struct {
 	pri              int64
 	index            int
 	deferredCnt      int32
+	timedoutCnt      int32
 	//for backend queue
 	Offset        BackendOffset
 	RawMoveSize   BackendOffset

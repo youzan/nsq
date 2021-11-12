@@ -24,6 +24,7 @@ import (
 const (
 	resetReaderTimeoutSec      = 60
 	MaxMemReqTimes             = 10
+	maxTimeoutCntToReq         = 20
 	MaxWaitingDelayed          = 100
 	MaxDepthReqToEnd           = 1000000
 	ZanTestSkip                = 0
@@ -32,6 +33,14 @@ const (
 	delayedReqToEndMinInterval = time.Millisecond * 128
 	DefaultMaxChDelayedQNum    = 10000 * 16
 	limitSmallMsgBytes         = 1024
+)
+
+func ChangeIntervalForTest() {
+	timeoutBlockingWait = time.Second * 2
+}
+
+var (
+	timeoutBlockingWait = time.Hour / 2
 )
 
 var (
@@ -55,7 +64,6 @@ type Consumer interface {
 	FinishedMessage()
 	Stats() ClientStats
 	Exit()
-	Empty()
 	String() string
 	GetID() int64
 	SetLimitedRdy(cnt int)
@@ -170,7 +178,8 @@ type Channel struct {
 // NewChannel creates a new instance of the Channel type and returns a pointer
 func NewChannel(topicName string, part int, topicOrdered bool, channelName string, chEnd BackendQueueEnd, opt *Options,
 	deleteCallback func(*Channel), moreDataCallback func(*Channel), consumeDisabled int32,
-	notify INsqdNotify, ext int32, queueStart BackendQueueEnd, metaStorage IMetaStorage, forceReload bool) *Channel {
+	notify INsqdNotify, ext int32, queueStart BackendQueueEnd, metaStorage IMetaStorage,
+	kvTopic *KVTopic, forceReload bool) *Channel {
 
 	c := &Channel{
 		topicName:          topicName,
@@ -246,6 +255,7 @@ func NewChannel(topicName string, part int, topicOrdered bool, channelName strin
 		chEnd,
 		false,
 		metaStorage,
+		kvTopic,
 		forceReload,
 	)
 
@@ -282,22 +292,44 @@ func (c *Channel) ChangeLimiterBytes(kb int64) {
 }
 
 func (c *Channel) checkAndFixStart(start BackendQueueEnd) {
+	dr, _ := c.backend.(*diskQueueReader)
+	dstart, _ := start.(*diskQueueEndInfo)
+	if dr != nil && dstart != nil && dstart.EndOffset.GreatThan(&dr.confirmedQueueInfo.EndOffset) {
+		c.chLog.Infof("confirm start need be fixed since file number is greater %v, %v",
+			start, c.GetConfirmed())
+		// new queue start file name is great than the confirmed, we move confirmed to new start
+		oldConfirmed := c.GetConfirmed()
+		dr.ResetReadToQueueStart(*dstart)
+		if c.GetConfirmed().Offset() < oldConfirmed.Offset() {
+			c.chLog.Infof("confirm start need be fixed %v, %v, %v",
+				start, oldConfirmed, c.GetConfirmed())
+			c.backend.SkipReadToOffset(oldConfirmed.Offset(), oldConfirmed.TotalMsgCnt())
+		}
+		return
+	}
 	if c.GetConfirmed().Offset() >= start.Offset() {
 		return
 	}
 	c.chLog.Infof("confirm start need be fixed %v, %v",
 		start, c.GetConfirmed())
-	newStart, err := c.backend.SkipReadToOffset(start.Offset(), start.TotalMsgCnt())
+	_, err := c.backend.SkipReadToOffset(start.Offset(), start.TotalMsgCnt())
 	if err != nil {
 		c.chLog.Warningf("skip to new start failed: %v",
 			err)
-		newStart, err = c.backend.SkipReadToEnd()
-		if err != nil {
-			c.chLog.Warningf("skip to new start failed: %v",
-				err)
+		if dr != nil && dstart != nil {
+			oldConfirmed := c.GetConfirmed()
+			dr.ResetReadToQueueStart(*dstart)
+			if c.GetConfirmed().Offset() < oldConfirmed.Offset() {
+				c.chLog.Infof("confirm start need be fixed %v, %v, %v",
+					start, oldConfirmed, c.GetConfirmed())
+				c.backend.SkipReadToOffset(oldConfirmed.Offset(), oldConfirmed.TotalMsgCnt())
+			}
+			c.chLog.Warningf("fix channel read to queue start: %v",
+				dstart)
 		} else {
-			c.chLog.Infof("skip to end : %v",
-				newStart)
+			newRead, _ := c.backend.SkipReadToEnd()
+			c.chLog.Warningf("fix channel read to : %v",
+				newRead)
 		}
 	}
 }
@@ -512,7 +544,10 @@ func (c *Channel) initPQ() {
 
 	for _, m := range c.inFlightMessages {
 		if m.belongedConsumer != nil {
-			m.belongedConsumer.Empty()
+			// Do we need empty client here?
+			// Req may be better for counter stats (any race case that make inflight count not 0?)
+			m.belongedConsumer.RequeuedMessage()
+			m.belongedConsumer = nil
 		}
 
 		if m.DelayedType == ChannelDelayed {
@@ -1160,10 +1195,7 @@ func (c *Channel) ShouldRequeueToEnd(clientID int64, clientAddr string, id Messa
 	if c.IsOrdered() || c.IsEphemeral() {
 		return nil, false
 	}
-	threshold := time.Minute
-	if c.option.ReqToEndThreshold >= time.Millisecond {
-		threshold = c.option.ReqToEndThreshold
-	}
+
 	c.inFlightMutex.Lock()
 	defer c.inFlightMutex.Unlock()
 	// change the timeout for inflight
@@ -1175,6 +1207,16 @@ func (c *Channel) ShouldRequeueToEnd(clientID int64, clientAddr string, id Messa
 		return nil, false
 	}
 
+	return c.checkMsgRequeueToEnd(msg, timeout)
+}
+
+func (c *Channel) checkMsgRequeueToEnd(msg *Message,
+	timeout time.Duration) (*Message, bool) {
+	id := msg.ID
+	threshold := time.Minute
+	if c.option.ReqToEndThreshold >= time.Millisecond {
+		threshold = c.option.ReqToEndThreshold
+	}
 	if c.chLog.Level() >= levellogger.LOG_DEBUG || c.IsTraced() {
 		c.chLog.Logf("check requeue to end, timeout:%v, msg timestamp:%v, depth ts:%v, msg attempt:%v, waiting :%v",
 			timeout, msg.Timestamp,
@@ -1341,6 +1383,10 @@ func (c *Channel) RequeueMessage(clientID int64, clientAddr string, id MessageID
 		if msg.Attempts() >= MaxAttempts/2 && byClient {
 			return ErrMsgTooMuchReq
 		}
+		if msg.Attempts() > MaxMemReqTimes*10 && byClient && time.Now().Sub(msg.deliveryTS) < time.Second/10 {
+			// avoid too short req for the message
+			return ErrMsgTooMuchReq
+		}
 
 		// remove from inflight first
 		msg, err := c.popInFlightMessage(clientID, id, false)
@@ -1371,6 +1417,12 @@ func (c *Channel) RequeueMessage(clientID int64, clientAddr string, id MessageID
 	}
 	// change the timeout for inflight
 	newTimeout := time.Now().Add(timeout)
+	if msg.Attempts() > MaxMemReqTimes*10 && newTimeout.Sub(msg.deliveryTS) < time.Second {
+		// avoid too short req for the message
+		c.chLog.LogDebugf("too short req %v, %v, %v, %v, %v",
+			newTimeout, msg.deliveryTS, timeout, id, msg.Attempts())
+		newTimeout = newTimeout.Add(time.Second)
+	}
 	if (timeout > c.option.ReqToEndThreshold) ||
 		(newTimeout.Sub(msg.deliveryTS) >=
 			c.option.MaxReqTimeout) {
@@ -1629,6 +1681,8 @@ func (c *Channel) pushInFlightMessage(msg *Message, client Consumer, now time.Ti
 		// It may conflict if both normal diskqueue and the delayed queue has the same message (because of the rpc timeout)
 		// We need check and clean the state to make sure we can have the right stats
 		c.cleanWaitingRequeueChanNoLock(msg)
+		// Since the belongedConsumer on the new msg is not actually used for sending, so we do not need handle it
+		// and the old message will continue be handled in next peek
 		if msg.DelayedType == 0 {
 			if oldm.DelayedType == ChannelDelayed {
 				c.ConfirmBackendQueue(msg)
@@ -2361,6 +2415,26 @@ func (c *Channel) GetChannelDebugStats() string {
 	return debugStr
 }
 
+func (c *Channel) CheckIfTimeoutToomuch(msg *Message, msgTimeout time.Duration) {
+	toCnt := atomic.LoadInt32(&msg.timedoutCnt)
+	// check is it a normal slow or a unnormal message caused timeout too much times
+	// In order to avoid timeout blocking normal, we check and req it to delayed queue
+	if toCnt > maxTimeoutCntToReq && !c.IsEphemeral() && !c.IsOrdered() {
+		tnow := time.Now().UnixNano()
+		if tnow-c.DepthTimestamp() > timeoutBlockingWait.Nanoseconds() {
+			c.inFlightMutex.Lock()
+			defer c.inFlightMutex.Unlock()
+			nmsg, ok := c.checkMsgRequeueToEnd(msg, msgTimeout)
+			if ok {
+				if c.isTracedOrDebugTraceLog(msg) {
+					c.chLog.Logf("msg %v timeout too much, requeue to end: %v", msg.ID, toCnt)
+				}
+				c.nsqdNotify.ReqToEnd(c, nmsg, msgTimeout*10)
+			}
+		}
+	}
+}
+
 func (c *Channel) doPeekInFlightQueue(tnow int64) (bool, bool) {
 	dirty := false
 	flightCnt := 0
@@ -2445,6 +2519,7 @@ func (c *Channel) doPeekInFlightQueue(tnow int64) (bool, bool) {
 				"partition": strconv.Itoa(c.GetTopicPart()),
 				"channel":   c.GetName(),
 			}).Inc()
+			atomic.AddInt32(&msg.timedoutCnt, 1)
 		}
 		client := msg.belongedConsumer
 		if msg.belongedConsumer != nil {

@@ -116,7 +116,11 @@ func NewNsqdServer(opts *nsqd.Options) (*nsqd.NSQD, *NsqdServer, error) {
 	}
 	nsqd.NsqLogger().Logf("current max conn for client is: %v", opts.MaxConnForClient)
 
-	nsqdInstance := nsqd.New(opts)
+	nsqdInstance, err := nsqd.New(opts)
+	if err != nil {
+		nsqd.NsqLogger().LogErrorf("FATAL: failed to init nsqd- %s", err)
+		return nil, nil, err
+	}
 
 	s := &NsqdServer{}
 	ctx := &context{}

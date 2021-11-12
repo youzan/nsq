@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"math"
 	"math/rand"
 	"net"
@@ -1911,24 +1912,24 @@ func TestConsumeMultiTagMessages(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		msgOut := recvNextMsgAndCheckWithCloseChan(t, conn, len(msg.Body), msg.TraceID, true, true, closeChan)
 		test.Nil(t, msgOut)
 		t.Logf("subscrieb without tag stops.")
-		wg.Done()
 	}()
 
 	var wgTag sync.WaitGroup
 	wgTag.Add(1)
 	go func() {
+		defer wgTag.Done()
 		msgOut1 := recvNextMsgAndCheckExt(t, conn1, len(msg.Body), msg.TraceID, true, true)
 		test.NotNil(t, msgOut1)
-		wgTag.Done()
 	}()
 	wgTag.Add(1)
 	go func() {
+		defer wgTag.Done()
 		msgOut2 := recvNextMsgAndCheckExt(t, conn2, len(msg.Body), msg.TraceID, true, true)
 		test.NotNil(t, msgOut2)
-		wgTag.Done()
 	}()
 
 	wgTag.Wait()
@@ -5246,6 +5247,123 @@ func TestSubTimeoutMany(t *testing.T) {
 	test.Assert(t, stats.DelayedQueueCount > 1, "should have delayed")
 }
 
+func TestSubFewMsgTimeoutAlwaysShouldNotBlocking(t *testing.T) {
+	nsqdNs.ChangeIntervalForTest()
+	// test few messages timeout too much times (which will less than ready) and blocking other continue consume
+	// should go delayed queue for a while and the channel depth should be 0
+	opts := nsqdNs.NewOptions()
+	opts.Logger = newTestLogger(t)
+	opts.LogLevel = 1
+	if testing.Verbose() {
+		opts.LogLevel = 4
+		nsqdNs.SetLogger(opts.Logger)
+	}
+	opts.SyncEvery = 1
+	opts.QueueScanInterval = time.Millisecond * 10
+	opts.MsgTimeout = time.Second / 10
+	opts.MaxConfirmWin = 50
+	opts.ReqToEndThreshold = nsqdNs.MaxWaitingDelayed*time.Millisecond + time.Millisecond*80
+	opts.MaxReqTimeout = time.Second*10 + opts.ReqToEndThreshold*3
+	opts.MaxOutputBufferTimeout = 10 * time.Millisecond
+	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
+
+	defer os.RemoveAll(opts.DataPath)
+	defer nsqdServer.Exit()
+
+	topicName := "test_few_timeout_toomuch" + strconv.Itoa(int(time.Now().Unix()))
+	topic := nsqd.GetTopicIgnPart(topicName)
+	ch := topic.GetChannel("ch")
+
+	putCnt := nsqdNs.MaxWaitingDelayed + 100
+	for i := 0; i < putCnt; i++ {
+		// generate not-continued timeouted to make confirm interval more than 1
+		if i <= 3 {
+			delayBody := []byte("timeout-message")
+			msg := nsqdNs.NewMessage(0, delayBody)
+			topic.PutMessage(msg)
+		} else {
+			msg := nsqdNs.NewMessage(0, []byte("nodelay"))
+			topic.PutMessage(msg)
+		}
+	}
+	topic.ForceFlush()
+
+	var wg sync.WaitGroup
+	done := make(chan struct{})
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+	RECONNECT:
+		select {
+		case <-done:
+			return
+		default:
+		}
+		conn, err := mustConnectNSQD(tcpAddr)
+		test.Equal(t, err, nil)
+		defer conn.Close()
+		identify(t, conn, map[string]interface{}{
+			"output_buffer_timeout": 10,
+		}, frameTypeResponse)
+		subRsp, err := subWaitResp(t, conn, topicName, "ch")
+		if err != nil || string(subRsp) != "OK" {
+			conn.Close()
+			time.Sleep(time.Millisecond * 3)
+			goto RECONNECT
+		}
+		test.Nil(t, err)
+		test.Equal(t, "OK", string(subRsp))
+		_, err = nsq.Ready(1).WriteTo(conn)
+		test.Equal(t, err, nil)
+
+		for {
+			select {
+			case <-done:
+				return
+			default:
+			}
+			msgOut := recvNextMsgAndCheck(t, conn, 0, 0, false)
+			if msgOut == nil {
+				conn.Close()
+				time.Sleep(time.Millisecond * 3)
+				goto RECONNECT
+			}
+			if len(msgOut.Body) >= 10 {
+				test.Nil(t, err)
+				now := int(time.Now().UnixNano())
+				t.Logf("\033[31m got timeout message : %v (id %v), now: %v\033[39m\n\n", string(msgOut.Body), msgOut.ID, now)
+				// wait timeout
+				continue
+			} else {
+				test.Equal(t, "nodelay", string(msgOut.Body))
+			}
+			nsq.Finish(nsq.MessageID(msgOut.GetFullMsgID())).WriteTo(conn)
+		}
+	}()
+	start := time.Now()
+	for {
+		if ch.Depth() == 0 {
+			break
+		}
+		t.Logf("current channel: %s", ch.GetChannelDebugStats())
+		time.Sleep(time.Second)
+		if time.Since(start) > time.Minute*3 {
+			t.Error("timeout waiting")
+			break
+		}
+	}
+	close(done)
+	wg.Wait()
+	stats := nsqdNs.NewChannelStats(ch, nil, 0)
+	t.Logf("channel stats: %v", stats)
+	test.Equal(t, 0, stats.DeferredCount)
+	test.Assert(t, stats.TimeoutCount >= nsqdNs.MaxMemReqTimes, "should have enough timeout")
+	test.Assert(t, stats.RequeueCount > 2, "should have requeued")
+	test.Assert(t, stats.DelayedQueueCount > 1, "should have delayed")
+	test.Assert(t, stats.DelayedQueueCount < 5, "should have less delayed")
+}
+
 func TestSubReqToEndFailedPartial(t *testing.T) {
 	// req to end success but the return is failed (while leader changed or write is disabled) and should req in memory,
 	// later the memory delayed failed and it should be req to end again
@@ -5526,6 +5644,7 @@ func TestSubOrderedWithFilter(t *testing.T) {
 		msgOut := recvNextMsgAndCheckExt(t, conn, 0, msg.TraceID, true, true)
 		test.NotNil(t, msgOut)
 		msgOut.Body = msgOut.Body[12:]
+		t.Logf("recv: %v", string(msgOut.Body))
 		test.Equal(t, msgOut.Body, []byte("second"))
 	}
 }
@@ -5533,6 +5652,7 @@ func TestSubOrderedWithFilter(t *testing.T) {
 func TestSubWithLargeReady(t *testing.T) {
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
+	opts.MaxRdyCount = 250
 	if testing.Verbose() {
 		opts.LogLevel = 2
 		nsqdNs.SetLogger(opts.Logger)
@@ -5551,7 +5671,7 @@ func TestSubWithLargeReady(t *testing.T) {
 	msg := nsqdNs.NewMessage(0, []byte("test body"))
 	topic.PutMessage(msg)
 
-	for i := 0; i < 100000; i++ {
+	for i := 0; i < 1000; i++ {
 		topic.PutMessage(nsqdNs.NewMessage(0, []byte("test body")))
 	}
 
@@ -5560,13 +5680,13 @@ func TestSubWithLargeReady(t *testing.T) {
 
 	defer conn.Close()
 
-	_, err = nsq.Ready(2500).WriteTo(conn)
+	_, err = nsq.Ready(250).WriteTo(conn)
 	test.Equal(t, err, nil)
 
 	_, err = nsq.Ready(int(opts.MaxRdyCount)).WriteTo(conn)
 	test.Equal(t, err, nil)
 
-	for i := 0; i < 100000; i++ {
+	for i := 0; i < 1000; i++ {
 		msgOut := recvNextMsgAndCheckClientMsg(t, conn, len(msg.Body), 0, false)
 		_, err = nsq.Finish(msgOut.ID).WriteTo(conn)
 		if err != nil {
@@ -7064,11 +7184,13 @@ func TestResetChannelToOld(t *testing.T) {
 		}
 	}
 	localTopic.ForceFlush()
+	conn.Close()
 	realEnd = channel.GetChannelEnd()
 
 	conn, err = mustConnectNSQD(tcpAddr)
 	identify(t, conn, nil, frameTypeResponse)
 	test.Equal(t, err, nil)
+	defer conn.Close()
 	sub(t, conn, topicName, "ch")
 	_, err = nsq.Ready(15).WriteTo(conn)
 	test.Equal(t, err, nil)
@@ -7080,6 +7202,12 @@ func TestResetChannelToOld(t *testing.T) {
 	go func() {
 		for {
 			time.Sleep(time.Second)
+			// check the client stats for channel
+			ccs := channel.GetClients()
+			for _, cc := range ccs {
+				cs := cc.Stats()
+				test.Equal(t, cs.MessageCount, uint64(cs.InFlightCount)+cs.FinishCount+cs.RequeueCount+uint64(cs.TimeoutCount))
+			}
 			if time.Since(startTime) > time.Second*30 {
 				if channel.GetConfirmed().Offset() == realEnd.Offset() {
 					return
@@ -7127,6 +7255,7 @@ func TestResetChannelToOld(t *testing.T) {
 		msgOut, err := nsq.DecodeMessage(data)
 		test.Equal(t, 5, len(msgOut.Body))
 		recvCnt++
+		time.Sleep(time.Millisecond * 10)
 		if recvCnt == int(opts.MaxConfirmWin)*2 {
 			continue
 		}
@@ -7140,6 +7269,173 @@ func TestResetChannelToOld(t *testing.T) {
 			test.NotEqual(t, realEnd, resetOldEnd)
 			end = channel.GetChannelEnd()
 			test.Equal(t, end, resetOldEnd)
+			// check the client stats for channel
+			ccs := channel.GetClients()
+			for _, cc := range ccs {
+				cs := cc.Stats()
+				test.Equal(t, cs.MessageCount, uint64(cs.InFlightCount)+cs.FinishCount+cs.RequeueCount+uint64(cs.TimeoutCount))
+				test.Equal(t, true, cs.InFlightCount >= 0)
+				test.Equal(t, true, cs.InFlightCount <= 15)
+			}
+		}
+		_, err = nsq.Finish(msgOut.ID).WriteTo(conn)
+
+		if recvCnt >= int(opts.MaxConfirmWin)*2+1 && channel.GetConfirmed().Offset() == realEnd.Offset() {
+			break
+		}
+		if err != nil {
+			t.Errorf("FIN msg %v error: %v", msgOut.ID, err.Error())
+		}
+		if recvCnt > int(opts.MaxConfirmWin)*2+1 {
+			// force flush will update the new end to channel
+			localTopic.ForceFlush()
+		}
+		if recvCnt > int(opts.MaxConfirmWin)*12 {
+			t.Errorf("should stop on : %v, %v, %v", recvCnt, channel.GetChannelDebugStats(), realEnd)
+			break
+		}
+		if time.Since(startTime) > time.Second*30 {
+			t.Errorf("should stop on : %v", recvCnt)
+			break
+		}
+	}
+}
+
+func TestConsumerEmpty(t *testing.T) {
+	// test many confirmed messages and waiting inflight is empty,
+	// and while confirming message offset, the channel end is changed
+	// to new offset.
+	opts := nsqdNs.NewOptions()
+	opts.Logger = newTestLogger(t)
+	//opts.Logger = &levellogger.SimpleLogger{}
+	opts.LogLevel = 2
+	if testing.Verbose() {
+		opts.LogLevel = 4
+		nsqdNs.SetLogger(opts.Logger)
+	}
+	opts.MsgTimeout = time.Second * 2
+	opts.MaxMsgSize = 100
+	opts.MaxBodySize = 1000
+	opts.MaxConfirmWin = 10
+	opts.QueueScanRefreshInterval = time.Second * 2
+	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
+	defer os.RemoveAll(opts.DataPath)
+	defer nsqdServer.Exit()
+
+	conn, err := mustConnectNSQD(tcpAddr)
+	test.Equal(t, err, nil)
+
+	topicName := "test_reset_channel" + strconv.Itoa(int(time.Now().Unix()))
+	localTopic := nsqd.GetTopicIgnPart(topicName)
+	channel := localTopic.GetChannel("ch")
+
+	identify(t, conn, nil, frameTypeResponse)
+
+	var realEnd nsqdNs.BackendQueueEnd
+	// PUB that's valid
+	for i := 0; i < int(opts.MaxConfirmWin)*6; i++ {
+		cmd := nsq.Publish(topicName, make([]byte, 5))
+		cmd.WriteTo(conn)
+		for {
+			resp, _ := nsq.ReadResponse(conn)
+			frameType, data, _ := nsq.UnpackResponse(resp)
+			test.Equal(t, frameType, frameTypeResponse)
+			if bytes.Equal(data, heartbeatBytes) {
+				continue
+			}
+			test.Equal(t, len(data), 2)
+			test.Equal(t, data[:], []byte("OK"))
+			break
+		}
+		if i == int(opts.MaxConfirmWin) {
+			localTopic.ForceFlush()
+		}
+	}
+	localTopic.ForceFlush()
+	realEnd = channel.GetChannelEnd()
+	conn.Close()
+
+	conn, err = mustConnectNSQD(tcpAddr)
+	identify(t, conn, nil, frameTypeResponse)
+	test.Equal(t, err, nil)
+	defer conn.Close()
+	sub(t, conn, topicName, "ch")
+	_, err = nsq.Ready(15).WriteTo(conn)
+	test.Equal(t, err, nil)
+	// sleep to allow the RDY state to take effect
+	time.Sleep(50 * time.Millisecond)
+
+	recvCnt := 0
+	startTime := time.Now()
+	go func() {
+		for {
+			time.Sleep(time.Second)
+			ccs := channel.GetClients()
+			for _, cc := range ccs {
+				cs := cc.Stats()
+				test.Equal(t, cs.MessageCount, uint64(cs.InFlightCount)+cs.FinishCount+cs.RequeueCount+uint64(cs.TimeoutCount))
+			}
+			if time.Since(startTime) > time.Second*30 {
+				if channel.GetConfirmed().Offset() == realEnd.Offset() {
+					return
+				}
+				t.Errorf("should stop on : %v, %v, %v", recvCnt, channel.GetChannelDebugStats(), realEnd)
+				conn.Close()
+				return
+			}
+		}
+	}()
+	for {
+		conn.SetReadDeadline(time.Now().Add(time.Second * 5))
+		resp, err := nsq.ReadResponse(conn)
+		if recvCnt >= int(opts.MaxConfirmWin)*2+1 && channel.GetConfirmed().Offset() == realEnd.Offset() {
+			break
+		}
+		test.Nil(t, err)
+		frameType, data, err := nsq.UnpackResponse(resp)
+
+		test.Nil(t, err)
+		if frameType == frameTypeError {
+			if recvCnt >= int(opts.MaxConfirmWin)*2+1 && channel.GetConfirmed().Offset() == realEnd.Offset() {
+				break
+			}
+			if bytes.Contains(data, []byte("E_FIN_FAILED")) {
+				continue
+			}
+			t.Logf("got error response: %v", string(data))
+		}
+		if recvCnt >= int(opts.MaxConfirmWin)*2+1 && channel.GetConfirmed().Offset() == realEnd.Offset() {
+			break
+		}
+		test.NotEqual(t, frameTypeError, frameType)
+		if frameType == frameTypeResponse {
+			t.Logf("got response data: %v", string(data))
+			if bytes.Equal(data, heartbeatBytes) {
+				cmd := nsq.Nop()
+				cmd.WriteTo(conn)
+				if channel.GetConfirmed().Offset() == realEnd.Offset() {
+					break
+				}
+			}
+			continue
+		}
+		msgOut, err := nsq.DecodeMessage(data)
+		test.Equal(t, 5, len(msgOut.Body))
+		recvCnt++
+		time.Sleep(time.Millisecond * 10)
+		if recvCnt == int(opts.MaxConfirmWin)*2+1 {
+			// reset channel to old and will be reset  to  new end by topic flush
+			end := channel.GetChannelEnd()
+			confirmEnd := channel.GetConfirmed()
+			channel.SetConsumeOffset(end.Offset(), end.TotalMsgCnt(), true)
+			t.Logf("channel update confirmed %v to end %v", confirmEnd, end)
+			time.Sleep(time.Second)
+			ccs := channel.GetClients()
+			for _, cc := range ccs {
+				cs := cc.Stats()
+				test.Equal(t, cs.MessageCount, uint64(cs.InFlightCount)+cs.FinishCount+cs.RequeueCount+uint64(cs.TimeoutCount))
+				test.Equal(t, int64(0), cs.InFlightCount)
+			}
 		}
 		_, err = nsq.Finish(msgOut.ID).WriteTo(conn)
 
@@ -7165,7 +7461,6 @@ func TestResetChannelToOld(t *testing.T) {
 
 	conn.Close()
 }
-
 func TestTooMuchClient(t *testing.T) {
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
@@ -7255,11 +7550,22 @@ func testIOLoopReturnsClientErr(t *testing.T, fakeConn test.FakeNetConn) {
 
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
+	opts.KVEnabled = false
+	if opts.DataPath == "" {
+		tmpDir, err := ioutil.TempDir("", fmt.Sprintf("nsq-test-%d", time.Now().UnixNano()))
+		if err != nil {
+			panic(err)
+		}
+		opts.DataPath = tmpDir
+		defer os.RemoveAll(tmpDir)
+	}
 
-	prot := &protocolV2{ctx: &context{nsqd: nsqdNs.New(opts)}}
+	nd, err := nsqdNs.New(opts)
+	test.Nil(t, err)
+	prot := &protocolV2{ctx: &context{nsqd: nd}}
 	defer prot.ctx.nsqd.Exit()
 
-	err := prot.IOLoop(fakeConn)
+	err = prot.IOLoop(fakeConn)
 
 	test.NotNil(t, err)
 	test.Equal(t, strings.HasPrefix(err.Error(), "E_INVALID "), true)

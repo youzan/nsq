@@ -530,6 +530,17 @@ func (q *DelayQueue) TryFixQueueEnd(vend BackendOffset, totalCnt int64) error {
 	return err
 }
 
+func (q *DelayQueue) CheckDiskQueueReadToEndOK(offset int64, seekCnt int64, endOffset BackendOffset) error {
+	snap := q.GetDiskQueueSnapshot(false)
+	defer snap.Close()
+	_, _, err := snap.CheckDiskQueueReadToEndOK(offset, seekCnt, endOffset)
+	if err != nil {
+		nsqLog.Warningf("check read failed at: %v, err: %s", offset, err)
+		return err
+	}
+	return nil
+}
+
 func (q *DelayQueue) ResetBackendWithQueueStartNoLock(queueStartOffset int64, queueStartCnt int64) error {
 	if queueStartOffset < 0 || queueStartCnt < 0 {
 		return errors.New("queue start should not less than 0")
@@ -546,7 +557,7 @@ func (q *DelayQueue) ResetBackendWithQueueStartNoLock(queueStartOffset int64, qu
 	return nil
 }
 
-func (q *DelayQueue) GetDiskQueueSnapshot() *DiskQueueSnapshot {
+func (q *DelayQueue) GetDiskQueueSnapshot(checkCommit bool) *DiskQueueSnapshot {
 	e := q.backend.GetQueueReadEnd()
 	start := q.backend.GetQueueReadStart()
 	d := NewDiskQueueSnapshot(getDelayQueueBackendName(q.tname, q.partition), q.dataPath, e)

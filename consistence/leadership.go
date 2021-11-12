@@ -58,7 +58,7 @@ type NsqLookupdNodeInfo struct {
 	Epoch    EpochType
 }
 
-func (self *NsqLookupdNodeInfo) GetID() string {
+func (self NsqLookupdNodeInfo) GetID() string {
 	return self.ID
 }
 
