@@ -1,6 +1,7 @@
 package nsqlookupd
 
 import (
+	"github.com/prometheus/client_golang/prometheus"
 	"net"
 	"net/http"
 	"strconv"
@@ -129,6 +130,9 @@ func (l *NSQLookupd) Main() error {
 			nsqlookupLog.LogErrorf("FATAL: start coordinator failed - %s", err)
 			return err
 		}
+		//register cluster stable indicator to prometheus
+		collector := NewClusterStableMetricsCollector(l.coordinator)
+		prometheus.MustRegister(collector)
 	} else {
 		nsqlookupLog.Logf("lookup start without the coordinator enabled.")
 		l.Lock()
@@ -193,4 +197,33 @@ func (l *NSQLookupd) Exit() {
 
 	l.waitGroup.Wait()
 	nsqlookupLog.Logf("lookup stopped.")
+}
+
+//prometheus controller to gather cluster stable status
+type ClusterStableMetricsCollector struct {
+	gaugeDesc   *prometheus.Desc
+	coordinator *consistence.NsqLookupCoordinator
+}
+
+func (c *ClusterStableMetricsCollector) Describe(ch chan<- *prometheus.Desc) {
+	ch <- c.gaugeDesc
+}
+
+func (c *ClusterStableMetricsCollector) Collect(ch chan<- prometheus.Metric) {
+	var flag float64
+	if c.coordinator.IsClusterStable() {
+		flag = 1
+	}
+	ch <- prometheus.MustNewConstMetric(
+		c.gaugeDesc,
+		prometheus.GaugeValue,
+		flag,
+	)
+}
+
+func NewClusterStableMetricsCollector(coordinator *consistence.NsqLookupCoordinator) *ClusterStableMetricsCollector {
+	return &ClusterStableMetricsCollector{
+		gaugeDesc:   prometheus.NewDesc("nsq_cluster_stable", "nsq cluster stable indicator", nil, nil),
+		coordinator: coordinator,
+	}
 }
