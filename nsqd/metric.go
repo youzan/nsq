@@ -84,4 +84,8 @@ var (
 		Name: "channel_ratelimit_cnt",
 		Help: "total ratelimit cnt for channel consumer",
 	}, []string{"topic", "channel"})
+	ChannelInflightCnt = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "channel_inflight_cnt",
+		Help: "channel inflight message cnt",
+	}, []string{"topic", "partition", "channel"})
 )

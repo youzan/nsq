@@ -74,6 +74,7 @@ func (n *NsqdServer) statsdLoop() {
 			nsqd.ChannelClientCnt.Reset()
 			nsqd.ChannelDelayedQueueCnt.Reset()
 			nsqd.ChannelDelayedQueueTs.Reset()
+			nsqd.ChannelInflightCnt.Reset()
 			for _, topic := range stats {
 				nsqd.TopicQueueMsgEnd.With(prometheus.Labels{
 					"topic":     topic.TopicName,
@@ -132,7 +133,11 @@ func (n *NsqdServer) statsdLoop() {
 						"partition": topic.TopicPartition,
 						"channel":   channel.ChannelName,
 					}).Set(float64(channel.DelayedQueueRecentNano))
-
+					nsqd.ChannelInflightCnt.With(prometheus.Labels{
+						"topic":     topic.TopicName,
+						"partition": topic.TopicPartition,
+						"channel":   channel.ChannelName,
+					}).Set(float64(channel.InFlightCount))
 					if client == nil {
 						continue
 					}
