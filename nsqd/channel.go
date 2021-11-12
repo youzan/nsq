@@ -22,7 +22,7 @@ import (
 )
 
 const (
-	resetReaderTimeoutSec      = 10
+	resetReaderTimeoutSec      = 60
 	MaxMemReqTimes             = 10
 	MaxWaitingDelayed          = 100
 	MaxDepthReqToEnd           = 1000000
@@ -164,6 +164,7 @@ type Channel struct {
 	lastDelayedReqToEndTs int64
 	limiter               *rate.Limiter
 	chLog                 *levellogger.LevelLogger
+	lastQueueReadTs       int64
 }
 
 // NewChannel creates a new instance of the Channel type and returns a pointer
@@ -1272,7 +1273,7 @@ func (c *Channel) ShouldRequeueToEnd(clientID int64, clientAddr string, id Messa
 			return msg.GetCopy(), true
 		}
 
-		if msgAtp < 3 {
+		if msgAtp <= MaxMemReqTimes/2 {
 			return nil, false
 		}
 
@@ -1284,7 +1285,7 @@ func (c *Channel) ShouldRequeueToEnd(clientID int64, clientAddr string, id Messa
 		if msgAtp > MaxMemReqTimes && depDiffTs > threshold.Nanoseconds() {
 			return msg.GetCopy(), true
 		}
-		if depDiffTs > 2*threshold.Nanoseconds() {
+		if depDiffTs > 2*threshold.Nanoseconds() && timeout > time.Second {
 			return msg.GetCopy(), true
 		}
 		return nil, false
@@ -1310,6 +1311,10 @@ func (c *Channel) ShouldRequeueToEnd(clientID int64, clientAddr string, id Messa
 			return msg.GetCopy(), true
 		}
 		if c.Depth() < MaxDepthReqToEnd/10 {
+			return nil, false
+		}
+		// avoid req to end if req is for rate limit for consuming
+		if timeout < threshold/2 {
 			return nil, false
 		}
 		// req to end since depth is large and the depth timestamp is also old
@@ -2021,6 +2026,7 @@ LOOP:
 			if !lastDataNeedRead {
 				dataRead, hasData := d.TryReadOne()
 				if hasData {
+					atomic.StoreInt64(&c.lastQueueReadTs, time.Now().Unix())
 					lastDataNeedRead = true
 					origReadChan <- dataRead
 					readChan = origReadChan
@@ -2551,21 +2557,23 @@ func (c *Channel) processInFlightQueue(tnow int64) (bool, bool) {
 	// in this way, we should block and wait un-tagged client.
 	// However, wait un-tagged client should have inflight or requeue waiting, and
 	// should waiting delivery state
-	if (!dirty) && (atomic.LoadInt32(&c.waitingDeliveryState) == 0) && c.CheckIfNeedResetRead() {
-		diff := time.Now().Unix() - atomic.LoadInt64(&c.processResetReaderTime)
+	// another new case: while a lot of confirmed messages go to confirmed without go into inflight (sampled or already confirmed),
+	// we should handle this case to avoid reset the channel. In this case we need check if current read pos is changed.
+	if (!dirty) && (atomic.LoadInt32(&c.waitingDeliveryState) == 0) && c.CheckIfNeedResetRead() && (tnow-atomic.LoadInt64(&c.lastQueueReadTs) > resetReaderTimeoutSec) {
+		diff := tnow - atomic.LoadInt64(&c.processResetReaderTime)
 		if diff > resetReaderTimeoutSec && atomic.LoadInt64(&c.processResetReaderTime) > 0 {
 			c.chLog.LogWarningf("try reset reader since no inflight and requeued for too long (%v): %v, %v, %v",
 				diff,
 				atomic.LoadInt32(&c.waitingConfirm), c.GetConfirmed(), c.GetChannelDebugStats())
 
-			atomic.StoreInt64(&c.processResetReaderTime, time.Now().Unix())
+			atomic.StoreInt64(&c.processResetReaderTime, tnow)
 			select {
 			case c.readerChanged <- resetChannelData{BackendOffset(-1), 0, false}:
 			default:
 			}
 		}
 	} else {
-		atomic.StoreInt64(&c.processResetReaderTime, time.Now().Unix())
+		atomic.StoreInt64(&c.processResetReaderTime, tnow)
 	}
 
 	return dirty, checkFast
