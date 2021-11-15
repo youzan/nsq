@@ -4,6 +4,7 @@ import (
 	//"github.com/youzan/nsq/internal/levellogger"
 	"os"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -1958,6 +1959,105 @@ func TestRangeTree(t *testing.T) {
 	deleted = tr.DeleteLower(int64(60))
 	equal(t, deleted, 1)
 	equal(t, tr.Len(), int(0))
+}
+
+func TestMessageDispatchWhileResetInvalidOffset(t *testing.T) {
+	topicName := "test_dispatch_while_rest_invalid" + strconv.Itoa(int(time.Now().Unix()))
+
+	opts := NewOptions()
+	opts.Logger = newTestLogger(t)
+	_, _, nsqd := mustStartNSQD(opts)
+	defer os.RemoveAll(opts.DataPath)
+	defer nsqd.Exit()
+	topic := nsqd.GetTopicIgnPart(topicName)
+	topicDynConf := TopicDynamicConf{
+		AutoCommit: 1,
+		SyncEvery:  1,
+		Ext:        true,
+	}
+	topic.SetDynamicInfo(topicDynConf, nil)
+
+	ch := topic.GetChannel("ch")
+
+	n := 100
+	var wg sync.WaitGroup
+	wg.Add(1)
+	//case 1: tagged message goes to client with tag
+	go func() {
+		defer wg.Done()
+		for i := 0; i < n; {
+			ch.readerChanged <- resetChannelData{BackendOffset(1000000000), 1, true}
+			msgOutput := <-ch.clientMsgChan
+			if msgOutput == nil {
+				continue
+			}
+			ch.StartInFlightTimeout(msgOutput, NewFakeConsumer(0), "", opts.MsgTimeout)
+			ch.ConfirmBackendQueue(msgOutput)
+			t.Logf("consume %v", string(msgOutput.Body))
+			i++
+		}
+	}()
+	for i := 0; i < n; i++ {
+		var msgId MessageID
+		msg := NewMessageWithExt(msgId, []byte("test body tag1"), ext.TAG_EXT_VER, []byte(""))
+		_, _, _, _, putErr := topic.PutMessage(msg)
+		assert(t, putErr == nil, "fail to put message: %v", putErr)
+	}
+	wg.Wait()
+	t.Logf("subscribe stops.")
+}
+
+func TestMessageDispatchWhileReset(t *testing.T) {
+	topicName := "test_dispatch_while_rest" + strconv.Itoa(int(time.Now().Unix()))
+
+	opts := NewOptions()
+	opts.Logger = newTestLogger(t)
+	_, _, nsqd := mustStartNSQD(opts)
+	defer os.RemoveAll(opts.DataPath)
+	defer nsqd.Exit()
+	topic := nsqd.GetTopicIgnPart(topicName)
+	topicDynConf := TopicDynamicConf{
+		AutoCommit: 1,
+		SyncEvery:  1,
+		Ext:        true,
+	}
+	topic.SetDynamicInfo(topicDynConf, nil)
+
+	ch := topic.GetChannel("ch")
+
+	n := 100
+	var wg sync.WaitGroup
+	wg.Add(1)
+	//case 1: tagged message goes to client with tag
+	go func() {
+		defer wg.Done()
+		for i := 0; i < n; {
+			queueEnd := ch.backend.GetQueueConfirmed()
+			ch.readerChanged <- resetChannelData{queueEnd.Offset(), queueEnd.TotalMsgCnt(), true}
+			msgOutput := <-ch.clientMsgChan
+			if msgOutput == nil {
+				continue
+			}
+			ch.StartInFlightTimeout(msgOutput, NewFakeConsumer(0), "", opts.MsgTimeout)
+			ch.ConfirmBackendQueue(msgOutput)
+			t.Logf("consume %v", string(msgOutput.Body))
+			i++
+		}
+	}()
+	for i := 0; i < n; i++ {
+		var msgId MessageID
+		msg := NewMessageWithExt(msgId, []byte("test body tag1"), ext.TAG_EXT_VER, []byte(""))
+		_, _, _, _, putErr := topic.PutMessage(msg)
+		assert(t, putErr == nil, "fail to put message: %v", putErr)
+		//reset with invalid offset to cause error
+		//ch.readerChanged <- resetChannelData{BackendOffset(12), 1, true}
+		//ch.readerChanged <- resetChannelData{BackendOffset(12), 1, true}
+		//ch.readerChanged <- resetChannelData{BackendOffset(12), 1, true}
+		//ch.readerChanged <- resetChannelData{BackendOffset(12), 1, true}
+		//channel still read this message
+	}
+	wg.Wait()
+	t.Logf("subscribe stops.")
 }
 
 func BenchmarkRangeTree(b *testing.B) {

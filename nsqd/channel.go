@@ -2327,6 +2327,8 @@ LOOP:
 			c.chLog.Infof("got reader reset notify while dispatch message:%v ", resetOffset)
 			c.cleanWaitingRequeueChan(msg)
 			c.resetChannelReader(resetOffset, &lastDataNeedRead, origReadChan, &lastMsg, &needReadBackend, &readBackendWait)
+			//retry delivering msg to client, regardless reset result
+			goto msgDefaultLoop
 		case <-c.exitChan:
 			goto exit
 		}
