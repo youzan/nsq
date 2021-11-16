@@ -1983,20 +1983,29 @@ func TestMessageDispatchWhileResetInvalidOffset(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(1)
 	//case 1: tagged message goes to client with tag
-	go func() {
+	go func(maxReceived int) {
+		i := 0
 		defer wg.Done()
-		for i := 0; i < n; {
+		timer := time.NewTimer(10 * time.Second)
+		for {
 			ch.readerChanged <- resetChannelData{BackendOffset(1000000000), 1, true}
-			msgOutput := <-ch.clientMsgChan
-			if msgOutput == nil {
-				continue
+			select {
+			case <-timer.C:
+				//timeout
+				t.Fatal("timeout receive all messages before timeout")
+				goto exit
+			case msgOutput := <-ch.clientMsgChan:
+				ch.StartInFlightTimeout(msgOutput, NewFakeConsumer(0), "", opts.MsgTimeout)
+				ch.ConfirmBackendQueue(msgOutput)
+				t.Logf("consume %v", string(msgOutput.Body))
+				i++
+				if i == maxReceived {
+					goto exit
+				}
 			}
-			ch.StartInFlightTimeout(msgOutput, NewFakeConsumer(0), "", opts.MsgTimeout)
-			ch.ConfirmBackendQueue(msgOutput)
-			t.Logf("consume %v", string(msgOutput.Body))
-			i++
 		}
-	}()
+	exit:
+	}(n)
 	for i := 0; i < n; i++ {
 		var msgId MessageID
 		msg := NewMessageWithExt(msgId, []byte("test body tag1"), ext.TAG_EXT_VER, []byte(""))
@@ -2050,11 +2059,6 @@ func TestMessageDispatchWhileReset(t *testing.T) {
 		_, _, _, _, putErr := topic.PutMessage(msg)
 		assert(t, putErr == nil, "fail to put message: %v", putErr)
 		//reset with invalid offset to cause error
-		//ch.readerChanged <- resetChannelData{BackendOffset(12), 1, true}
-		//ch.readerChanged <- resetChannelData{BackendOffset(12), 1, true}
-		//ch.readerChanged <- resetChannelData{BackendOffset(12), 1, true}
-		//ch.readerChanged <- resetChannelData{BackendOffset(12), 1, true}
-		//channel still read this message
 	}
 	wg.Wait()
 	t.Logf("subscribe stops.")
