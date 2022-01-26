@@ -1,16 +1,15 @@
 package clusterinfo
 
 import (
+	"errors"
 	"fmt"
+	"math"
 	"net"
 	"net/url"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
-
-	"errors"
-	"math"
 	"sync/atomic"
 
 	"github.com/blang/semver"
@@ -1250,17 +1249,7 @@ func (c *ClusterInfo) CreateTopicChannel(topicName string, channelName string, l
 		errs = append(errs, pe.Errors()...)
 	}
 
-	if len(partitionProducers) == 0 {
-		qs := fmt.Sprintf("topic=%s&channel=%s", url.QueryEscape(topicName), url.QueryEscape(channelName))
-		err = c.versionPivotProducers(producers, "create_channel", "channel/create", qs)
-		if err != nil {
-			pe, ok := err.(PartialErr)
-			if !ok {
-				return err
-			}
-			errs = append(errs, pe.Errors()...)
-		}
-	} else {
+	if len(partitionProducers) > 0 {
 		for pid, pp := range partitionProducers {
 			qs := fmt.Sprintf("topic=%s&channel=%s&partition=%s", url.QueryEscape(topicName), url.QueryEscape(channelName), pid)
 			err = c.versionPivotProducers(pp, "create_channel", "channel/create", qs)
@@ -1272,6 +1261,19 @@ func (c *ClusterInfo) CreateTopicChannel(topicName string, channelName string, l
 				errs = append(errs, pe.Errors()...)
 			}
 		}
+	} else if len(producers) > 0 {
+		qs := fmt.Sprintf("topic=%s&channel=%s", url.QueryEscape(topicName), url.QueryEscape(channelName))
+		err = c.versionPivotProducers(producers, "create_channel", "channel/create", qs)
+		if err != nil {
+			pe, ok := err.(PartialErr)
+			if !ok {
+				return err
+			}
+			errs = append(errs, pe.Errors()...)
+		}
+	} else {
+		//neither producer nor partitions found
+		return errors.New(fmt.Sprintf("neither topic producers nor partitions found for channel/create: %v/%v", topicName, channelName))
 	}
 	if len(errs) > 0 {
 		return ErrList(errs)
