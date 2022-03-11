@@ -6456,6 +6456,165 @@ func TestTLSSnappy(t *testing.T) {
 	test.Equal(t, data, []byte("OK"))
 }
 
+func TestChannelMsgBacklogRequeueStat(t *testing.T) {
+	opts := nsqdNs.NewOptions()
+	opts.Logger = newTestLogger(t)
+	opts.LogLevel = 3
+	opts.QueueScanRefreshInterval = 100 * time.Millisecond
+	if testing.Verbose() {
+		nsqdNs.SetLogger(opts.Logger)
+	}
+	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
+	defer os.RemoveAll(opts.DataPath)
+	defer nsqdServer.Exit()
+
+	topicName := "test_channel_msg_requeue_backlog" + strconv.Itoa(int(time.Now().Unix()))
+	topic := nsqd.GetTopicIgnPart(topicName)
+
+	conn, err := mustConnectNSQD(tcpAddr)
+	test.Equal(t, err, nil)
+	defer conn.Close()
+
+	identify(t, conn, map[string]interface{}{
+		"msg_timeout": 2000,
+	}, frameTypeResponse)
+	sub(t, conn, topicName, "ch")
+
+	//one for inflight
+	msg := nsqdNs.NewMessage(0, make([]byte, 100))
+	_, _, _, _, err = topic.PutMessage(msg)
+	//one for channel msg chan
+	msg = nsqdNs.NewMessage(0, make([]byte, 100))
+	_, _, _, _, err = topic.PutMessage(msg)
+	//init backlogs 2
+	msg = nsqdNs.NewMessage(0, make([]byte, 100))
+	_, _, _, _, err = topic.PutMessage(msg)
+	msg = nsqdNs.NewMessage(0, make([]byte, 100))
+	_, _, _, _, err = topic.PutMessage(msg)
+
+	_, err = nsq.Ready(2).WriteTo(conn)
+	test.Equal(t, err, nil)
+
+	msgOut1 := recvNextMsgAndCheck(t, conn, len(msg.Body), msg.TraceID, false)
+	msgOut2 := recvNextMsgAndCheck(t, conn, len(msg.Body), msg.TraceID, false)
+
+	_, err = nsq.Ready(0).WriteTo(conn)
+	test.Equal(t, err, nil)
+
+	nsq.Requeue(nsq.MessageID(msgOut1.GetFullMsgID()), 1*time.Second).WriteTo(conn)
+	nsq.Requeue(nsq.MessageID(msgOut2.GetFullMsgID()), 1*time.Second).WriteTo(conn)
+
+	time.Sleep(time.Millisecond)
+	tstats := nsqd.GetTopicStats(true, topicName)
+	chStats := tstats[0].Channels[0]
+	test.Equal(t, int64(3), chStats.Backlogs)
+
+	time.Sleep(2000*time.Millisecond + opts.QueueScanInterval)
+	tstats = nsqd.GetTopicStats(true, topicName)
+	chStats = tstats[0].Channels[0]
+
+	_, err = nsq.Finish(nsq.MessageID(msgOut1.GetFullMsgID())).WriteTo(conn)
+	test.Equal(t, err, nil)
+	_, err = nsq.Finish(nsq.MessageID(msgOut2.GetFullMsgID())).WriteTo(conn)
+	test.Equal(t, err, nil)
+	time.Sleep(time.Millisecond)
+
+	tstats = nsqd.GetTopicStats(true, topicName)
+	chStats = tstats[0].Channels[0]
+	test.Equal(t, int64(1), chStats.Backlogs)
+	time.Sleep(time.Millisecond)
+}
+
+func TestChannelMsgBacklogStat(t *testing.T) {
+	opts := nsqdNs.NewOptions()
+	opts.Logger = newTestLogger(t)
+	opts.LogLevel = 3
+	opts.QueueScanRefreshInterval = 100 * time.Millisecond
+	if testing.Verbose() {
+		nsqdNs.SetLogger(opts.Logger)
+	}
+	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
+	defer os.RemoveAll(opts.DataPath)
+	defer nsqdServer.Exit()
+
+	topicName := "test_channel_msg_backlog" + strconv.Itoa(int(time.Now().Unix()))
+	topic := nsqd.GetTopicIgnPart(topicName)
+
+	conn, err := mustConnectNSQD(tcpAddr)
+	test.Equal(t, err, nil)
+	defer conn.Close()
+
+	identify(t, conn, map[string]interface{}{
+		"msg_timeout": 2000,
+	}, frameTypeResponse)
+	sub(t, conn, topicName, "ch")
+
+	//one for inflight
+	msg := nsqdNs.NewMessage(0, make([]byte, 100))
+	_, _, _, _, err = topic.PutMessage(msg)
+	//one for channel msg chan
+	msg = nsqdNs.NewMessage(0, make([]byte, 100))
+	_, _, _, _, err = topic.PutMessage(msg)
+	//init backlogs 2
+	msg = nsqdNs.NewMessage(0, make([]byte, 100))
+	_, _, _, _, err = topic.PutMessage(msg)
+	msg = nsqdNs.NewMessage(0, make([]byte, 100))
+	_, _, _, _, err = topic.PutMessage(msg)
+
+	_, err = nsq.Ready(1).WriteTo(conn)
+	test.Equal(t, err, nil)
+
+	msgOut := recvNextMsgAndCheck(t, conn, len(msg.Body), msg.TraceID, false)
+	time.Sleep(500 * time.Millisecond)
+	tstats := nsqd.GetTopicStats(true, topicName)
+	chStats := tstats[0].Channels[0]
+	clientStats := tstats[0].Channels[0].Clients[0]
+	test.Equal(t, int64(2), chStats.Backlogs)
+
+	_, err = nsq.Ready(0).WriteTo(conn)
+	test.Equal(t, err, nil)
+
+	time.Sleep(2000*time.Millisecond + opts.QueueScanInterval)
+	tstats = nsqd.GetTopicStats(true, topicName)
+	chStats = tstats[0].Channels[0]
+
+	test.Equal(t, int64(2), chStats.Backlogs)
+
+	_, err = nsq.Ready(1).WriteTo(conn)
+	test.Equal(t, err, nil)
+
+	msgOut = recvNextMsgAndCheck(t, conn, len(msg.Body), msg.TraceID, false)
+
+	tstats = nsqd.GetTopicStats(true, topicName)
+	chStats = tstats[0].Channels[0]
+	clientStats = tstats[0].Channels[0].Clients[0]
+	test.Equal(t, uint64(2), clientStats.MessageCount)
+	//after rdy=1, read another from backend
+	test.Equal(t, int64(1), chStats.Backlogs)
+
+	msgOut = recvNextMsgAndCheck(t, conn, len(msg.Body), msg.TraceID, false)
+	_, err = nsq.Ready(0).WriteTo(conn)
+	test.Equal(t, err, nil)
+
+	_, err = nsq.Finish(nsq.MessageID(msgOut.GetFullMsgID())).WriteTo(conn)
+	test.Equal(t, err, nil)
+	time.Sleep(time.Millisecond)
+
+	tstats = nsqd.GetTopicStats(true, topicName)
+	chStats = tstats[0].Channels[0]
+	clientStats = tstats[0].Channels[0].Clients[0]
+	test.Equal(t, int64(1), chStats.Backlogs)
+	time.Sleep(time.Millisecond)
+
+	_, err = nsq.Ready(1).WriteTo(conn)
+	test.Equal(t, err, nil)
+	msgOut = recvNextMsgAndCheck(t, conn, len(msg.Body), msg.TraceID, false)
+
+	tstats = nsqd.GetTopicStats(true, topicName)
+	chStats = tstats[0].Channels[0]
+	test.Equal(t, int64(0), chStats.Backlogs)
+}
+
 func TestClientMsgTimeoutReqCount(t *testing.T) {
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)

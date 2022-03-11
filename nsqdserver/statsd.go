@@ -68,6 +68,7 @@ func (n *NsqdServer) statsdLoop() {
 			// since the topic may migrate to other nodes, we should always reset to keep only needed labels
 			nsqd.TopicQueueMsgEnd.Reset()
 			nsqd.TopicPubClientCnt.Reset()
+			nsqd.ChannelBacklog.Reset()
 			nsqd.ChannelDepth.Reset()
 			nsqd.ChannelDepthSize.Reset()
 			nsqd.ChannelDepthTs.Reset()
@@ -103,6 +104,11 @@ func (n *NsqdServer) statsdLoop() {
 					if protocol.IsEphemeral(channel.ChannelName) {
 						continue
 					}
+					nsqd.ChannelBacklog.With(prometheus.Labels{
+						"topic":     topic.TopicName,
+						"partition": topic.TopicPartition,
+						"channel":   channel.ChannelName,
+					}).Set(float64(channel.Backlogs))
 					nsqd.ChannelDepth.With(prometheus.Labels{
 						"topic":     topic.TopicName,
 						"partition": topic.TopicPartition,

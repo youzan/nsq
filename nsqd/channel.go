@@ -681,6 +681,21 @@ func (c *Channel) Flush(fsync bool) error {
 	return nil
 }
 
+func (c *Channel) Backlogs() int64 {
+	depth := c.Depth()
+	//short cut for order topic
+	if c.IsOrdered() {
+		return depth
+	}
+
+	delayedCnt := atomic.LoadInt64(&c.deferredCount)
+	backlogsNotRead := c.GetChannelNotReadCnt()
+	if backlogsNotRead < 0 {
+		backlogsNotRead = 0
+	}
+	return delayedCnt + backlogsNotRead
+}
+
 func (c *Channel) Depth() int64 {
 	return c.backend.Depth()
 }
@@ -1623,6 +1638,15 @@ func (c *Channel) GetConfirmed() BackendQueueEnd {
 
 func (c *Channel) GetChannelEnd() BackendQueueEnd {
 	return c.backend.GetQueueReadEnd()
+}
+
+//message count from queue end to queue read end
+func (c *Channel) GetChannelNotReadCnt() int64 {
+	d, ok := c.backend.(*diskQueueReader)
+	if ok {
+		return d.GetQueueReadEnd().TotalMsgCnt() - d.GetQueueCurrentRead().TotalMsgCnt()
+	}
+	return 0
 }
 
 func (c *Channel) GetChannelWaitingConfirmCnt() int64 {
