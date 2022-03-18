@@ -84,6 +84,8 @@ func NewTopicStats(t *Topic, channels []ChannelStats, filterClients bool) TopicS
 
 type ChannelStats struct {
 	ChannelName string `json:"channel_name"`
+	//channel backlogs
+	Backlogs int64 `json:"backlogs"`
 	// message size need to consume
 	Depth          int64  `json:"depth"`
 	DepthSize      int64  `json:"depth_size"`
@@ -122,6 +124,7 @@ func NewChannelStats(c *Channel, clients []ClientStats, clientNum int) ChannelSt
 
 	return ChannelStats{
 		ChannelName:    c.name,
+		Backlogs:       c.Backlogs(),
 		Depth:          c.Depth(),
 		DepthTimestamp: time.Unix(0, c.DepthTimestamp()).String(),
 		DepthTsNano:    c.DepthTimestamp(),

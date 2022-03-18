@@ -43,6 +43,10 @@ var (
 	}, []string{"topic"})
 
 	// metric for channel
+	ChannelBacklog = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "channel_backlog",
+		Help: "channel message backlog not ack",
+	}, []string{"topic", "partition", "channel"})
 	ChannelDepth = promauto.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "channel_depth",
 		Help: "channel depth for message waiting consumed cnt",
