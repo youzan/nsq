@@ -27,6 +27,7 @@ type TopicStats struct {
 	TopicFullName               string           `json:"topic_full_name"`
 	TopicPartition              string           `json:"topic_partition"`
 	Channels                    []ChannelStats   `json:"channels"`
+	ChannelNum                  int64            `json:"channel_num"`
 	Depth                       int64            `json:"depth"`
 	BackendDepth                int64            `json:"backend_depth"`
 	BackendStart                int64            `json:"backend_start"`
@@ -62,6 +63,7 @@ func NewTopicStats(t *Topic, channels []ChannelStats, filterClients bool) TopicS
 		TopicFullName:               t.GetFullName(),
 		TopicPartition:              strconv.Itoa(t.GetTopicPart()),
 		Channels:                    channels,
+		ChannelNum:                  int64(len(channels)),
 		Depth:                       t.TotalDataSize(),
 		BackendDepth:                t.TotalDataSize(),
 		BackendStart:                t.GetQueueReadStart(),
@@ -260,10 +262,10 @@ func (n *NSQD) GetStats(leaderOnly bool, filterClients bool) []TopicStats {
 	}
 	n.RUnlock()
 
-	return n.getTopicStats(realTopics, filterClients)
+	return n.getTopicStats(realTopics, "", filterClients)
 }
 
-func (n *NSQD) getTopicStats(realTopics []*Topic, filterClients bool) []TopicStats {
+func (n *NSQD) getTopicStats(realTopics []*Topic, ch string, filterClients bool) []TopicStats {
 	sort.Sort(TopicsByName{realTopics})
 	topics := make([]TopicStats, 0, len(realTopics))
 	for _, t := range realTopics {
@@ -282,9 +284,11 @@ func (n *NSQD) getTopicStats(realTopics []*Topic, filterClients bool) []TopicSta
 			if filterClients {
 				clients = nil
 			} else {
-				clients = make([]ClientStats, 0, len(c.clients))
-				for _, client := range c.clients {
-					clients = append(clients, client.Stats())
+				if len(ch) == 0 || c.name == ch {
+					clients = make([]ClientStats, 0, len(c.clients))
+					for _, client := range c.clients {
+						clients = append(clients, client.Stats())
+					}
 				}
 			}
 			c.RUnlock()
@@ -295,7 +299,7 @@ func (n *NSQD) getTopicStats(realTopics []*Topic, filterClients bool) []TopicSta
 	return topics
 }
 
-func (n *NSQD) GetTopicStatsWithFilter(leaderOnly bool, topic string, filterClients bool) []TopicStats {
+func (n *NSQD) GetTopicStatsWithFilter(leaderOnly bool, topic string, ch string, filterClients bool) []TopicStats {
 	n.RLock()
 	realTopics := make([]*Topic, 0, len(n.topicMap))
 	for name, topicParts := range n.topicMap {
@@ -310,11 +314,11 @@ func (n *NSQD) GetTopicStatsWithFilter(leaderOnly bool, topic string, filterClie
 		}
 	}
 	n.RUnlock()
-	return n.getTopicStats(realTopics, filterClients)
+	return n.getTopicStats(realTopics, ch, filterClients)
 }
 
 func (n *NSQD) GetTopicStats(leaderOnly bool, topic string) []TopicStats {
-	return n.GetTopicStatsWithFilter(leaderOnly, topic, false)
+	return n.GetTopicStatsWithFilter(leaderOnly, topic, "", false)
 }
 
 type DetailStatsInfo struct {

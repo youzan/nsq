@@ -495,7 +495,7 @@ func (s *httpServer) topicHandler(w http.ResponseWriter, req *http.Request, ps h
 		s.ctx.nsqadmin.logf("WARNING: %s", err)
 		messages = append(messages, pe.Error())
 	}
-	topicStats, _, err := s.ci.GetNSQDStats(producers, topicName, "partition", true)
+	topicStats, _, err := s.ci.GetNSQDStatsWithClients(producers, topicName, "partition", true)
 	if err != nil {
 		pe, ok := err.(clusterinfo.PartialErr)
 		if !ok {
@@ -587,7 +587,7 @@ func (s *httpServer) channelHandler(w http.ResponseWriter, req *http.Request, ps
 		s.ctx.nsqadmin.logf("WARNING: %s", err)
 		messages = append(messages, pe.Error())
 	}
-	_, allChannelStats, err := s.ci.GetNSQDStats(producers, topicName, "partition", true)
+	_, allChannelStats, err := s.ci.GetNSQDStatsWithClients(producers, topicName, "partition", true)
 	if err != nil {
 		pe, ok := err.(clusterinfo.PartialErr)
 		if !ok {
@@ -662,7 +662,11 @@ func (s *httpServer) nodeHandler(w http.ResponseWriter, req *http.Request, ps ht
 	var totalMessages int64
 	for _, ts := range topicStats {
 		for _, cs := range ts.Channels {
-			totalClients += int64(len(cs.Clients))
+			if len(cs.Clients) != 0 {
+				totalClients += int64(len(cs.Clients))
+			} else {
+				totalClients += int64(cs.ClientNum)
+			}
 		}
 		totalMessages += ts.MessageCount
 	}

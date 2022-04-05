@@ -577,7 +577,7 @@ func (self *NsqdCoordRpcServer) GetTopicStats(topic string) *NodeTopicStats {
 		// all topic status
 		topicStats = self.nsqdCoord.localNsqd.GetStats(false, true)
 	} else {
-		topicStats = self.nsqdCoord.localNsqd.GetTopicStatsWithFilter(false, topic, true)
+		topicStats = self.nsqdCoord.localNsqd.GetTopicStatsWithFilter(false, topic, "", true)
 	}
 	stat := NewNodeTopicStats(self.nsqdCoord.myNode.GetID(), len(topicStats)*2, runtime.NumCPU())
 	for _, ts := range topicStats {
