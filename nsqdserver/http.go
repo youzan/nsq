@@ -1062,7 +1062,7 @@ func (s *httpServer) doMessageHistoryStats(w http.ResponseWriter, req *http.Requ
 	}
 
 	if topicName == "" && topicPartStr == "" {
-		topicStats := s.ctx.getStats(true, "", true)
+		topicStats := s.ctx.getStats(true, "", "", true)
 		var topicHourlyPubStatsList []*clusterinfo.NodeHourlyPubsize
 		for _, topicStat := range topicStats {
 			partitionNum, err := strconv.Atoi(topicStat.TopicPartition)
@@ -1361,8 +1361,12 @@ func (s *httpServer) doStats(w http.ResponseWriter, req *http.Request, ps httpro
 
 	jsonFormat := formatString == "json"
 	filterClients := needClients != "true"
+	if topicName != "" && needClients == "" {
+		// compatible with old, we always return clients if topic is specified and needClients is not specified
+		filterClients = false
+	}
 
-	stats := s.ctx.getStats(leaderOnly, topicName, filterClients)
+	stats := s.ctx.getStats(leaderOnly, topicName, channelName, filterClients)
 	health := s.ctx.getHealth()
 	startTime := s.ctx.getStartTime()
 	uptime := time.Since(startTime)

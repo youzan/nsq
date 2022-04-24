@@ -140,11 +140,13 @@ type TopicStats struct {
 	MessageCount           int64            `json:"message_count"`
 	NodeStats              []*TopicStats    `json:"nodes"`
 	Channels               []*ChannelStats  `json:"channels"`
+	ChannelNum             int64            `json:"channel_num"`
 	TotalChannelDepth      int64            `json:"total_channel_depth"`
 	Paused                 bool             `json:"paused"`
 	HourlyPubSize          int64            `json:"hourly_pubsize"`
 	PartitionHourlyPubSize []int64          `json:"partition_hourly_pubsize"`
 	Clients                []ClientPubStats `json:"client_pub_stats"`
+	ClientNum              int64            `json:"client_num"`
 	MessageSizeStats       [16]int64        `json:"msg_size_stats"`
 	MessageLatencyStats    [16]int64        `json:"msg_write_latency_stats"`
 
@@ -224,6 +226,7 @@ type ChannelStats struct {
 	Selected                bool                                    `json:"-"`
 	NodeStats               []*ChannelStats                         `json:"nodes"`
 	Clients                 []*ClientStats                          `json:"clients"`
+	ClientNum               int64                                   `json:"client_num"`
 	Paused                  bool                                    `json:"paused"`
 	Skipped                 bool                                    `json:"skipped"`
 	ZanTestSkipped          bool                                    `json:"zan_test_skipped"`
