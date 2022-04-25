@@ -1121,10 +1121,8 @@ func (c *Channel) internalFinishMessage(clientID int64, clientAddr string,
 	if c.e2eProcessingLatencyStream != nil {
 		c.e2eProcessingLatencyStream.Insert(msg.Timestamp)
 	}
-	expectTimeout := msg.pri - msg.deliveryTS.UnixNano()
 	if ackCost >= time.Second.Nanoseconds() &&
-		(c.isTracedOrDebugTraceLog(msg) || c.IsSlowTraced() ||
-			ackCost >= expectTimeout/10) {
+		(c.isTracedOrDebugTraceLog(msg) || c.IsSlowTraced()) {
 		if clientAddr != "" {
 			nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "SLOW_ACK", msg.TraceID, msg, clientAddr, ackCost)
 		}
@@ -2567,7 +2565,7 @@ func (c *Channel) doPeekInFlightQueue(tnow int64) (bool, bool) {
 			if msgCopy.IsDeferred() {
 				c.chLog.LogDebugf("msg %v defer timeout, expect at %v ",
 					msgCopy.ID, msgCopy.pri)
-				if c.isTracedOrDebugTraceLog(&msgCopy) || msgCopy.Attempts() > 1 {
+				if c.isTracedOrDebugTraceLog(&msgCopy) || msgCopy.Attempts() > 5 {
 					nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "DELAY_TIMEOUT", msgCopy.TraceID, &msgCopy, clientAddr, cost)
 				}
 			} else {
