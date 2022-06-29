@@ -1,13 +1,10 @@
 package nsqd
 
 import (
-	"encoding/binary"
-	"errors"
 	"fmt"
 	"io"
 	"os"
 	"sync"
-	"sync/atomic"
 
 	"github.com/youzan/nsq/internal/levellogger"
 )
@@ -174,9 +171,7 @@ retry:
 			return err
 		}
 	}
-	d.readPos.EndOffset = newPos.EndOffset
-	d.readPos.virtualEnd = newPos.virtualEnd
-	d.readPos.totalMsgCnt = newPos.totalMsgCnt
+	d.readPos = newPos
 	return nil
 }
 
@@ -289,7 +284,7 @@ func (d *DiskQueueSnapshot) ReadRaw(size int32) ([]byte, error) {
 		if err != nil {
 			isEnd := err == io.EOF || err == io.ErrUnexpectedEOF
 			if isEnd && d.readPos.EndOffset.FileNum < d.endPos.EndOffset.FileNum {
-				d.handleReachEnd()
+				d.readFile, d.readPos = handleReachEnd(d.readFile, nil, d.readPos)
 				nsqLog.Logf("DISKQUEUE snapshot(%s): readRaw() read end, try next: %v",
 					d.readFrom, d.readPos)
 				goto CheckFileOpen
@@ -318,86 +313,7 @@ func (d *DiskQueueSnapshot) ReadOne() ReadResult {
 	defer d.Unlock()
 
 	var result ReadResult
-	var msgSize int32
-	result.Offset = BackendOffset(0)
-	if d.readPos == d.endPos {
-		result.Err = io.EOF
-		return result
-	}
-
-CheckFileOpen:
-
-	result.Offset = d.readPos.Offset()
-	if d.readFile == nil {
-		curFileName := d.fileName(d.readPos.EndOffset.FileNum)
-		d.readFile, result.Err = os.OpenFile(curFileName, os.O_RDONLY, 0600)
-		if result.Err != nil {
-			if d.readPos.Offset() == d.endPos.Offset() && d.readPos.EndOffset == d.endPos.EndOffset {
-				if os.IsNotExist(result.Err) {
-					result.Err = io.EOF
-				}
-			}
-			return result
-		}
-
-		nsqLog.Debugf("DISKQUEUE(%s): readOne() opened %s", d.readFrom, curFileName)
-
-		if d.readPos.EndOffset.Pos > 0 {
-			_, result.Err = d.readFile.Seek(d.readPos.EndOffset.Pos, 0)
-			if result.Err != nil {
-				d.readFile.Close()
-				d.readFile = nil
-				return result
-			}
-		}
-	}
-
-	if d.readPos.EndOffset.FileNum > d.endPos.EndOffset.FileNum {
-		result.Err = errors.New("exceed end of queue")
-		return result
-	}
-	result.Err = binary.Read(d.readFile, binary.BigEndian, &msgSize)
-	if result.Err != nil {
-		if result.Err == io.EOF && d.readPos.EndOffset.FileNum < d.endPos.EndOffset.FileNum {
-			d.handleReachEnd()
-			goto CheckFileOpen
-		}
-		nsqLog.LogWarningf("DISKQUEUE(%s): readOne() read failed %v  at %v, end: %v",
-			d.readFrom, result.Err, d.readPos, d.endPos)
-
-		d.readFile.Close()
-		d.readFile = nil
-		return result
-	}
-
-	if msgSize <= 0 || msgSize > MAX_POSSIBLE_MSG_SIZE {
-		// this file is corrupt and we have no reasonable guarantee on
-		// where a new message should begin
-		d.readFile.Close()
-		d.readFile = nil
-		result.Err = fmt.Errorf("invalid message read size (%d) at offset: %v", msgSize, d.readPos)
-		return result
-	}
-
-	result.Data = make([]byte, msgSize)
-	_, result.Err = io.ReadFull(d.readFile, result.Data)
-	if result.Err != nil {
-		d.readFile.Close()
-		d.readFile = nil
-		return result
-	}
-
-	result.Offset = d.readPos.Offset()
-
-	totalBytes := int64(4 + msgSize)
-	result.MovedSize = BackendOffset(totalBytes)
-
-	oldPos := d.readPos
-	d.readPos.EndOffset.Pos = d.readPos.EndOffset.Pos + totalBytes
-	result.CurCnt = atomic.AddInt64(&d.readPos.totalMsgCnt, 1)
-	d.readPos.virtualEnd += BackendOffset(totalBytes)
-	nsqLog.LogDebugf("=== read move forward: %v to %v", oldPos,
-		d.readPos)
+	d.readPos, d.readFile, result = diskReadOne(d.readFrom, nil, d.fileName, d.readPos, d.endPos, d.readFile)
 
 	return result
 }
@@ -432,15 +348,6 @@ func (d *DiskQueueSnapshot) CheckDiskQueueReadToEndOK(offset int64, seekCnt int6
 		}
 	}
 	return lastOffset, lastCnt, nil
-}
-
-func (d *DiskQueueSnapshot) handleReachEnd() {
-	if d.readFile != nil {
-		d.readFile.Close()
-		d.readFile = nil
-	}
-	d.readPos.EndOffset.FileNum++
-	d.readPos.EndOffset.Pos = 0
 }
 
 func (d *DiskQueueSnapshot) fileName(fileNum int64) string {

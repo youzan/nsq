@@ -1572,6 +1572,7 @@ func (q *DelayQueue) compactStore(force bool) error {
 	if !force {
 		fi, err := os.Stat(origPath)
 		if err != nil {
+			nsqLog.Infof("db %v compact stat err: %s", origPath, err.Error())
 			return err
 		}
 		if fi.Size() < int64(CompactThreshold) {
@@ -1591,6 +1592,7 @@ func (q *DelayQueue) compactStore(force bool) error {
 		})
 
 		if err != nil {
+			nsqLog.Infof("db %v compact get counter err: %s", origPath, err.Error())
 			return err
 		}
 		if cnt > CompactCntThreshold {

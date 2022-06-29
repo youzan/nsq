@@ -2951,6 +2951,7 @@ func TestTcpPub(t *testing.T) {
 	connList := make([]net.Conn, 0)
 	for i := 0; i < 200; i++ {
 		conn, err := mustConnectNSQD(tcpAddr)
+		t.Logf("conn %v : %v", i, err)
 		test.Equal(t, err, nil)
 		defer conn.Close()
 		identify(t, conn, nil, frameTypeResponse)
@@ -3479,6 +3480,7 @@ func TestTcpMpubExt(t *testing.T) {
 	connList := make([]net.Conn, 0)
 	for i := 0; i < 200; i++ {
 		conn, err := mustConnectNSQD(tcpAddr)
+		t.Logf("conn %v: %v", i, err)
 		test.Equal(t, err, nil)
 		defer conn.Close()
 		identify(t, conn, nil, frameTypeResponse)
