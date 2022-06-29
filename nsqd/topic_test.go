@@ -736,9 +736,11 @@ func TestTopicWriteRollback(t *testing.T) {
 
 	// rollback single
 	nend := topic.backend.GetQueueWriteEnd()
-	_, _, err := topic.kvTopic.GetMsgByCnt(nend.TotalMsgCnt() - 1)
-	test.Equal(t, nil, err)
-	err = topic.RollbackNoLock(qend-BackendOffset(singleSize), 1)
+	if topic.kvTopic != nil {
+		_, _, err := topic.kvTopic.GetMsgByCnt(nend.TotalMsgCnt() - 1)
+		test.Equal(t, nil, err)
+	}
+	err := topic.RollbackNoLock(qend-BackendOffset(singleSize), 1)
 	test.Nil(t, err)
 	if topic.kvTopic != nil {
 		_, _, err = topic.kvTopic.GetMsgByCnt(nend.TotalMsgCnt() - 1)
@@ -754,10 +756,10 @@ func TestTopicWriteRollback(t *testing.T) {
 		test.Equal(t, nend.TotalMsgCnt(), topic.kvTopic.lastCnt)
 		test.Equal(t, int64(nend.Offset()), loffset)
 		test.Equal(t, nend.TotalMsgCnt(), lcnt)
+		// rollback batch
+		_, _, err = topic.kvTopic.GetMsgByCnt(nend.TotalMsgCnt() - 1)
+		test.Nil(t, err)
 	}
-	// rollback batch
-	_, _, err = topic.kvTopic.GetMsgByCnt(nend.TotalMsgCnt() - 1)
-	test.Nil(t, err)
 	err = topic.RollbackNoLock(qend-BackendOffset(singleSize)*10, 9)
 	test.Nil(t, err)
 	if topic.kvTopic != nil {
@@ -940,6 +942,9 @@ func TestTopicFixKV(t *testing.T) {
 	}
 	topic.ForceFlush()
 
+	if topic.kvTopic == nil {
+		return
+	}
 	// rollback single
 	nend := topic.backend.GetQueueWriteEnd()
 	_, _, err := topic.kvTopic.GetMsgByCnt(nend.TotalMsgCnt() - 1)
@@ -1132,6 +1137,9 @@ func TestTopicWriteConcurrentMulti(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			start := time.Now()
+			if topic.kvTopic == nil {
+				return
+			}
 			for time.Since(start) < time.Second*25 {
 				topic.kvTopic.kvEng.CompactAllRange()
 				time.Sleep(time.Second * 5)
@@ -1152,16 +1160,20 @@ func TestTopicWriteConcurrentMulti(t *testing.T) {
 					return
 				}
 				msg.Timestamp = time.Now().UnixNano()
-				topic.kvTopic.GetMsgByCnt(int64(i))
+				if topic.kvTopic != nil {
+					topic.kvTopic.GetMsgByCnt(int64(i))
+				}
 				if i%100 == 0 {
 					topic.ForceFlush()
-					topic.Lock()
-					topic.kvTopic.ResetBackendEnd(dend.Offset()/2, dend.TotalMsgCnt()/2)
-					_, err := topic.tryFixKVTopic()
-					topic.Unlock()
-					if err != nil {
-						t.Errorf("failed to fix kv topic: %s", err)
-						return
+					if topic.kvTopic != nil {
+						topic.Lock()
+						topic.kvTopic.ResetBackendEnd(dend.Offset()/2, dend.TotalMsgCnt()/2)
+						_, err := topic.tryFixKVTopic()
+						topic.Unlock()
+						if err != nil {
+							t.Errorf("failed to fix kv topic: %s", err)
+							return
+						}
 					}
 				}
 			}
@@ -1182,16 +1194,20 @@ func TestTopicWriteConcurrentMulti(t *testing.T) {
 					return
 				}
 				msg.Timestamp = time.Now().UnixNano()
-				topic2.kvTopic.GetMsgByCnt(int64(i))
+				if topic2.kvTopic != nil {
+					topic2.kvTopic.GetMsgByCnt(int64(i))
+				}
 				if i%100 == 0 {
 					topic2.ForceFlush()
-					topic2.Lock()
-					topic2.kvTopic.ResetBackendEnd(dend.Offset()/2, dend.TotalMsgCnt()/2)
-					_, err := topic2.tryFixKVTopic()
-					topic2.Unlock()
-					if err != nil {
-						t.Errorf("failed to fix kv topic: %s", err)
-						return
+					if topic2.kvTopic != nil {
+						topic2.Lock()
+						topic2.kvTopic.ResetBackendEnd(dend.Offset()/2, dend.TotalMsgCnt()/2)
+						_, err := topic2.tryFixKVTopic()
+						topic2.Unlock()
+						if err != nil {
+							t.Errorf("failed to fix kv topic: %s", err)
+							return
+						}
 					}
 				}
 			}

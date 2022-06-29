@@ -906,6 +906,7 @@ func TestChannelEmptyWhileReqDelayedMessageWaitingInReq(t *testing.T) {
 	channel.SetConsumeOffset(BackendOffset(queueOffset), cnt, true)
 	time.Sleep(time.Millisecond * 10)
 
+	t.Logf("current state %v, %v", atomic.LoadInt64(&channel.deferredFromDelay), channel.GetChannelDebugStats())
 	s = time.Now()
 	// continue consume
 	done := false
@@ -1208,11 +1209,19 @@ func TestChannelResetConfirmedWhileDelayedQueueMsgInflight(t *testing.T) {
 	var resetFirstMsgID MessageID
 	done := false
 	s = time.Now()
+	firstPoped := true
 	for !done {
 		ticker := time.NewTimer(time.Second)
 		select {
 		case outputMsg, _ := <-channel.clientMsgChan:
 			t.Logf("consume %v", outputMsg)
+			// ignore first message, if it is the message before reset
+			if firstPoped && outputMsg.Offset != resetOffset.Offset() {
+				_, err = channel.StartInFlightTimeout(outputMsg, NewFakeConsumer(1), "", opts.MsgTimeout)
+				channel.FinishMessageForce(1, "", outputMsg.ID, true)
+				continue
+			}
+			firstPoped = false
 			// the first non-delayed queue message should be the reset message
 			if resetFirstMsgID <= 0 && outputMsg.DelayedType != ChannelDelayed {
 				_, err = channel.StartInFlightTimeout(outputMsg, NewFakeConsumer(1), "", time.Second)
@@ -1249,7 +1258,7 @@ func TestChannelResetConfirmedWhileDelayedQueueMsgInflight(t *testing.T) {
 				_, err = channel.StartInFlightTimeout(outputMsg, NewFakeConsumer(1), "", opts.MsgTimeout)
 				ast.Nil(t, err)
 			}
-			channel.FinishMessageForce(0, "", outputMsg.ID, true)
+			channel.FinishMessageForce(1, "", outputMsg.ID, true)
 		case <-ticker.C:
 			if time.Since(s) > time.Minute {
 				t.Errorf("timeout waiting")
@@ -1412,10 +1421,188 @@ func TestChannelSkip(t *testing.T) {
 	t.Logf("backendOffsetMid: %d", backendOffsetMid)
 	channel.SetConsumeOffset(backendOffsetMid, 10, true)
 	time.Sleep(time.Second)
+	// should first read the old read pos message
 	for i := 0; i < 10; i++ {
 		outputMsg := <-channel.clientMsgChan
+		if i == 0 && outputMsg.Offset != backendOffsetMid {
+			//this is message before reset, we can ignore and try next
+			equal(t, string(outputMsg.Body[:]), strconv.Itoa(0))
+			outputMsg = <-channel.clientMsgChan
+		}
 		equal(t, string(outputMsg.Body[:]), strconv.Itoa(i+10))
 	}
+}
+
+func checkChannelCleanStats(t *testing.T, channel *Channel, expectedDepth int64) {
+	chStats := NewChannelStats(channel, nil, 0)
+	equal(t, chStats.InFlightCount, int(0))
+	equal(t, chStats.DeferredCount, int(0))
+	equal(t, chStats.Depth, expectedDepth)
+	equal(t, chStats.DeferredFromDelayCount, int(0))
+}
+
+func TestChannelResetMaybeReadOneOldMsg(t *testing.T) {
+	opts := NewOptions()
+	opts.SyncEvery = 1
+	opts.Logger = newTestLogger(t)
+	_, _, nsqd := mustStartNSQD(opts)
+	defer os.RemoveAll(opts.DataPath)
+	defer nsqd.Exit()
+
+	topicName := "test_channel_reset_read_old" + strconv.Itoa(int(time.Now().Unix()))
+	topic := nsqd.GetTopicIgnPart(topicName)
+	channel := topic.GetChannel("channel")
+
+	msgs := make([]*Message, 0, 10)
+	for i := 0; i < 10; i++ {
+		var msgId MessageID
+		msgBytes := []byte(strconv.Itoa(i))
+		msg := NewMessage(msgId, msgBytes)
+		msgs = append(msgs, msg)
+	}
+	topic.PutMessages(msgs)
+
+	var msgId MessageID
+	msgBytes := []byte(strconv.Itoa(10))
+	msg := NewMessage(msgId, msgBytes)
+	_, backendOffsetMid, _, _, _ := topic.PutMessage(msg)
+	topic.ForceFlush()
+	equal(t, channel.Depth(), int64(11))
+
+	msgs = make([]*Message, 0, 9)
+	//put another 10 messages
+	for i := 0; i < 9; i++ {
+		var msgId MessageID
+		msgBytes := []byte(strconv.Itoa(i + 11))
+		msg := NewMessage(msgId, msgBytes)
+		msgs = append(msgs, msg)
+	}
+	topic.PutMessages(msgs)
+	topic.flushBuffer(true)
+	time.Sleep(time.Millisecond)
+	equal(t, channel.Depth(), int64(20))
+
+	//skip forward to message 10
+	t.Logf("backendOffsetMid: %d", backendOffsetMid)
+	channel.SetConsumeOffset(backendOffsetMid, 10, true)
+	time.Sleep(time.Second)
+	checkChannelCleanStats(t, channel, 10)
+	for i := 0; i < 10; i++ {
+		outputMsg := <-channel.clientMsgChan
+		if i == 0 && outputMsg.Offset != backendOffsetMid {
+			// first read the old read pos message
+			equal(t, string(outputMsg.Body[:]), strconv.Itoa(0))
+			channel.StartInFlightTimeout(outputMsg, NewFakeConsumer(0), "", time.Second)
+			channel.FinishMessage(0, "", outputMsg.ID)
+			outputMsg = <-channel.clientMsgChan
+		}
+		equal(t, string(outputMsg.Body[:]), strconv.Itoa(i+10))
+		channel.StartInFlightTimeout(outputMsg, NewFakeConsumer(0), "", time.Second)
+		channel.FinishMessage(0, "", outputMsg.ID)
+	}
+	checkChannelCleanStats(t, channel, 0)
+}
+
+func TestChannelResetWhileOneSingleMemDelayedMsg(t *testing.T) {
+	opts := NewOptions()
+	opts.SyncEvery = 1
+	opts.Logger = newTestLogger(t)
+	_, _, nsqd := mustStartNSQD(opts)
+	defer os.RemoveAll(opts.DataPath)
+	defer nsqd.Exit()
+
+	topicName := "test_channel_reset_delayed" + strconv.Itoa(int(time.Now().Unix()))
+	topic := nsqd.GetTopicIgnPart(topicName)
+	channel := topic.GetChannel("channel")
+
+	channel.AddClient(1, NewFakeConsumer(1))
+
+	var msgId MessageID
+	msgBytes := []byte(strconv.Itoa(10))
+	msg := NewMessage(msgId, msgBytes)
+	_, backendOffsetMid, _, _, _ := topic.PutMessage(msg)
+	topic.ForceFlush()
+	topic.flushBuffer(true)
+	time.Sleep(time.Millisecond)
+	equal(t, channel.Depth(), int64(1))
+	// make sure we have one mem delayed msg
+	outputMsg := <-channel.clientMsgChan
+	channel.StartInFlightTimeout(outputMsg, NewFakeConsumer(0), "", time.Second)
+	channel.RequeueMessage(0, "", outputMsg.ID, time.Second, true)
+	equal(t, atomic.LoadInt64(&channel.deferredCount), int64(1))
+	// wait until timeout
+	time.Sleep(time.Second * 2)
+	checkChannelCleanStats(t, channel, 1)
+	//skip forward
+	t.Logf("backendOffsetMid: %d", backendOffsetMid)
+	channel.SetConsumeOffset(channel.GetChannelEnd().Offset(), 1, true)
+	time.Sleep(time.Second)
+	outputMsg = <-channel.clientMsgChan
+	equal(t, string(outputMsg.Body[:]), strconv.Itoa(10))
+	channel.StartInFlightTimeout(outputMsg, NewFakeConsumer(0), "", time.Second)
+	channel.FinishMessage(0, "", outputMsg.ID)
+
+	checkChannelCleanStats(t, channel, 0)
+}
+
+func TestChannelResetWhileOneSingleDiskDelayedMsg(t *testing.T) {
+	opts := NewOptions()
+	opts.SyncEvery = 1
+	opts.Logger = newTestLogger(t)
+	_, _, nsqd := mustStartNSQD(opts)
+	defer os.RemoveAll(opts.DataPath)
+	defer nsqd.Exit()
+
+	topicName := "test_channel_reset_delayed" + strconv.Itoa(int(time.Now().Unix()))
+	topic := nsqd.GetTopicIgnPart(topicName)
+	channel := topic.GetChannel("channel")
+	channel.AddClient(1, NewFakeConsumer(1))
+
+	var msgId MessageID
+	msgBytes := []byte(strconv.Itoa(10))
+	msg := NewMessage(msgId, msgBytes)
+	_, backendOffsetMid, _, _, _ := topic.PutMessage(msg)
+	topic.ForceFlush()
+	topic.flushBuffer(true)
+	time.Sleep(time.Millisecond)
+	equal(t, channel.Depth(), int64(1))
+	// make sure we have one disk delayed msg
+	outputMsg := <-channel.clientMsgChan
+	channel.StartInFlightTimeout(outputMsg, NewFakeConsumer(0), "", time.Second)
+
+	newMsg := outputMsg.GetCopy()
+	newMsg.ID = 0
+	newMsg.DelayedType = ChannelDelayed
+	newTimeout := time.Now().Add(time.Second)
+	newMsg.DelayedTs = newTimeout.UnixNano()
+
+	newMsg.DelayedOrigID = outputMsg.ID
+	newMsg.DelayedChannel = channel.GetName()
+
+	topic.Lock()
+	dq, _ := topic.GetOrCreateDelayedQueueNoLock(nil)
+	dq.PutDelayMessage(newMsg)
+	topic.Unlock()
+
+	channel.FinishMessage(0, "", outputMsg.ID)
+	checkChannelCleanStats(t, channel, 0)
+
+	// wait until timeout
+	time.Sleep(time.Second * 2)
+	//skip forward
+	t.Logf("backendOffsetMid: %d", backendOffsetMid)
+	channel.SetConsumeOffset(channel.GetChannelEnd().Offset(), 1, true)
+	time.Sleep(time.Second)
+	chStats := NewChannelStats(channel, nil, 0)
+	equal(t, chStats.DeferredFromDelayCount, int(1))
+
+	outputMsg = <-channel.clientMsgChan
+	equal(t, string(outputMsg.Body[:]), strconv.Itoa(10))
+
+	channel.StartInFlightTimeout(outputMsg, NewFakeConsumer(0), "", time.Second)
+	channel.FinishMessage(0, "", outputMsg.ID)
+
+	checkChannelCleanStats(t, channel, 0)
 }
 
 func TestChannelSkipZanTestForOrdered(t *testing.T) {
@@ -1555,6 +1742,11 @@ func TestChannelInitWithOldStart(t *testing.T) {
 	channel.SetConsumeOffset(backendOffsetMid, 10, true)
 	time.Sleep(time.Second)
 	outputMsg := <-channel.clientMsgChan
+	if (outputMsg.Offset) != backendOffsetMid {
+		//this is message before reset
+		equal(t, string(outputMsg.Body[:]), strconv.Itoa(0))
+		outputMsg = <-channel.clientMsgChan
+	}
 	equal(t, string(outputMsg.Body[:]), strconv.Itoa(10))
 	topic.CloseExistingChannel("channel", false)
 	time.Sleep(time.Second)
@@ -1637,7 +1829,13 @@ func TestChannelResetWithNewStartOverConfirmed(t *testing.T) {
 	equal(t, channel.Depth(), int64(11))
 	channel.SetConsumeOffset(backendOffsetMid, 10, true)
 	time.Sleep(time.Second)
+
 	outputMsg := <-channel.clientMsgChan
+	if (outputMsg.Offset) != backendOffsetMid {
+		//this is message before reset
+		equal(t, string(outputMsg.Body[:]), strconv.Itoa(0))
+		outputMsg = <-channel.clientMsgChan
+	}
 	equal(t, string(outputMsg.Body[:]), strconv.Itoa(10))
 	topic.CloseExistingChannel("channel", false)
 	time.Sleep(time.Second)
@@ -1721,6 +1919,11 @@ func TestChannelResetReadEnd(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		outputMsg := <-channel.clientMsgChan
 		t.Logf("Msg: %s", outputMsg.Body)
+		if (outputMsg.Offset) != backendOffsetMid && i == 0 {
+			//this is message before reset
+			equal(t, string(outputMsg.Body[:]), strconv.Itoa(0))
+			outputMsg = <-channel.clientMsgChan
+		}
 		equal(t, string(outputMsg.Body[:]), strconv.Itoa(i+10))
 	}
 	equal(t, channel.Depth(), int64(10))

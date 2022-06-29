@@ -1172,6 +1172,10 @@ func TestDelayQueueCompactStoreCrash(t *testing.T) {
 		time.Sleep(time.Second * 2)
 		for i := 0; i < 10; i++ {
 			err := dq.compactStore(true)
+			if err != nil {
+				test.Equal(t, true, err.Error() == "database not open")
+				continue
+			}
 			test.Nil(t, err)
 		}
 	}()

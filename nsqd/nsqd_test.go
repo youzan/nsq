@@ -85,6 +85,7 @@ func mustStartNSQD(opts *Options) (*net.TCPAddr, *net.TCPAddr, *NSQD) {
 	opts.HTTPAddress = "127.0.0.1:0"
 	opts.HTTPSAddress = "127.0.0.1:0"
 	opts.KVEnabled = true
+	opts.KVEnabled = false
 	if opts.DataPath == "" {
 		tmpDir, err := ioutil.TempDir("", fmt.Sprintf("nsq-test-%d", time.Now().UnixNano()))
 		if err != nil {
