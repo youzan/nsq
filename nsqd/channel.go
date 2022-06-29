@@ -911,6 +911,8 @@ func (c *Channel) ConfirmMsgWithoutGoInflight(msg *Message) (BackendOffset, int6
 	return offset, cnt, changed
 }
 
+// must be called to clean the state if this msg will be ignored after poped from requeue
+// must not called if the msg will be delivery to inflight or will be confirmed later
 func (c *Channel) cleanWaitingRequeueChan(msg *Message) {
 	c.inFlightMutex.Lock()
 	c.cleanWaitingRequeueChanNoLock(msg)
@@ -2353,7 +2355,6 @@ LOOP:
 		case c.clientMsgChan <- msg:
 		case resetOffset := <-c.readerChanged:
 			c.chLog.Infof("got reader reset notify while dispatch message:%v ", resetOffset)
-			c.cleanWaitingRequeueChan(msg)
 			c.resetChannelReader(resetOffset, &lastDataNeedRead, origReadChan, &lastMsg, &needReadBackend, &readBackendWait)
 			//retry delivering msg to client, regardless reset result
 			goto msgDefaultLoop
