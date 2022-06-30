@@ -1003,7 +1003,7 @@ func (c *Channel) ConfirmBackendQueue(msg *Message) (BackendOffset, int64, bool)
 		if err != nil {
 			if err != ErrExiting {
 				c.chLog.LogWarningf("channel confirm read failed: %v, msg: %v",
-					err, msg)
+					err, msg.ID)
 				// rollback removed confirmed messages
 				//for _, m := range c.tmpRemovedConfirmed {
 				//	c.confirmedMsgs[int64(msg.offset)] = m

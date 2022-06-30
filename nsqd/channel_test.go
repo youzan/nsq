@@ -1764,7 +1764,7 @@ func TestChannelSkipMsgRetryTooLongAgo(t *testing.T) {
 	opts.SyncEvery = 1
 	opts.Logger = newTestLogger(t)
 	opts.MsgTimeout = time.Second / 2
-	opts.AckOldThanTime = time.Second * 5
+	opts.AckOldThanTime = time.Second * 10
 	opts.AckRetryCnt = 1
 	if testing.Verbose() {
 		opts.LogLevel = 4
@@ -1789,7 +1789,7 @@ func TestChannelSkipMsgRetryTooLongAgo(t *testing.T) {
 	topic.flushBuffer(true)
 	time.Sleep(time.Millisecond)
 	// consume and wait timeout
-	toC := time.After(time.Second * 10)
+	toC := time.After(opts.AckOldThanTime * 2)
 	cnt := 0
 	for {
 		var outputMsg *Message
