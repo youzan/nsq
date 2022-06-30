@@ -173,6 +173,8 @@ type Channel struct {
 	limiter               *rate.Limiter
 	chLog                 *levellogger.LevelLogger
 	lastQueueReadTs       int64
+	ackOldThanTime        time.Duration
+	ackRetryCnt           int
 }
 
 // NewChannel creates a new instance of the Channel type and returns a pointer
@@ -206,6 +208,12 @@ func NewChannel(topicName string, part int, topicOrdered bool, channelName strin
 		// we use KB as tokens, and ignore any less than 1KB messages
 		// so the limiter only limit the large messages.
 		limiter: rate.NewLimiter(rate.Limit(opt.ChannelRateLimitKB), int(opt.ChannelRateLimitKB)*4),
+	}
+	if opt.AckOldThanTime > 0 {
+		c.ackOldThanTime = opt.AckOldThanTime
+	}
+	if opt.AckRetryCnt > 0 {
+		c.ackRetryCnt = opt.AckRetryCnt
 	}
 
 	c.chLog = nsqLog.WrappedWithPrefix("["+c.GetTopicName()+"("+c.GetName()+")]", 0)
@@ -995,7 +1003,7 @@ func (c *Channel) ConfirmBackendQueue(msg *Message) (BackendOffset, int64, bool)
 		if err != nil {
 			if err != ErrExiting {
 				c.chLog.LogWarningf("channel confirm read failed: %v, msg: %v",
-					err, msg)
+					err, msg.ID)
 				// rollback removed confirmed messages
 				//for _, m := range c.tmpRemovedConfirmed {
 				//	c.confirmedMsgs[int64(msg.offset)] = m
@@ -2271,7 +2279,7 @@ LOOP:
 			isZanTestSkip = c.shouldSkipZanTest(msg)
 			needSkip = isZanTestSkip
 		}
-		if needSkip {
+		if needSkip || c.shouldAckForIgnore(msg) {
 			c.ConfirmMsgWithoutGoInflight(msg)
 			continue LOOP
 		}
@@ -2370,6 +2378,22 @@ exit:
 	c.chLog.Logf("CHANNEL closing ... messagePump")
 	close(c.clientMsgChan)
 	close(c.exitSyncChan)
+}
+
+func (c *Channel) shouldAckForIgnore(msg *Message) bool {
+	if c.ackRetryCnt == 0 || c.ackOldThanTime == 0 {
+		return false
+	}
+	if (msg.Attempts() > uint16(c.ackRetryCnt)) && (msg.Timestamp < time.Now().UnixNano()-c.ackOldThanTime.Nanoseconds()) {
+		nsqMsgTracer.TraceSub(c.GetTopicName(), c.GetName(), "ACK_AUTO_RETRY_TOO_LONG", msg.TraceID, msg, "", 0)
+		ChannelAutoAckCnt.With(prometheus.Labels{
+			"topic":   c.GetTopicName(),
+			"channel": c.GetName(),
+			"reason":  "ACK_AUTO_RETRY_TOO_LONG",
+		}).Inc()
+		return true
+	}
+	return false
 }
 
 func (c *Channel) shouldSkipZanTest(msg *Message) bool {
@@ -2545,6 +2569,12 @@ func (c *Channel) doPeekInFlightQueue(tnow int64) (bool, bool) {
 				"channel":   c.GetName(),
 			}).Inc()
 			atomic.AddInt32(&msg.timedoutCnt, 1)
+		}
+		if msg.Attempts() >= MaxAttempts {
+			ChannelRetryToomuchCnt.With(prometheus.Labels{
+				"topic":   c.GetTopicName(),
+				"channel": c.GetName(),
+			}).Inc()
 		}
 		client := msg.belongedConsumer
 		if msg.belongedConsumer != nil {

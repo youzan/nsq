@@ -122,6 +122,8 @@ func nsqdFlagSet(opts *nsqd.Options) *flag.FlagSet {
 	flagSet.Int64("max-message-size", opts.MaxMsgSize, "(deprecated use --max-msg-size) maximum size of a single message in bytes")
 	flagSet.Int64("max-body-size", opts.MaxBodySize, "maximum size of a single command body")
 	flagSet.Int64("max-pub-waiting-size", opts.MaxPubWaitingSize, "maximum size of a topic partition waiting pub bytes")
+	flagSet.Duration("ack-old-than-time", opts.AckOldThanTime, "max duration before  auto ack is considered too old")
+	flagSet.Int("ack-retry-cnt", opts.AckRetryCnt, "max retry count for auto ack, default 0 will never auto ack")
 
 	// client overridable configuration options
 	flagSet.Duration("max-heartbeat-interval", opts.MaxHeartbeatInterval, "maximum client configurable duration of time between client heartbeats")
