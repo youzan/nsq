@@ -60,6 +60,8 @@ type Options struct {
 	// max for each topic partition
 	MaxPubWaitingSize     int64         `flag:"max-pub-waiting-size"`
 	MaxReqTimeout         time.Duration `flag:"max-req-timeout"`
+	AckOldThanTime        time.Duration `flag:"ack-old-than-time"`
+	AckRetryCnt           int           `flag:"ack-retry-cnt"`
 	MaxConfirmWin         int64         `flag:"max-confirm-win"`
 	MaxChannelDelayedQNum int64         `flag:"max-channel-delayed-qnum"`
 	ClientTimeout         time.Duration

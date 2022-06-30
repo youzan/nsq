@@ -1703,6 +1703,113 @@ func TestChannelSkipZanTestForOrdered(t *testing.T) {
 	equal(t, channel.Depth(), int64(0))
 }
 
+func TestChannelSkipMsgRetryTooMuchCnt(t *testing.T) {
+	// while the ordered message is timeouted and requeued,
+	// change the state to skip zan test may block waiting the next
+	// we test this case for ordered topic
+	opts := NewOptions()
+	opts.SyncEvery = 1
+	opts.Logger = newTestLogger(t)
+	opts.MsgTimeout = time.Second / 2
+	opts.AckOldThanTime = time.Second
+	opts.AckRetryCnt = 3
+	if testing.Verbose() {
+		opts.LogLevel = 4
+		SetLogger(opts.Logger)
+	}
+	_, _, nsqd := mustStartNSQD(opts)
+	defer os.RemoveAll(opts.DataPath)
+	defer nsqd.Exit()
+
+	topicName := "test_channel_skiptest_toomuch_retry" + strconv.Itoa(int(time.Now().Unix()))
+	topic := nsqd.GetTopicWithExt(topicName, 0, false)
+	channel := topic.GetChannel("channel")
+
+	msgs := make([]*Message, 0, 3)
+	for i := 0; i < 3; i++ {
+		var msgId MessageID
+		msgBytes := []byte(strconv.Itoa(i))
+		msg := NewMessage(msgId, msgBytes)
+		msgs = append(msgs, msg)
+	}
+	topic.PutMessages(msgs)
+	topic.flushBuffer(true)
+	time.Sleep(time.Millisecond)
+	// consume and wait timeout
+	toC := time.After(time.Second * 10)
+	for i := 0; i < 3*(opts.AckRetryCnt+2); i++ {
+		var outputMsg *Message
+		select {
+		case outputMsg = <-channel.clientMsgChan:
+		case <-toC:
+			if channel.Depth() == 0 {
+				return
+			}
+			t.Errorf("timeout waiting consume")
+			return
+		}
+		t.Logf("consume %v attempt %v, limit: %v", outputMsg.ID, outputMsg.Attempts(), opts.AckRetryCnt)
+		equal(t, int(outputMsg.Attempts()) <= opts.AckRetryCnt, true)
+		channel.StartInFlightTimeout(outputMsg, NewFakeConsumer(0), "", opts.MsgTimeout)
+		// wait timeout
+	}
+	equal(t, channel.Depth(), int64(0))
+}
+
+func TestChannelSkipMsgRetryTooLongAgo(t *testing.T) {
+	// while the ordered message is timeouted and requeued,
+	// change the state to skip zan test may block waiting the next
+	// we test this case for ordered topic
+	opts := NewOptions()
+	opts.SyncEvery = 1
+	opts.Logger = newTestLogger(t)
+	opts.MsgTimeout = time.Second / 2
+	opts.AckOldThanTime = time.Second * 5
+	opts.AckRetryCnt = 1
+	if testing.Verbose() {
+		opts.LogLevel = 4
+		SetLogger(opts.Logger)
+	}
+	_, _, nsqd := mustStartNSQD(opts)
+	defer os.RemoveAll(opts.DataPath)
+	defer nsqd.Exit()
+
+	topicName := "test_channel_skiptest_toomuch_retry" + strconv.Itoa(int(time.Now().Unix()))
+	topic := nsqd.GetTopicWithExt(topicName, 0, false)
+	channel := topic.GetChannel("channel")
+
+	msgs := make([]*Message, 0, 3)
+	for i := 0; i < 3; i++ {
+		var msgId MessageID
+		msgBytes := []byte(strconv.Itoa(i))
+		msg := NewMessage(msgId, msgBytes)
+		msgs = append(msgs, msg)
+	}
+	topic.PutMessages(msgs)
+	topic.flushBuffer(true)
+	time.Sleep(time.Millisecond)
+	// consume and wait timeout
+	toC := time.After(time.Second * 10)
+	cnt := 0
+	for {
+		var outputMsg *Message
+		select {
+		case outputMsg = <-channel.clientMsgChan:
+		case <-toC:
+			if channel.Depth() == 0 {
+				equal(t, cnt > 3*(opts.AckRetryCnt+2), true)
+				return
+			}
+			t.Errorf("timeout waiting consume")
+			return
+		}
+		t.Logf("consume %v attempt %v, limit: %v, cnt: %v", outputMsg.ID, outputMsg.Attempts(), opts.AckRetryCnt, cnt)
+		cnt++
+		channel.StartInFlightTimeout(outputMsg, NewFakeConsumer(0), "", opts.MsgTimeout)
+		// wait timeout
+	}
+}
+
 func TestChannelInitWithOldStart(t *testing.T) {
 	opts := NewOptions()
 	opts.SyncEvery = 1

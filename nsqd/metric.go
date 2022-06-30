@@ -63,6 +63,14 @@ var (
 		Name: "channel_requeued_cnt",
 		Help: "total requeued cnt for channel consumer",
 	}, []string{"topic", "partition", "channel"})
+	ChannelRetryToomuchCnt = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "channel_retry_toomuch_cnt",
+		Help: "total retry too much cnt for channel consumer",
+	}, []string{"topic", "channel"})
+	ChannelAutoAckCnt = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "channel_auto_ack_cnt",
+		Help: "total auto ack cnt for channel consumer",
+	}, []string{"topic", "channel", "reason"})
 	ChannelTimeoutCnt = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "channel_timeout_cnt",
 		Help: "total timeout cnt for channel consumer",
