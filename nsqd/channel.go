@@ -2501,8 +2501,8 @@ func (c *Channel) doPeekInFlightQueue(tnow int64) (bool, bool) {
 			// TODO: also check if delayed queue is blocked too much, and try increase delay and put this
 			// delayed message to delay-queue again.
 			if atomic.LoadInt32(&c.waitingConfirm) > 1 || flightCnt > 1 {
-				c.chLog.LogDebugf("channel no timeout, inflight %v, waiting confirm: %v, confirmed: %v",
-					flightCnt, atomic.LoadInt32(&c.waitingConfirm),
+				c.chLog.LogDebugf("tnow %v channel no timeout, inflight %v, waiting confirm: %v, confirmed: %v",
+					tnow, flightCnt, atomic.LoadInt32(&c.waitingConfirm),
 					c.GetConfirmed())
 				canReqEnd := tnow-atomic.LoadInt64(&c.lastDelayedReqToEndTs) > delayedReqToEndMinInterval.Nanoseconds()
 				if !c.IsEphemeral() && !c.IsOrdered() && atomic.LoadInt32(&c.waitingConfirm) >= int32(c.option.MaxConfirmWin) && canReqEnd {

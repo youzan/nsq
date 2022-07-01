@@ -383,6 +383,7 @@ func TestDelayQueueEmptyAll(t *testing.T) {
 	}
 
 	dq, err := NewDelayQueue("test", 0, tmpDir, opts, nil, false)
+	atomic.StoreInt64(&dq.SyncEvery, 10000)
 	test.Nil(t, err)
 	defer dq.Close()
 	oldMaxBatch := txMaxBatch
@@ -406,8 +407,9 @@ func TestDelayQueueEmptyAll(t *testing.T) {
 		msg.DelayedOrigID = MessageID(i + 1)
 		_, _, _, _, err = dq.PutDelayMessage(msg)
 		test.Nil(t, err)
-		time.Sleep(time.Millisecond * 100)
+		time.Sleep(time.Millisecond * 50)
 	}
+	dq.ForceFlush()
 
 	newCnt, _ := dq.GetCurrentDelayedCnt(ChannelDelayed, "test")
 	test.Equal(t, cnt, int(newCnt))
@@ -457,6 +459,7 @@ func TestDelayQueueEmptyAllWhileCompacted(t *testing.T) {
 	}
 
 	dq, err := NewDelayQueue("test", 0, tmpDir, opts, nil, false)
+	atomic.StoreInt64(&dq.SyncEvery, 10000)
 	test.Nil(t, err)
 	defer dq.Close()
 	oldMaxBatch := txMaxBatch
@@ -480,8 +483,9 @@ func TestDelayQueueEmptyAllWhileCompacted(t *testing.T) {
 		msg.DelayedOrigID = MessageID(i + 1)
 		_, _, _, _, err = dq.PutDelayMessage(msg)
 		test.Nil(t, err)
-		time.Sleep(time.Millisecond * 100)
+		time.Sleep(time.Millisecond * 50)
 	}
+	dq.ForceFlush()
 
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -555,6 +559,7 @@ func TestDelayQueueUpdateConsumedState(t *testing.T) {
 	}
 
 	dq, err := NewDelayQueue("test", 0, tmpDir, opts, nil, false)
+	atomic.StoreInt64(&dq.SyncEvery, 10000)
 	test.Nil(t, err)
 	defer dq.Close()
 	oldMaxBatch := txMaxBatch
@@ -578,8 +583,9 @@ func TestDelayQueueUpdateConsumedState(t *testing.T) {
 		msg.DelayedOrigID = MessageID(i + 1)
 		_, _, _, _, err = dq.PutDelayMessage(msg)
 		test.Nil(t, err)
-		time.Sleep(time.Millisecond * 100)
+		time.Sleep(time.Millisecond * 50)
 	}
+	dq.ForceFlush()
 
 	newCnt, _ := dq.GetCurrentDelayedCnt(ChannelDelayed, "test")
 	test.Equal(t, cnt, int(newCnt))
@@ -966,6 +972,7 @@ func TestDelayQueueCompactStore(t *testing.T) {
 	}
 
 	dq, err := NewDelayQueue("test-compact", 0, tmpDir, opts, nil, false)
+	atomic.StoreInt64(&dq.SyncEvery, 10000)
 	test.Nil(t, err)
 	defer dq.Close()
 	cnt := CompactCntThreshold + 1
@@ -978,7 +985,7 @@ func TestDelayQueueCompactStore(t *testing.T) {
 		_, _, _, _, err := dq.PutDelayMessage(msg)
 		test.Nil(t, err)
 	}
-	dq.getStore().Sync()
+	dq.ForceFlush()
 	newCnt, _ := dq.GetCurrentDelayedCnt(ChannelDelayed, "test")
 	test.Equal(t, cnt, int(newCnt))
 
@@ -1143,6 +1150,10 @@ func TestDelayQueueCompactStoreCrash(t *testing.T) {
 		time.Sleep(time.Second * 2)
 		for i := 0; i < 10; i++ {
 			err := dq.compactStore(true)
+			if err != nil {
+				test.Equal(t, true, err.Error() == "database not open")
+				continue
+			}
 			test.Nil(t, err)
 		}
 	}()

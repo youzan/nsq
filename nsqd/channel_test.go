@@ -375,7 +375,8 @@ func TestChannelReqShortTooMuch(t *testing.T) {
 	opts = adjustDefaultOptsForTest(opts)
 	opts.MaxRdyCount = 100
 	// use large to delay the period scan
-	opts.QueueScanRefreshInterval = longWaitTime
+	opts.QueueScanRefreshInterval = longWaitTime / 2
+	opts.QueueScanInterval = time.Millisecond * 2
 	_, _, nsqd := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqd.Exit()
@@ -394,9 +395,9 @@ func TestChannelReqShortTooMuch(t *testing.T) {
 	start := time.Now()
 	reqCnt := 0
 	timeout := 0
-	for time.Since(start) < longWaitTime {
+	for time.Since(start) < longWaitTime/2+time.Second*time.Duration(count) {
 		select {
-		case <-time.After(opts.MsgTimeout):
+		case <-time.After(opts.MsgTimeout * 2):
 			timeout++
 		case outputMsg, ok := <-channel.clientMsgChan:
 			if !ok {
@@ -422,6 +423,7 @@ func TestChannelReqShortTooMuch(t *testing.T) {
 
 	t.Logf("total req cnt: %v, timeout: %v", reqCnt, timeout)
 	ast.True(t, reqCnt >= count*MaxMemReqTimes*10)
+	ast.True(t, timeout > 1)
 	ast.True(t, reqCnt < count*MaxMemReqTimes*20)
 }
 
@@ -597,7 +599,6 @@ func TestChannelTimeoutTooMuchIShouldNotBlockingToolong(t *testing.T) {
 func TestChannelEmptyWhileConfirmDelayMsg(t *testing.T) {
 	// test confirm delay counter while empty channel
 	opts := NewOptions()
-	opts.SyncEvery = 1
 	opts.Logger = newTestLogger(t)
 	opts = adjustDefaultOptsForTest(opts)
 	_, _, nsqd := mustStartNSQD(opts)
@@ -608,6 +609,7 @@ func TestChannelEmptyWhileConfirmDelayMsg(t *testing.T) {
 	topic := nsqd.GetTopicIgnPart(topicName)
 	channel := topic.GetChannel("channel")
 	dq, err := topic.GetOrCreateDelayedQueueNoLock(nil)
+	atomic.StoreInt64(&dq.SyncEvery, opts.SyncEvery*100)
 	equal(t, err, nil)
 	stopC := make(chan bool)
 	for i := 0; i < 100; i++ {
@@ -627,6 +629,7 @@ func TestChannelEmptyWhileConfirmDelayMsg(t *testing.T) {
 		_, _, _, _, err = dq.PutDelayMessage(newMsg)
 		equal(t, err, nil)
 	}
+	dq.ForceFlush()
 
 	channel.skipChannelToEnd()
 	channel.AddClient(1, NewFakeConsumer(1))
@@ -714,6 +717,7 @@ func TestChannelEmptyWhileReqDelayedMessageWaitingDispatchToClient(t *testing.T)
 	topic := nsqd.GetTopicIgnPart(topicName)
 	channel := topic.GetChannel("channel")
 	dq, err := topic.GetOrCreateDelayedQueueNoLock(nil)
+	atomic.StoreInt64(&dq.SyncEvery, opts.SyncEvery*100)
 	equal(t, err, nil)
 	// write at least 2*MaxWaitingDelayed to test the second peek from delayed queue
 	for i := 0; i < 3*MaxWaitingDelayed+1; i++ {
@@ -733,6 +737,7 @@ func TestChannelEmptyWhileReqDelayedMessageWaitingDispatchToClient(t *testing.T)
 		_, _, _, _, err = dq.PutDelayMessage(newMsg)
 		equal(t, err, nil)
 	}
+	dq.ForceFlush()
 
 	t.Logf("current %v, %v", atomic.LoadInt64(&channel.deferredFromDelay), channel.GetChannelDebugStats())
 	channel.AddClient(1, NewFakeConsumer(1))
@@ -801,6 +806,7 @@ func TestChannelEmptyWhileReqDelayedMessageWaitingInReq(t *testing.T) {
 	// use small max ready count to make sure the req chan to be full and more delayed messages is waiting in requeued map
 	opts.MaxRdyCount = 2
 	opts.SyncEvery = 100
+	opts.SyncTimeout = time.Second * 10
 	// make sure scan for full delayed, so we need scan slow to make sure all delayed messages can be poped
 	opts.QueueScanInterval = time.Second * 2
 	_, _, nsqd := mustStartNSQD(opts)
@@ -811,6 +817,7 @@ func TestChannelEmptyWhileReqDelayedMessageWaitingInReq(t *testing.T) {
 	topic := nsqd.GetTopicIgnPart(topicName)
 	channel := topic.GetChannel("channel")
 	dq, err := topic.GetOrCreateDelayedQueueNoLock(nil)
+	atomic.StoreInt64(&dq.SyncEvery, opts.SyncEvery)
 	equal(t, err, nil)
 	// write at least 2*MaxWaitingDelayed to test the second peek from delayed queue
 	for i := 0; i < 2*MaxWaitingDelayed+1; i++ {
@@ -821,7 +828,7 @@ func TestChannelEmptyWhileReqDelayedMessageWaitingInReq(t *testing.T) {
 		newMsg.ID = 0
 		newMsg.DelayedType = ChannelDelayed
 
-		newTimeout := time.Now().Add(time.Second * 2)
+		newTimeout := time.Now().Add(time.Second * 4)
 		newMsg.DelayedTs = newTimeout.UnixNano()
 
 		newMsg.DelayedOrigID = id
@@ -850,7 +857,7 @@ func TestChannelEmptyWhileReqDelayedMessageWaitingInReq(t *testing.T) {
 		ast.NotEqual(t, ChannelDelayed, outputMsg.DelayedType)
 		channel.StartInFlightTimeout(outputMsg, NewFakeConsumer(1), "", opts.MsgTimeout)
 		//  use short req to make sure the mem req will be poped first to req chan
-		channel.RequeueMessage(1, "", outputMsg.ID, opts.QueueScanInterval/2, false)
+		channel.RequeueMessage(1, "", outputMsg.ID, opts.QueueScanInterval/10, false)
 	}
 
 	t.Logf("current %v, %v", atomic.LoadInt64(&channel.deferredFromDelay), channel.GetChannelDebugStats())
@@ -954,6 +961,7 @@ func TestChannelResetConfirmedWhileDelayedQueuePop(t *testing.T) {
 	topic := nsqd.GetTopicIgnPart(topicName)
 	channel := topic.GetChannel("channel")
 	dq, err := topic.GetOrCreateDelayedQueueNoLock(nil)
+	atomic.StoreInt64(&dq.SyncEvery, opts.SyncEvery*100)
 	equal(t, err, nil)
 	// write at least 2*MaxWaitingDelayed to test the second peek from delayed queue
 	var resetOffset BackendQueueEnd
@@ -969,7 +977,7 @@ func TestChannelResetConfirmedWhileDelayedQueuePop(t *testing.T) {
 		newMsg.ID = 0
 		newMsg.DelayedType = ChannelDelayed
 
-		newTimeout := time.Now().Add(time.Second)
+		newTimeout := time.Now().Add(time.Second * 2)
 		newMsg.DelayedTs = newTimeout.UnixNano()
 
 		newMsg.DelayedOrigID = id
@@ -978,6 +986,7 @@ func TestChannelResetConfirmedWhileDelayedQueuePop(t *testing.T) {
 		_, _, _, _, err = dq.PutDelayMessage(newMsg)
 		equal(t, err, nil)
 	}
+	dq.ForceFlush()
 
 	t.Logf("current %v, %v", atomic.LoadInt64(&channel.deferredFromDelay), channel.GetChannelDebugStats())
 	channel.AddClient(1, NewFakeConsumer(1))
@@ -1131,6 +1140,7 @@ func TestChannelResetConfirmedWhileDelayedQueueMsgInflight(t *testing.T) {
 	topic := nsqd.GetTopicIgnPart(topicName)
 	channel := topic.GetChannel("channel")
 	dq, err := topic.GetOrCreateDelayedQueueNoLock(nil)
+	atomic.StoreInt64(&dq.SyncEvery, opts.SyncEvery*100)
 	equal(t, err, nil)
 	// write at least 2*MaxWaitingDelayed to test the second peek from delayed queue
 	var resetOffset BackendQueueEnd
@@ -1156,6 +1166,7 @@ func TestChannelResetConfirmedWhileDelayedQueueMsgInflight(t *testing.T) {
 		_, _, _, _, err = dq.PutDelayMessage(newMsg)
 		equal(t, err, nil)
 	}
+	dq.ForceFlush()
 
 	t.Logf("current %v, %v", atomic.LoadInt64(&channel.deferredFromDelay), channel.GetChannelDebugStats())
 	channel.AddClient(1, NewFakeConsumer(1))
