@@ -960,7 +960,7 @@ func TestDelayQueueCompactStore(t *testing.T) {
 
 	opts := NewOptions()
 	opts.Logger = newTestLogger(t)
-	opts.SyncEvery = 1
+	opts.SyncEvery = 100
 	if testing.Verbose() {
 		SetLogger(opts.Logger)
 	}
@@ -978,6 +978,7 @@ func TestDelayQueueCompactStore(t *testing.T) {
 		_, _, _, _, err := dq.PutDelayMessage(msg)
 		test.Nil(t, err)
 	}
+	dq.getStore().Sync()
 	newCnt, _ := dq.GetCurrentDelayedCnt(ChannelDelayed, "test")
 	test.Equal(t, cnt, int(newCnt))
 
@@ -1101,7 +1102,7 @@ func TestDelayQueueCompactStoreCrash(t *testing.T) {
 	dq, err := NewDelayQueue("test-compact", 0, tmpDir, opts, nil, false)
 	test.Nil(t, err)
 	defer dq.Close()
-	cnt := 1000
+	cnt := 100
 	bodyLen := 1024 * 128
 	for i := 0; i < cnt; i++ {
 		msg := NewMessage(0, append(make([]byte, bodyLen), []byte("body")...))
@@ -1290,7 +1291,7 @@ func TestDelayQueueReopenWithEmpty(t *testing.T) {
 	test.Equal(t, "body_new2", string(ret[1].Body))
 }
 
-func TestGetOldestConsumedStateCostOnLarge(t *testing.T) {
+func BenchmarkGetOldestConsumedStateCostOnLarge(b *testing.B) {
 	tmpDir, err := ioutil.TempDir("", fmt.Sprintf("nsq-test-delay-%d", time.Now().UnixNano()))
 	if err != nil {
 		panic(err)
@@ -1302,7 +1303,8 @@ func TestGetOldestConsumedStateCostOnLarge(t *testing.T) {
 
 	dq, _ := NewDelayQueue("test", 0, tmpDir, opts, nil, false)
 	defer dq.Close()
-	cnt := 1000
+	cnt := b.N
+	b.ResetTimer()
 	for i := 0; i < cnt; i++ {
 		msg := NewMessage(0, []byte("body"))
 		msg.DelayedType = ChannelDelayed
@@ -1334,5 +1336,5 @@ func TestGetOldestConsumedStateCostOnLarge(t *testing.T) {
 		dq.GetOldestConsumedState([]string{"test"}, true)
 	}
 	cost3 := time.Since(s)
-	t.Logf("cost: %s-%s, %s", cost1, cost2, cost3)
+	b.Logf("cost: %s-%s, %s", cost1, cost2, cost3)
 }

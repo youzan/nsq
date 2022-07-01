@@ -522,6 +522,7 @@ func TestChannelTimeoutTooMuchIShouldNotBlockingToolong(t *testing.T) {
 	opts := NewOptions()
 	opts.Logger = newTestLogger(t)
 	opts = adjustDefaultOptsForTest(opts)
+	opts.MsgTimeout = time.Millisecond
 	opts.MaxRdyCount = 100
 	opts.MaxConfirmWin = 10
 	// make it more chance to req the timeout to end
@@ -799,6 +800,9 @@ func TestChannelEmptyWhileReqDelayedMessageWaitingInReq(t *testing.T) {
 	opts = adjustDefaultOptsForTest(opts)
 	// use small max ready count to make sure the req chan to be full and more delayed messages is waiting in requeued map
 	opts.MaxRdyCount = 2
+	opts.SyncEvery = 100
+	// make sure scan for full delayed, so we need scan slow to make sure all delayed messages can be poped
+	opts.QueueScanInterval = time.Second * 2
 	_, _, nsqd := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqd.Exit()
@@ -827,6 +831,8 @@ func TestChannelEmptyWhileReqDelayedMessageWaitingInReq(t *testing.T) {
 		equal(t, err, nil)
 	}
 
+	dq.ForceFlush()
+	topic.ForceFlush()
 	t.Logf("current %v, %v", atomic.LoadInt64(&channel.deferredFromDelay), channel.GetChannelDebugStats())
 	channel.AddClient(1, NewFakeConsumer(1))
 	channel.skipChannelToEnd()
@@ -836,6 +842,7 @@ func TestChannelEmptyWhileReqDelayedMessageWaitingInReq(t *testing.T) {
 		_, _, _, _, err := topic.PutMessage(msg)
 		equal(t, err, nil)
 	}
+	topic.ForceFlush()
 	select {
 	case outputMsg, _ := <-channel.clientMsgChan:
 		t.Logf("consume %v", outputMsg)
@@ -850,7 +857,7 @@ func TestChannelEmptyWhileReqDelayedMessageWaitingInReq(t *testing.T) {
 	equal(t, atomic.LoadInt64(&channel.deferredCount), int64(1))
 	s := time.Now()
 	for {
-		if time.Since(s) > longWaitTime {
+		if time.Since(s) > longWaitTime*2 {
 			t.Error("timeout waiting req")
 			return
 		}
@@ -864,7 +871,7 @@ func TestChannelEmptyWhileReqDelayedMessageWaitingInReq(t *testing.T) {
 		inflightCnt := len(channel.inFlightMessages)
 		channel.inFlightMutex.Unlock()
 		t.Logf("current %v, %v", atomic.LoadInt64(&channel.deferredFromDelay), channel.GetChannelDebugStats())
-		if waitChCnt <= 0 || waitReqMoreCnt <= 0 {
+		if waitChCnt <= 0 || waitReqMoreCnt <= 0 || waitChCnt != realWaitChCnt+1 {
 			continue
 		}
 		ast.True(t, waitChCnt > 0, "should have wait req count")
@@ -1509,7 +1516,7 @@ func TestChannelResetWhileOneSingleMemDelayedMsg(t *testing.T) {
 	channel.RequeueMessage(0, "", outputMsg.ID, time.Second, true)
 	equal(t, atomic.LoadInt64(&channel.deferredCount), int64(1))
 	// wait until timeout
-	time.Sleep(time.Second * 5)
+	time.Sleep(time.Second * 2)
 	checkChannelCleanStats(t, channel, 1)
 	//skip forward
 	t.Logf("backendOffsetMid: %d", backendOffsetMid)
@@ -1570,7 +1577,7 @@ func TestChannelResetWhileOneSingleDiskDelayedMsg(t *testing.T) {
 	checkChannelCleanStats(t, channel, 0)
 
 	// wait until timeout
-	time.Sleep(time.Second * 5)
+	time.Sleep(time.Second * 2)
 	chStats := NewChannelStats(channel, nil, 0)
 	equal(t, chStats.DeferredFromDelayCount, int(1))
 	//skip forward
@@ -1693,8 +1700,10 @@ func TestChannelSkipMsgRetryTooMuchCnt(t *testing.T) {
 	opts := NewOptions()
 	opts.Logger = newTestLogger(t)
 	opts = adjustDefaultOptsForTest(opts)
+	opts.QueueScanInterval = time.Millisecond * 10
+	opts.MsgTimeout = time.Millisecond
 	opts.AckOldThanTime = opts.MsgTimeout
-	opts.AckRetryCnt = 3
+	opts.AckRetryCnt = 2
 	_, _, nsqd := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqd.Exit()
@@ -1714,8 +1723,11 @@ func TestChannelSkipMsgRetryTooMuchCnt(t *testing.T) {
 	topic.flushBuffer(true)
 	time.Sleep(time.Millisecond)
 	// consume and wait timeout
-	toC := time.After(time.Second * 10)
+	toC := time.After(time.Second)
 	for i := 0; i < 3*(opts.AckRetryCnt+2); i++ {
+		if channel.Depth() == 0 {
+			return
+		}
 		var outputMsg *Message
 		select {
 		case outputMsg = <-channel.clientMsgChan:
@@ -1741,7 +1753,7 @@ func TestChannelSkipMsgRetryTooLongAgo(t *testing.T) {
 	opts := NewOptions()
 	opts.Logger = newTestLogger(t)
 	opts = adjustDefaultOptsForTest(opts)
-	opts.AckOldThanTime = longWaitTime
+	opts.AckOldThanTime = shortWaitTime
 	opts.AckRetryCnt = 1
 
 	_, _, nsqd := mustStartNSQD(opts)

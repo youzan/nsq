@@ -666,6 +666,7 @@ func TestSkipping(t *testing.T) {
 	topicName := "test_skip_v2" + strconv.Itoa(int(time.Now().Unix()))
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
+	opts = adjustDefaultOptsForTest(opts)
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqdServer.Exit()
@@ -727,6 +728,8 @@ func TestSkipping(t *testing.T) {
 
 	msg = nsqdNs.NewMessage(0, []byte("test body3"))
 	topic.PutMessage(msg)
+	topic.ForceFlush()
+	channel.TryWakeupRead()
 
 	msgOut = recvNextMsgAndCheck(t, conn, len(msg.Body), msg.TraceID, true)
 	test.Equal(t, msgOut.Body, []byte("test body3"))
@@ -775,6 +778,7 @@ func TestConsumeTagMessageNormal(t *testing.T) {
 
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
+	opts.ClientTimeout = time.Second * 5
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqdServer.Exit()
@@ -1838,6 +1842,7 @@ func TestConsumeMultiTagMessages(t *testing.T) {
 
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
+	opts.ClientTimeout = time.Second * 5
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqdServer.Exit()
@@ -2197,6 +2202,7 @@ func consumeTagConcurrent(t *testing.T, producerFirst bool, ticker *time.Ticker)
 
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
+	opts.ClientTimeout = time.Second * 2
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqdServer.Exit()
@@ -2531,26 +2537,25 @@ loop:
 		idx := rand.Intn(3)
 		t.Logf("restart consumer %v", idx+1)
 		resChans[idx] <- 1
-		time.Sleep(5 * time.Second)
+		time.Sleep(2 * time.Second)
 		select {
 		case <-ticker.C:
 			t.Logf("close producer & consumer...")
 			for _, clsCh := range clsP {
 				clsCh <- 1
 			}
-			time.Sleep(5 * time.Second)
+			time.Sleep(2 * time.Second)
 			for _, clsCh := range clsC {
 				clsCh <- 1
 			}
 			clsC4 <- 1
-			time.Sleep(5 * time.Second)
+			time.Sleep(2 * time.Second)
 			break loop
 		default:
 		}
 	}
 	t.Logf("for loop exits")
-	time.Sleep(10 * time.Second)
-
+	time.Sleep(time.Second)
 }
 
 func TestWriteAndConsumeTagMix(t *testing.T) {
@@ -2676,6 +2681,7 @@ func TestStuckOnAnotherTag(t *testing.T) {
 
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
+	opts.ClientTimeout = time.Second
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqdServer.Exit()
@@ -3159,7 +3165,7 @@ func TestTcpPubWaitQueueFullAndTimeout(t *testing.T) {
 
 	timeoutCnt := int32(0)
 	var wg sync.WaitGroup
-	for i := 0; i < 20; i++ {
+	for i := 0; i < 10; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -3187,12 +3193,12 @@ func TestTcpPubWaitQueueFullAndTimeout(t *testing.T) {
 	}
 	wg.Wait()
 	t.Logf("timeout pub cnt : %v", timeoutCnt)
-	test.Equal(t, true, timeoutCnt >= 15)
+	test.Equal(t, true, timeoutCnt >= 5)
 
 	atomic.StoreInt32(&testPutMessageTimeout, int32(pubWaitTimeout.Seconds()-1))
 	timeoutCnt = 0
 
-	for i := 0; i < 20; i++ {
+	for i := 0; i < 10; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -4436,8 +4442,8 @@ func TestDelayMessage(t *testing.T) {
 	//opts.Logger = &levellogger.SimpleLogger{}
 	opts.LogLevel = 1
 	opts.SyncEvery = 1
-	opts.MsgTimeout = time.Second * 2
-	opts.MaxReqTimeout = time.Second * 50
+	opts.MsgTimeout = time.Second + time.Millisecond
+	opts.MaxReqTimeout = time.Second * 10
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqdServer.Exit()
@@ -4844,10 +4850,10 @@ func testDelayManyMessagesToQueueEnd(t *testing.T, changedLeader bool) {
 	}
 	opts.SyncEvery = 1
 	opts.QueueScanInterval = time.Millisecond * 10
-	opts.MsgTimeout = time.Second * 2
+	opts.MsgTimeout = time.Second
 	opts.MaxConfirmWin = 50
-	opts.ReqToEndThreshold = nsqdNs.MaxWaitingDelayed*time.Millisecond*100 + time.Millisecond*800
-	opts.MaxReqTimeout = time.Second*30 + opts.ReqToEndThreshold*3
+	opts.ReqToEndThreshold = nsqdNs.MaxWaitingDelayed*time.Millisecond*50 + time.Millisecond*800
+	opts.MaxReqTimeout = time.Second*10 + opts.ReqToEndThreshold*3
 	opts.MaxOutputBufferTimeout = 10 * time.Millisecond
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 
@@ -5085,6 +5091,7 @@ func TestSubOrderedMulti(t *testing.T) {
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
 	opts.LogLevel = 1
+	opts.ClientTimeout = time.Second
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqdServer.Exit()
@@ -5132,6 +5139,7 @@ func TestSubTimeoutMany(t *testing.T) {
 	// should go delayed queue for a while and the channel depth should be 0
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
+	opts.ClientTimeout = time.Second
 	opts.LogLevel = 1
 	if testing.Verbose() {
 		opts.LogLevel = 4
@@ -5139,10 +5147,10 @@ func TestSubTimeoutMany(t *testing.T) {
 	}
 	opts.SyncEvery = 1
 	opts.QueueScanInterval = time.Millisecond * 10
-	opts.MsgTimeout = time.Second * 2
+	opts.MsgTimeout = time.Second / 2
 	opts.MaxConfirmWin = 5
 	opts.ReqToEndThreshold = nsqdNs.MaxWaitingDelayed*time.Millisecond*10 + time.Millisecond*80
-	opts.MaxReqTimeout = time.Second*30 + opts.ReqToEndThreshold*3
+	opts.MaxReqTimeout = time.Second*10 + opts.ReqToEndThreshold*3
 	opts.MaxOutputBufferTimeout = 10 * time.Millisecond
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 
@@ -5262,7 +5270,7 @@ func TestSubFewMsgTimeoutAlwaysShouldNotBlocking(t *testing.T) {
 	}
 	opts.SyncEvery = 1
 	opts.QueueScanInterval = time.Millisecond * 10
-	opts.MsgTimeout = time.Second / 10
+	opts.MsgTimeout = time.Millisecond * 10
 	opts.MaxConfirmWin = 50
 	opts.ReqToEndThreshold = nsqdNs.MaxWaitingDelayed*time.Millisecond + time.Millisecond*80
 	opts.MaxReqTimeout = time.Second*10 + opts.ReqToEndThreshold*3
@@ -5378,10 +5386,10 @@ func TestSubReqToEndFailedPartial(t *testing.T) {
 	}
 	opts.SyncEvery = 1
 	opts.QueueScanInterval = time.Millisecond * 10
-	opts.MsgTimeout = time.Second * 2
+	opts.MsgTimeout = time.Second
 	opts.MaxConfirmWin = 50
 	opts.ReqToEndThreshold = nsqdNs.MaxWaitingDelayed*time.Millisecond*100 + time.Millisecond*800
-	opts.MaxReqTimeout = time.Second*30 + opts.ReqToEndThreshold*3
+	opts.MaxReqTimeout = time.Second*10 + opts.ReqToEndThreshold*3
 	opts.MaxOutputBufferTimeout = 10 * time.Millisecond
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 
@@ -6896,7 +6904,7 @@ func TestTimeoutShouldNotBlockStats(t *testing.T) {
 		opts.LogLevel = 2
 		nsqdNs.SetLogger(opts.Logger)
 	}
-	opts.ClientTimeout = time.Second * 10
+	opts.ClientTimeout = time.Second * 5
 	opts.QueueScanRefreshInterval = 100 * time.Millisecond
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
@@ -6917,7 +6925,7 @@ func TestTimeoutShouldNotBlockStats(t *testing.T) {
 	defer conn.Close()
 
 	identify(t, conn, map[string]interface{}{
-		"msg_timeout": 5000,
+		"msg_timeout": 2000,
 	}, frameTypeResponse)
 	sub(t, conn, topicName, "ch")
 
@@ -6967,7 +6975,6 @@ func TestTimeoutFin(t *testing.T) {
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
 	//opts.Logger = &levellogger.SimpleLogger{}
-	opts.LogLevel = 2
 	opts.LogLevel = 2
 	opts.QueueScanRefreshInterval = 100 * time.Millisecond
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)

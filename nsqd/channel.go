@@ -36,7 +36,7 @@ const (
 )
 
 func ChangeIntervalForTest() {
-	timeoutBlockingWait = time.Second * 2
+	timeoutBlockingWait = time.Second
 }
 
 var (
