@@ -59,6 +59,7 @@ func adjustDefaultOptsForTest(opts *nsqdNs.Options) *nsqdNs.Options {
 	opts.SyncEvery = 1
 	opts.MsgTimeout = 100 * time.Millisecond
 	opts.LogLevel = 3
+	opts.ClientTimeout = time.Second * 5
 	if testing.Verbose() {
 		opts.LogLevel = 4
 	}
