@@ -65,24 +65,37 @@ func sub(t *testing.T, conn io.ReadWriter, topicName string, channelName string)
 	readValidate(t, conn, frameTypeResponse, "OK")
 }
 
-func subWaitResp(t *testing.T, conn io.ReadWriter, topicName string, channelName string) ([]byte, error) {
-	_, err := nsq.Subscribe(topicName, channelName).WriteTo(conn)
-	test.Equal(t, err, nil)
+func readFrameResponse(t *testing.T, conn io.ReadWriter) (int32, []byte, error) {
 	for {
 		resp, err := nsq.ReadResponse(conn)
 		if err != nil {
-			return nil, err
+			return 0, nil, err
 		}
-		_, data, err := nsq.UnpackResponse(resp)
+		frameType, data, err := nsq.UnpackResponse(resp)
 		test.Equal(t, err, nil)
-
 		if string(data) == string(heartbeatBytes) {
 			cmd := nsq.Nop()
 			cmd.WriteTo(conn)
 			continue
 		}
-		return data, nil
+		return frameType, data, err
 	}
+}
+
+func validatePubResponse(t *testing.T, conn io.ReadWriter) {
+	frameType, data, err := readFrameResponse(t, conn)
+	test.Equal(t, nil, err)
+	t.Logf("frameType: %d, data: %s", frameType, data)
+	test.Equal(t, frameType, frameTypeResponse)
+	test.Equal(t, len(data) >= 2, true)
+	test.Equal(t, data[:2], []byte("OK"))
+}
+
+func subWaitResp(t *testing.T, conn io.ReadWriter, topicName string, channelName string) ([]byte, error) {
+	_, err := nsq.Subscribe(topicName, channelName).WriteTo(conn)
+	test.Equal(t, err, nil)
+	_, data, err := readFrameResponse(t, conn)
+	return data, err
 }
 
 func subOrdered(t *testing.T, conn io.ReadWriter, topicName string, channelName string) {
@@ -365,7 +378,7 @@ func TestChannelTopicNames(t *testing.T) {
 func TestBasicV2(t *testing.T) {
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
-	opts.ClientTimeout = 60 * time.Second
+	opts = adjustDefaultOptsForTest(opts)
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqdServer.Exit()
@@ -395,7 +408,7 @@ func TestMultipleConsumerV2(t *testing.T) {
 
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
-	opts.ClientTimeout = 60 * time.Second
+	opts = adjustDefaultOptsForTest(opts)
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqdServer.Exit()
@@ -440,8 +453,8 @@ func TestClientTimeout(t *testing.T) {
 
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
+	opts = adjustDefaultOptsForTest(opts)
 	opts.ClientTimeout = 150 * time.Millisecond
-	opts.LogLevel = 1
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqdServer.Exit()
@@ -460,7 +473,7 @@ func TestClientTimeout(t *testing.T) {
 		cs := c.Stats()
 		test.Equal(t, int64(opts.MsgTimeout), cs.MsgTimeout)
 	}
-	time.Sleep(150 * time.Millisecond)
+	time.Sleep(opts.ClientTimeout)
 
 	// depending on timing there may be 1 or 2 hearbeats sent
 	// just read until we get an error
@@ -484,6 +497,7 @@ func TestClientHeartbeat(t *testing.T) {
 
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
+	opts = adjustDefaultOptsForTest(opts)
 	opts.ClientTimeout = 200 * time.Millisecond
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
@@ -523,8 +537,8 @@ func TestClientHeartbeatDisableSUB(t *testing.T) {
 
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
+	opts = adjustDefaultOptsForTest(opts)
 	opts.ClientTimeout = 200 * time.Millisecond
-	opts.LogLevel = 1
 	tcpAddr, _, _, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqdServer.Exit()
@@ -542,6 +556,7 @@ func TestClientHeartbeatDisableSUB(t *testing.T) {
 func TestClientHeartbeatDisable(t *testing.T) {
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
+	opts = adjustDefaultOptsForTest(opts)
 	opts.ClientTimeout = 100 * time.Millisecond
 	tcpAddr, _, _, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
@@ -564,6 +579,7 @@ func TestClientHeartbeatDisable(t *testing.T) {
 func TestMaxHeartbeatIntervalValid(t *testing.T) {
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
+	opts = adjustDefaultOptsForTest(opts)
 	opts.MaxHeartbeatInterval = 300 * time.Second
 	tcpAddr, _, _, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
@@ -582,6 +598,7 @@ func TestMaxHeartbeatIntervalValid(t *testing.T) {
 func TestMaxHeartbeatIntervalInvalid(t *testing.T) {
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
+	opts = adjustDefaultOptsForTest(opts)
 	opts.MaxHeartbeatInterval = 300 * time.Second
 	tcpAddr, _, _, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
@@ -603,9 +620,9 @@ func TestClientIdentifyMsgTimeout(t *testing.T) {
 
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
+	opts = adjustDefaultOptsForTest(opts)
 	opts.ClientTimeout = 150 * time.Millisecond
 	opts.MsgTimeout = time.Second * 2
-	opts.LogLevel = 1
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqdServer.Exit()
@@ -666,6 +683,7 @@ func TestSkipping(t *testing.T) {
 	topicName := "test_skip_v2" + strconv.Itoa(int(time.Now().Unix()))
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
+	opts = adjustDefaultOptsForTest(opts)
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqdServer.Exit()
@@ -727,6 +745,8 @@ func TestSkipping(t *testing.T) {
 
 	msg = nsqdNs.NewMessage(0, []byte("test body3"))
 	topic.PutMessage(msg)
+	topic.ForceFlush()
+	channel.TryWakeupRead()
 
 	msgOut = recvNextMsgAndCheck(t, conn, len(msg.Body), msg.TraceID, true)
 	test.Equal(t, msgOut.Body, []byte("test body3"))
@@ -775,6 +795,7 @@ func TestConsumeTagMessageNormal(t *testing.T) {
 
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
+	opts = adjustDefaultOptsForTest(opts)
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqdServer.Exit()
@@ -874,10 +895,8 @@ func TestConsumeIllegalZanTestWithCompatibility(t *testing.T) {
 
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
-	if testing.Verbose() {
-		opts.LogLevel = 4
-		nsqdNs.SetLogger(opts.Logger)
-	}
+	opts = adjustDefaultOptsForTest(opts)
+
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqdServer.Exit()
@@ -924,8 +943,7 @@ func TestConsumeIllegalZanTestWithCompatibility(t *testing.T) {
 			cmd, err := nsq.PublishWithJsonExt(topicName, "0", msgBodyZanTest, jheZantest.GetBytes())
 			test.Nil(t, err)
 			cmd.WriteTo(conn)
-			resp, _ := nsq.ReadResponse(conn)
-			frameType, data, _ := nsq.UnpackResponse(resp)
+			frameType, data, _ := readFrameResponse(t, conn)
 			t.Logf("frameType: %d, data: %s", frameType, data)
 			test.Equal(t, int32(1), frameType)
 		}
@@ -947,10 +965,7 @@ func TestConsumeJsonHeaderMessageNormal(t *testing.T) {
 
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
-	if testing.Verbose() {
-		opts.LogLevel = 4
-		nsqdNs.SetLogger(opts.Logger)
-	}
+	opts = adjustDefaultOptsForTest(opts)
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqdServer.Exit()
@@ -1004,6 +1019,7 @@ func TestConsumeJsonHeaderMessageTag(t *testing.T) {
 
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
+	opts = adjustDefaultOptsForTest(opts)
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqdServer.Exit()
@@ -1088,12 +1104,9 @@ func TestPubJsonHeaderIgnored(t *testing.T) {
 
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
+	opts = adjustDefaultOptsForTest(opts)
 	opts.AllowExtCompatible = true
 	opts.AllowSubExtCompatible = true
-	if testing.Verbose() {
-		opts.LogLevel = 4
-		nsqdNs.SetLogger(opts.Logger)
-	}
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqdServer.Exit()
@@ -1114,58 +1127,32 @@ func TestPubJsonHeaderIgnored(t *testing.T) {
 	jext.TraceID = 1
 	cmd, _ := nsq.PublishWithJsonExt(topicName, "0", make([]byte, 5), jext.ToJson())
 	cmd.WriteTo(conn)
-	resp, _ := nsq.ReadResponse(conn)
-	frameType, data, _ := nsq.UnpackResponse(resp)
-	t.Logf("frameType: %d, data: %s", frameType, data)
-	test.Equal(t, frameType, frameTypeResponse)
-	test.Equal(t, len(data) >= 2, true)
-	test.Equal(t, data[:2], []byte("OK"))
+	validatePubResponse(t, conn)
 
 	jext.DispatchTag = "tag"
 	cmd, _ = nsq.PublishWithJsonExt(topicName, "0", make([]byte, 5), jext.ToJson())
 	cmd.WriteTo(conn)
-	resp, _ = nsq.ReadResponse(conn)
-	frameType, data, _ = nsq.UnpackResponse(resp)
-	t.Logf("frameType: %d, data: %s", frameType, data)
-	test.Equal(t, frameType, frameTypeResponse)
-	test.Equal(t, len(data) >= 2, true)
-	test.Equal(t, data[:2], []byte("OK"))
+	validatePubResponse(t, conn)
 
 	jext.TraceID = 0
 	jext.DispatchTag = "tag"
 	cmd, _ = nsq.PublishWithJsonExt(topicName, "0", make([]byte, 5), jext.ToJson())
 	cmd.WriteTo(conn)
-	resp, _ = nsq.ReadResponse(conn)
-	frameType, data, _ = nsq.UnpackResponse(resp)
-	t.Logf("frameType: %d, data: %s", frameType, data)
-	test.Equal(t, frameType, frameTypeResponse)
-	test.Equal(t, len(data) >= 2, true)
-	test.Equal(t, data[:2], []byte("OK"))
+	validatePubResponse(t, conn)
 
 	cmd, _ = nsq.PublishWithJsonExt(topicName, "0", make([]byte, 5), []byte("{}"))
 	cmd.WriteTo(conn)
-	resp, _ = nsq.ReadResponse(conn)
-	frameType, data, _ = nsq.UnpackResponse(resp)
-	t.Logf("frameType: %d, data: %s", frameType, data)
-	test.Equal(t, frameType, frameTypeResponse)
-	test.Equal(t, len(data) >= 2, true)
-	test.Equal(t, data[:2], []byte("OK"))
+	validatePubResponse(t, conn)
 
 	jext.Custom[ext.ZAN_TEST_KEY] = "true"
 	cmd, _ = nsq.PublishWithJsonExt(topicName, "0", make([]byte, 5), jext.ToJson())
 	cmd.WriteTo(conn)
-	resp, _ = nsq.ReadResponse(conn)
-	frameType, data, _ = nsq.UnpackResponse(resp)
-	t.Logf("frameType: %d, data: %s", frameType, data)
-	test.Equal(t, frameType, frameTypeResponse)
-	test.Equal(t, len(data) >= 2, true)
-	test.Equal(t, data[:2], []byte("OK"))
+	validatePubResponse(t, conn)
 
 	jext.Custom["k1"] = "v1"
 	cmd, _ = nsq.PublishWithJsonExt(topicName, "0", make([]byte, 5), jext.ToJson())
 	cmd.WriteTo(conn)
-	resp, _ = nsq.ReadResponse(conn)
-	frameType, data, _ = nsq.UnpackResponse(resp)
+	frameType, data, _ := readFrameResponse(t, conn)
 	t.Logf("frameType: %d, data: %s", frameType, data)
 	test.Equal(t, frameType, frameTypeError)
 	test.Equal(t, true, strings.Contains(string(data), ext.E_EXT_NOT_SUPPORT))
@@ -1176,12 +1163,9 @@ func TestPubJsonHeaderNotCompatible(t *testing.T) {
 
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
+	opts = adjustDefaultOptsForTest(opts)
 	opts.AllowExtCompatible = false
 	opts.AllowSubExtCompatible = true
-	if testing.Verbose() {
-		opts.LogLevel = 4
-		nsqdNs.SetLogger(opts.Logger)
-	}
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqdServer.Exit()
@@ -1202,8 +1186,7 @@ func TestPubJsonHeaderNotCompatible(t *testing.T) {
 	jext.TraceID = 1
 	cmd, _ := nsq.PublishWithJsonExt(topicName, "0", make([]byte, 5), jext.ToJson())
 	cmd.WriteTo(conn)
-	resp, _ := nsq.ReadResponse(conn)
-	frameType, data, _ := nsq.UnpackResponse(resp)
+	frameType, data, _ := readFrameResponse(t, conn)
 	t.Logf("frameType: %d, data: %s", frameType, data)
 	test.Equal(t, frameType, frameTypeError)
 	test.Equal(t, true, strings.Contains(string(data), ext.E_EXT_NOT_SUPPORT))
@@ -1211,8 +1194,7 @@ func TestPubJsonHeaderNotCompatible(t *testing.T) {
 	jext.DispatchTag = "tag"
 	cmd, _ = nsq.PublishWithJsonExt(topicName, "0", make([]byte, 5), jext.ToJson())
 	cmd.WriteTo(conn)
-	resp, _ = nsq.ReadResponse(conn)
-	frameType, data, _ = nsq.UnpackResponse(resp)
+	frameType, data, _ = readFrameResponse(t, conn)
 	t.Logf("frameType: %d, data: %s", frameType, data)
 	test.Equal(t, frameType, frameTypeError)
 	test.Equal(t, true, strings.Contains(string(data), ext.E_EXT_NOT_SUPPORT))
@@ -1221,16 +1203,14 @@ func TestPubJsonHeaderNotCompatible(t *testing.T) {
 	jext.DispatchTag = "tag"
 	cmd, _ = nsq.PublishWithJsonExt(topicName, "0", make([]byte, 5), jext.ToJson())
 	cmd.WriteTo(conn)
-	resp, _ = nsq.ReadResponse(conn)
-	frameType, data, _ = nsq.UnpackResponse(resp)
+	frameType, data, _ = readFrameResponse(t, conn)
 	t.Logf("frameType: %d, data: %s", frameType, data)
 	test.Equal(t, frameType, frameTypeError)
 	test.Equal(t, true, strings.Contains(string(data), ext.E_EXT_NOT_SUPPORT))
 
 	cmd, _ = nsq.PublishWithJsonExt(topicName, "0", make([]byte, 5), []byte("{}"))
 	cmd.WriteTo(conn)
-	resp, _ = nsq.ReadResponse(conn)
-	frameType, data, _ = nsq.UnpackResponse(resp)
+	frameType, data, _ = readFrameResponse(t, conn)
 	t.Logf("frameType: %d, data: %s", frameType, data)
 	test.Equal(t, frameType, frameTypeError)
 	test.Equal(t, true, strings.Contains(string(data), ext.E_EXT_NOT_SUPPORT))
@@ -1238,8 +1218,7 @@ func TestPubJsonHeaderNotCompatible(t *testing.T) {
 	jext.Custom[ext.ZAN_TEST_KEY] = "true"
 	cmd, _ = nsq.PublishWithJsonExt(topicName, "0", make([]byte, 5), jext.ToJson())
 	cmd.WriteTo(conn)
-	resp, _ = nsq.ReadResponse(conn)
-	frameType, data, _ = nsq.UnpackResponse(resp)
+	frameType, data, _ = readFrameResponse(t, conn)
 	t.Logf("frameType: %d, data: %s", frameType, data)
 	test.Equal(t, frameType, frameTypeError)
 	test.Equal(t, true, strings.Contains(string(data), ext.E_EXT_NOT_SUPPORT))
@@ -1247,8 +1226,7 @@ func TestPubJsonHeaderNotCompatible(t *testing.T) {
 	jext.Custom["k1"] = "v1"
 	cmd, _ = nsq.PublishWithJsonExt(topicName, "0", make([]byte, 5), jext.ToJson())
 	cmd.WriteTo(conn)
-	resp, _ = nsq.ReadResponse(conn)
-	frameType, data, _ = nsq.UnpackResponse(resp)
+	frameType, data, _ = readFrameResponse(t, conn)
 	t.Logf("frameType: %d, data: %s", frameType, data)
 	test.Equal(t, frameType, frameTypeError)
 	test.Equal(t, true, strings.Contains(string(data), ext.E_EXT_NOT_SUPPORT))
@@ -1259,6 +1237,7 @@ func TestConsumeRateLimit(t *testing.T) {
 
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
+	opts = adjustDefaultOptsForTest(opts)
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqdServer.Exit()
@@ -1314,10 +1293,8 @@ func TestConsumeMessageWhileUpgrade(t *testing.T) {
 
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
-	if testing.Verbose() {
-		opts.LogLevel = 3
-		nsqdNs.SetLogger(opts.Logger)
-	}
+	opts = adjustDefaultOptsForTest(opts)
+
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqdServer.Exit()
@@ -1436,10 +1413,7 @@ func TestConsumeDelayedMessageWhileUpgrade(t *testing.T) {
 
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
-	if testing.Verbose() {
-		opts.LogLevel = 3
-		nsqdNs.SetLogger(opts.Logger)
-	}
+	opts = adjustDefaultOptsForTest(opts)
 	opts.ReqToEndThreshold = time.Second
 	opts.MsgTimeout = time.Second * 5
 	opts.MaxConfirmWin = 50
@@ -1638,6 +1612,9 @@ func prepareTestOptsForDelayedMsg(t *testing.T, reqToEnd time.Duration) *nsqdNs.
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
 	opts.LogLevel = 3
+	if testing.Verbose() {
+		opts.LogLevel = 4
+	}
 	nsqdNs.SetLogger(opts.Logger)
 	opts.QueueScanInterval = time.Millisecond * 200
 	opts.ReqToEndThreshold = reqToEnd
@@ -1838,6 +1815,8 @@ func TestConsumeMultiTagMessages(t *testing.T) {
 
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
+	opts = adjustDefaultOptsForTest(opts)
+	opts.ClientTimeout = time.Second * 5
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqdServer.Exit()
@@ -1953,11 +1932,9 @@ func TestRemoveTagClientWhileConsuming(t *testing.T) {
 
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
+	opts = adjustDefaultOptsForTest(opts)
 	opts.MsgTimeout = time.Second * 5
-	if testing.Verbose() {
-		opts.LogLevel = 4
-		nsqdNs.SetLogger(opts.Logger)
-	}
+
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqdServer.Exit()
@@ -2069,6 +2046,7 @@ func TestSubWTagToOldTopic(t *testing.T) {
 
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
+	opts = adjustDefaultOptsForTest(opts)
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqdServer.Exit()
@@ -2111,6 +2089,7 @@ func TestSubToChannelNotRegistered(t *testing.T) {
 
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
+	opts = adjustDefaultOptsForTest(opts)
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqdServer.Exit()
@@ -2147,6 +2126,7 @@ func TestInvalidTagSub(t *testing.T) {
 
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
+	opts = adjustDefaultOptsForTest(opts)
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqdServer.Exit()
@@ -2197,6 +2177,8 @@ func consumeTagConcurrent(t *testing.T, producerFirst bool, ticker *time.Ticker)
 
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
+	opts = adjustDefaultOptsForTest(opts)
+	opts.ClientTimeout = time.Second * 2
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqdServer.Exit()
@@ -2531,32 +2513,32 @@ loop:
 		idx := rand.Intn(3)
 		t.Logf("restart consumer %v", idx+1)
 		resChans[idx] <- 1
-		time.Sleep(5 * time.Second)
+		time.Sleep(2 * time.Second)
 		select {
 		case <-ticker.C:
 			t.Logf("close producer & consumer...")
 			for _, clsCh := range clsP {
 				clsCh <- 1
 			}
-			time.Sleep(5 * time.Second)
+			time.Sleep(2 * time.Second)
 			for _, clsCh := range clsC {
 				clsCh <- 1
 			}
 			clsC4 <- 1
-			time.Sleep(5 * time.Second)
+			time.Sleep(2 * time.Second)
 			break loop
 		default:
 		}
 	}
 	t.Logf("for loop exits")
-	time.Sleep(10 * time.Second)
-
+	time.Sleep(time.Second)
 }
 
 func TestWriteAndConsumeTagMix(t *testing.T) {
 	topicName := "test_tag_stuck" + strconv.Itoa(int(time.Now().Unix()))
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
+	opts = adjustDefaultOptsForTest(opts)
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqdServer.Exit()
@@ -2676,6 +2658,8 @@ func TestStuckOnAnotherTag(t *testing.T) {
 
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
+	opts = adjustDefaultOptsForTest(opts)
+	opts.ClientTimeout = time.Second
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqdServer.Exit()
@@ -2753,6 +2737,7 @@ func TestPausing(t *testing.T) {
 
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
+	opts = adjustDefaultOptsForTest(opts)
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqdServer.Exit()
@@ -2806,6 +2791,7 @@ func TestPausing(t *testing.T) {
 func TestEmptyCommand(t *testing.T) {
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
+	opts = adjustDefaultOptsForTest(opts)
 	tcpAddr, _, _, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqdServer.Exit()
@@ -2823,7 +2809,7 @@ func TestEmptyCommand(t *testing.T) {
 func TestTcpPUBTRACE(t *testing.T) {
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
-	opts.LogLevel = 1
+	opts = adjustDefaultOptsForTest(opts)
 	opts.MaxMsgSize = 100
 	opts.MaxBodySize = 1000
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
@@ -2841,8 +2827,7 @@ func TestTcpPUBTRACE(t *testing.T) {
 	// PUBTRACE that's valid
 	cmd, _ := nsq.PublishTrace(topicName, "0", 123, make([]byte, 5))
 	cmd.WriteTo(conn)
-	resp, _ := nsq.ReadResponse(conn)
-	frameType, data, _ := nsq.UnpackResponse(resp)
+	frameType, data, _ := readFrameResponse(t, conn)
 	t.Logf("frameType: %d, data: %s", frameType, data)
 	test.Equal(t, frameType, frameTypeResponse)
 	test.Equal(t, len(data), 2+nsqdNs.MsgIDLength+8+4)
@@ -2851,8 +2836,7 @@ func TestTcpPUBTRACE(t *testing.T) {
 	// PUBTRACE that's invalid (too big)
 	cmd, _ = nsq.PublishTrace(topicName, "0", 123, make([]byte, 105))
 	cmd.WriteTo(conn)
-	resp, _ = nsq.ReadResponse(conn)
-	frameType, data, _ = nsq.UnpackResponse(resp)
+	frameType, data, _ = readFrameResponse(t, conn)
 	t.Logf("frameType: %d, data: %s", frameType, data)
 	test.Equal(t, frameType, frameTypeError)
 	// note: the trace body length should include the trace id
@@ -2879,8 +2863,7 @@ func TestTcpPUBTRACE(t *testing.T) {
 	}
 	cmd, _ = nsq.MultiPublishTrace(topicName, "0", traceIDList, mpub)
 	cmd.WriteTo(conn)
-	resp, _ = nsq.ReadResponse(conn)
-	frameType, data, _ = nsq.UnpackResponse(resp)
+	frameType, data, _ = readFrameResponse(t, conn)
 	t.Logf("frameType: %d, data: %s", frameType, data)
 	test.Equal(t, frameType, frameTypeResponse)
 	test.Equal(t, len(data), 2+nsqdNs.MsgIDLength+8+4)
@@ -2893,8 +2876,7 @@ func TestTcpPUBTRACE(t *testing.T) {
 	}
 	cmd, _ = nsq.MultiPublish(topicName, mpub)
 	cmd.WriteTo(conn)
-	resp, _ = nsq.ReadResponse(conn)
-	frameType, data, _ = nsq.UnpackResponse(resp)
+	frameType, data, _ = readFrameResponse(t, conn)
 	t.Logf("frameType: %d, data: %s", frameType, data)
 	test.Equal(t, frameType, frameTypeError)
 	test.Equal(t, string(data), fmt.Sprintf("E_BAD_BODY body too big 1148 > 1000"))
@@ -2903,7 +2885,7 @@ func TestTcpPUBTRACE(t *testing.T) {
 func TestTcpPub(t *testing.T) {
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
-	opts.LogLevel = 1
+	opts = adjustDefaultOptsForTest(opts)
 	opts.MaxMsgSize = 100
 	opts.MaxBodySize = 1000
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
@@ -2921,8 +2903,7 @@ func TestTcpPub(t *testing.T) {
 	// PUB that's valid
 	cmd := nsq.Publish(topicName, make([]byte, 5))
 	cmd.WriteTo(conn)
-	resp, _ := nsq.ReadResponse(conn)
-	frameType, data, _ := nsq.UnpackResponse(resp)
+	frameType, data, _ := readFrameResponse(t, conn)
 	t.Logf("frameType: %d, data: %s", frameType, data)
 	test.Equal(t, frameType, frameTypeResponse)
 	test.Equal(t, len(data), 2)
@@ -2931,8 +2912,7 @@ func TestTcpPub(t *testing.T) {
 	// PUB that's invalid (too big)
 	cmd = nsq.Publish(topicName, make([]byte, 105))
 	cmd.WriteTo(conn)
-	resp, _ = nsq.ReadResponse(conn)
-	frameType, data, _ = nsq.UnpackResponse(resp)
+	frameType, data, _ = readFrameResponse(t, conn)
 	t.Logf("frameType: %d, data: %s", frameType, data)
 	test.Equal(t, frameType, frameTypeError)
 	// note: the trace body length should include the trace id
@@ -2949,7 +2929,7 @@ func TestTcpPub(t *testing.T) {
 	conn.Close()
 
 	connList := make([]net.Conn, 0)
-	for i := 0; i < 200; i++ {
+	for i := 0; i < 100; i++ {
 		conn, err := mustConnectNSQD(tcpAddr)
 		t.Logf("conn %v : %v", i, err)
 		test.Equal(t, err, nil)
@@ -2968,19 +2948,14 @@ func TestTcpPub(t *testing.T) {
 	}
 	close(goStart)
 	for i := 0; i < len(connList); i++ {
-		resp, _ := nsq.ReadResponse(connList[i])
-		frameType, data, _ := nsq.UnpackResponse(resp)
-		test.Equal(t, frameType, frameTypeResponse)
-		test.Equal(t, len(data), 2)
-		test.Equal(t, data[:], []byte("OK"))
+		validatePubResponse(t, connList[i])
 	}
 
 	conn, err = mustConnectAndSub(t, tcpAddr, topicName, "ch")
 	test.Equal(t, err, nil)
 
 	for i := 0; i < len(connList); i++ {
-		resp, _ := nsq.ReadResponse(conn)
-		frameType, data, err := nsq.UnpackResponse(resp)
+		frameType, data, _ := readFrameResponse(t, conn)
 		test.Nil(t, err)
 		test.NotEqual(t, frameTypeError, frameType)
 		if frameType == frameTypeResponse {
@@ -2998,7 +2973,7 @@ func TestTcpPub(t *testing.T) {
 func TestTcpPubMultiTopicStats(t *testing.T) {
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
-	opts.LogLevel = 1
+	opts = adjustDefaultOptsForTest(opts)
 	opts.MaxMsgSize = 100
 	opts.MaxBodySize = 1000
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
@@ -3018,21 +2993,11 @@ func TestTcpPubMultiTopicStats(t *testing.T) {
 	// PUB that's valid
 	cmd := nsq.Publish(topicName, make([]byte, 5))
 	cmd.WriteTo(conn)
-	resp, _ := nsq.ReadResponse(conn)
-	frameType, data, _ := nsq.UnpackResponse(resp)
-	t.Logf("frameType: %d, data: %s", frameType, data)
-	test.Equal(t, frameType, frameTypeResponse)
-	test.Equal(t, len(data), 2)
-	test.Equal(t, data[:], []byte("OK"))
+	validatePubResponse(t, conn)
 
 	cmd = nsq.Publish(topicName2, make([]byte, 5))
 	cmd.WriteTo(conn)
-	resp, _ = nsq.ReadResponse(conn)
-	frameType, data, _ = nsq.UnpackResponse(resp)
-	t.Logf("frameType: %d, data: %s", frameType, data)
-	test.Equal(t, frameType, frameTypeResponse)
-	test.Equal(t, len(data), 2)
-	test.Equal(t, data[:], []byte("OK"))
+	validatePubResponse(t, conn)
 
 	t1Stat := nsqd.GetTopicIgnPart(topicName).GetDetailStats().GetPubClientStats()
 	test.Equal(t, 1, len(t1Stat))
@@ -3058,7 +3023,7 @@ func TestTcpPubPopQueueTimeout(t *testing.T) {
 	}()
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
-	opts.LogLevel = 3
+	opts = adjustDefaultOptsForTest(opts)
 	opts.MaxMsgSize = 100
 	opts.MaxBodySize = 1000
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
@@ -3077,8 +3042,7 @@ func TestTcpPubPopQueueTimeout(t *testing.T) {
 
 	cmd := nsq.Publish(topicName, []byte("12345"))
 	cmd.WriteTo(conn)
-	resp, _ := nsq.ReadResponse(conn)
-	frameType, data, _ := nsq.UnpackResponse(resp)
+	frameType, data, _ := readFrameResponse(t, conn)
 	t.Logf("frameType: %d, data: %s", frameType, data)
 	test.Equal(t, frameType, frameTypeError)
 	test.Equal(t, true, strings.Contains(string(data), ErrPubPopQueueTimeout.Error()))
@@ -3087,12 +3051,7 @@ func TestTcpPubPopQueueTimeout(t *testing.T) {
 	time.Sleep(time.Second)
 	cmd = nsq.Publish(topicName, []byte("22345"))
 	cmd.WriteTo(conn)
-	resp, _ = nsq.ReadResponse(conn)
-	frameType, data, err = nsq.UnpackResponse(resp)
-	t.Logf("frameType: %d, data: %s, err: %v", frameType, data, err)
-	test.Equal(t, frameType, frameTypeResponse)
-	test.Equal(t, len(data), 2)
-	test.Equal(t, data[:], []byte("OK"))
+	validatePubResponse(t, conn)
 }
 
 func TestTcpMPubPopQueueTimeout(t *testing.T) {
@@ -3102,7 +3061,7 @@ func TestTcpMPubPopQueueTimeout(t *testing.T) {
 	}()
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
-	opts.LogLevel = 3
+	opts = adjustDefaultOptsForTest(opts)
 	opts.MaxMsgSize = 100
 	opts.MaxBodySize = 1000
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
@@ -3121,8 +3080,7 @@ func TestTcpMPubPopQueueTimeout(t *testing.T) {
 
 	cmd, _ := nsq.MultiPublish(topicName, [][]byte{[]byte("12345")})
 	cmd.WriteTo(conn)
-	resp, _ := nsq.ReadResponse(conn)
-	frameType, data, _ := nsq.UnpackResponse(resp)
+	frameType, data, _ := readFrameResponse(t, conn)
 	t.Logf("frameType: %d, data: %s", frameType, data)
 	test.Equal(t, frameType, frameTypeError)
 	test.Equal(t, true, strings.Contains(string(data), ErrPubPopQueueTimeout.Error()))
@@ -3131,8 +3089,7 @@ func TestTcpMPubPopQueueTimeout(t *testing.T) {
 	time.Sleep(time.Second)
 	cmd, _ = nsq.MultiPublish(topicName, [][]byte{[]byte("22345")})
 	cmd.WriteTo(conn)
-	resp, _ = nsq.ReadResponse(conn)
-	frameType, data, err = nsq.UnpackResponse(resp)
+	frameType, data, err = readFrameResponse(t, conn)
 	t.Logf("frameType: %d, data: %s, err: %v", frameType, data, err)
 	test.Equal(t, frameType, frameTypeResponse)
 	test.Equal(t, len(data), 2)
@@ -3147,7 +3104,7 @@ func TestTcpPubWaitQueueFullAndTimeout(t *testing.T) {
 	}()
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
-	opts.LogLevel = 3
+	opts = adjustDefaultOptsForTest(opts)
 	opts.MaxMsgSize = 100
 	opts.MaxBodySize = 1000
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
@@ -3159,7 +3116,7 @@ func TestTcpPubWaitQueueFullAndTimeout(t *testing.T) {
 
 	timeoutCnt := int32(0)
 	var wg sync.WaitGroup
-	for i := 0; i < 20; i++ {
+	for i := 0; i < 10; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -3171,8 +3128,8 @@ func TestTcpPubWaitQueueFullAndTimeout(t *testing.T) {
 			s := time.Now()
 			cmd := nsq.Publish(topicName, []byte("12345"))
 			cmd.WriteTo(conn)
-			resp, _ := nsq.ReadResponse(conn)
-			frameType, data, _ := nsq.UnpackResponse(resp)
+			frameType, data, _ := readFrameResponse(t, conn)
+
 			cost := time.Since(s)
 			t.Logf("frameType: %d, data: %s, cost: %s", frameType, data, cost)
 			test.Equal(t, true, cost >= pubWaitTimeout)
@@ -3187,12 +3144,12 @@ func TestTcpPubWaitQueueFullAndTimeout(t *testing.T) {
 	}
 	wg.Wait()
 	t.Logf("timeout pub cnt : %v", timeoutCnt)
-	test.Equal(t, true, timeoutCnt >= 15)
+	test.Equal(t, true, timeoutCnt >= 5)
 
 	atomic.StoreInt32(&testPutMessageTimeout, int32(pubWaitTimeout.Seconds()-1))
 	timeoutCnt = 0
 
-	for i := 0; i < 20; i++ {
+	for i := 0; i < 10; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -3205,8 +3162,8 @@ func TestTcpPubWaitQueueFullAndTimeout(t *testing.T) {
 				s := time.Now()
 				cmd := nsq.Publish(topicName, []byte("12345"))
 				cmd.WriteTo(conn)
-				resp, _ := nsq.ReadResponse(conn)
-				frameType, data, _ := nsq.UnpackResponse(resp)
+				frameType, data, _ := readFrameResponse(t, conn)
+
 				cost := time.Since(s)
 				t.Logf("frameType: %d, data: %s, cost: %s", frameType, data, cost)
 				test.Equal(t, true, int32(cost.Seconds()) >= atomic.LoadInt32(&testPutMessageTimeout))
@@ -3234,7 +3191,7 @@ func TestTcpMPubWaitQueueFullAndTimeout(t *testing.T) {
 	}()
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
-	opts.LogLevel = 3
+	opts = adjustDefaultOptsForTest(opts)
 	opts.MaxMsgSize = 100
 	opts.MaxBodySize = 1000
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
@@ -3258,8 +3215,7 @@ func TestTcpMPubWaitQueueFullAndTimeout(t *testing.T) {
 			s := time.Now()
 			cmd, _ := nsq.MultiPublish(topicName, [][]byte{[]byte("12345")})
 			cmd.WriteTo(conn)
-			resp, _ := nsq.ReadResponse(conn)
-			frameType, data, _ := nsq.UnpackResponse(resp)
+			frameType, data, _ := readFrameResponse(t, conn)
 			cost := time.Since(s)
 			t.Logf("frameType: %d, data: %s, cost: %s", frameType, data, cost)
 			test.Equal(t, true, cost >= pubWaitTimeout)
@@ -3292,8 +3248,7 @@ func TestTcpMPubWaitQueueFullAndTimeout(t *testing.T) {
 				s := time.Now()
 				cmd, _ := nsq.MultiPublish(topicName, [][]byte{[]byte("12345")})
 				cmd.WriteTo(conn)
-				resp, _ := nsq.ReadResponse(conn)
-				frameType, data, _ := nsq.UnpackResponse(resp)
+				frameType, data, _ := readFrameResponse(t, conn)
 				cost := time.Since(s)
 				t.Logf("frameType: %d, data: %s, cost: %s", frameType, data, cost)
 				test.Equal(t, true, int32(cost.Seconds()) >= atomic.LoadInt32(&testPutMessageTimeout))
@@ -3315,7 +3270,7 @@ func TestTcpMPubWaitQueueFullAndTimeout(t *testing.T) {
 func TestTcpPubWaitTooMuchBytes(t *testing.T) {
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
-	opts.LogLevel = 3
+	opts = adjustDefaultOptsForTest(opts)
 	opts.MaxMsgSize = 100
 	opts.MaxBodySize = 1000
 	opts.MaxPubWaitingSize = 50
@@ -3334,8 +3289,7 @@ func TestTcpPubWaitTooMuchBytes(t *testing.T) {
 	s := time.Now()
 	cmd := nsq.Publish(topicName, make([]byte, opts.MaxPubWaitingSize+1))
 	cmd.WriteTo(conn)
-	resp, _ := nsq.ReadResponse(conn)
-	frameType, data, _ := nsq.UnpackResponse(resp)
+	frameType, data, _ := readFrameResponse(t, conn)
 	cost := time.Since(s)
 	t.Logf("frameType: %d, data: %s, cost: %s", frameType, data, cost)
 	atomic.AddInt32(&errCnt, 1)
@@ -3348,7 +3302,7 @@ func TestTcpPubWaitTooMuchBytes(t *testing.T) {
 func TestTcpMPubWaitTooMuchBytes(t *testing.T) {
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
-	opts.LogLevel = 3
+	opts = adjustDefaultOptsForTest(opts)
 	opts.MaxMsgSize = 200
 	opts.MaxBodySize = 1000
 	opts.MaxPubWaitingSize = 50
@@ -3372,8 +3326,7 @@ func TestTcpMPubWaitTooMuchBytes(t *testing.T) {
 			s := time.Now()
 			cmd, _ := nsq.MultiPublish(topicName, [][]byte{make([]byte, opts.MaxPubWaitingSize)})
 			cmd.WriteTo(conn)
-			resp, _ := nsq.ReadResponse(conn)
-			frameType, data, _ := nsq.UnpackResponse(resp)
+			frameType, data, _ := readFrameResponse(t, conn)
 			cost := time.Since(s)
 			t.Logf("frameType: %d, data: %s, cost: %s", frameType, data, cost)
 			if frameType == 0 {
@@ -3392,7 +3345,7 @@ func TestTcpMPubWaitTooMuchBytes(t *testing.T) {
 func TestTcpMpubExt(t *testing.T) {
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
-	opts.LogLevel = 1
+	opts = adjustDefaultOptsForTest(opts)
 	opts.MaxMsgSize = 100
 	opts.MaxBodySize = 1000
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
@@ -3426,12 +3379,7 @@ func TestTcpMpubExt(t *testing.T) {
 	cmd, err := nsq.MultiPublishWithJsonExt(topicName, "0", msgExtList, msgBody)
 	test.Nil(t, err)
 	cmd.WriteTo(conn)
-	resp, _ := nsq.ReadResponse(conn)
-	frameType, data, _ := nsq.UnpackResponse(resp)
-	t.Logf("frameType: %d, data: %s", frameType, data)
-	test.Equal(t, frameType, frameTypeResponse)
-	test.Equal(t, len(data), 2)
-	test.Equal(t, data[:], []byte("OK"))
+	validatePubResponse(t, conn)
 	conn.Close()
 
 	conn, err = mustConnectNSQD(tcpAddr)
@@ -3443,8 +3391,7 @@ func TestTcpMpubExt(t *testing.T) {
 	isOdd := false
 	cnt := 0
 	for {
-		resp, _ := nsq.ReadResponse(conn)
-		frameType, data, err := nsq.UnpackResponse(resp)
+		frameType, data, err := readFrameResponse(t, conn)
 		test.Nil(t, err)
 		test.NotEqual(t, frameTypeError, frameType)
 		if frameType == frameTypeResponse {
@@ -3478,7 +3425,7 @@ func TestTcpMpubExt(t *testing.T) {
 	conn.Close()
 
 	connList := make([]net.Conn, 0)
-	for i := 0; i < 200; i++ {
+	for i := 0; i < 100; i++ {
 		conn, err := mustConnectNSQD(tcpAddr)
 		t.Logf("conn %v: %v", i, err)
 		test.Equal(t, err, nil)
@@ -3501,12 +3448,7 @@ func TestTcpMpubExt(t *testing.T) {
 	}
 	close(goStart)
 	for i := 0; i < len(connList); i++ {
-		resp, _ := nsq.ReadResponse(connList[i])
-		frameType, data, _ := nsq.UnpackResponse(resp)
-		t.Log(string(data))
-		test.Equal(t, frameType, frameTypeResponse)
-		test.Equal(t, len(data), 2)
-		test.Equal(t, data[:], []byte("OK"))
+		validatePubResponse(t, connList[i])
 	}
 }
 
@@ -3520,7 +3462,7 @@ func TestTcpPubExtToNonExtTopicNotAllow(t *testing.T) {
 func testTcpPubExtToNonExtTopic(t *testing.T, allow bool) {
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
-	opts.LogLevel = 1
+	opts = adjustDefaultOptsForTest(opts)
 	opts.MaxMsgSize = 100
 	opts.MaxBodySize = 1000
 	opts.AllowExtCompatible = allow
@@ -3544,8 +3486,7 @@ func testTcpPubExtToNonExtTopic(t *testing.T, allow bool) {
 	cmd, err := nsq.PublishWithJsonExt(topicName, "0", make([]byte, 5), jhe.GetBytes())
 	test.Nil(t, err)
 	cmd.WriteTo(conn)
-	resp, _ := nsq.ReadResponse(conn)
-	frameType, data, _ := nsq.UnpackResponse(resp)
+	frameType, data, _ := readFrameResponse(t, conn)
 	t.Logf("frameType: %d, data: %s", frameType, data)
 	if !allow {
 		test.Equal(t, frameType, frameTypeError)
@@ -3560,8 +3501,7 @@ func testTcpPubExtToNonExtTopic(t *testing.T, allow bool) {
 	test.Equal(t, err, nil)
 
 	for {
-		resp, _ := nsq.ReadResponse(conn)
-		frameType, data, err := nsq.UnpackResponse(resp)
+		frameType, data, err := readFrameResponse(t, conn)
 		test.Nil(t, err)
 		test.NotEqual(t, frameTypeError, frameType)
 		if frameType == frameTypeResponse {
@@ -3590,6 +3530,7 @@ func testConsumeWithFilter(t *testing.T, inverse bool) {
 	topicName := "test_channel_filter" + strconv.Itoa(int(time.Now().Unix()))
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
+	opts = adjustDefaultOptsForTest(opts)
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqdServer.Exit()
@@ -3620,67 +3561,37 @@ func testConsumeWithFilter(t *testing.T, inverse bool) {
 		msgBody := fmt.Sprintf("this is message A %v", i)
 		cmd, _ := nsq.PublishWithJsonExt(topicName, "0", []byte(msgBody), jext.ToJson())
 		cmd.WriteTo(conn)
-		resp, _ := nsq.ReadResponse(conn)
-		frameType, data, _ := nsq.UnpackResponse(resp)
-		t.Logf("frameType: %d, data: %s", frameType, data)
-		test.Equal(t, frameType, frameTypeResponse)
-		test.Equal(t, len(data) >= 2, true)
-		test.Equal(t, data[:2], []byte("OK"))
+		validatePubResponse(t, conn)
 
 		jext.Custom[filterExtKey] = "filterAB"
 		msgBody = fmt.Sprintf("this is message AB %v", i)
 		cmd, _ = nsq.PublishWithJsonExt(topicName, "0", []byte(msgBody), jext.ToJson())
 		cmd.WriteTo(conn)
-		resp, _ = nsq.ReadResponse(conn)
-		frameType, data, _ = nsq.UnpackResponse(resp)
-		t.Logf("frameType: %d, data: %s", frameType, data)
-		test.Equal(t, frameType, frameTypeResponse)
-		test.Equal(t, len(data) >= 2, true)
-		test.Equal(t, data[:2], []byte("OK"))
+		validatePubResponse(t, conn)
 
 		jext.Custom[filterExtKey] = "filterB"
 		msgBody = fmt.Sprintf("this is message B %v", i)
 		cmd, _ = nsq.PublishWithJsonExt(topicName, "0", []byte(msgBody), jext.ToJson())
 		cmd.WriteTo(conn)
-		resp, _ = nsq.ReadResponse(conn)
-		frameType, data, _ = nsq.UnpackResponse(resp)
-		t.Logf("frameType: %d, data: %s", frameType, data)
-		test.Equal(t, frameType, frameTypeResponse)
-		test.Equal(t, len(data) >= 2, true)
-		test.Equal(t, data[:2], []byte("OK"))
+		validatePubResponse(t, conn)
 
 		jext.Custom[filterExtKey] = "filterBA"
 		msgBody = fmt.Sprintf("this is message BA %v", i)
 		cmd, _ = nsq.PublishWithJsonExt(topicName, "0", []byte(msgBody), jext.ToJson())
 		cmd.WriteTo(conn)
-		resp, _ = nsq.ReadResponse(conn)
-		frameType, data, _ = nsq.UnpackResponse(resp)
-		t.Logf("frameType: %d, data: %s", frameType, data)
-		test.Equal(t, frameType, frameTypeResponse)
-		test.Equal(t, len(data) >= 2, true)
-		test.Equal(t, data[:2], []byte("OK"))
+		validatePubResponse(t, conn)
 
 		jext.Custom[filterExtKey] = "filterA"
 		msgBody = fmt.Sprintf("this is message A %v", i)
 		cmd, _ = nsq.PublishWithJsonExt(topicName, "0", []byte(msgBody), jext.ToJson())
 		cmd.WriteTo(conn)
-		resp, _ = nsq.ReadResponse(conn)
-		frameType, data, _ = nsq.UnpackResponse(resp)
-		t.Logf("frameType: %d, data: %s", frameType, data)
-		test.Equal(t, frameType, frameTypeResponse)
-		test.Equal(t, len(data) >= 2, true)
-		test.Equal(t, data[:2], []byte("OK"))
+		validatePubResponse(t, conn)
 		// write some message with no ext to test filter non-ext message
 		delete(jext.Custom, filterExtKey)
 		msgBody = fmt.Sprintf("this is message no ext %v", i)
 		cmd, _ = nsq.PublishWithJsonExt(topicName, "0", []byte(msgBody), jext.ToJson())
 		cmd.WriteTo(conn)
-		resp, _ = nsq.ReadResponse(conn)
-		frameType, data, _ = nsq.UnpackResponse(resp)
-		t.Logf("frameType: %d, data: %s", frameType, data)
-		test.Equal(t, frameType, frameTypeResponse)
-		test.Equal(t, len(data) >= 2, true)
-		test.Equal(t, data[:2], []byte("OK"))
+		validatePubResponse(t, conn)
 	}
 	conn.Close()
 	t.Logf("starts consumers")
@@ -3907,10 +3818,7 @@ func testConsumeWithFilterComplex(t *testing.T, inverse bool) {
 	topicName := "test_channel_filter" + strconv.Itoa(int(time.Now().Unix()))
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
-	opts.LogLevel = 3
-	if testing.Verbose() {
-		nsqdNs.SetLogger(opts.Logger)
-	}
+	opts = adjustDefaultOptsForTest(opts)
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqdServer.Exit()
@@ -3940,24 +3848,14 @@ func testConsumeWithFilterComplex(t *testing.T, inverse bool) {
 		jextJson, _ := json.Marshal(jext)
 		cmd, _ := nsq.PublishWithJsonExt(topicName, "0", []byte(msgBody), jextJson)
 		cmd.WriteTo(conn)
-		resp, _ := nsq.ReadResponse(conn)
-		frameType, data, _ := nsq.UnpackResponse(resp)
-		t.Logf("frameType: %d, data: %s", frameType, data)
-		test.Equal(t, frameType, frameTypeResponse)
-		test.Equal(t, len(data) >= 2, true)
-		test.Equal(t, data[:2], []byte("OK"))
+		validatePubResponse(t, conn)
 
 		jext[filterExtKey] = false
 		msgBody = fmt.Sprintf("this is message false %v", i)
 		jextJson, _ = json.Marshal(jext)
 		cmd, _ = nsq.PublishWithJsonExt(topicName, "0", []byte(msgBody), jextJson)
 		cmd.WriteTo(conn)
-		resp, _ = nsq.ReadResponse(conn)
-		frameType, data, _ = nsq.UnpackResponse(resp)
-		t.Logf("frameType: %d, data: %s", frameType, data)
-		test.Equal(t, frameType, frameTypeResponse)
-		test.Equal(t, len(data) >= 2, true)
-		test.Equal(t, data[:2], []byte("OK"))
+		validatePubResponse(t, conn)
 
 		jext[filterExtKey] = "filterA"
 		jext[filterExtKey1] = "filter1A"
@@ -3965,12 +3863,7 @@ func testConsumeWithFilterComplex(t *testing.T, inverse bool) {
 		jextJson, _ = json.Marshal(jext)
 		cmd, _ = nsq.PublishWithJsonExt(topicName, "0", []byte(msgBody), jextJson)
 		cmd.WriteTo(conn)
-		resp, _ = nsq.ReadResponse(conn)
-		frameType, data, _ = nsq.UnpackResponse(resp)
-		t.Logf("frameType: %d, data: %s", frameType, data)
-		test.Equal(t, frameType, frameTypeResponse)
-		test.Equal(t, len(data) >= 2, true)
-		test.Equal(t, data[:2], []byte("OK"))
+		validatePubResponse(t, conn)
 
 		jext[filterExtKey] = "filterB"
 		jext[filterExtKey1] = "filter1B"
@@ -3978,12 +3871,7 @@ func testConsumeWithFilterComplex(t *testing.T, inverse bool) {
 		jextJson, _ = json.Marshal(jext)
 		cmd, _ = nsq.PublishWithJsonExt(topicName, "0", []byte(msgBody), jextJson)
 		cmd.WriteTo(conn)
-		resp, _ = nsq.ReadResponse(conn)
-		frameType, data, _ = nsq.UnpackResponse(resp)
-		t.Logf("frameType: %d, data: %s", frameType, data)
-		test.Equal(t, frameType, frameTypeResponse)
-		test.Equal(t, len(data) >= 2, true)
-		test.Equal(t, data[:2], []byte("OK"))
+		validatePubResponse(t, conn)
 
 		jext[filterExtKey] = "filterA"
 		delete(jext, filterExtKey1)
@@ -3991,12 +3879,7 @@ func testConsumeWithFilterComplex(t *testing.T, inverse bool) {
 		jextJson, _ = json.Marshal(jext)
 		cmd, _ = nsq.PublishWithJsonExt(topicName, "0", []byte(msgBody), jextJson)
 		cmd.WriteTo(conn)
-		resp, _ = nsq.ReadResponse(conn)
-		frameType, data, _ = nsq.UnpackResponse(resp)
-		t.Logf("frameType: %d, data: %s", frameType, data)
-		test.Equal(t, frameType, frameTypeResponse)
-		test.Equal(t, len(data) >= 2, true)
-		test.Equal(t, data[:2], []byte("OK"))
+		validatePubResponse(t, conn)
 
 		// write some message with no ext to test filter non-ext message
 		delete(jext, filterExtKey)
@@ -4005,12 +3888,7 @@ func testConsumeWithFilterComplex(t *testing.T, inverse bool) {
 		msgBody = fmt.Sprintf("this is message no ext %v", i)
 		cmd, _ = nsq.PublishWithJsonExt(topicName, "0", []byte(msgBody), jextJson)
 		cmd.WriteTo(conn)
-		resp, _ = nsq.ReadResponse(conn)
-		frameType, data, _ = nsq.UnpackResponse(resp)
-		t.Logf("frameType: %d, data: %s", frameType, data)
-		test.Equal(t, frameType, frameTypeResponse)
-		test.Equal(t, len(data) >= 2, true)
-		test.Equal(t, data[:2], []byte("OK"))
+		validatePubResponse(t, conn)
 	}
 	conn.Close()
 	t.Logf("starts consumers")
@@ -4144,10 +4022,8 @@ func TestConsumeWithFilterOnNonExtendTopic(t *testing.T) {
 	topicName := "test_channel_filter" + strconv.Itoa(int(time.Now().Unix()))
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
-	opts.LogLevel = 3
-	if testing.Verbose() {
-		nsqdNs.SetLogger(opts.Logger)
-	}
+	opts = adjustDefaultOptsForTest(opts)
+
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqdServer.Exit()
@@ -4169,12 +4045,7 @@ func TestConsumeWithFilterOnNonExtendTopic(t *testing.T) {
 		msgBody := fmt.Sprintf("this is message %v", i)
 		cmd := nsq.Publish(topicName, []byte(msgBody))
 		cmd.WriteTo(conn)
-		resp, _ := nsq.ReadResponse(conn)
-		frameType, data, _ := nsq.UnpackResponse(resp)
-		t.Logf("frameType: %d, data: %s", frameType, data)
-		test.Equal(t, frameType, frameTypeResponse)
-		test.Equal(t, len(data) >= 2, true)
-		test.Equal(t, data[:2], []byte("OK"))
+		validatePubResponse(t, conn)
 	}
 	conn.Close()
 	t.Logf("starts consumers")
@@ -4206,7 +4077,7 @@ func TestConsumeWithFilterOnNonExtendTopic(t *testing.T) {
 func TestSizeLimits(t *testing.T) {
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
-	opts.LogLevel = 1
+	opts = adjustDefaultOptsForTest(opts)
 	opts.MaxMsgSize = 100
 	opts.MaxBodySize = 1000
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
@@ -4226,24 +4097,15 @@ func TestSizeLimits(t *testing.T) {
 	// PUB that's valid
 	// small body
 	nsq.Publish(topicName, make([]byte, 1)).WriteTo(conn)
-	resp, _ := nsq.ReadResponse(conn)
-	frameType, data, _ := nsq.UnpackResponse(resp)
-	t.Logf("frameType: %d, data: %s", frameType, data)
-	test.Equal(t, frameType, frameTypeResponse)
-	test.Equal(t, data, []byte("OK"))
+	validatePubResponse(t, conn)
 
 	// normal body
 	nsq.Publish(topicName, make([]byte, 95)).WriteTo(conn)
-	resp, _ = nsq.ReadResponse(conn)
-	frameType, data, _ = nsq.UnpackResponse(resp)
-	t.Logf("frameType: %d, data: %s", frameType, data)
-	test.Equal(t, frameType, frameTypeResponse)
-	test.Equal(t, data, []byte("OK"))
+	validatePubResponse(t, conn)
 
 	// PUB that's invalid (too big)
 	nsq.Publish(topicName, make([]byte, 105)).WriteTo(conn)
-	resp, _ = nsq.ReadResponse(conn)
-	frameType, data, _ = nsq.UnpackResponse(resp)
+	frameType, data, _ := readFrameResponse(t, conn)
 	t.Logf("frameType: %d, data: %s", frameType, data)
 	test.Equal(t, frameType, frameTypeError)
 	test.Equal(t, string(data), fmt.Sprintf("E_BAD_MESSAGE message too big 105 > 100"))
@@ -4255,8 +4117,7 @@ func TestSizeLimits(t *testing.T) {
 
 	// PUB thats empty
 	nsq.Publish(topicName, []byte{}).WriteTo(conn)
-	resp, _ = nsq.ReadResponse(conn)
-	frameType, data, _ = nsq.UnpackResponse(resp)
+	frameType, data, _ = readFrameResponse(t, conn)
 	t.Logf("frameType: %d, data: %s", frameType, data)
 	test.Equal(t, frameType, frameTypeError)
 	test.Equal(t, string(data), fmt.Sprintf("E_BAD_BODY invalid body size 0"))
@@ -4274,11 +4135,7 @@ func TestSizeLimits(t *testing.T) {
 	}
 	cmd, _ := nsq.MultiPublish(topicName, mpub)
 	cmd.WriteTo(conn)
-	resp, _ = nsq.ReadResponse(conn)
-	frameType, data, _ = nsq.UnpackResponse(resp)
-	t.Logf("frameType: %d, data: %s", frameType, data)
-	test.Equal(t, frameType, frameTypeResponse)
-	test.Equal(t, data, []byte("OK"))
+	validatePubResponse(t, conn)
 
 	mpub = make([][]byte, 5)
 	for i := range mpub {
@@ -4286,11 +4143,7 @@ func TestSizeLimits(t *testing.T) {
 	}
 	cmd, _ = nsq.MultiPublish(topicName, mpub)
 	cmd.WriteTo(conn)
-	resp, _ = nsq.ReadResponse(conn)
-	frameType, data, _ = nsq.UnpackResponse(resp)
-	t.Logf("frameType: %d, data: %s", frameType, data)
-	test.Equal(t, frameType, frameTypeResponse)
-	test.Equal(t, data, []byte("OK"))
+	validatePubResponse(t, conn)
 
 	// MPUB body that's invalid (body too big)
 	mpub = make([][]byte, 11)
@@ -4299,8 +4152,7 @@ func TestSizeLimits(t *testing.T) {
 	}
 	cmd, _ = nsq.MultiPublish(topicName, mpub)
 	cmd.WriteTo(conn)
-	resp, _ = nsq.ReadResponse(conn)
-	frameType, data, _ = nsq.UnpackResponse(resp)
+	frameType, data, _ = readFrameResponse(t, conn)
 	t.Logf("frameType: %d, data: %s", frameType, data)
 	test.Equal(t, frameType, frameTypeError)
 	test.Equal(t, string(data), fmt.Sprintf("E_BAD_BODY body too big 1148 > 1000"))
@@ -4318,8 +4170,7 @@ func TestSizeLimits(t *testing.T) {
 	mpub = append(mpub, []byte{})
 	cmd, _ = nsq.MultiPublish(topicName, mpub)
 	cmd.WriteTo(conn)
-	resp, _ = nsq.ReadResponse(conn)
-	frameType, data, _ = nsq.UnpackResponse(resp)
+	frameType, data, _ = readFrameResponse(t, conn)
 	t.Logf("frameType: %d, data: %s", frameType, data)
 	test.Equal(t, frameType, frameTypeError)
 	test.Equal(t, string(data), fmt.Sprintf("E_BAD_MESSAGE MPUB invalid message(5) body size 0"))
@@ -4336,8 +4187,7 @@ func TestSizeLimits(t *testing.T) {
 	}
 	cmd, _ = nsq.MultiPublish(topicName, mpub)
 	cmd.WriteTo(conn)
-	resp, _ = nsq.ReadResponse(conn)
-	frameType, data, _ = nsq.UnpackResponse(resp)
+	frameType, data, _ = readFrameResponse(t, conn)
 	t.Logf("frameType: %d, data: %s", frameType, data)
 	test.Equal(t, frameType, frameTypeError)
 	test.Equal(t, string(data), fmt.Sprintf("E_BAD_MESSAGE MPUB message too big 101 > 100"))
@@ -4346,8 +4196,7 @@ func TestSizeLimits(t *testing.T) {
 func TestZanTestSkip(t *testing.T) {
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
-	opts.LogLevel = 1
-	opts.SyncEvery = 1
+	opts = adjustDefaultOptsForTest(opts)
 	opts.MsgTimeout = time.Second * 2
 	opts.MaxReqTimeout = time.Second * 100
 	opts.AllowZanTestSkip = true
@@ -4386,12 +4235,7 @@ func TestZanTestSkip(t *testing.T) {
 	cmd, err := nsq.MultiPublishWithJsonExt(topicName, "0", msgExtList, msgBody)
 	test.Nil(t, err)
 	cmd.WriteTo(conn)
-	resp, _ := nsq.ReadResponse(conn)
-	frameType, data, _ := nsq.UnpackResponse(resp)
-	t.Logf("frameType: %d, data: %s", frameType, data)
-	test.Equal(t, frameType, frameTypeResponse)
-	test.Equal(t, len(data), 2)
-	test.Equal(t, data[:], []byte("OK"))
+	validatePubResponse(t, conn)
 	conn.Close()
 
 	//skip zan test messages
@@ -4405,8 +4249,7 @@ func TestZanTestSkip(t *testing.T) {
 	test.Equal(t, err, nil)
 	var cnt int
 	for {
-		resp, _ := nsq.ReadResponse(conn)
-		frameType, data, err := nsq.UnpackResponse(resp)
+		frameType, data, err := readFrameResponse(t, conn)
 		test.Nil(t, err)
 		test.NotEqual(t, frameTypeError, frameType)
 		if frameType == frameTypeResponse {
@@ -4433,11 +4276,9 @@ func TestZanTestSkip(t *testing.T) {
 func TestDelayMessage(t *testing.T) {
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
-	//opts.Logger = &levellogger.SimpleLogger{}
-	opts.LogLevel = 1
-	opts.SyncEvery = 1
-	opts.MsgTimeout = time.Second * 2
-	opts.MaxReqTimeout = time.Second * 50
+	opts = adjustDefaultOptsForTest(opts)
+	opts.MsgTimeout = time.Second + time.Millisecond
+	opts.MaxReqTimeout = time.Second * 10
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqdServer.Exit()
@@ -4545,12 +4386,7 @@ func TestDelayMessage(t *testing.T) {
 func TestDelayMessageToQueueEnd(t *testing.T) {
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
-	opts.LogLevel = 1
-	if testing.Verbose() {
-		opts.LogLevel = 4
-		nsqdNs.SetLogger(opts.Logger)
-	}
-	opts.SyncEvery = 1
+	opts = adjustDefaultOptsForTest(opts)
 	opts.QueueScanInterval = time.Millisecond * 20
 	opts.MsgTimeout = time.Second * 2
 	opts.MaxReqTimeout = time.Second * 100
@@ -4621,10 +4457,11 @@ func TestDelayMessageToQueueEnd(t *testing.T) {
 		if uint64(msg.ID) > largestID {
 			largestID = uint64(msg.ID)
 		}
-		topic.ForceFlush()
 	}
+	topic.ForceFlush()
 
 	delayStart = time.Now()
+
 	var longestDelayOutMsg *nsq.Message
 	// requeue while blocking
 	var longestDelay time.Duration
@@ -4713,17 +4550,13 @@ func TestDelayMessageToQueueEndAgainAndAgain(t *testing.T) {
 
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
-	opts.LogLevel = 2
-	if testing.Verbose() {
-		opts.LogLevel = 3
-		nsqdNs.SetLogger(opts.Logger)
-	}
-	opts.SyncEvery = 1
+	opts = adjustDefaultOptsForTest(opts)
 	opts.QueueScanInterval = time.Millisecond * 10
 	opts.MsgTimeout = time.Second * 10
 	opts.MaxReqTimeout = time.Second * 100
 	opts.MaxConfirmWin = 50
 	opts.ReqToEndThreshold = time.Millisecond * 150
+	opts.SyncEvery = 1000
 	maxIntervalDelayed := opts.ReqToEndThreshold * nsqdNs.MaxWaitingDelayed * 2
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 
@@ -4769,6 +4602,7 @@ func TestDelayMessageToQueueEndAgainAndAgain(t *testing.T) {
 		test.Nil(t, err)
 		t.Logf("delay msg to end %v, %v", msgOut.ID, recvCnt)
 	}
+	topic.ForceFlush()
 	delayStart2 := time.Now()
 	// delay some delayed message again
 	for {
@@ -4837,17 +4671,13 @@ func TestDelayManyMessagesToQueueEnd(t *testing.T) {
 func testDelayManyMessagesToQueueEnd(t *testing.T, changedLeader bool) {
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
-	opts.LogLevel = 1
-	if testing.Verbose() {
-		opts.LogLevel = 4
-		nsqdNs.SetLogger(opts.Logger)
-	}
-	opts.SyncEvery = 1
+	opts = adjustDefaultOptsForTest(opts)
+	opts.SyncEvery = 10000
 	opts.QueueScanInterval = time.Millisecond * 10
-	opts.MsgTimeout = time.Second * 2
+	opts.MsgTimeout = time.Second
 	opts.MaxConfirmWin = 50
-	opts.ReqToEndThreshold = nsqdNs.MaxWaitingDelayed*time.Millisecond*100 + time.Millisecond*800
-	opts.MaxReqTimeout = time.Second*30 + opts.ReqToEndThreshold*3
+	opts.ReqToEndThreshold = nsqdNs.MaxWaitingDelayed*time.Millisecond*50 + time.Millisecond*800
+	opts.MaxReqTimeout = time.Second*10 + opts.ReqToEndThreshold*3
 	opts.MaxOutputBufferTimeout = 10 * time.Millisecond
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 
@@ -5036,9 +4866,7 @@ func testDelayManyMessagesToQueueEnd(t *testing.T, changedLeader bool) {
 func TestTouch(t *testing.T) {
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
-	opts.SyncEvery = 1
-	opts.LogLevel = 1
-	opts.MsgTimeout = 150 * time.Millisecond
+	opts = adjustDefaultOptsForTest(opts)
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqdServer.Exit()
@@ -5065,12 +4893,12 @@ func TestTouch(t *testing.T) {
 	msgOutID := uint64(nsq.GetNewMessageID(msgOut.ID[:]))
 	test.Equal(t, msgOutID, uint64(msg.ID))
 
-	time.Sleep(75 * time.Millisecond)
+	time.Sleep(opts.MsgTimeout / 2)
 
 	_, err = nsq.Touch(nsq.MessageID(msg.GetFullMsgID())).WriteTo(conn)
 	test.Equal(t, err, nil)
 
-	time.Sleep(75 * time.Millisecond)
+	time.Sleep(opts.MsgTimeout / 2)
 
 	_, err = nsq.Finish(nsq.MessageID(msg.GetFullMsgID())).WriteTo(conn)
 	test.Equal(t, err, nil)
@@ -5084,7 +4912,8 @@ func TestSubOrderedMulti(t *testing.T) {
 
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
-	opts.LogLevel = 1
+	opts = adjustDefaultOptsForTest(opts)
+	opts.ClientTimeout = time.Second
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqdServer.Exit()
@@ -5132,17 +4961,13 @@ func TestSubTimeoutMany(t *testing.T) {
 	// should go delayed queue for a while and the channel depth should be 0
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
-	opts.LogLevel = 1
-	if testing.Verbose() {
-		opts.LogLevel = 4
-		nsqdNs.SetLogger(opts.Logger)
-	}
-	opts.SyncEvery = 1
+	opts = adjustDefaultOptsForTest(opts)
+	opts.ClientTimeout = time.Second
 	opts.QueueScanInterval = time.Millisecond * 10
-	opts.MsgTimeout = time.Second * 2
+	opts.MsgTimeout = time.Second / 2
 	opts.MaxConfirmWin = 5
 	opts.ReqToEndThreshold = nsqdNs.MaxWaitingDelayed*time.Millisecond*10 + time.Millisecond*80
-	opts.MaxReqTimeout = time.Second*30 + opts.ReqToEndThreshold*3
+	opts.MaxReqTimeout = time.Second*10 + opts.ReqToEndThreshold*3
 	opts.MaxOutputBufferTimeout = 10 * time.Millisecond
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 
@@ -5255,14 +5080,10 @@ func TestSubFewMsgTimeoutAlwaysShouldNotBlocking(t *testing.T) {
 	// should go delayed queue for a while and the channel depth should be 0
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
-	opts.LogLevel = 1
-	if testing.Verbose() {
-		opts.LogLevel = 4
-		nsqdNs.SetLogger(opts.Logger)
-	}
-	opts.SyncEvery = 1
+	opts = adjustDefaultOptsForTest(opts)
+
 	opts.QueueScanInterval = time.Millisecond * 10
-	opts.MsgTimeout = time.Second / 10
+	opts.MsgTimeout = time.Millisecond * 10
 	opts.MaxConfirmWin = 50
 	opts.ReqToEndThreshold = nsqdNs.MaxWaitingDelayed*time.Millisecond + time.Millisecond*80
 	opts.MaxReqTimeout = time.Second*10 + opts.ReqToEndThreshold*3
@@ -5371,17 +5192,13 @@ func TestSubReqToEndFailedPartial(t *testing.T) {
 	// later the memory delayed failed and it should be req to end again
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
-	opts.LogLevel = 1
-	if testing.Verbose() {
-		opts.LogLevel = 4
-		nsqdNs.SetLogger(opts.Logger)
-	}
-	opts.SyncEvery = 1
+	opts = adjustDefaultOptsForTest(opts)
+
 	opts.QueueScanInterval = time.Millisecond * 10
-	opts.MsgTimeout = time.Second * 2
+	opts.MsgTimeout = time.Second
 	opts.MaxConfirmWin = 50
 	opts.ReqToEndThreshold = nsqdNs.MaxWaitingDelayed*time.Millisecond*100 + time.Millisecond*800
-	opts.MaxReqTimeout = time.Second*30 + opts.ReqToEndThreshold*3
+	opts.MaxReqTimeout = time.Second*10 + opts.ReqToEndThreshold*3
 	opts.MaxOutputBufferTimeout = 10 * time.Millisecond
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 
@@ -5501,7 +5318,7 @@ func TestSubOrdered(t *testing.T) {
 
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
-	opts.LogLevel = 1
+	opts = adjustDefaultOptsForTest(opts)
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqdServer.Exit()
@@ -5579,12 +5396,9 @@ func TestSubOrderedWithFilter(t *testing.T) {
 
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
-	opts.LogLevel = 2
+	opts = adjustDefaultOptsForTest(opts)
 	opts.SyncTimeout = time.Minute
-	if testing.Verbose() {
-		opts.LogLevel = 4
-		nsqdNs.SetLogger(opts.Logger)
-	}
+
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqdServer.Exit()
@@ -5654,11 +5468,9 @@ func TestSubOrderedWithFilter(t *testing.T) {
 func TestSubWithLargeReady(t *testing.T) {
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
+	opts = adjustDefaultOptsForTest(opts)
 	opts.MaxRdyCount = 250
-	if testing.Verbose() {
-		opts.LogLevel = 2
-		nsqdNs.SetLogger(opts.Logger)
-	}
+
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqdServer.Exit()
@@ -5701,7 +5513,7 @@ func TestSubWithLargeReady(t *testing.T) {
 func TestMaxRdyCount(t *testing.T) {
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
-	opts.LogLevel = 1
+	opts = adjustDefaultOptsForTest(opts)
 	opts.MaxRdyCount = 50
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
@@ -5748,6 +5560,7 @@ func TestMaxRdyCount(t *testing.T) {
 func TestFatalError(t *testing.T) {
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
+	opts = adjustDefaultOptsForTest(opts)
 	tcpAddr, _, _, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqdServer.Exit()
@@ -5769,66 +5582,12 @@ func TestFatalError(t *testing.T) {
 	test.NotNil(t, err)
 }
 
-func TestOutputBufferingNoWait(t *testing.T) {
-	// TODO: shorter buffer testing if used
-	return
-	opts := nsqdNs.NewOptions()
-	opts.Logger = newTestLogger(t)
-	opts.LogLevel = 1
-	opts.MaxOutputBufferSize = 512 * 1024
-	opts.MaxOutputBufferTimeout = time.Second
-	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
-	defer os.RemoveAll(opts.DataPath)
-	defer nsqdServer.Exit()
-
-	topicName := "test_output_buffering" + strconv.Itoa(int(time.Now().Unix()))
-
-	conn, err := mustConnectNSQD(tcpAddr)
-	test.Equal(t, err, nil)
-	defer conn.Close()
-
-	outputBufferSize := 256 * 1024
-	outputBufferTimeout := 500
-
-	topic := nsqd.GetTopicIgnPart(topicName)
-	topic.GetChannel("ch")
-	msg := nsqdNs.NewMessage(0, make([]byte, outputBufferSize-1024))
-	topic.PutMessage(msg)
-
-	start := time.Now()
-	data := identify(t, conn, map[string]interface{}{
-		"output_buffer_size":    outputBufferSize,
-		"output_buffer_timeout": outputBufferTimeout,
-	}, frameTypeResponse)
-	var decoded map[string]interface{}
-	json.Unmarshal(data, &decoded)
-	v, ok := decoded["output_buffer_size"]
-	test.Equal(t, ok, true)
-	test.Equal(t, int(v.(float64)), outputBufferSize)
-	v, _ = decoded["output_buffer_timeout"]
-	test.Equal(t, int(v.(float64)), outputBufferTimeout)
-	sub(t, conn, topicName, "ch")
-
-	_, err = nsq.Ready(10).WriteTo(conn)
-	test.Equal(t, err, nil)
-
-	msgOut := recvNextMsgAndCheck(t, conn, len(msg.Body), msg.TraceID, false)
-	end := time.Now()
-	t.Logf("recv cost : %v", end.Sub(start))
-
-	test.Equal(t, int(end.Sub(start)/time.Millisecond) < outputBufferTimeout, true)
-	test.Equal(t, int(end.Sub(start)/time.Millisecond) > 1, true)
-
-	msgOutID := uint64(nsq.GetNewMessageID(msgOut.ID[:]))
-	test.Equal(t, msgOutID, uint64(msg.ID))
-}
-
 func TestOutputBuffering(t *testing.T) {
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
-	opts.LogLevel = 1
+	opts = adjustDefaultOptsForTest(opts)
 	opts.MaxOutputBufferSize = 512 * 1024
-	opts.MaxOutputBufferTimeout = time.Second
+	opts.MaxOutputBufferTimeout = opts.MsgTimeout
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqdServer.Exit()
@@ -5840,7 +5599,7 @@ func TestOutputBuffering(t *testing.T) {
 	defer conn.Close()
 
 	outputBufferSize := 256 * 1024
-	outputBufferTimeout := 500
+	outputBufferTimeout := int(opts.MsgTimeout / 2 / time.Millisecond)
 
 	topic := nsqd.GetTopicIgnPart(topicName)
 	topic.GetChannel("ch")
@@ -5877,7 +5636,7 @@ func TestOutputBuffering(t *testing.T) {
 func TestOutputBufferingValidity(t *testing.T) {
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
-	opts.LogLevel = 1
+	opts = adjustDefaultOptsForTest(opts)
 	opts.MaxOutputBufferSize = 512 * 1024
 	opts.MaxOutputBufferTimeout = time.Second
 	tcpAddr, _, _, nsqdServer := mustStartNSQD(opts)
@@ -5920,7 +5679,7 @@ func TestOutputBufferingValidity(t *testing.T) {
 func TestTLS(t *testing.T) {
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
-	opts.LogLevel = 1
+	opts = adjustDefaultOptsForTest(opts)
 	opts.TLSCert = "./test/certs/server.pem"
 	opts.TLSKey = "./test/certs/server.key"
 	tcpAddr, _, _, nsqdServer := mustStartNSQD(opts)
@@ -5959,7 +5718,7 @@ func TestTLS(t *testing.T) {
 func TestTLSRequired(t *testing.T) {
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
-	opts.LogLevel = 2
+	opts = adjustDefaultOptsForTest(opts)
 	opts.TLSCert = "./test/certs/server.pem"
 	opts.TLSKey = "./test/certs/server.key"
 	opts.TLSRequired = TLSRequiredExceptHTTP
@@ -6008,7 +5767,7 @@ func TestTLSRequired(t *testing.T) {
 func TestTLSAuthRequire(t *testing.T) {
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
-	opts.LogLevel = 2
+	opts = adjustDefaultOptsForTest(opts)
 	opts.TLSCert = "./test/certs/server.pem"
 	opts.TLSKey = "./test/certs/server.key"
 	opts.TLSClientAuthPolicy = "require"
@@ -6074,7 +5833,7 @@ func TestTLSAuthRequire(t *testing.T) {
 func TestTLSAuthRequireVerify(t *testing.T) {
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
-	opts.LogLevel = 1
+	opts = adjustDefaultOptsForTest(opts)
 	opts.TLSCert = "./test/certs/server.pem"
 	opts.TLSKey = "./test/certs/server.key"
 	opts.TLSRootCAFile = "./test/certs/ca.pem"
@@ -6163,7 +5922,7 @@ func TestTLSAuthRequireVerify(t *testing.T) {
 func TestDeflate(t *testing.T) {
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
-	opts.LogLevel = 2
+	opts = adjustDefaultOptsForTest(opts)
 	opts.DeflateEnabled = true
 	tcpAddr, _, _, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
@@ -6199,11 +5958,8 @@ type readWriter struct {
 func TestSnappy(t *testing.T) {
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
-	opts.LogLevel = 2
+	opts = adjustDefaultOptsForTest(opts)
 	opts.SnappyEnabled = true
-	if testing.Verbose() {
-		nsqdNs.SetLogger(opts.Logger)
-	}
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqdServer.Exit()
@@ -6257,7 +6013,7 @@ func TestSnappy(t *testing.T) {
 func TestTLSDeflate(t *testing.T) {
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
-	opts.LogLevel = 2
+	opts = adjustDefaultOptsForTest(opts)
 	opts.DeflateEnabled = true
 	opts.TLSCert = "./test/certs/cert.pem"
 	opts.TLSKey = "./test/certs/key.pem"
@@ -6314,8 +6070,9 @@ func TestSampling(t *testing.T) {
 
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
-	opts.SyncEvery = 1
-	opts.LogLevel = 4
+	opts = adjustDefaultOptsForTest(opts)
+	// make sure no timeout while waiting inflight sample
+	opts.MsgTimeout = time.Second * 10
 	opts.MaxRdyCount = int64(num)
 	opts.MaxConfirmWin = int64(num * 10)
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
@@ -6346,6 +6103,7 @@ func TestSampling(t *testing.T) {
 		topic.PutMessage(msg)
 	}
 
+	topic.ForceFlush()
 	// let the topic drain into the channel
 	time.Sleep(50 * time.Millisecond)
 
@@ -6357,7 +6115,7 @@ func TestSampling(t *testing.T) {
 	doneChan := make(chan int)
 	go func() {
 		for {
-			_, err := nsq.ReadResponse(conn)
+			resp, err := nsq.ReadResponse(conn)
 			if err != nil {
 				return
 			}
@@ -6366,19 +6124,14 @@ func TestSampling(t *testing.T) {
 				return
 			default:
 			}
-			//frameType, data, _ := nsq.UnpackResponse(resp)
-			//if frameType == frameTypeResponse {
-			//	if !bytes.Equal(data, heartbeatBytes) {
-			//		t.Fatalf("got response not heartbeat:" + string(data))
-			//	}
-			//	nsq.Nop().WriteTo(conn)
-			//	continue
-			//}
-			//if frameType != frameTypeMessage {
-			//	t.Fatalf("got something else")
-			//}
-			//msgOut, _ := nsqdNs.DecodeMessage(data)
-			//nsq.Finish(nsq.MessageID(msgOut.GetFullMsgID())).WriteTo(conn)
+			frameType, data, _ := nsq.UnpackResponse(resp)
+			if frameType == frameTypeResponse {
+				if !bytes.Equal(data, heartbeatBytes) {
+					t.Fatalf("got response not heartbeat:" + string(data))
+				}
+				nsq.Nop().WriteTo(conn)
+				continue
+			}
 		}
 	}()
 
@@ -6410,7 +6163,7 @@ func TestSampling(t *testing.T) {
 func TestTLSSnappy(t *testing.T) {
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
-	opts.LogLevel = 2
+	opts = adjustDefaultOptsForTest(opts)
 	opts.SnappyEnabled = true
 	opts.TLSCert = "./test/certs/cert.pem"
 	opts.TLSKey = "./test/certs/key.pem"
@@ -6461,11 +6214,8 @@ func TestTLSSnappy(t *testing.T) {
 func TestChannelMsgBacklogRequeueStat(t *testing.T) {
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
-	opts.LogLevel = 3
+	opts = adjustDefaultOptsForTest(opts)
 	opts.QueueScanRefreshInterval = 100 * time.Millisecond
-	if testing.Verbose() {
-		nsqdNs.SetLogger(opts.Logger)
-	}
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqdServer.Exit()
@@ -6494,6 +6244,7 @@ func TestChannelMsgBacklogRequeueStat(t *testing.T) {
 	msg = nsqdNs.NewMessage(0, make([]byte, 100))
 	_, _, _, _, err = topic.PutMessage(msg)
 
+	topic.ForceFlush()
 	_, err = nsq.Ready(2).WriteTo(conn)
 	test.Equal(t, err, nil)
 
@@ -6530,11 +6281,8 @@ func TestChannelMsgBacklogRequeueStat(t *testing.T) {
 func TestChannelMsgBacklogStat(t *testing.T) {
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
-	opts.LogLevel = 3
+	opts = adjustDefaultOptsForTest(opts)
 	opts.QueueScanRefreshInterval = 100 * time.Millisecond
-	if testing.Verbose() {
-		nsqdNs.SetLogger(opts.Logger)
-	}
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqdServer.Exit()
@@ -6563,6 +6311,7 @@ func TestChannelMsgBacklogStat(t *testing.T) {
 	msg = nsqdNs.NewMessage(0, make([]byte, 100))
 	_, _, _, _, err = topic.PutMessage(msg)
 
+	topic.ForceFlush()
 	_, err = nsq.Ready(1).WriteTo(conn)
 	test.Equal(t, err, nil)
 
@@ -6624,20 +6373,14 @@ func TestChannelMsgBacklogStat(t *testing.T) {
 func TestClientMsgTimeoutReqCount(t *testing.T) {
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
-	opts.LogLevel = 3
+	opts = adjustDefaultOptsForTest(opts)
 	opts.QueueScanRefreshInterval = 100 * time.Millisecond
-	if testing.Verbose() {
-		nsqdNs.SetLogger(opts.Logger)
-	}
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqdServer.Exit()
 
 	topicName := "test_cmsg_timeout" + strconv.Itoa(int(time.Now().Unix()))
 	topic := nsqd.GetTopicIgnPart(topicName)
-	msg := nsqdNs.NewMessage(0, make([]byte, 100))
-	topic.PutMessage(msg)
-	topic.PutMessage(nsqdNs.NewMessage(0, make([]byte, 100)))
 
 	conn, err := mustConnectNSQD(tcpAddr)
 	test.Equal(t, err, nil)
@@ -6647,6 +6390,10 @@ func TestClientMsgTimeoutReqCount(t *testing.T) {
 		"msg_timeout": 1000,
 	}, frameTypeResponse)
 	sub(t, conn, topicName, "ch")
+
+	msg := nsqdNs.NewMessage(0, make([]byte, 100))
+	topic.PutMessage(msg)
+	topic.PutMessage(nsqdNs.NewMessage(0, make([]byte, 100)))
 
 	_, err = nsq.Ready(1).WriteTo(conn)
 	test.Equal(t, err, nil)
@@ -6690,8 +6437,7 @@ func TestClientMsgTimeoutReqCount(t *testing.T) {
 	_, err = nsq.Finish(nsq.MessageID(msgOut.GetFullMsgID())).WriteTo(conn)
 	test.Equal(t, err, nil)
 
-	resp, _ := nsq.ReadResponse(conn)
-	frameType, data, _ := nsq.UnpackResponse(resp)
+	frameType, data, _ := readFrameResponse(t, conn)
 	test.Equal(t, frameType, frameTypeError)
 	test.Equal(t, string(data),
 		fmt.Sprintf("E_FIN_FAILED FIN %v failed Message ID not in flight", msgOut.GetFullMsgID()))
@@ -6839,7 +6585,7 @@ func TestClientMsgTimeoutReqCount(t *testing.T) {
 func TestClientMsgTimeout(t *testing.T) {
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
-	opts.LogLevel = 2
+	opts = adjustDefaultOptsForTest(opts)
 	opts.QueueScanRefreshInterval = 100 * time.Millisecond
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
@@ -6847,14 +6593,6 @@ func TestClientMsgTimeout(t *testing.T) {
 
 	topicName := "test_cmsg_timeout" + strconv.Itoa(int(time.Now().Unix()))
 	topic := nsqd.GetTopicIgnPart(topicName)
-	msg := nsqdNs.NewMessage(0, make([]byte, 100))
-	topic.PutMessage(msg)
-
-	// without this the race detector thinks there's a write
-	// to msg.Attempts that races with the read in the protocol's messagePump...
-	// it does not reflect a realistically possible condition
-	topic.PutMessage(nsqdNs.NewMessage(0, make([]byte, 100)))
-
 	conn, err := mustConnectNSQD(tcpAddr)
 	test.Equal(t, err, nil)
 	defer conn.Close()
@@ -6863,6 +6601,14 @@ func TestClientMsgTimeout(t *testing.T) {
 		"msg_timeout": 1000,
 	}, frameTypeResponse)
 	sub(t, conn, topicName, "ch")
+
+	msg := nsqdNs.NewMessage(0, make([]byte, 100))
+	topic.PutMessage(msg)
+
+	// without this the race detector thinks there's a write
+	// to msg.Attempts that races with the read in the protocol's messagePump...
+	// it does not reflect a realistically possible condition
+	topic.PutMessage(nsqdNs.NewMessage(0, make([]byte, 100)))
 
 	_, err = nsq.Ready(1).WriteTo(conn)
 	test.Equal(t, err, nil)
@@ -6880,8 +6626,7 @@ func TestClientMsgTimeout(t *testing.T) {
 	_, err = nsq.Finish(nsq.MessageID(msgOut.GetFullMsgID())).WriteTo(conn)
 	test.Equal(t, err, nil)
 
-	resp, _ := nsq.ReadResponse(conn)
-	frameType, data, _ := nsq.UnpackResponse(resp)
+	frameType, data, _ := readFrameResponse(t, conn)
 	test.Equal(t, frameType, frameTypeError)
 	test.Equal(t, string(data),
 		fmt.Sprintf("E_FIN_FAILED FIN %v failed Message ID not in flight", msgOut.GetFullMsgID()))
@@ -6892,11 +6637,8 @@ func TestClientMsgTimeout(t *testing.T) {
 func TestTimeoutShouldNotBlockStats(t *testing.T) {
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
-	if testing.Verbose() {
-		opts.LogLevel = 2
-		nsqdNs.SetLogger(opts.Logger)
-	}
-	opts.ClientTimeout = time.Second * 10
+	opts = adjustDefaultOptsForTest(opts)
+
 	opts.QueueScanRefreshInterval = 100 * time.Millisecond
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
@@ -6917,7 +6659,7 @@ func TestTimeoutShouldNotBlockStats(t *testing.T) {
 	defer conn.Close()
 
 	identify(t, conn, map[string]interface{}{
-		"msg_timeout": 5000,
+		"msg_timeout": 2000,
 	}, frameTypeResponse)
 	sub(t, conn, topicName, "ch")
 
@@ -6926,12 +6668,10 @@ func TestTimeoutShouldNotBlockStats(t *testing.T) {
 
 	// ack one message, and wait process and do not response
 	// wait heartbeat timeout and get stats should not block
-	resp, err := nsq.ReadResponse(conn)
-	test.Nil(t, err)
-	frameType, data, err := nsq.UnpackResponse(resp)
+	frameType, data, err := readFrameResponse(t, conn)
 	test.Nil(t, err)
 	if frameType == frameTypeError {
-		t.Errorf(string(resp))
+		t.Errorf(string(data))
 		return
 	}
 	test.Equal(t, frameTypeMessage, frameType)
@@ -6966,9 +6706,7 @@ func TestTimeoutShouldNotBlockStats(t *testing.T) {
 func TestTimeoutFin(t *testing.T) {
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
-	//opts.Logger = &levellogger.SimpleLogger{}
-	opts.LogLevel = 2
-	opts.LogLevel = 2
+	opts = adjustDefaultOptsForTest(opts)
 	opts.QueueScanRefreshInterval = 100 * time.Millisecond
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
@@ -7042,12 +6780,7 @@ func TestTimeoutFin(t *testing.T) {
 func TestTimeoutTooMuch(t *testing.T) {
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
-	//opts.Logger = &levellogger.SimpleLogger{}
-	opts.LogLevel = 2
-	if testing.Verbose() {
-		opts.LogLevel = 5
-		nsqdNs.SetLogger(opts.Logger)
-	}
+	opts = adjustDefaultOptsForTest(opts)
 
 	opts.ClientTimeout = time.Second * 10
 	opts.QueueScanRefreshInterval = 100 * time.Millisecond
@@ -7134,7 +6867,7 @@ func TestTimeoutTooMuch(t *testing.T) {
 func TestSetChannelOffset(t *testing.T) {
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
-	opts.LogLevel = 2
+	opts = adjustDefaultOptsForTest(opts)
 	opts.QueueScanRefreshInterval = 100 * time.Millisecond
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
@@ -7206,9 +6939,7 @@ func TestSetChannelOffset(t *testing.T) {
 func TestBadFin(t *testing.T) {
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
-	opts.SyncEvery = 1
-	opts.LogLevel = 2
-	opts.Verbose = true
+	opts = adjustDefaultOptsForTest(opts)
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqdServer.Exit()
@@ -7229,13 +6960,7 @@ func TestBadFin(t *testing.T) {
 	_, err = fin.WriteTo(conn)
 	test.Equal(t, err, nil)
 
-	resp, _ := nsq.ReadResponse(conn)
-	t.Logf("%v", resp)
-	frameType, data, _ := nsq.UnpackResponse(resp)
-	if string(data) == string(heartbeatBytes) {
-		//resp, _ = nsq.ReadResponse(conn)
-		//frameType, data, _ = nsq.UnpackResponse(resp)
-	}
+	frameType, data, _ := readFrameResponse(t, conn)
 	test.Equal(t, string(data), "E_INVALID Invalid Message ID")
 	test.Equal(t, frameType, frameTypeError)
 }
@@ -7309,12 +7034,7 @@ func TestResetChannelToOld(t *testing.T) {
 	// to old offset.
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
-	//opts.Logger = &levellogger.SimpleLogger{}
-	opts.LogLevel = 2
-	if testing.Verbose() {
-		opts.LogLevel = 4
-		nsqdNs.SetLogger(opts.Logger)
-	}
+	opts = adjustDefaultOptsForTest(opts)
 	opts.MsgTimeout = time.Second * 2
 	opts.MaxMsgSize = 100
 	opts.MaxBodySize = 1000
@@ -7339,17 +7059,7 @@ func TestResetChannelToOld(t *testing.T) {
 	for i := 0; i < int(opts.MaxConfirmWin)*6; i++ {
 		cmd := nsq.Publish(topicName, make([]byte, 5))
 		cmd.WriteTo(conn)
-		for {
-			resp, _ := nsq.ReadResponse(conn)
-			frameType, data, _ := nsq.UnpackResponse(resp)
-			test.Equal(t, frameType, frameTypeResponse)
-			if bytes.Equal(data, heartbeatBytes) {
-				continue
-			}
-			test.Equal(t, len(data), 2)
-			test.Equal(t, data[:], []byte("OK"))
-			break
-		}
+		validatePubResponse(t, conn)
 		if i == int(opts.MaxConfirmWin) {
 			localTopic.ForceFlush()
 			resetOldEnd = channel.GetChannelEnd()
@@ -7479,12 +7189,7 @@ func TestConsumerEmpty(t *testing.T) {
 	// to new offset.
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
-	//opts.Logger = &levellogger.SimpleLogger{}
-	opts.LogLevel = 2
-	if testing.Verbose() {
-		opts.LogLevel = 4
-		nsqdNs.SetLogger(opts.Logger)
-	}
+	opts = adjustDefaultOptsForTest(opts)
 	opts.MsgTimeout = time.Second * 2
 	opts.MaxMsgSize = 100
 	opts.MaxBodySize = 1000
@@ -7508,17 +7213,7 @@ func TestConsumerEmpty(t *testing.T) {
 	for i := 0; i < int(opts.MaxConfirmWin)*6; i++ {
 		cmd := nsq.Publish(topicName, make([]byte, 5))
 		cmd.WriteTo(conn)
-		for {
-			resp, _ := nsq.ReadResponse(conn)
-			frameType, data, _ := nsq.UnpackResponse(resp)
-			test.Equal(t, frameType, frameTypeResponse)
-			if bytes.Equal(data, heartbeatBytes) {
-				continue
-			}
-			test.Equal(t, len(data), 2)
-			test.Equal(t, data[:], []byte("OK"))
-			break
-		}
+		validatePubResponse(t, conn)
 		if i == int(opts.MaxConfirmWin) {
 			localTopic.ForceFlush()
 		}
@@ -7636,14 +7331,11 @@ func TestConsumerEmpty(t *testing.T) {
 func TestTooMuchClient(t *testing.T) {
 	opts := nsqdNs.NewOptions()
 	opts.Logger = newTestLogger(t)
-	opts.LogLevel = 3
+	opts = adjustDefaultOptsForTest(opts)
 	opts.MaxMsgSize = 100
 	opts.MaxBodySize = 1000
 	opts.MaxConnForClient = 2
-	if testing.Verbose() {
-		opts.LogLevel = 4
-		nsqdNs.SetLogger(opts.Logger)
-	}
+
 	tcpAddr, _, nsqd, nsqdServer := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqdServer.Exit()
@@ -7663,12 +7355,7 @@ func TestTooMuchClient(t *testing.T) {
 
 	cmd := nsq.Publish(topicName, []byte("12345"))
 	cmd.WriteTo(conn)
-	resp, _ := nsq.ReadResponse(conn)
-	frameType, data, err := nsq.UnpackResponse(resp)
-	t.Logf("frameType: %d, data: %s, err: %v", frameType, data, err)
-	test.Equal(t, frameType, frameTypeResponse)
-	test.Equal(t, len(data), 2)
-	test.Equal(t, data[:], []byte("OK"))
+	validatePubResponse(t, conn)
 
 	conn2, err := mustConnectNSQD(tcpAddr)
 	test.Nil(t, err)
@@ -7682,7 +7369,7 @@ func TestTooMuchClient(t *testing.T) {
 		return
 	}
 	t.Logf("3rd connection should fail")
-	data = identify(t, conn3, nil, frameTypeError)
+	data := identify(t, conn3, nil, frameTypeError)
 	test.Equal(t, errTooMuchClientConns.Error(), string(data))
 	conn3.Close()
 

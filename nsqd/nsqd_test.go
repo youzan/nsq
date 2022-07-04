@@ -80,6 +80,19 @@ func newTestLogger(tbl tbLog) levellogger.Logger {
 	return &testLogger{tbl, 0}
 }
 
+func adjustDefaultOptsForTest(opts *Options) *Options {
+	opts.QueueScanRefreshInterval = time.Second / 10
+	opts.QueueScanInterval = time.Second / 100
+	opts.SyncEvery = 1
+	opts.MsgTimeout = 100 * time.Millisecond
+	opts.LogLevel = 3
+	if testing.Verbose() {
+		opts.LogLevel = 4
+	}
+	SetLogger(opts.Logger)
+	return opts
+}
+
 func mustStartNSQD(opts *Options) (*net.TCPAddr, *net.TCPAddr, *NSQD) {
 	opts.TCPAddress = "127.0.0.1:0"
 	opts.HTTPAddress = "127.0.0.1:0"

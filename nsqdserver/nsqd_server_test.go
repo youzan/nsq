@@ -53,6 +53,20 @@ func initNSQD(opts *nsqdNs.Options) (*net.TCPAddr, *net.TCPAddr, *nsqdNs.NSQD, *
 	return nsqdServer.ctx.realTCPAddr(), nsqdServer.ctx.realHTTPAddr(), nsqdServer.ctx.nsqd, nsqdServer
 }
 
+func adjustDefaultOptsForTest(opts *nsqdNs.Options) *nsqdNs.Options {
+	opts.QueueScanRefreshInterval = time.Second / 10
+	opts.QueueScanInterval = time.Second / 100
+	opts.SyncEvery = 1
+	opts.MsgTimeout = 100 * time.Millisecond
+	opts.LogLevel = 3
+	opts.ClientTimeout = time.Second * 5
+	if testing.Verbose() {
+		opts.LogLevel = 4
+	}
+	nsqdNs.SetLogger(opts.Logger)
+	return opts
+}
+
 func mustStartNSQD(opts *nsqdNs.Options) (*net.TCPAddr, *net.TCPAddr, *nsqdNs.NSQD, *NsqdServer) {
 	opts.TCPAddress = "127.0.0.1:0"
 	opts.HTTPAddress = "127.0.0.1:0"

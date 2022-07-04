@@ -14,6 +14,9 @@ import (
 	"github.com/youzan/nsq/internal/ext"
 )
 
+var shortWaitTime = time.Second
+var longWaitTime = time.Second * 10
+
 type fakeConsumer struct {
 	cid         int64
 	inFlightCnt int64
@@ -67,16 +70,22 @@ func (c *fakeConsumer) UnskipZanTest() {
 
 }
 
+func waitUntil(t *testing.T, to time.Duration, f func() bool) {
+	end := time.Now().UnixNano() + int64(to)
+	for time.Now().UnixNano() < end {
+		if f() {
+			return
+		}
+		time.Sleep(time.Millisecond * 10)
+	}
+	t.Errorf("condition not met after timeout")
+}
+
 // ensure that we can push a message through a topic and get it out of a channel
 func TestPutMessage(t *testing.T) {
 	opts := NewOptions()
 	opts.Logger = newTestLogger(t)
-	opts.LogLevel = 3
-	opts.SyncEvery = 1
-	if testing.Verbose() {
-		opts.LogLevel = 4
-		SetLogger(opts.Logger)
-	}
+	opts = adjustDefaultOptsForTest(opts)
 	_, _, nsqd := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqd.Exit()
@@ -94,7 +103,7 @@ func TestPutMessage(t *testing.T) {
 	case outputMsg := <-channel1.clientMsgChan:
 		equal(t, msg.ID, outputMsg.ID)
 		equal(t, msg.Body, outputMsg.Body)
-	case <-time.After(time.Second * 10):
+	case <-time.After(shortWaitTime):
 		t.Logf("timeout wait")
 	}
 }
@@ -102,10 +111,8 @@ func TestPutMessage(t *testing.T) {
 // ensure that both channels get the same message
 func TestPutMessage2Chan(t *testing.T) {
 	opts := NewOptions()
-	opts.SyncEvery = 1
 	opts.Logger = newTestLogger(t)
-	opts.LogLevel = 3
-	SetLogger(opts.Logger)
+	opts = adjustDefaultOptsForTest(opts)
 	_, _, nsqd := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqd.Exit()
@@ -120,7 +127,7 @@ func TestPutMessage2Chan(t *testing.T) {
 	topic.PutMessage(msg)
 	topic.flushBuffer(true)
 
-	timer := time.NewTimer(time.Second * 10)
+	timer := time.NewTimer(shortWaitTime)
 	select {
 	case outputMsg1 := <-channel1.clientMsgChan:
 		equal(t, msg.ID, outputMsg1.ID)
@@ -142,8 +149,8 @@ func TestPutMessage2Chan(t *testing.T) {
 
 func TestChannelBackendMaxMsgSize(t *testing.T) {
 	opts := NewOptions()
-	opts.SyncEvery = 1
 	opts.Logger = newTestLogger(t)
+	opts = adjustDefaultOptsForTest(opts)
 	_, _, nsqd := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqd.Exit()
@@ -158,10 +165,8 @@ func TestInFlightWorker(t *testing.T) {
 	count := 250
 
 	opts := NewOptions()
-	opts.SyncEvery = 1
 	opts.Logger = newTestLogger(t)
-	opts.MsgTimeout = 100 * time.Millisecond
-	opts.QueueScanRefreshInterval = 100 * time.Millisecond
+	opts = adjustDefaultOptsForTest(opts)
 	_, _, nsqd := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqd.Exit()
@@ -202,8 +207,8 @@ func TestInFlightWorker(t *testing.T) {
 
 func TestChannelEmpty(t *testing.T) {
 	opts := NewOptions()
-	opts.SyncEvery = 1
 	opts.Logger = newTestLogger(t)
+	opts = adjustDefaultOptsForTest(opts)
 	_, _, nsqd := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqd.Exit()
@@ -234,13 +239,12 @@ func TestChannelReqRefillSoon(t *testing.T) {
 	// test the overflow requeued in waiting map should be refilled soon after the requeue chan is empty
 	count := 50
 	opts := NewOptions()
-	opts.SyncEvery = 1
-	opts.MaxRdyCount = 100
 	opts.Logger = newTestLogger(t)
-	opts.MsgTimeout = 100 * time.Millisecond
+	opts = adjustDefaultOptsForTest(opts)
+	opts.MaxRdyCount = 100
 	// use large to delay the period scan
-	opts.QueueScanRefreshInterval = 10 * time.Second
-	opts.QueueScanInterval = 10 * time.Second
+	opts.QueueScanRefreshInterval = shortWaitTime * 2
+	opts.QueueScanInterval = shortWaitTime * 2
 	_, _, nsqd := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqd.Exit()
@@ -259,9 +263,9 @@ func TestChannelReqRefillSoon(t *testing.T) {
 	lastTime := time.Now()
 	start := time.Now()
 	recvCnt := 0
-	for time.Since(start) < time.Second*20 {
+	for time.Since(start) < opts.QueueScanInterval*2 {
 		select {
-		case <-time.After(time.Second):
+		case <-time.After(shortWaitTime):
 			t.Error("timeout recv")
 			return
 		case outputMsg, ok := <-channel.clientMsgChan:
@@ -277,21 +281,21 @@ func TestChannelReqRefillSoon(t *testing.T) {
 			recvCnt++
 			now := time.Now()
 			t.Logf("recv: %v, consume %v at %s last %s, %v, %v", recvCnt, outputMsg.ID, now, lastTime, waitingReq, reqChanLen)
-			if time.Since(lastTime) > time.Second {
+			if time.Since(lastTime) > shortWaitTime {
 				t.Errorf("too long waiting")
 			}
 			lastTime = now
 			channel.StartInFlightTimeout(outputMsg, NewFakeConsumer(1), "", opts.MsgTimeout)
 			if recvCnt == count {
 				go func() {
-					time.Sleep(time.Millisecond * 10)
+					time.Sleep(shortWaitTime / 10)
 					channel.nsqdNotify.NotifyScanChannel(channel, false)
 				}()
 			}
 			if recvCnt >= count {
 				channel.FinishMessage(1, "", outputMsg.ID)
 			} else {
-				channel.RequeueMessage(1, "", outputMsg.ID, time.Millisecond*10, true)
+				channel.RequeueMessage(1, "", outputMsg.ID, time.Millisecond, true)
 			}
 			if channel.Depth() == 0 {
 				return
@@ -305,13 +309,12 @@ func TestChannelReqNowTooMuch(t *testing.T) {
 	// test the 0 requeued message should be avoided if too much attempts
 	count := 5
 	opts := NewOptions()
-	opts.SyncEvery = 1
-	opts.MaxRdyCount = 100
 	opts.Logger = newTestLogger(t)
-	opts.MsgTimeout = 200 * time.Millisecond
+	opts = adjustDefaultOptsForTest(opts)
+	opts.MaxRdyCount = 100
 	// use large to delay the period scan
-	opts.QueueScanRefreshInterval = 10 * time.Second
-	opts.QueueScanInterval = 5 * time.Second
+	opts.QueueScanRefreshInterval = shortWaitTime * 2
+	opts.QueueScanInterval = shortWaitTime * 2
 	_, _, nsqd := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqd.Exit()
@@ -330,9 +333,9 @@ func TestChannelReqNowTooMuch(t *testing.T) {
 	start := time.Now()
 	reqCnt := 0
 	timeout := 0
-	for time.Since(start) < time.Second*5 {
+	for time.Since(start) < opts.QueueScanInterval*2 {
 		select {
-		case <-time.After(time.Second):
+		case <-time.After(opts.MsgTimeout):
 			timeout++
 		case outputMsg, ok := <-channel.clientMsgChan:
 			if !ok {
@@ -368,17 +371,12 @@ func TestChannelReqShortTooMuch(t *testing.T) {
 	// test the 0 requeued message should be avoided if too much attempts
 	count := 5
 	opts := NewOptions()
-	opts.SyncEvery = 1
-	opts.MaxRdyCount = 100
 	opts.Logger = newTestLogger(t)
-	opts.MsgTimeout = 200 * time.Millisecond
+	opts = adjustDefaultOptsForTest(opts)
+	opts.MaxRdyCount = 100
 	// use large to delay the period scan
-	opts.QueueScanRefreshInterval = 10 * time.Second
-	opts.QueueScanInterval = time.Millisecond * 50
-	if testing.Verbose() {
-		opts.LogLevel = 3
-		SetLogger(opts.Logger)
-	}
+	opts.QueueScanRefreshInterval = longWaitTime / 2
+	opts.QueueScanInterval = time.Millisecond * 2
 	_, _, nsqd := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqd.Exit()
@@ -397,9 +395,9 @@ func TestChannelReqShortTooMuch(t *testing.T) {
 	start := time.Now()
 	reqCnt := 0
 	timeout := 0
-	for time.Since(start) < time.Second*20 {
+	for time.Since(start) < longWaitTime/2+time.Second*time.Duration(count) {
 		select {
-		case <-time.After(time.Second):
+		case <-time.After(opts.MsgTimeout * 2):
 			timeout++
 		case outputMsg, ok := <-channel.clientMsgChan:
 			if !ok {
@@ -425,19 +423,18 @@ func TestChannelReqShortTooMuch(t *testing.T) {
 
 	t.Logf("total req cnt: %v, timeout: %v", reqCnt, timeout)
 	ast.True(t, reqCnt >= count*MaxMemReqTimes*10)
+	ast.True(t, timeout > 1)
 	ast.True(t, reqCnt < count*MaxMemReqTimes*20)
 }
 
 func TestChannelReqTooMuchInDeferShouldNotContinueReadBackend(t *testing.T) {
 	count := 30
 	opts := NewOptions()
-	opts.SyncEvery = 1
-	opts.MaxRdyCount = 100
-	opts.MaxConfirmWin = 10
 	opts.Logger = newTestLogger(t)
-	opts.MsgTimeout = time.Second * 3
-	opts.QueueScanRefreshInterval = time.Second / 10
-	opts.QueueScanInterval = time.Millisecond * 100
+	opts = adjustDefaultOptsForTest(opts)
+	opts.MaxConfirmWin = 10
+	opts.MaxRdyCount = 100
+	opts.MsgTimeout = opts.QueueScanInterval * 10
 	_, _, nsqd := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqd.Exit()
@@ -457,9 +454,9 @@ func TestChannelReqTooMuchInDeferShouldNotContinueReadBackend(t *testing.T) {
 	reqCnt := 0
 	timeout := 0
 	lastDelay := time.Now()
-	for time.Since(start) < time.Second*5 {
+	for time.Since(start) < opts.QueueScanInterval*5 {
 		select {
-		case <-time.After(time.Second * 2):
+		case <-time.After(opts.MsgTimeout):
 			timeout++
 		case outputMsg, ok := <-channel.clientMsgChan:
 			if !ok {
@@ -479,7 +476,7 @@ func TestChannelReqTooMuchInDeferShouldNotContinueReadBackend(t *testing.T) {
 			channel.StartInFlightTimeout(outputMsg, NewFakeConsumer(1), "", opts.MsgTimeout)
 			// requeue with different timeout to make sure the memory deferred cnt is high
 			// since after timeout deferred cnt will be reset
-			lastDelay = lastDelay.Add(time.Millisecond * 101)
+			lastDelay = lastDelay.Add(opts.QueueScanInterval)
 			delay := lastDelay.Sub(now)
 			t.Logf("consume %v delay to %s, %s", outputMsg.ID, lastDelay, delay)
 			channel.RequeueMessage(1, "", outputMsg.ID, delay, false)
@@ -487,15 +484,15 @@ func TestChannelReqTooMuchInDeferShouldNotContinueReadBackend(t *testing.T) {
 	}
 
 	t.Logf("total req cnt: %v, timeout: %v", reqCnt, timeout)
-	ast.True(t, int64(reqCnt) >= opts.MaxConfirmWin*2)
+	ast.True(t, int64(reqCnt) > opts.MaxConfirmWin)
 	ast.Equal(t, 0, timeout)
 	start = time.Now()
-	for time.Since(start) < time.Second*5 {
+	for time.Since(start) < shortWaitTime {
 		if channel.Depth() == 0 {
 			break
 		}
 		select {
-		case <-time.After(time.Second):
+		case <-time.After(opts.MsgTimeout):
 			timeout++
 		case outputMsg, ok := <-channel.clientMsgChan:
 			if !ok {
@@ -522,16 +519,14 @@ func TestChannelTimeoutTooMuchIShouldNotBlockingToolong(t *testing.T) {
 	defer func() {
 		timeoutBlockingWait = oldWait
 	}()
-	timeoutBlockingWait = time.Second * 2
+	timeoutBlockingWait = time.Second
 	count := 300
 	opts := NewOptions()
-	opts.SyncEvery = 1
+	opts.Logger = newTestLogger(t)
+	opts = adjustDefaultOptsForTest(opts)
+	opts.MsgTimeout = time.Millisecond
 	opts.MaxRdyCount = 100
 	opts.MaxConfirmWin = 10
-	opts.Logger = newTestLogger(t)
-	opts.MsgTimeout = time.Second / 100
-	opts.QueueScanRefreshInterval = time.Second / 10
-	opts.QueueScanInterval = time.Millisecond * 10
 	// make it more chance to req the timeout to end
 	opts.ReqToEndThreshold = time.Second
 	_, _, nsqd := mustStartNSQD(opts)
@@ -562,7 +557,7 @@ func TestChannelTimeoutTooMuchIShouldNotBlockingToolong(t *testing.T) {
 	timeout := 0
 	checkTimeout := 0
 	finCnt := 0
-	for time.Since(start) < time.Second*20 {
+	for time.Since(start) < timeoutBlockingWait*maxTimeoutCntToReq*2 {
 		recvChan := channel.clientMsgChan
 		if fc.GetInflightCnt() > 2 {
 			recvChan = nil
@@ -571,7 +566,7 @@ func TestChannelTimeoutTooMuchIShouldNotBlockingToolong(t *testing.T) {
 			break
 		}
 		select {
-		case <-time.After(time.Millisecond * 100):
+		case <-time.After(opts.MsgTimeout):
 			timeout++
 		case outputMsg, ok := <-recvChan:
 			if !ok {
@@ -591,12 +586,11 @@ func TestChannelTimeoutTooMuchIShouldNotBlockingToolong(t *testing.T) {
 			} else {
 				channel.FinishMessage(1, "", outputMsg.ID)
 				finCnt++
-
 			}
 		}
 	}
 
-	t.Logf("total req cnt: %v, timeout: %v, fin %v", reqCnt, timeout, finCnt)
+	t.Logf("total req cnt: %v, timeout: %v, fin %v, depth: %v, check %v", reqCnt, timeout, finCnt, channel.Depth(), checkTimeout)
 	ast.True(t, finCnt > 1)
 	ast.Equal(t, int64(0), channel.Depth())
 	ast.True(t, checkTimeout > 1)
@@ -605,14 +599,8 @@ func TestChannelTimeoutTooMuchIShouldNotBlockingToolong(t *testing.T) {
 func TestChannelEmptyWhileConfirmDelayMsg(t *testing.T) {
 	// test confirm delay counter while empty channel
 	opts := NewOptions()
-	opts.SyncEvery = 1
 	opts.Logger = newTestLogger(t)
-	opts.QueueScanInterval = time.Millisecond
-	opts.MsgTimeout = time.Second
-	if testing.Verbose() {
-		opts.LogLevel = 2
-		SetLogger(opts.Logger)
-	}
+	opts = adjustDefaultOptsForTest(opts)
 	_, _, nsqd := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqd.Exit()
@@ -621,6 +609,7 @@ func TestChannelEmptyWhileConfirmDelayMsg(t *testing.T) {
 	topic := nsqd.GetTopicIgnPart(topicName)
 	channel := topic.GetChannel("channel")
 	dq, err := topic.GetOrCreateDelayedQueueNoLock(nil)
+	atomic.StoreInt64(&dq.SyncEvery, opts.SyncEvery*100)
 	equal(t, err, nil)
 	stopC := make(chan bool)
 	for i := 0; i < 100; i++ {
@@ -640,6 +629,7 @@ func TestChannelEmptyWhileConfirmDelayMsg(t *testing.T) {
 		_, _, _, _, err = dq.PutDelayMessage(newMsg)
 		equal(t, err, nil)
 	}
+	dq.ForceFlush()
 
 	channel.skipChannelToEnd()
 	channel.AddClient(1, NewFakeConsumer(1))
@@ -717,14 +707,8 @@ func TestChannelEmptyWhileConfirmDelayMsg(t *testing.T) {
 func TestChannelEmptyWhileReqDelayedMessageWaitingDispatchToClient(t *testing.T) {
 	// test confirm delay counter while empty channel
 	opts := NewOptions()
-	opts.SyncEvery = 1
 	opts.Logger = newTestLogger(t)
-	opts.QueueScanInterval = time.Millisecond
-	opts.MsgTimeout = time.Second
-	if testing.Verbose() {
-		opts.LogLevel = 2
-		SetLogger(opts.Logger)
-	}
+	opts = adjustDefaultOptsForTest(opts)
 	_, _, nsqd := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqd.Exit()
@@ -733,6 +717,7 @@ func TestChannelEmptyWhileReqDelayedMessageWaitingDispatchToClient(t *testing.T)
 	topic := nsqd.GetTopicIgnPart(topicName)
 	channel := topic.GetChannel("channel")
 	dq, err := topic.GetOrCreateDelayedQueueNoLock(nil)
+	atomic.StoreInt64(&dq.SyncEvery, opts.SyncEvery*100)
 	equal(t, err, nil)
 	// write at least 2*MaxWaitingDelayed to test the second peek from delayed queue
 	for i := 0; i < 3*MaxWaitingDelayed+1; i++ {
@@ -752,12 +737,13 @@ func TestChannelEmptyWhileReqDelayedMessageWaitingDispatchToClient(t *testing.T)
 		_, _, _, _, err = dq.PutDelayMessage(newMsg)
 		equal(t, err, nil)
 	}
+	dq.ForceFlush()
 
 	t.Logf("current %v, %v", atomic.LoadInt64(&channel.deferredFromDelay), channel.GetChannelDebugStats())
 	channel.AddClient(1, NewFakeConsumer(1))
 	channel.skipChannelToEnd()
 	// wait peek delayed messages
-	time.Sleep(time.Second * 5)
+	time.Sleep(opts.QueueScanInterval * 2)
 	// the clientMsgChan should block waiting
 	channel.inFlightMutex.Lock()
 	waitChCnt := len(channel.waitingRequeueChanMsgs)
@@ -773,7 +759,7 @@ func TestChannelEmptyWhileReqDelayedMessageWaitingDispatchToClient(t *testing.T)
 	queueOffset := int64(e.Offset())
 	cnt := e.TotalMsgCnt()
 	channel.SetConsumeOffset(BackendOffset(queueOffset), cnt, true)
-	time.Sleep(time.Millisecond * 10)
+	time.Sleep(time.Millisecond)
 
 	s := time.Now()
 	// continue consume
@@ -815,16 +801,14 @@ func TestChannelEmptyWhileReqDelayedMessageWaitingDispatchToClient(t *testing.T)
 func TestChannelEmptyWhileReqDelayedMessageWaitingInReq(t *testing.T) {
 	// test confirm delay counter while empty channel
 	opts := NewOptions()
-	opts.SyncEvery = 1
 	opts.Logger = newTestLogger(t)
-	opts.QueueScanInterval = time.Second
+	opts = adjustDefaultOptsForTest(opts)
 	// use small max ready count to make sure the req chan to be full and more delayed messages is waiting in requeued map
 	opts.MaxRdyCount = 2
-	opts.MsgTimeout = time.Second
-	if testing.Verbose() {
-		opts.LogLevel = 2
-		SetLogger(opts.Logger)
-	}
+	opts.SyncEvery = 100
+	opts.SyncTimeout = time.Second * 10
+	// make sure scan for full delayed, so we need scan slow to make sure all delayed messages can be poped
+	opts.QueueScanInterval = time.Second * 2
 	_, _, nsqd := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqd.Exit()
@@ -833,6 +817,7 @@ func TestChannelEmptyWhileReqDelayedMessageWaitingInReq(t *testing.T) {
 	topic := nsqd.GetTopicIgnPart(topicName)
 	channel := topic.GetChannel("channel")
 	dq, err := topic.GetOrCreateDelayedQueueNoLock(nil)
+	atomic.StoreInt64(&dq.SyncEvery, opts.SyncEvery)
 	equal(t, err, nil)
 	// write at least 2*MaxWaitingDelayed to test the second peek from delayed queue
 	for i := 0; i < 2*MaxWaitingDelayed+1; i++ {
@@ -843,7 +828,7 @@ func TestChannelEmptyWhileReqDelayedMessageWaitingInReq(t *testing.T) {
 		newMsg.ID = 0
 		newMsg.DelayedType = ChannelDelayed
 
-		newTimeout := time.Now().Add(time.Second)
+		newTimeout := time.Now().Add(time.Second * 4)
 		newMsg.DelayedTs = newTimeout.UnixNano()
 
 		newMsg.DelayedOrigID = id
@@ -853,6 +838,8 @@ func TestChannelEmptyWhileReqDelayedMessageWaitingInReq(t *testing.T) {
 		equal(t, err, nil)
 	}
 
+	dq.ForceFlush()
+	topic.ForceFlush()
 	t.Logf("current %v, %v", atomic.LoadInt64(&channel.deferredFromDelay), channel.GetChannelDebugStats())
 	channel.AddClient(1, NewFakeConsumer(1))
 	channel.skipChannelToEnd()
@@ -862,24 +849,27 @@ func TestChannelEmptyWhileReqDelayedMessageWaitingInReq(t *testing.T) {
 		_, _, _, _, err := topic.PutMessage(msg)
 		equal(t, err, nil)
 	}
+	topic.ForceFlush()
 	select {
 	case outputMsg, _ := <-channel.clientMsgChan:
 		t.Logf("consume %v", outputMsg)
 		// make sure we are not requeue the delayed messages
 		ast.NotEqual(t, ChannelDelayed, outputMsg.DelayedType)
 		channel.StartInFlightTimeout(outputMsg, NewFakeConsumer(1), "", opts.MsgTimeout)
-		channel.RequeueMessage(1, "", outputMsg.ID, time.Second, false)
+		//  use short req to make sure the mem req will be poped first to req chan
+		channel.RequeueMessage(1, "", outputMsg.ID, opts.QueueScanInterval/10, false)
 	}
 
+	t.Logf("current %v, %v", atomic.LoadInt64(&channel.deferredFromDelay), channel.GetChannelDebugStats())
 	equal(t, atomic.LoadInt64(&channel.deferredCount), int64(1))
 	s := time.Now()
 	for {
-		if time.Since(s) > time.Minute {
+		if time.Since(s) > longWaitTime*2 {
 			t.Error("timeout waiting req")
 			return
 		}
 		// wait peek delayed messages
-		time.Sleep(time.Second * 3)
+		time.Sleep(opts.QueueScanInterval)
 		// the clientMsgChan should block waiting
 		channel.inFlightMutex.Lock()
 		waitChCnt := len(channel.waitingRequeueChanMsgs)
@@ -888,12 +878,13 @@ func TestChannelEmptyWhileReqDelayedMessageWaitingInReq(t *testing.T) {
 		inflightCnt := len(channel.inFlightMessages)
 		channel.inFlightMutex.Unlock()
 		t.Logf("current %v, %v", atomic.LoadInt64(&channel.deferredFromDelay), channel.GetChannelDebugStats())
-		if waitChCnt <= 0 || waitReqMoreCnt <= 0 {
+		if waitChCnt <= 0 || waitReqMoreCnt <= 0 || waitChCnt != realWaitChCnt+1 {
 			continue
 		}
 		ast.True(t, waitChCnt > 0, "should have wait req count")
 		ast.True(t, waitReqMoreCnt > 0, "should have wait more req count")
 		ast.Equal(t, waitChCnt, realWaitChCnt+1)
+		// should pop memory requeued message first
 		ast.Equal(t, 0, inflightCnt)
 		ast.InDelta(t, int64(waitChCnt+waitReqMoreCnt), atomic.LoadInt64(&channel.deferredFromDelay), 1)
 		break
@@ -952,8 +943,8 @@ func TestChannelResetConfirmedWhileDelayedQueuePop(t *testing.T) {
 	// go into inflight, after that the delayed message later will conflict while try go into inflight.
 	// In this case, the delayed count should be handled
 	opts := NewOptions()
-	opts.SyncEvery = 1
 	opts.Logger = newTestLogger(t)
+	opts = adjustDefaultOptsForTest(opts)
 	opts.QueueScanInterval = time.Second
 	// use small max ready count to make sure the req chan to be full and more delayed messages is waiting in requeued map
 	opts.MaxRdyCount = 2
@@ -970,6 +961,7 @@ func TestChannelResetConfirmedWhileDelayedQueuePop(t *testing.T) {
 	topic := nsqd.GetTopicIgnPart(topicName)
 	channel := topic.GetChannel("channel")
 	dq, err := topic.GetOrCreateDelayedQueueNoLock(nil)
+	atomic.StoreInt64(&dq.SyncEvery, opts.SyncEvery*100)
 	equal(t, err, nil)
 	// write at least 2*MaxWaitingDelayed to test the second peek from delayed queue
 	var resetOffset BackendQueueEnd
@@ -985,7 +977,7 @@ func TestChannelResetConfirmedWhileDelayedQueuePop(t *testing.T) {
 		newMsg.ID = 0
 		newMsg.DelayedType = ChannelDelayed
 
-		newTimeout := time.Now().Add(time.Second)
+		newTimeout := time.Now().Add(time.Second * 2)
 		newMsg.DelayedTs = newTimeout.UnixNano()
 
 		newMsg.DelayedOrigID = id
@@ -994,6 +986,7 @@ func TestChannelResetConfirmedWhileDelayedQueuePop(t *testing.T) {
 		_, _, _, _, err = dq.PutDelayMessage(newMsg)
 		equal(t, err, nil)
 	}
+	dq.ForceFlush()
 
 	t.Logf("current %v, %v", atomic.LoadInt64(&channel.deferredFromDelay), channel.GetChannelDebugStats())
 	channel.AddClient(1, NewFakeConsumer(1))
@@ -1129,8 +1122,8 @@ func TestChannelResetConfirmedWhileDelayedQueueMsgInflight(t *testing.T) {
 	// In this case, the normal message may never go into inflight which leave the confirmed offset
 	// blocking. So we need handle this by checking conflict
 	opts := NewOptions()
-	opts.SyncEvery = 1
 	opts.Logger = newTestLogger(t)
+	opts = adjustDefaultOptsForTest(opts)
 	opts.QueueScanInterval = time.Second
 	// use small max ready count to make sure the req chan to be full and more delayed messages is waiting in requeued map
 	opts.MaxRdyCount = 2
@@ -1147,6 +1140,7 @@ func TestChannelResetConfirmedWhileDelayedQueueMsgInflight(t *testing.T) {
 	topic := nsqd.GetTopicIgnPart(topicName)
 	channel := topic.GetChannel("channel")
 	dq, err := topic.GetOrCreateDelayedQueueNoLock(nil)
+	atomic.StoreInt64(&dq.SyncEvery, opts.SyncEvery*100)
 	equal(t, err, nil)
 	// write at least 2*MaxWaitingDelayed to test the second peek from delayed queue
 	var resetOffset BackendQueueEnd
@@ -1172,6 +1166,7 @@ func TestChannelResetConfirmedWhileDelayedQueueMsgInflight(t *testing.T) {
 		_, _, _, _, err = dq.PutDelayMessage(newMsg)
 		equal(t, err, nil)
 	}
+	dq.ForceFlush()
 
 	t.Logf("current %v, %v", atomic.LoadInt64(&channel.deferredFromDelay), channel.GetChannelDebugStats())
 	channel.AddClient(1, NewFakeConsumer(1))
@@ -1359,8 +1354,8 @@ func TestChannelResetConfirmedWhileDelayedQueueMsgInflight(t *testing.T) {
 func TestChannelHealth(t *testing.T) {
 	opts := NewOptions()
 	opts.Logger = newTestLogger(t)
+	opts = adjustDefaultOptsForTest(opts)
 	opts.MemQueueSize = 2
-
 	_, _, nsqd := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqd.Exit()
@@ -1378,8 +1373,8 @@ func TestChannelHealth(t *testing.T) {
 
 func TestChannelSkip(t *testing.T) {
 	opts := NewOptions()
-	opts.SyncEvery = 1
 	opts.Logger = newTestLogger(t)
+	opts = adjustDefaultOptsForTest(opts)
 	_, _, nsqd := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqd.Exit()
@@ -1443,8 +1438,8 @@ func checkChannelCleanStats(t *testing.T, channel *Channel, expectedDepth int64)
 
 func TestChannelResetMaybeReadOneOldMsg(t *testing.T) {
 	opts := NewOptions()
-	opts.SyncEvery = 1
 	opts.Logger = newTestLogger(t)
+	opts = adjustDefaultOptsForTest(opts)
 	_, _, nsqd := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqd.Exit()
@@ -1505,8 +1500,9 @@ func TestChannelResetMaybeReadOneOldMsg(t *testing.T) {
 
 func TestChannelResetWhileOneSingleMemDelayedMsg(t *testing.T) {
 	opts := NewOptions()
-	opts.SyncEvery = 1
 	opts.Logger = newTestLogger(t)
+	opts = adjustDefaultOptsForTest(opts)
+
 	_, _, nsqd := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqd.Exit()
@@ -1537,18 +1533,22 @@ func TestChannelResetWhileOneSingleMemDelayedMsg(t *testing.T) {
 	t.Logf("backendOffsetMid: %d", backendOffsetMid)
 	channel.SetConsumeOffset(channel.GetChannelEnd().Offset(), 1, true)
 	time.Sleep(time.Second)
-	outputMsg = <-channel.clientMsgChan
-	equal(t, string(outputMsg.Body[:]), strconv.Itoa(10))
-	channel.StartInFlightTimeout(outputMsg, NewFakeConsumer(0), "", time.Second)
-	channel.FinishMessage(0, "", outputMsg.ID)
+	select {
+	case outputMsg = <-channel.clientMsgChan:
+		equal(t, string(outputMsg.Body[:]), strconv.Itoa(10))
+		channel.StartInFlightTimeout(outputMsg, NewFakeConsumer(0), "", time.Second)
+		channel.FinishMessage(0, "", outputMsg.ID)
+	case <-time.After(time.Second):
+	}
 
 	checkChannelCleanStats(t, channel, 0)
 }
 
 func TestChannelResetWhileOneSingleDiskDelayedMsg(t *testing.T) {
 	opts := NewOptions()
-	opts.SyncEvery = 1
 	opts.Logger = newTestLogger(t)
+	opts = adjustDefaultOptsForTest(opts)
+
 	_, _, nsqd := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqd.Exit()
@@ -1589,18 +1589,23 @@ func TestChannelResetWhileOneSingleDiskDelayedMsg(t *testing.T) {
 
 	// wait until timeout
 	time.Sleep(time.Second * 2)
+	chStats := NewChannelStats(channel, nil, 0)
+	equal(t, chStats.DeferredFromDelayCount, int(1))
 	//skip forward
 	t.Logf("backendOffsetMid: %d", backendOffsetMid)
 	channel.SetConsumeOffset(channel.GetChannelEnd().Offset(), 1, true)
 	time.Sleep(time.Second)
-	chStats := NewChannelStats(channel, nil, 0)
+	chStats = NewChannelStats(channel, nil, 0)
 	equal(t, chStats.DeferredFromDelayCount, int(1))
 
-	outputMsg = <-channel.clientMsgChan
-	equal(t, string(outputMsg.Body[:]), strconv.Itoa(10))
+	select {
+	case outputMsg = <-channel.clientMsgChan:
+		equal(t, string(outputMsg.Body[:]), strconv.Itoa(10))
 
-	channel.StartInFlightTimeout(outputMsg, NewFakeConsumer(0), "", time.Second)
-	channel.FinishMessage(0, "", outputMsg.ID)
+		channel.StartInFlightTimeout(outputMsg, NewFakeConsumer(0), "", time.Second)
+		channel.FinishMessage(0, "", outputMsg.ID)
+	case <-time.After(time.Second):
+	}
 
 	checkChannelCleanStats(t, channel, 0)
 }
@@ -1610,14 +1615,10 @@ func TestChannelSkipZanTestForOrdered(t *testing.T) {
 	// change the state to skip zan test may block waiting the next
 	// we test this case for ordered topic
 	opts := NewOptions()
-	opts.SyncEvery = 1
 	opts.Logger = newTestLogger(t)
+	opts = adjustDefaultOptsForTest(opts)
 	opts.MsgTimeout = time.Second * 2
 	opts.AllowZanTestSkip = true
-	if testing.Verbose() {
-		opts.LogLevel = 4
-		SetLogger(opts.Logger)
-	}
 	_, _, nsqd := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqd.Exit()
@@ -1708,15 +1709,12 @@ func TestChannelSkipMsgRetryTooMuchCnt(t *testing.T) {
 	// change the state to skip zan test may block waiting the next
 	// we test this case for ordered topic
 	opts := NewOptions()
-	opts.SyncEvery = 1
 	opts.Logger = newTestLogger(t)
-	opts.MsgTimeout = time.Second / 2
-	opts.AckOldThanTime = time.Second
-	opts.AckRetryCnt = 3
-	if testing.Verbose() {
-		opts.LogLevel = 4
-		SetLogger(opts.Logger)
-	}
+	opts = adjustDefaultOptsForTest(opts)
+	opts.QueueScanInterval = time.Millisecond * 10
+	opts.MsgTimeout = time.Millisecond
+	opts.AckOldThanTime = opts.MsgTimeout
+	opts.AckRetryCnt = 2
 	_, _, nsqd := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqd.Exit()
@@ -1736,8 +1734,11 @@ func TestChannelSkipMsgRetryTooMuchCnt(t *testing.T) {
 	topic.flushBuffer(true)
 	time.Sleep(time.Millisecond)
 	// consume and wait timeout
-	toC := time.After(time.Second * 10)
+	toC := time.After(time.Second)
 	for i := 0; i < 3*(opts.AckRetryCnt+2); i++ {
+		if channel.Depth() == 0 {
+			return
+		}
 		var outputMsg *Message
 		select {
 		case outputMsg = <-channel.clientMsgChan:
@@ -1761,15 +1762,11 @@ func TestChannelSkipMsgRetryTooLongAgo(t *testing.T) {
 	// change the state to skip zan test may block waiting the next
 	// we test this case for ordered topic
 	opts := NewOptions()
-	opts.SyncEvery = 1
 	opts.Logger = newTestLogger(t)
-	opts.MsgTimeout = time.Second / 2
-	opts.AckOldThanTime = time.Second * 10
+	opts = adjustDefaultOptsForTest(opts)
+	opts.AckOldThanTime = shortWaitTime
 	opts.AckRetryCnt = 1
-	if testing.Verbose() {
-		opts.LogLevel = 4
-		SetLogger(opts.Logger)
-	}
+
 	_, _, nsqd := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqd.Exit()
@@ -1812,14 +1809,9 @@ func TestChannelSkipMsgRetryTooLongAgo(t *testing.T) {
 
 func TestChannelInitWithOldStart(t *testing.T) {
 	opts := NewOptions()
-	opts.SyncEvery = 1
-	opts.MaxBytesPerFile = 1024
-	opts.LogLevel = 4
 	opts.Logger = newTestLogger(t)
-	if testing.Verbose() {
-		opts.LogLevel = 4
-		SetLogger(opts.Logger)
-	}
+	opts = adjustDefaultOptsForTest(opts)
+	opts.MaxBytesPerFile = 1024
 	_, _, nsqd := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqd.Exit()
@@ -1902,14 +1894,9 @@ func TestChannelInitWithOldStart(t *testing.T) {
 
 func TestChannelResetWithNewStartOverConfirmed(t *testing.T) {
 	opts := NewOptions()
-	opts.SyncEvery = 1
-	opts.MaxBytesPerFile = 1024
-	opts.LogLevel = 4
 	opts.Logger = newTestLogger(t)
-	if testing.Verbose() {
-		opts.LogLevel = 4
-		SetLogger(opts.Logger)
-	}
+	opts = adjustDefaultOptsForTest(opts)
+	opts.MaxBytesPerFile = 1024
 	_, _, nsqd := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqd.Exit()
@@ -1980,8 +1967,8 @@ func TestChannelResetWithNewStartOverConfirmed(t *testing.T) {
 
 func TestChannelResetReadEnd(t *testing.T) {
 	opts := NewOptions()
-	opts.SyncEvery = 1
 	opts.Logger = newTestLogger(t)
+	opts = adjustDefaultOptsForTest(opts)
 	_, _, nsqd := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqd.Exit()
@@ -2049,8 +2036,8 @@ func TestChannelResetReadEnd(t *testing.T) {
 func TestChannelDepthTimestamp(t *testing.T) {
 	// handle read no data, reset, etc
 	opts := NewOptions()
-	opts.SyncEvery = 1
 	opts.Logger = newTestLogger(t)
+	opts = adjustDefaultOptsForTest(opts)
 	_, _, nsqd := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqd.Exit()
@@ -2097,14 +2084,11 @@ func TestChannelUpdateEndWhenNeed(t *testing.T) {
 	// 6. consume end and put 5
 	// 7. check consume 5 without flush
 	opts := NewOptions()
-	opts.SyncEvery = 100
-	opts.LogLevel = 2
-	opts.SyncTimeout = time.Second * 10
 	opts.Logger = newTestLogger(t)
-	if testing.Verbose() {
-		opts.LogLevel = 4
-		SetLogger(opts.Logger)
-	}
+	opts = adjustDefaultOptsForTest(opts)
+	opts.SyncEvery = 100
+	opts.SyncTimeout = time.Second * 10
+
 	_, _, nsqd := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqd.Exit()
@@ -2276,6 +2260,7 @@ func TestMessageDispatchWhileResetInvalidOffset(t *testing.T) {
 
 	opts := NewOptions()
 	opts.Logger = newTestLogger(t)
+	opts = adjustDefaultOptsForTest(opts)
 	_, _, nsqd := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqd.Exit()
@@ -2331,6 +2316,7 @@ func TestMessageDispatchWhileReset(t *testing.T) {
 
 	opts := NewOptions()
 	opts.Logger = newTestLogger(t)
+	opts = adjustDefaultOptsForTest(opts)
 	_, _, nsqd := mustStartNSQD(opts)
 	defer os.RemoveAll(opts.DataPath)
 	defer nsqd.Exit()

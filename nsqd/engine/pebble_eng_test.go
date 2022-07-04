@@ -54,7 +54,7 @@ func TestPebbleCheckpointDuringWrite(t *testing.T) {
 				t.Logf("checkpoint too long: %v, %v", begin, time.Since(begin))
 			}
 			os.RemoveAll(ckpath)
-			time.Sleep(time.Millisecond * 100)
+			time.Sleep(time.Millisecond * 50)
 		}
 	}()
 	bigV := make([]byte, 8000)
@@ -78,7 +78,7 @@ func TestPebbleCheckpointDuringWrite(t *testing.T) {
 				})
 				break
 			}
-			if time.Since(start) > time.Minute {
+			if time.Since(start) > time.Minute/2 {
 				break
 			}
 		}
@@ -86,7 +86,7 @@ func TestPebbleCheckpointDuringWrite(t *testing.T) {
 			break
 		}
 		time.Sleep(time.Microsecond * 10)
-		if time.Since(start) > time.Minute {
+		if time.Since(start) > time.Minute/2 {
 			break
 		}
 	}
@@ -131,7 +131,7 @@ func TestPebbleReopenAndCheck(t *testing.T) {
 	pe.OpenEng()
 
 	pe.CloseAll()
-	time.Sleep(time.Second * 10)
+	time.Sleep(time.Second)
 }
 
 func TestPebbleSharedCacheForMulti(t *testing.T) {

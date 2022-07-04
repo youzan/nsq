@@ -316,6 +316,7 @@ func newDelayQueue(topicName string, part int, dataPath string, opt *Options,
 		dataPath:               dataPath,
 		msgIDCursor:            idGen,
 		oldestChannelDelayedTs: make(map[string]int64),
+		SyncEvery:              opt.SyncEvery,
 	}
 	if isExt {
 		q.isExt = 1
