@@ -1139,7 +1139,9 @@ func TestDelayQueueCompactStoreCrash(t *testing.T) {
 			}
 		}
 	}()
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		time.Sleep(time.Second)
 		for i := 0; i < 10; i++ {
 			err := dq.compactStore(true)
@@ -1150,7 +1152,9 @@ func TestDelayQueueCompactStoreCrash(t *testing.T) {
 			test.Nil(t, err)
 		}
 	}()
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		time.Sleep(time.Second * 2)
 		for i := 0; i < 10; i++ {
 			err := dq.compactStore(true)
@@ -1184,7 +1188,9 @@ func TestDelayQueueCompactStoreCrash(t *testing.T) {
 		}
 	}
 	dq.getStore().Sync()
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		time.Sleep(time.Second * 2)
 		for i := 0; i < 10; i++ {
 			err := dq.compactStore(true)

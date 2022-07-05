@@ -19,6 +19,8 @@ github.com/absolute8511/bolt v1.5.0 h1:1HMP0GLSCHFStWt5VwwqS0pb1msmP+BsKmJ3TmZd2
 github.com/absolute8511/bolt v1.5.0/go.mod h1:ZvG4+BG8/gnqo3YxXstB96fsOPZfm7hVg9xnud/um0A=
 github.com/absolute8511/bolt v1.5.1 h1:DhzQahV6eJUjLGtk8S72CNVAmXVq8XIs8AVQINY47IY=
 github.com/absolute8511/bolt v1.5.1/go.mod h1:ZcWITTZhq+Amag5xYMjaRvTLA1eeN4AtQ4pXsdDQh7g=
+github.com/absolute8511/bolt v1.5.2 h1:b5sVmgBmLKAwEm3hRO+vbhhwWk1/1Pgmn2U3iY3mmhI=
+github.com/absolute8511/bolt v1.5.2/go.mod h1:ZcWITTZhq+Amag5xYMjaRvTLA1eeN4AtQ4pXsdDQh7g=
 github.com/absolute8511/glog v0.3.1 h1:oTuACTGSouUxi7CWuya5azGQ9s7WnsAxrAxAZPKevRk=
 github.com/absolute8511/glog v0.3.1/go.mod h1:T44AH/EtS/Grr3Ujq6U0Lhk1y4960FC9i06pxXblZ2I=
 github.com/absolute8511/gorpc v0.0.0-20161203145636-60ee7d4359cb h1:F8aNeq5n+KBvboy1eAlpCcZ+DqdJ4a3g+CQ7L0jwt4o=

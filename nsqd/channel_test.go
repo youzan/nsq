@@ -456,7 +456,7 @@ func TestChannelReqTooMuchInDeferShouldNotContinueReadBackend(t *testing.T) {
 	lastDelay := time.Now()
 	for time.Since(start) < opts.QueueScanInterval*5 {
 		select {
-		case <-time.After(opts.MsgTimeout):
+		case <-time.After(opts.MsgTimeout * 2):
 			timeout++
 		case outputMsg, ok := <-channel.clientMsgChan:
 			if !ok {
