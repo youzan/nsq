@@ -5485,22 +5485,20 @@ func TestSubWithLargeReady(t *testing.T) {
 	msg := nsqdNs.NewMessage(0, []byte("test body"))
 	topic.PutMessage(msg)
 
-	for i := 0; i < 1000; i++ {
+	for i := 0; i < int(opts.MaxRdyCount*2); i++ {
 		topic.PutMessage(nsqdNs.NewMessage(0, []byte("test body")))
 	}
+	topic.ForceFlush()
 
 	identify(t, conn, nil, frameTypeResponse)
 	sub(t, conn, topicName, "ch")
 
 	defer conn.Close()
 
-	_, err = nsq.Ready(250).WriteTo(conn)
-	test.Equal(t, err, nil)
-
 	_, err = nsq.Ready(int(opts.MaxRdyCount)).WriteTo(conn)
 	test.Equal(t, err, nil)
 
-	for i := 0; i < 1000; i++ {
+	for i := 0; i < int(opts.MaxRdyCount*2); i++ {
 		msgOut := recvNextMsgAndCheckClientMsg(t, conn, len(msg.Body), 0, false)
 		_, err = nsq.Finish(msgOut.ID).WriteTo(conn)
 		if err != nil {
@@ -6395,6 +6393,7 @@ func TestClientMsgTimeoutReqCount(t *testing.T) {
 	topic.PutMessage(msg)
 	topic.PutMessage(nsqdNs.NewMessage(0, make([]byte, 100)))
 
+	topic.ForceFlush()
 	_, err = nsq.Ready(1).WriteTo(conn)
 	test.Equal(t, err, nil)
 
@@ -6492,20 +6491,32 @@ func TestClientMsgTimeoutReqCount(t *testing.T) {
 	test.Equal(t, uint64(2), chStats.RequeueCount)
 	test.Equal(t, uint64(1), chStats.TimeoutCount)
 
-	_, err = nsq.Requeue(nsq.MessageID(msgOut.GetFullMsgID()), time.Second*3).WriteTo(conn)
+	_, err = nsq.Requeue(nsq.MessageID(msgOut.GetFullMsgID()), opts.MsgTimeout*2).WriteTo(conn)
 	test.Equal(t, err, nil)
-	time.Sleep(time.Millisecond)
 
-	tstats = nsqd.GetTopicStats(true, topicName)
-	chStats = tstats[0].Channels[0]
-	clientStats = tstats[0].Channels[0].Clients[0]
-	t.Log(chStats)
-	test.Equal(t, uint64(2), clientStats.RequeueCount)
+	start := time.Now()
+	for {
+		if time.Since(start) > (opts.MsgTimeout * 2) {
+			t.Errorf("timeout waiting for message")
+			break
+		}
+		time.Sleep(time.Millisecond)
+		tstats = nsqd.GetTopicStats(true, topicName)
+		chStats = tstats[0].Channels[0]
+		clientStats = tstats[0].Channels[0].Clients[0]
+		t.Log(chStats)
+		if chStats.InFlightCount != 2 {
+			//wait until the second message is processed
+			continue
+		}
+		test.Equal(t, uint64(2), clientStats.RequeueCount)
 
-	test.Equal(t, 2, chStats.InFlightCount)
-	test.Equal(t, 1, chStats.DeferredCount)
-	test.Equal(t, uint64(2), chStats.RequeueCount)
-	test.Equal(t, uint64(1), chStats.TimeoutCount)
+		test.Equal(t, 2, chStats.InFlightCount)
+		test.Equal(t, 1, chStats.DeferredCount)
+		test.Equal(t, uint64(2), chStats.RequeueCount)
+		test.Equal(t, uint64(1), chStats.TimeoutCount)
+		break
+	}
 
 	msgOut = recvNextMsgAndCheck(t, conn, len(msg.Body), msg.TraceID, false)
 
