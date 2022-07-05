@@ -1090,6 +1090,59 @@ func TestDelayQueueCompactStore(t *testing.T) {
 	}
 }
 
+func TestDelayedQueueDeleteIndexCheckValue(t *testing.T) {
+	tmpDir, err := ioutil.TempDir("", fmt.Sprintf("nsq-test-delay-delete-%d", time.Now().UnixNano()))
+	if err != nil {
+		panic(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	opts := NewOptions()
+	opts.Logger = newTestLogger(t)
+	opts.SyncEvery = 1
+	if testing.Verbose() {
+		SetLogger(opts.Logger)
+	}
+
+	dq, err := NewDelayQueue("test-delete", 0, tmpDir, opts, nil, false)
+	test.Nil(t, err)
+	defer dq.Close()
+	cnt := 10
+	bodyLen := 128
+	for i := 0; i < cnt; i++ {
+		msg := NewMessage(0, append(make([]byte, bodyLen), []byte("body")...))
+		msg.DelayedType = ChannelDelayed
+		msg.DelayedTs = time.Now().Add(time.Millisecond).UnixNano()
+		msg.DelayedChannel = "test"
+		msg.DelayedOrigID = MessageID(i + 1)
+		_, _, _, _, err := dq.PutDelayMessage(msg)
+		test.Nil(t, err)
+	}
+	time.Sleep(time.Second)
+	// override the message to make index invalid for old
+	for i := 0; i < cnt; i++ {
+		msg := NewMessage(0, append(make([]byte, bodyLen), []byte("body")...))
+		msg.DelayedType = ChannelDelayed
+		msg.DelayedTs = time.Now().Add(time.Millisecond).UnixNano()
+		msg.DelayedChannel = "test"
+		msg.DelayedOrigID = MessageID(i + 1)
+		dq.PutDelayMessage(msg)
+	}
+	time.Sleep(time.Second)
+	ret := make([]Message, cnt)
+	dq.getStore().Sync()
+	n, err := dq.PeekRecentChannelTimeout(time.Now().UnixNano(), ret, "test")
+	test.Nil(t, err)
+	test.Assert(t, n > 0, "n should be greater than 0")
+	for _, m := range ret[:n] {
+		origID := m.DelayedOrigID
+		test.Equal(t, true, dq.IsChannelMessageDelayed(origID, "test"))
+		m.DelayedOrigID = m.ID
+		dq.ConfirmedMessage(&m)
+		test.Equal(t, true, dq.IsChannelMessageDelayed(origID, "test"))
+	}
+}
+
 func TestDelayQueueCompactStoreCrash(t *testing.T) {
 	// It may crash while compact to new db and the old is closed
 	// test this for bug
@@ -1125,7 +1178,7 @@ func TestDelayQueueCompactStoreCrash(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		for i := 0; i < cnt; i++ {
+		for i := cnt; i < cnt*2; i++ {
 			msg := NewMessage(0, append(make([]byte, bodyLen), []byte("body")...))
 			msg.DelayedType = ChannelDelayed
 			msg.DelayedTs = time.Now().Add(time.Millisecond).UnixNano()
