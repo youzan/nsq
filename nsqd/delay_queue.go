@@ -205,11 +205,22 @@ func deleteMsgIndex(msgData []byte, tx *bolt.Tx, isExt bool) error {
 	}
 	msgIndexKey := getDelayedMsgDBIndexKey(int(m.DelayedType), m.DelayedChannel, m.DelayedOrigID)
 	b := tx.Bucket(bucketDelayedMsgIndex)
-	err = b.Delete(msgIndexKey)
-	if err != nil {
-		nsqLog.Infof("failed to delete delayed index : %v", msgIndexKey)
-		return err
+	v := b.Get(msgIndexKey)
+
+	if v != nil {
+		ts, _, err := decodeDelayedMsgDBIndexValue(v)
+		if err != nil {
+			return err
+		}
+		if m.DelayedTs == ts {
+			err = b.Delete(msgIndexKey)
+			if err != nil {
+				nsqLog.Infof("failed to delete delayed index : %v", msgIndexKey)
+				return err
+			}
+		}
 	}
+
 	return nil
 }
 
