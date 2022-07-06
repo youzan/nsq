@@ -61,9 +61,9 @@ func (self *LogMsgTracer) TracePubClient(topic string, part int, traceID uint64,
 }
 
 func (self *LogMsgTracer) TraceSub(topic string, channel string, state string, traceID uint64, msg *Message, clientID string, cost int64) {
-	nsqLog.Logf("[TRACE] topic %v channel %v trace id %v: message %v (offset: %v, pri:%v) consume state %v from client %v(%v) at time: %v cost: %v, attempt: %v",
+	nsqLog.Logf("[TRACE] topic %v channel %v trace id %v: message %v (ts: %v, offset: %v, pri:%v) consume state %v from client %v(%v) at time: %v cost: %v, attempt: %v",
 		topic, channel, msg.TraceID,
-		msg.ID, msg.Offset, msg.pri, state, clientID, msg.GetClientID(), time.Now().UnixNano(), cost, msg.Attempts())
+		msg.ID, msg.Timestamp, msg.Offset, msg.pri, state, clientID, msg.GetClientID(), time.Now().UnixNano(), cost, msg.Attempts())
 }
 
 func (self *LogMsgTracer) IsRemote() bool {
@@ -148,8 +148,8 @@ func (self *RemoteMsgTracer) TraceSub(topic string, channel string, state string
 	detail := flume_log.NewDetailInfo(traceModule)
 	detail.SetExtraInfo(traceItem[:])
 
-	l := fmt.Sprintf("[TRACE] topic %v channel %v trace id %v: message %v (offset: %v, pri:%v) consume state %v from client %v(%v) at time: %v cost: %v, attempt: %v",
-		topic, channel, msg.TraceID, msg.ID, msg.Offset, msg.pri, state, clientID, msg.GetClientID(), time.Now().UnixNano(), cost, msg.Attempts())
+	l := fmt.Sprintf("[TRACE] topic %v channel %v trace id %v: message %v (ts: %v, offset: %v, pri:%v) consume state %v from client %v(%v) at time: %v cost: %v, attempt: %v",
+		topic, channel, msg.TraceID, msg.ID, msg.Timestamp, msg.Offset, msg.pri, state, clientID, msg.GetClientID(), now, cost, msg.Attempts())
 	err := self.remoteLogger.Info(l, detail)
 	if err != nil || nsqLog.Level() >= levellogger.LOG_DEBUG {
 		if err != nil {

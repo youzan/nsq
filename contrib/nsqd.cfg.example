@@ -188,3 +188,9 @@ queue_scan_dirty_percent = 0.1
 
 ## the rate limit in kilobytes for each channel consume, the default is 100MB
 #channel_ratelimit_kb=102400
+
+## below will control the max retry for the message, when the retry cnt larger than ack_retry_cnt and the message create timestamp old than ack_old_than_time,
+## this message will be auto acked in server. the default is 0(means never auto ack) and "" which will keep the same with old.
+## ack_retry_cnt should always be less than 4000 (exclude)
+#ack_retry_cnt=0
+#ack_old_than_time=""
