@@ -205,11 +205,22 @@ func deleteMsgIndex(msgData []byte, tx *bolt.Tx, isExt bool) error {
 	}
 	msgIndexKey := getDelayedMsgDBIndexKey(int(m.DelayedType), m.DelayedChannel, m.DelayedOrigID)
 	b := tx.Bucket(bucketDelayedMsgIndex)
-	err = b.Delete(msgIndexKey)
-	if err != nil {
-		nsqLog.Infof("failed to delete delayed index : %v", msgIndexKey)
-		return err
+	v := b.Get(msgIndexKey)
+
+	if v != nil {
+		ts, _, err := decodeDelayedMsgDBIndexValue(v)
+		if err != nil {
+			return err
+		}
+		if m.DelayedTs == ts {
+			err = b.Delete(msgIndexKey)
+			if err != nil {
+				nsqLog.Infof("failed to delete delayed index : %v", msgIndexKey)
+				return err
+			}
+		}
 	}
+
 	return nil
 }
 
@@ -243,6 +254,9 @@ func deleteBucketKey(dt int, ch string, ts int64, id MessageID, tx *bolt.Tx, isE
 			if err != nil {
 				nsqLog.Infof("failed to update the meta count: %v, %v", cntKey, err)
 				return err
+			}
+			if nsqLog.Level() >= levellogger.LOG_DEBUG {
+				nsqLog.LogDebugf("decr delayed cnt: %v, msg: %v", cnt, msgKey)
 			}
 		}
 	} else {
@@ -801,8 +815,29 @@ func (q *DelayQueue) put(m *Message, rawData []byte, trace bool, checkSize int64
 	wstart := time.Now()
 	q.compactMutex.Lock()
 	err = q.getStore().Update(func(tx *bolt.Tx) error {
+		newIndexKey := getDelayedMsgDBIndexKey(int(m.DelayedType), m.DelayedChannel, m.DelayedOrigID)
+		ib := tx.Bucket(bucketDelayedMsgIndex)
+		iv := ib.Get(newIndexKey)
 		b := tx.Bucket(bucketDelayedMsg)
-		oldV := b.Get(msgKey)
+		var oldV []byte
+		var oldMsgKey []byte
+		if iv != nil {
+			ts, oldID, err := decodeDelayedMsgDBIndexValue(iv)
+			if err != nil {
+				return err
+			}
+			oldMsgKey = getDelayedMsgDBKey(int(m.DelayedType), m.DelayedChannel, ts, oldID)
+			oldV = b.Get(oldMsgKey)
+			oldMsg, err := DecodeDelayedMessage(oldV, q.IsExt())
+			if err != nil {
+				return err
+			}
+			// the value from old index is not the same message we are inserting, this may happend when old code use the wrong id in index
+			if oldMsg.DelayedOrigID != m.DelayedOrigID || oldMsg.DelayedChannel != m.DelayedChannel || oldMsg.DelayedType != m.DelayedType {
+				nsqLog.Infof("found old delayed index key %v (%v, %v) msg value not matched : %v, %v", newIndexKey, iv, oldMsgKey, oldMsg, m)
+				oldV = nil
+			}
+		}
 		exists := oldV != nil
 		if exists && bytes.Equal(oldV, q.putBuffer.Bytes()) {
 		} else {
@@ -810,18 +845,22 @@ func (q *DelayQueue) put(m *Message, rawData []byte, trace bool, checkSize int64
 			if err != nil {
 				return err
 			}
-			if oldV != nil {
-				err = deleteMsgIndex(oldV, tx, q.IsExt())
+			if oldV != nil && (!bytes.Equal(oldMsgKey, msgKey)) {
+				err := b.Delete(oldMsgKey)
+				if err != nil {
+					nsqLog.Infof("failed to delete old delayed message: %v", msgKey)
+					return err
+				}
+				err = ib.Delete(newIndexKey)
 				if err != nil {
 					nsqLog.Infof("failed to delete old delayed index : %v, %v", oldV, err)
 					return err
 				}
 			}
 			// note here we only support one index for the same message(if dup inserted, only one has the index)
-			b = tx.Bucket(bucketDelayedMsgIndex)
-			newIndexKey := getDelayedMsgDBIndexKey(int(m.DelayedType), m.DelayedChannel, m.DelayedOrigID)
-			d := getDelayedMsgDBIndexValue(m.DelayedTs, m.DelayedOrigID)
-			err = b.Put(newIndexKey, d)
+			ib = tx.Bucket(bucketDelayedMsgIndex)
+			d := getDelayedMsgDBIndexValue(m.DelayedTs, m.ID)
+			err = ib.Put(newIndexKey, d)
 			if err != nil {
 				return err
 			}
@@ -836,6 +875,9 @@ func (q *DelayQueue) put(m *Message, rawData []byte, trace bool, checkSize int64
 			}
 			cnt++
 			cntBytes = make([]byte, 8)
+			if nsqLog.Level() >= levellogger.LOG_DEBUG {
+				nsqLog.LogDebugf("incr delayed cnt: %v, msg: %v", cnt, m)
+			}
 
 			binary.BigEndian.PutUint64(cntBytes[:8], cnt)
 			err = b.Put(cntKey, cntBytes)
@@ -1338,6 +1380,22 @@ func (q *DelayQueue) FindChannelMessageDelayed(msgID MessageID, ch string, trySc
 		return nil
 	})
 	return msg, err
+}
+
+func (q *DelayQueue) getChannelDelayedMsgDelayedTs(msgID MessageID, ch string) (int64, error) {
+	msgKey := getDelayedMsgDBIndexKey(ChannelDelayed, ch, msgID)
+	var ts int64
+	err := q.getStore().View(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketDelayedMsgIndex)
+		v := b.Get(msgKey)
+		if v != nil {
+			var errDecode error
+			ts, _, errDecode = decodeDelayedMsgDBIndexValue(v)
+			return errDecode
+		}
+		return errBucketKeyNotFound
+	})
+	return ts, err
 }
 
 // IsChannelMessageDelayed check if this message may already exist. Note if dup delayed message with same id exist,

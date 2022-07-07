@@ -552,13 +552,13 @@ func (c *context) internalRequeueToEnd(ch *nsqd.Channel,
 	_, _, _, _, putErr := c.PutMessageObj(topic, newMsg)
 	if putErr != nil {
 		nsqd.NsqLogger().Logf("req message %v to end failed, channel %v, put error: %v ",
-			oldMsg, ch.GetName(), putErr)
+			newMsg, ch.GetName(), putErr)
 		return putErr
 	}
 	if atomic.LoadInt32(&testFailedReqToDelayTimeout) == 1 {
-		time.Sleep(time.Second * 20)
+		time.Sleep(time.Second * 10)
 		nsqd.NsqLogger().Logf("req message %v to end failed, channel %v, put error by test",
-			oldMsg, ch.GetName())
+			newMsg, ch.GetName())
 		return errors.New("put delayed timeout error by test")
 	}
 
