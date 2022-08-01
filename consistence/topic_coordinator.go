@@ -124,6 +124,15 @@ type coordData struct {
 	syncedConsumeMgr   *ChannelConsumeMgr
 	logMgr             *TopicCommitLogMgr
 	delayedLogMgr      *TopicCommitLogMgr
+	needFix            int32
+}
+
+func (cd *coordData) setNeedFix(needFix bool) {
+	if needFix {
+		atomic.StoreInt32(&cd.needFix, 1)
+	} else {
+		atomic.StoreInt32(&cd.needFix, 0)
+	}
 }
 
 func (cd *coordData) updateBufferSize(bs int) {
@@ -324,6 +333,10 @@ func (tc *TopicCoordinator) SetForceLeave(leave bool) {
 
 func (tc *TopicCoordinator) IsForceLeave() bool {
 	return atomic.LoadInt32(&tc.forceLeave) == 1
+}
+
+func (cd *coordData) IsNeedFix() bool {
+	return atomic.LoadInt32(&cd.needFix) == 1
 }
 
 func (cd *coordData) GetLeader() string {

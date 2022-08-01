@@ -1614,6 +1614,7 @@ func (dpm *DataPlacement) prepareCandidateNodesForNewLeader(topicInfo *TopicPart
 			coordLog.Infof("failed to get log id on replica: %v, %v", replica, err)
 			continue
 		}
+		// TODO: maybe we should check the epoch in the log, is it possible we have higher epoch with less log id?
 		if cid > newestLogID {
 			newestReplicas = newestReplicas[0:0]
 			newestReplicas = append(newestReplicas, replica)
