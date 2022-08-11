@@ -295,6 +295,7 @@ func (p *program) Start() error {
 	}
 
 	nsqd.LoadMetadata(initDisabled)
+	nsqd.LoadLocalCacheTopic()
 	nsqd.NotifyPersistMetadata()
 
 	err = nsqdServer.Main()

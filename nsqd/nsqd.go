@@ -10,6 +10,7 @@ import (
 	"os"
 	"path"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -75,8 +76,9 @@ type NSQD struct {
 	errValue  atomic.Value
 	startTime time.Time
 
-	topicMap       map[string]map[int]*Topic
-	magicCodeMutex sync.Mutex
+	topicMap           map[string]map[int]*Topic
+	localCacheTopicMap map[string]map[int]*Topic
+	magicCodeMutex     sync.Mutex
 
 	poolSize         int
 	topicJobPoolSize int
@@ -128,6 +130,7 @@ func New(opts *Options) (*NSQD, error) {
 	n := &NSQD{
 		startTime:            time.Now(),
 		topicMap:             make(map[string]map[int]*Topic),
+		localCacheTopicMap:   make(map[string]map[int]*Topic),
 		exitChan:             make(chan int),
 		MetaNotifyChan:       make(chan interface{}, 128),
 		OptsNotificationChan: make(chan struct{}, 1),
@@ -298,6 +301,10 @@ func (n *NSQD) GetTopicMapRef() map[string]map[int]*Topic {
 	return n.topicMap
 }
 
+func (n *NSQD) GetLocalCacheTopicMapRef() map[string]map[int]*Topic {
+	return n.localCacheTopicMap
+}
+
 func (n *NSQD) GetTopicPartitions(topicName string) map[int]*Topic {
 	tmpMap := make(map[int]*Topic)
 	n.RLock()
@@ -433,6 +440,36 @@ func (n *NSQD) LoadMetadata(disabled int32) {
 		}
 		// we load channels from the new meta file
 		topic.LoadChannelMeta()
+	}
+}
+
+func (n *NSQD) LoadLocalCacheTopic() {
+	fn := fmt.Sprintf(path.Join(n.GetOpts().DataPath))
+	data, _ := ioutil.ReadDir(fn)
+	for _, topicFile := range data {
+		topicFilePath := fmt.Sprintf(path.Join(n.GetOpts().DataPath, topicFile.Name()))
+
+		cacheFiles, _ := ioutil.ReadDir(topicFilePath)
+		for _, file := range cacheFiles {
+			if find := strings.Contains(file.Name(), ".diskqueue"); find {
+				str := strings.Split(file.Name(), ".diskqueue")
+				topicDes := strings.Split(str[0], "-")
+				topicName := topicDes[0]
+				partition, _ := strconv.Atoi(topicDes[1])
+
+				topics, ok := n.localCacheTopicMap[topicName]
+				if ok {
+					_, ok1 := topics[partition]
+					if ok1 {
+						continue
+					}
+				} else {
+					topics = make(map[int]*Topic)
+					n.localCacheTopicMap[topicName] = topics
+				}
+				topics[partition] = nil
+			}
+		}
 	}
 }
 
