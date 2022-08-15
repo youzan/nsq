@@ -488,6 +488,7 @@ func (ncoord *NsqdCoordinator) checkAndCleanOldData() {
 			tc, _, loadErr := ncoord.initLocalTopicCoord(topicMetaInfoForPartition, topicLeaderSession, basePath, true, false)
 			if loadErr != nil {
 				coordLog.Errorf("Cleaning: topic %v coord init error: %v", topicMetaInfoForPartition.GetTopicDesp(), loadErr.Error())
+				continue
 			}
 			coordLog.Debugf("Load local cache topic from cache file, topic: %v", tc.GetData().topicInfo.GetTopicDesp())
 		}
