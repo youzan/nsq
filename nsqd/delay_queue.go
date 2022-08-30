@@ -828,14 +828,17 @@ func (q *DelayQueue) put(m *Message, rawData []byte, trace bool, checkSize int64
 			}
 			oldMsgKey = getDelayedMsgDBKey(int(m.DelayedType), m.DelayedChannel, ts, oldID)
 			oldV = b.Get(oldMsgKey)
-			oldMsg, err := DecodeDelayedMessage(oldV, q.IsExt())
-			if err != nil {
-				return err
-			}
-			// the value from old index is not the same message we are inserting, this may happend when old code use the wrong id in index
-			if oldMsg.DelayedOrigID != m.DelayedOrigID || oldMsg.DelayedChannel != m.DelayedChannel || oldMsg.DelayedType != m.DelayedType {
-				nsqLog.Infof("found old delayed index key %v (%v, %v) msg value not matched : %v, %v", newIndexKey, iv, oldMsgKey, oldMsg, m)
-				oldV = nil
+			// it may have some old data which only have index but no msg value
+			if len(oldV) > 0 {
+				oldMsg, err := DecodeDelayedMessage(oldV, q.IsExt())
+				if err != nil {
+					nsqLog.Warningf("found old delayed index key %v (%v, %v) msg value data wrong: %v, %v", newIndexKey, iv, oldMsgKey, oldV, m)
+					// we can just delete this safely
+				} else if oldMsg.DelayedOrigID != m.DelayedOrigID || oldMsg.DelayedChannel != m.DelayedChannel || oldMsg.DelayedType != m.DelayedType {
+					// the value from old index is not the same message we are inserting, this may happend when old code use the wrong id in index
+					nsqLog.Infof("found old delayed index key %v (%v, %v) msg value not matched : %v, %v", newIndexKey, iv, oldMsgKey, oldMsg, m)
+					oldV = nil
+				}
 			}
 		}
 		exists := oldV != nil
