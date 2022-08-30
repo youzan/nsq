@@ -815,8 +815,29 @@ func (q *DelayQueue) put(m *Message, rawData []byte, trace bool, checkSize int64
 	wstart := time.Now()
 	q.compactMutex.Lock()
 	err = q.getStore().Update(func(tx *bolt.Tx) error {
+		newIndexKey := getDelayedMsgDBIndexKey(int(m.DelayedType), m.DelayedChannel, m.DelayedOrigID)
+		ib := tx.Bucket(bucketDelayedMsgIndex)
+		iv := ib.Get(newIndexKey)
 		b := tx.Bucket(bucketDelayedMsg)
-		oldV := b.Get(msgKey)
+		var oldV []byte
+		var oldMsgKey []byte
+		if iv != nil {
+			ts, oldID, err := decodeDelayedMsgDBIndexValue(iv)
+			if err != nil {
+				return err
+			}
+			oldMsgKey = getDelayedMsgDBKey(int(m.DelayedType), m.DelayedChannel, ts, oldID)
+			oldV = b.Get(oldMsgKey)
+			oldMsg, err := DecodeDelayedMessage(oldV, q.IsExt())
+			if err != nil {
+				return err
+			}
+			// the value from old index is not the same message we are inserting, this may happend when old code use the wrong id in index
+			if oldMsg.DelayedOrigID != m.DelayedOrigID || oldMsg.DelayedChannel != m.DelayedChannel || oldMsg.DelayedType != m.DelayedType {
+				nsqLog.Infof("found old delayed index key %v (%v, %v) msg value not matched : %v, %v", newIndexKey, iv, oldMsgKey, oldMsg, m)
+				oldV = nil
+			}
+		}
 		exists := oldV != nil
 		if exists && bytes.Equal(oldV, q.putBuffer.Bytes()) {
 		} else {
@@ -824,18 +845,22 @@ func (q *DelayQueue) put(m *Message, rawData []byte, trace bool, checkSize int64
 			if err != nil {
 				return err
 			}
-			if oldV != nil {
-				err = deleteMsgIndex(oldV, tx, q.IsExt())
+			if oldV != nil && (!bytes.Equal(oldMsgKey, msgKey)) {
+				err := b.Delete(oldMsgKey)
+				if err != nil {
+					nsqLog.Infof("failed to delete old delayed message: %v", msgKey)
+					return err
+				}
+				err = ib.Delete(newIndexKey)
 				if err != nil {
 					nsqLog.Infof("failed to delete old delayed index : %v, %v", oldV, err)
 					return err
 				}
 			}
 			// note here we only support one index for the same message(if dup inserted, only one has the index)
-			b = tx.Bucket(bucketDelayedMsgIndex)
-			newIndexKey := getDelayedMsgDBIndexKey(int(m.DelayedType), m.DelayedChannel, m.DelayedOrigID)
-			d := getDelayedMsgDBIndexValue(m.DelayedTs, m.DelayedOrigID)
-			err = b.Put(newIndexKey, d)
+			ib = tx.Bucket(bucketDelayedMsgIndex)
+			d := getDelayedMsgDBIndexValue(m.DelayedTs, m.ID)
+			err = ib.Put(newIndexKey, d)
 			if err != nil {
 				return err
 			}
