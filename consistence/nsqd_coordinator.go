@@ -417,18 +417,36 @@ func doLogQClean(tcData *coordData, localTopic *nsqd.Topic, retentionSize int64,
 }
 
 func (ncoord *NsqdCoordinator) GreedyCleanTopicOldData(localTopic *nsqd.Topic) error {
-	tcData, err := ncoord.getTopicCoordData(localTopic.GetTopicName(), localTopic.GetTopicPart())
+	topicName := localTopic.GetTopicName()
+	partition := localTopic.GetTopicPart()
+	topicMetaInfoForPartition, err := ncoord.GetTopicInfo(topicName, partition)
 	if err != nil {
-		return err.ToErrorType()
+		coordLog.Errorf("Cleaning: failed to get topic info, %v-%v: %v", topicName, partition, err)
+		return nil
 	}
 
-	retentionDay := tcData.topicInfo.RetentionDay
+	topicMetaInfo := topicMetaInfoForPartition.TopicMetaInfo
+
+	retentionDay := topicMetaInfo.RetentionDay
 	if retentionDay == 0 {
 		retentionDay = int32(nsqd.DEFAULT_RETENTION_DAYS)
 	}
 	retentionSize := (MaxTopicRetentionSizePerDay / 16) * int64(retentionDay)
-	doLogQClean(tcData, localTopic, retentionSize, false)
-	doLogQClean(tcData, localTopic, retentionSize, true)
+
+	basePath := GetTopicPartitionBasePath(ncoord.dataRootPath, topicName, partition)
+	topicLeaderSession, err := ncoord.leadership.GetTopicLeaderSession(topicName, partition)
+	if err != nil {
+		coordLog.Errorf("Cleaning: failed to get topic leader info:%v-%v, err:%v", topicName, partition, err)
+		return nil
+	}
+
+	tc, localTopic, loadErr := ncoord.initLocalTopicCoord(topicMetaInfoForPartition, topicLeaderSession, basePath, true, false)
+	if loadErr != nil {
+		coordLog.Errorf("Cleaning: topic %v coord init error: %v", topicMetaInfoForPartition.GetTopicDesp(), loadErr.Error())
+		return nil
+	}
+	doLogQClean(tc.GetData(), localTopic, retentionSize, false)
+	doLogQClean(tc.GetData(), localTopic, retentionSize, true)
 	return nil
 }
 
@@ -452,6 +470,30 @@ func (ncoord *NsqdCoordinator) checkAndCleanOldData() {
 	ticker := time.NewTicker(time.Minute * 10)
 	defer ticker.Stop()
 
+	for topicName, data := range ncoord.localNsqd.GetLocalCacheTopicMapRef() {
+		for partition := range data {
+			topicMetaInfoForPartition, err := ncoord.GetTopicInfo(topicName, partition)
+			if err != nil {
+				coordLog.Errorf("Cleaning: failed to get topic info, %v-%v: %v", topicName, partition, err)
+				continue
+			}
+
+			basePath := GetTopicPartitionBasePath(ncoord.dataRootPath, topicName, partition)
+			topicLeaderSession, err := ncoord.leadership.GetTopicLeaderSession(topicName, partition)
+			if err != nil {
+				coordLog.Errorf("Cleaning: failed to get topic leader info:%v-%v, err:%v", topicName, partition, err)
+				continue
+			}
+
+			tc, _, loadErr := ncoord.initLocalTopicCoord(topicMetaInfoForPartition, topicLeaderSession, basePath, true, false)
+			if loadErr != nil {
+				coordLog.Errorf("Cleaning: topic %v coord init error: %v", topicMetaInfoForPartition.GetTopicDesp(), loadErr.Error())
+				continue
+			}
+			coordLog.Debugf("Load local cache topic from cache file, topic: %v", tc.GetData().topicInfo.GetTopicDesp())
+		}
+	}
+
 	doCheckAndCleanOld := func(checkRetentionDay bool) {
 		tmpCoords := make(map[string]map[int]*TopicCoordinator)
 		ncoord.getAllCoords(tmpCoords)
@@ -472,6 +514,7 @@ func (ncoord *NsqdCoordinator) checkAndCleanOldData() {
 				if checkRetentionDay {
 					retentionSize = 0
 				}
+				coordLog.Debugf("start clean local topic: %v", tcData.topicInfo.GetTopicDesp())
 				doLogQClean(tcData, localTopic, retentionSize, false)
 				doLogQClean(tcData, localTopic, retentionSize, true)
 			}
@@ -2613,6 +2656,11 @@ func (ncoord *NsqdCoordinator) isMeCatchup(tinfo *TopicPartitionMetaInfo) bool {
 
 func (ncoord *NsqdCoordinator) GetTopicMetaInfo(topic string) (TopicMetaInfo, error) {
 	meta, _, err := ncoord.leadership.GetTopicMetaInfo(topic)
+	return meta, err
+}
+
+func (ncoord *NsqdCoordinator) GetTopicInfo(topic string, partition int) (*TopicPartitionMetaInfo, error) {
+	meta, err := ncoord.leadership.GetTopicInfo(topic, partition)
 	return meta, err
 }
 
