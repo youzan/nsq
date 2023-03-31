@@ -17,10 +17,8 @@ require (
 	github.com/bmizerany/assert v0.0.0-20160611221934-b7ed37b82869 // indirect
 	github.com/bmizerany/perks v0.0.0-20141205001514-d9a9656a3a4b
 	github.com/cenkalti/backoff v2.1.0+incompatible
-	github.com/certifi/gocertifi v0.0.0-20200211180108-c7c1fbc02894 // indirect
 	github.com/cockroachdb/pebble v0.0.0-20210322142411-65860c8c27ac
 	github.com/coreos/etcd v3.3.13+incompatible
-	github.com/getsentry/raven-go v0.2.0 // indirect
 	github.com/go-ole/go-ole v1.2.5 // indirect
 	github.com/gobwas/glob v0.2.3
 	github.com/gogo/protobuf v1.3.1
@@ -45,8 +43,8 @@ require (
 	github.com/valyala/fastjson v1.6.1
 	github.com/viki-org/dnscache v0.0.0-20130720023526-c70c1f23c5d8
 	github.com/youzan/go-nsq v1.7.2-HA
-	golang.org/x/net v0.0.0-20200520004742-59133d7f0dd7
-	golang.org/x/sync v0.0.0-20201020160332-67f06af15bc9
+	golang.org/x/net v0.7.0
+	golang.org/x/sync v0.0.0-20220722155255-886fb9371eb4
 	golang.org/x/time v0.0.0-20200630173020-3af7569d3a1e
 	google.golang.org/grpc v1.29.1
 	gopkg.in/stretchr/testify.v1 v1.2.2 // indirect
