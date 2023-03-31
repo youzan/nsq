@@ -7,7 +7,7 @@ require (
 	github.com/StackExchange/wmi v0.0.0-20210224194228-fe8f1750fd46 // indirect
 	github.com/Workiva/go-datastructures v1.0.50
 	github.com/absolute8511/bolt v1.5.2
-	github.com/absolute8511/glog v0.3.1
+	github.com/absolute8511/glog v0.4.1
 	github.com/absolute8511/gorpc v0.0.0-20161203145636-60ee7d4359cb
 	github.com/absolute8511/goskiplist v0.0.0-20170727031420-3ba6f667c3df
 	github.com/bitly/go-hostpool v0.0.0-20171023180738-a3a6125de932

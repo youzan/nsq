@@ -23,6 +23,8 @@ github.com/absolute8511/bolt v1.5.2 h1:b5sVmgBmLKAwEm3hRO+vbhhwWk1/1Pgmn2U3iY3mm
 github.com/absolute8511/bolt v1.5.2/go.mod h1:ZcWITTZhq+Amag5xYMjaRvTLA1eeN4AtQ4pXsdDQh7g=
 github.com/absolute8511/glog v0.3.1 h1:oTuACTGSouUxi7CWuya5azGQ9s7WnsAxrAxAZPKevRk=
 github.com/absolute8511/glog v0.3.1/go.mod h1:T44AH/EtS/Grr3Ujq6U0Lhk1y4960FC9i06pxXblZ2I=
+github.com/absolute8511/glog v0.4.1 h1:L/7x7j5CfBymjcpJSWS8eq7s86d1cMGo7+mNMJRcj+A=
+github.com/absolute8511/glog v0.4.1/go.mod h1:T44AH/EtS/Grr3Ujq6U0Lhk1y4960FC9i06pxXblZ2I=
 github.com/absolute8511/gorpc v0.0.0-20161203145636-60ee7d4359cb h1:F8aNeq5n+KBvboy1eAlpCcZ+DqdJ4a3g+CQ7L0jwt4o=
 github.com/absolute8511/gorpc v0.0.0-20161203145636-60ee7d4359cb/go.mod h1:PjNRfcxNGdDHKsjOwvm3QSXPsL1PCSCPkI0qqIbL9Fs=
 github.com/absolute8511/goskiplist v0.0.0-20170727031420-3ba6f667c3df h1:7iX7qyzKpDQ5ymyZrrlhK99T9phGo44DBhg9muteGXs=
