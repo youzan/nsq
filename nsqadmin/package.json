@@ -16,7 +16,7 @@
     "gulp-sourcemaps": "^2.6.4",
     "gulp-task-listing": "^1.0.0",
     "gulp-uglify": "^3.0.1",
-    "handlebars": "^4.2.0",
+    "handlebars": "^4.7.7",
     "hbsfy": "^2.8.1",
     "vinyl-buffer": "^1.0.0",
     "vinyl-source-stream": "^2.0.0"
