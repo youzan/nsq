@@ -86,6 +86,7 @@ func newHTTPServer(ctx *context, tlsEnabled bool, tlsRequired bool) *httpServer 
 	router.Handle("POST", "/channel/fixconfirmed", http_api.Decorate(s.doFixChannelConfirmed, log, http_api.V1))
 	router.Handle("POST", "/channel/finishmemdelayed", http_api.Decorate(s.doFinishMemDelayed, log, http_api.V1))
 	router.Handle("POST", "/channel/emptydelayed", http_api.Decorate(s.doEmptyChannelDelayed, log, http_api.V1))
+	router.Handle("POST", "/channel/requeuedelayed", http_api.Decorate(s.doRequeueChannelDelayed, log, http_api.V1))
 	router.Handle("POST", "/channel/setoffset", http_api.Decorate(s.doSetChannelOffset, log, http_api.V1))
 	router.Handle("POST", "/channel/setorder", http_api.Decorate(s.doSetChannelOrder, log, http_api.V1))
 	router.Handle("POST", "/channel/setclientlimit", http_api.Decorate(s.doSetChannelClientLimit, log, http_api.V1))
@@ -222,6 +223,30 @@ func (s *httpServer) getExistingTopicChannelFromQuery(req *http.Request) (url.Va
 	}
 
 	return reqParams, topic, channelName, err
+}
+
+func (s *httpServer) getTimeOffsetFromQuery(req *http.Request) (int, error) {
+	reqParams, err := url.ParseQuery(req.URL.RawQuery)
+
+	if err != nil {
+		nsqd.NsqLogger().LogErrorf("failed to parse request params - %s", err)
+		return 1, http_api.Err{400, "INVALID_REQUEST"}
+	}
+
+	offsetStr := reqParams.Get("offset")
+
+	if offsetStr == "" {
+		nsqd.NsqLogger().LogErrorf("The value of offset does not exist. Set the default value to 1")
+		return 1, nil
+	}
+	offset, err := strconv.Atoi(offsetStr)
+
+	if err != nil {
+		nsqd.NsqLogger().LogErrorf("offset invalid - %s", err)
+		return 1, http_api.Err{400, "INVALID_REQUEST"}
+	}
+
+	return offset, err
 }
 
 //TODO: will be refactored for further extension
@@ -708,6 +733,33 @@ func (s *httpServer) doEmptyChannelDelayed(w http.ResponseWriter, req *http.Requ
 		err = s.ctx.EmptyChannelDelayedQueue(channel)
 		if err != nil {
 			nsqd.NsqLogger().Logf("failed to empty the channel %v delayed data: %v, by client:%v",
+				channelName, err, req.RemoteAddr)
+		}
+	} else {
+		nsqd.NsqLogger().LogDebugf("should request to master: %v, from %v",
+			topic.GetFullName(), req.RemoteAddr)
+		return nil, http_api.Err{400, FailedOnNotLeader}
+	}
+	return nil, nil
+}
+
+func (s *httpServer) doRequeueChannelDelayed(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {
+	_, topic, channelName, err := s.getExistingTopicChannelFromQuery(req)
+	if err != nil {
+		return nil, err
+	}
+
+	offset, err := s.getTimeOffsetFromQuery(req)
+
+	channel, err := topic.GetExistingChannel(channelName)
+	if err != nil {
+		return nil, http_api.Err{404, "CHANNEL_NOT_FOUND"}
+	}
+
+	if s.ctx.checkConsumeForMasterWrite(topic.GetTopicName(), topic.GetTopicPart()) {
+		_, _, err := channel.PeekAndReqDelayedMessages(time.Now().Add(time.Hour * time.Duration(offset)).UnixNano())
+		if err != nil {
+			nsqd.NsqLogger().Logf("failed to requeue the channel %v delayed data: %v, by client:%v",
 				channelName, err, req.RemoteAddr)
 		}
 	} else {

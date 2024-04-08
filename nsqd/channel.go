@@ -2663,7 +2663,7 @@ func (c *Channel) processInFlightQueue(tnow int64) (bool, bool) {
 
 	if !c.IsConsumeDisabled() && !c.IsOrdered() &&
 		needPeekDelay && clientNum > 0 {
-		newAdded, cnt, err := c.peekAndReqDelayedMessages(tnow)
+		newAdded, cnt, err := c.PeekAndReqDelayedMessages(tnow)
 		if err == nil {
 			if newAdded > 0 && c.chLog.Level() >= levellogger.LOG_DEBUG {
 				c.chLog.LogDebugf("channel delayed waiting peeked %v added %v new : %v",
@@ -2709,7 +2709,7 @@ func (c *Channel) processInFlightQueue(tnow int64) (bool, bool) {
 	return dirty, checkFast
 }
 
-func (c *Channel) peekAndReqDelayedMessages(tnow int64) (int, int, error) {
+func (c *Channel) PeekAndReqDelayedMessages(tnow int64) (int, int, error) {
 	if c.IsEphemeral() {
 		return 0, 0, nil
 	}
