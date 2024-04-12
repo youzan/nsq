@@ -1627,6 +1627,8 @@ func TestChannelSkipZanTestForOrdered(t *testing.T) {
 	topic := nsqd.GetTopicWithExt(topicName, 0, true)
 	channel := topic.GetChannel("order_channel")
 	channel.SetOrdered(true)
+	// sleep here since set order will reset reader
+	time.Sleep(time.Millisecond)
 	channel.doSkipZanTest(false)
 
 	msgs := make([]*Message, 0, 3)
@@ -1663,7 +1665,7 @@ func TestChannelSkipZanTestForOrdered(t *testing.T) {
 	}
 	topic.PutMessages(msgs)
 	topic.flushBuffer(true)
-	time.Sleep(time.Second)
+	time.Sleep(time.Millisecond)
 	// consume normal message and some test message
 	for i := 0; i < 3; i++ {
 		outputMsg := <-channel.clientMsgChan
@@ -1672,7 +1674,6 @@ func TestChannelSkipZanTestForOrdered(t *testing.T) {
 		channel.FinishMessageForce(0, "", outputMsg.ID, true)
 		channel.ContinueConsumeForOrder()
 	}
-	time.Sleep(time.Millisecond * 10)
 	// make sure zan test timeout
 	outputMsg := <-channel.clientMsgChan
 	t.Logf("consume %v", string(outputMsg.Body))
@@ -1681,7 +1682,7 @@ func TestChannelSkipZanTestForOrdered(t *testing.T) {
 	time.Sleep(time.Millisecond * 10)
 	// skip zan test soon to make sure the zan test is inflight
 	channel.doSkipZanTest(true)
-	time.Sleep(time.Second * 3)
+	time.Sleep(opts.MsgTimeout * 2)
 	toC := time.After(time.Second * 30)
 
 	// set zan test skip and should continue consume normal messages

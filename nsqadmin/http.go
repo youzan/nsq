@@ -495,6 +495,9 @@ func (s *httpServer) topicHandler(w http.ResponseWriter, req *http.Request, ps h
 		s.ctx.nsqadmin.logf("WARNING: %s", err)
 		messages = append(messages, pe.Error())
 	}
+	if producers.Len() == 0 {
+		return nil, http_api.Err{404, "NODE_NOT_FOUND"}
+	}
 	topicStats, _, err := s.ci.GetNSQDStatsWithClients(producers, topicName, "partition", true)
 	if err != nil {
 		pe, ok := err.(clusterinfo.PartialErr)
@@ -586,6 +589,9 @@ func (s *httpServer) channelHandler(w http.ResponseWriter, req *http.Request, ps
 		}
 		s.ctx.nsqadmin.logf("WARNING: %s", err)
 		messages = append(messages, pe.Error())
+	}
+	if producers.Len() == 0 {
+		return nil, http_api.Err{404, "NODE_NOT_FOUND"}
 	}
 	_, allChannelStats, err := s.ci.GetNSQDStatsWithClients(producers, topicName, "partition", true)
 	if err != nil {
